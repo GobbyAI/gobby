@@ -644,7 +644,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             from gobby.storage.agents import LocalAgentRunManager
 
             manager = LocalAgentRunManager(server.services.database)
-            runs = manager.list_active()
+            runs = manager.list_active_global()
             return {
                 "status": "success",
                 "agents": [r.to_dict() for r in runs],

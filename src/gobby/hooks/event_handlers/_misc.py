@@ -383,6 +383,12 @@ class MiscEventHandlerMixin(EventHandlersBase):
         record_cleanup_succeeded = True
         if self._worktree_manager:
             try:
+                if self._worktree_manager.has_path_on_other_machine(worktree_path):
+                    self.logger.warning(
+                        "WORKTREE_REMOVE refused path owned by another machine: %s",
+                        worktree_path,
+                    )
+                    return HookResponse(decision="allow")
                 existing = self._worktree_manager.get_by_path(worktree_path)
             except Exception as e:
                 self.logger.warning("WORKTREE_REMOVE record lookup failed: %s", e)

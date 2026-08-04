@@ -684,7 +684,7 @@ def register_agent_query_tools(
                     status=cast(AgentRunStatus, status_key),
                 )
         elif status_key == "active":
-            runs = ctx.agent_run_manager.list_active(limit=limit)
+            runs = ctx.agent_run_manager.list_active_global(limit=limit)
         elif status_key == "running":
             runs = ctx.agent_run_manager.list_running(limit=limit)
         else:
@@ -777,7 +777,7 @@ def register_agent_query_tools(
         description="Get statistics about running agents.",
     )
     async def running_agent_stats() -> dict[str, Any]:
-        all_runs = ctx.agent_run_manager.list_active()
+        all_runs = ctx.agent_run_manager.list_active_global()
         by_parent: dict[str, int] = {}
 
         for run in all_runs:

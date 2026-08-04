@@ -20,6 +20,7 @@ from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._transitions import reset_current_non_ready_stage
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
 
 
 def _active_agents(db: HubDatabase, task_ids: list[str]) -> list[AgentRun]:
-    return LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
+    return LocalAgentRunManager(db).list_active_global(task_ids=task_ids, limit=1000)
 
 
 def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
@@ -158,6 +159,7 @@ def _parked_daemon_stop_runs(db: HubDatabase, task_ids: list[str]) -> list[Agent
     if not task_ids:
         return []
     return LocalAgentRunManager(db).list_daemon_stop_orphans(
+        machine_id=require_machine_id(),
         max_age_hours=None,
         task_ids=task_ids,
         limit=1000,
@@ -209,7 +211,7 @@ def _clear_stale_dispatch_mutexes(
     mutexes = TaskDispatchMutexManager(db)
     resolved_now = now or datetime.now(UTC)
     cleared = 0
-    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
+    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active_global(limit=1000)}
     for task_id in task_ids:
         mutex = mutexes.get_mutex(task_id)
         if mutex is None:
@@ -263,7 +265,7 @@ def _release_stale_agent_claims(
 ) -> int:
     active_session_ids = {
         session_id
-        for run in LocalAgentRunManager(db).list_active(limit=1000)
+        for run in LocalAgentRunManager(db).list_active_global(limit=1000)
         for session_id in (run.child_session_id, run.claimed_session_id, run.parent_session_id)
         if session_id
     }

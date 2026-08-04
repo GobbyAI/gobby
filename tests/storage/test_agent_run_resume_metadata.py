@@ -9,6 +9,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -148,6 +149,8 @@ def test_daemon_stop_resume_candidates_exclude_consumed_and_expired_runs(
         (old_timestamp, old_timestamp, expired.id),
     )
 
-    candidates = manager.list_daemon_stop_resume_candidates(task.id, max_age_hours=24)
+    candidates = manager.list_daemon_stop_resume_candidates(
+        task.id, machine_id=require_machine_id(), max_age_hours=24
+    )
 
     assert [candidate.id for candidate in candidates] == [recent.id]

@@ -36,6 +36,15 @@ class _AgentRunQueryHost(Protocol):
         offset: int = 0,
     ) -> list[AgentRun]: ...
 
+    def _list_active_runs(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        machine_id: str | None,
+        task_ids: Sequence[str] | None = None,
+    ) -> list[AgentRun]: ...
+
 
 class _AgentRunQueryMixin:
     def get(self: _AgentRunQueryHost, run_id: str) -> AgentRun | None:
@@ -78,6 +87,7 @@ class _AgentRunQueryMixin:
         self: _AgentRunQueryHost,
         task_id: str,
         *,
+        machine_id: str,
         limit: int = 20,
         max_age_hours: float = 24,
     ) -> list[AgentRun]:
@@ -94,12 +104,13 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.task_id = %s
+              AND ar.machine_id = %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
               AND {unconsumed_sql}
               AND {recent_sql}
             """,
-            (task_id, max_age_hours),
+            (task_id, machine_id, max_age_hours),
             order_by="ORDER BY ar.completed_at DESC NULLS LAST, ar.updated_at DESC",
             limit=limit,
         )
@@ -107,6 +118,7 @@ class _AgentRunQueryMixin:
     def list_parked_non_task_resume_candidates(
         self: _AgentRunQueryHost,
         *,
+        machine_id: str,
         limit: int = 20,
         max_age_hours: float = 24,
     ) -> list[AgentRun]:
@@ -127,6 +139,7 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.task_id IS NULL
+              AND ar.machine_id = %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
               AND {unconsumed_sql}
@@ -139,7 +152,7 @@ class _AgentRunQueryMixin:
                       AND s.status NOT IN ('expired', 'deleted')
               )
             """,
-            (max_age_hours,),
+            (machine_id, max_age_hours),
             order_by="ORDER BY ar.completed_at ASC NULLS FIRST, ar.updated_at ASC",
             limit=limit,
         )
@@ -147,6 +160,7 @@ class _AgentRunQueryMixin:
     def list_provisional_daemon_resumes(
         self: _AgentRunQueryHost,
         *,
+        machine_id: str,
         limit: int = 100,
     ) -> list[AgentRun]:
         """List non-finalized successor runs requiring boot resolution."""
@@ -158,8 +172,9 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE {phase_sql} IN ('prepared', 'launch_requested', 'runtime_persisted')
+              AND ar.machine_id = %s
             """,
-            (),
+            (machine_id,),
             order_by="ORDER BY ar.created_at ASC, ar.id ASC",
             limit=limit,
         )
@@ -167,6 +182,7 @@ class _AgentRunQueryMixin:
     def list_reconciliation_pending(
         self: _AgentRunQueryHost,
         *,
+        machine_id: str,
         limit: int = 100,
     ) -> list[AgentRun]:
         """List active runs deferred by an unresolved startup inbox barrier."""
@@ -178,9 +194,10 @@ class _AgentRunQueryMixin:
         return self._fetch_runs_with_live_stats(
             f"""
             WHERE ar.status IN ('pending', 'running')
+              AND ar.machine_id = %s
               AND {pending_sql} = 'true'
             """,
-            (),
+            (machine_id,),
             order_by="ORDER BY ar.updated_at ASC, ar.id ASC",
             limit=limit,
         )
@@ -188,6 +205,7 @@ class _AgentRunQueryMixin:
     def list_daemon_stop_orphans(
         self: _AgentRunQueryHost,
         *,
+        machine_id: str,
         max_age_hours: float | None = 24,
         limit: int = 100,
         task_ids: Sequence[str] | None = None,
@@ -208,6 +226,7 @@ class _AgentRunQueryMixin:
             REAPED_AT_KEY,
         )
         conditions = [
+            "ar.machine_id = %s",
             "ar.status = 'cancelled'",
             "ar.terminal_reason = 'daemon_stop'",
             unconsumed_sql,
@@ -219,7 +238,7 @@ class _AgentRunQueryMixin:
                       AND s.agent_run_id = ar.id
               )""",
         ]
-        params: list[object] = []
+        params: list[object] = [machine_id]
         if max_age_hours is not None:
             requested_sql = json_text_expr(
                 self.db,
@@ -338,16 +357,20 @@ class _AgentRunQueryMixin:
             limit=limit,
         )
 
-    def list_active(
+    def _list_active_runs(
         self: _AgentRunQueryHost,
         limit: int = 100,
         offset: int = 0,
         *,
+        machine_id: str | None,
         task_ids: Sequence[str] | None = None,
     ) -> list[AgentRun]:
-        """List all active (running or pending) agent runs."""
+        """List active runs under the requested explicit scope."""
         params: list[object] = []
         where_clause = "WHERE ar.status IN ('running', 'pending')"
+        if machine_id is not None:
+            where_clause += " AND ar.machine_id = %s"
+            params.append(machine_id)
         if task_ids is not None:
             if not task_ids:
                 return []
@@ -360,6 +383,37 @@ class _AgentRunQueryMixin:
             order_by="ORDER BY ar.started_at ASC",
             limit=limit,
             offset=offset,
+        )
+
+    def list_active_for_machine(
+        self: _AgentRunQueryHost,
+        machine_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        task_ids: Sequence[str] | None = None,
+    ) -> list[AgentRun]:
+        """List active runs owned by one machine."""
+        return self._list_active_runs(
+            limit,
+            offset,
+            machine_id=machine_id,
+            task_ids=task_ids,
+        )
+
+    def list_active_global(
+        self: _AgentRunQueryHost,
+        limit: int = 100,
+        offset: int = 0,
+        *,
+        task_ids: Sequence[str] | None = None,
+    ) -> list[AgentRun]:
+        """List active runs across all machines."""
+        return self._list_active_runs(
+            limit,
+            offset,
+            machine_id=None,
+            task_ids=task_ids,
         )
 
     def get_by_session(self: _AgentRunQueryHost, session_id: str) -> AgentRun | None:

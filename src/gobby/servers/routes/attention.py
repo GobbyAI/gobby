@@ -21,6 +21,7 @@ from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
 from gobby.storage.session_models import Session
 from gobby.utils.hashing import is_sha256
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -493,7 +494,12 @@ async def _list_active_runs(services: Any) -> list[AgentRun]:
     runs: list[AgentRun] = []
     offset = 0
     while True:
-        page = await services.run_db(manager.list_active, limit=500, offset=offset)
+        page = await services.run_db(
+            manager.list_active_for_machine,
+            require_machine_id(),
+            limit=500,
+            offset=offset,
+        )
         runs.extend(page)
         if len(page) < 500:
             return runs

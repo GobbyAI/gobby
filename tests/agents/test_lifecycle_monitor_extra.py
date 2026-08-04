@@ -510,7 +510,7 @@ class TestLoopPromptEscalation:
         monitor._tmux = mock_tmux
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
         mock_tmux.send_keys.return_value = True
 
@@ -532,7 +532,7 @@ class TestLoopPromptEscalation:
         monitor._tmux = mock_tmux
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
         mock_tmux.send_keys.return_value = True
 
@@ -564,7 +564,7 @@ class TestLoopPromptEscalation:
         monitor._tmux = mock_tmux
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         mock_tmux.capture_pane.return_value = "It seems like I'm stuck in a loop.\n"
 
         with patch.object(
@@ -593,7 +593,7 @@ class TestLoopPromptEscalation:
         monitor._terminal_prompt_monitor._monotonic = lambda: now
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         mock_tmux.capture_pane.return_value = "Potential loop detected\nContinue? (y/n)"
         mock_tmux.send_keys.return_value = True
 
@@ -619,7 +619,7 @@ class TestLoopPromptEscalation:
         monitor._terminal_prompt_monitor._monotonic = lambda: now
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         mock_tmux.capture_pane.side_effect = [
             "Potential loop detected\nContinue? (y/n)",
             "It seems to be stuck\nContinue? (y/n)",
@@ -646,7 +646,7 @@ class TestLoopPromptEscalation:
         monitor._tmux = mock_tmux
 
         run = self._run()
-        mock_run_mgr.list_active.return_value = [run]
+        mock_run_mgr.list_active_for_machine.return_value = [run]
         pane_output = "Potential loop detected\nContinue? (y/n)"
         mock_tmux.capture_pane.return_value = pane_output
         mock_tmux.send_keys.return_value = False
@@ -693,7 +693,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = (
             "Approval required\nPress Enter to approve this command\n"
         )
@@ -713,7 +713,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = (
             "Tool call needs your approval. Reason: Request contains encrypted reasoning "
             "and a tool call; requires user confirmation to proceed.\n"
@@ -737,7 +737,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = (
             "Approval required\nPress Enter to approve this command\n"
         )
@@ -755,7 +755,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.side_effect = [
             "Approval required\nPress Enter to approve command A\n",
             "Approval required\nPress Enter to approve command B\n",
@@ -782,7 +782,7 @@ class TestApprovalPromptAutoEnter:
             tmux_config=TmuxConfig(auto_enter_approval_prompts=False),
         )
         monitor._tmux = mock_tmux
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
 
         handled = await monitor.check_approval_prompts()
 
@@ -795,7 +795,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-no-tmux", tmux_session_name=None)
         ]
 
@@ -861,7 +861,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-codex", tmux_session_name="gobby-codex", provider="codex"),
             self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
             self._run(run_id="run-qwen", tmux_session_name="gobby-qwen", provider="qwen"),
@@ -887,7 +887,7 @@ class TestPeriodicAgentTerminalEnter:
             interval=30,
             auto_enter_approval_prompts=False,
         )
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = (
             "Tool call needs your approval.\n"
             "› 1. Allow   Run the tool and continue.\n"
@@ -910,7 +910,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-trust", tmux_session_name="gobby-trust"),
             self._run(run_id="run-loop", tmux_session_name="gobby-loop"),
             self._run(run_id="run-normal", tmux_session_name="gobby-normal"),
@@ -972,7 +972,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, db=temp_db)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(child_session_id=child.id),
         ]
         mock_tmux.send_keys.return_value = True
@@ -991,7 +991,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
         ]
         mock_tmux.capture_pane.return_value = (
@@ -1017,7 +1017,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = "Press up to edit queued messages\n"
 
         result = await monitor.check_queued_continuation_prompts()
@@ -1030,7 +1030,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.send_keys.return_value = True
         current_time = 100.0
         monitor._terminal_prompt_monitor._monotonic = lambda: current_time
@@ -1049,7 +1049,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, interval=30)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
         mock_tmux.capture_pane.return_value = (
             "Approval required\nPress Enter to approve command A\n"
         )
@@ -1069,7 +1069,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux, enabled=False)
-        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_run_mgr.list_active_for_machine.return_value = [self._run()]
 
         handled = await monitor.check_periodic_enters()
 
@@ -1081,7 +1081,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = self._monitor(mock_run_mgr, mock_tmux)
-        mock_run_mgr.list_active.return_value = [
+        mock_run_mgr.list_active_for_machine.return_value = [
             self._run(run_id="run-no-tmux", tmux_session_name=None)
         ]
 

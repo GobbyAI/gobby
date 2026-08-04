@@ -116,7 +116,7 @@ def _make_runner_with_run_storage() -> MagicMock:
     """Create a mock runner with a mock run_storage (LocalAgentRunManager)."""
     runner = MagicMock()
     runner.run_storage = MagicMock()
-    runner.run_storage.list_active.return_value = []
+    runner.run_storage.list_active_global.return_value = []
     runner.run_storage.list_by_parent.return_value = []
     runner.run_storage.get.return_value = None
     runner.run_storage.get_by_session.return_value = None
@@ -896,7 +896,7 @@ class TestListRunningAgents:
         """Test listing all running agents."""
         runner = _make_runner_with_run_storage()
         agents = self._make_agents()
-        runner.run_storage.list_active.return_value = agents
+        runner.run_storage.list_active_global.return_value = agents
 
         registry = create_agents_registry(runner)
         list_running = registry._tools["list_running_agents"].func
@@ -907,7 +907,7 @@ class TestListRunningAgents:
         assert result["count"] == 3
         assert len(result["agents"]) == 3
         assert result["scope"] == "all"
-        runner.run_storage.list_active.assert_called_once_with(limit=100)
+        runner.run_storage.list_active_global.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
     async def test_list_rows_have_only_compact_decision_fields(self) -> None:
@@ -928,7 +928,7 @@ class TestListRunningAgents:
                 "config_overrides": ["model=x"],
             },
         )
-        runner.run_storage.list_active.return_value = [run]
+        runner.run_storage.list_active_global.return_value = [run]
 
         registry = create_agents_registry(runner)
         result = await registry._tools["list_running_agents"].func()
@@ -948,7 +948,7 @@ class TestListRunningAgents:
     async def test_clamps_zero_limit_to_positive_bound(self) -> None:
         """Explicit zero is clamped to the smallest positive limit."""
         runner = _make_runner_with_run_storage()
-        runner.run_storage.list_active.return_value = []
+        runner.run_storage.list_active_global.return_value = []
 
         registry = create_agents_registry(runner)
         list_running = registry._tools["list_running_agents"].func
@@ -957,7 +957,7 @@ class TestListRunningAgents:
 
         assert result["success"] is True
         assert result["count"] == 0
-        runner.run_storage.list_active.assert_called_once_with(limit=1)
+        runner.run_storage.list_active_global.assert_called_once_with(limit=1)
 
     @pytest.mark.asyncio
     async def test_filter_by_parent_session(self) -> None:
@@ -986,7 +986,7 @@ class TestListRunningAgents:
 
         runner = _make_runner_with_run_storage()
         agents = self._make_agents()
-        runner.run_storage.list_active.return_value = agents
+        runner.run_storage.list_active_global.return_value = agents
 
         registry = create_agents_registry(runner)
         list_running = registry._tools["list_running_agents"].func
@@ -996,7 +996,7 @@ class TestListRunningAgents:
 
         assert result["success"] is True
         assert result["count"] == 3
-        runner.run_storage.list_active.assert_called_once_with(limit=100)
+        runner.run_storage.list_active_global.assert_called_once_with(limit=100)
         runner.run_storage.list_by_parent.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1756,7 +1756,7 @@ class TestRunningAgentStats:
     async def test_empty_stats(self) -> None:
         """Test stats with no running agents."""
         runner = _make_runner_with_run_storage()
-        runner.run_storage.list_active.return_value = []
+        runner.run_storage.list_active_global.return_value = []
 
         registry = create_agents_registry(runner)
         stats = registry._tools["running_agent_stats"].func
@@ -1771,7 +1771,7 @@ class TestRunningAgentStats:
     async def test_stats_with_agents(self) -> None:
         """Test stats with multiple running agents."""
         runner = _make_runner_with_run_storage()
-        runner.run_storage.list_active.return_value = [
+        runner.run_storage.list_active_global.return_value = [
             _make_mock_agent_run(
                 run_id="run-1",
                 parent_session_id="parent-1",

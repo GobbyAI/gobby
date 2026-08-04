@@ -24,6 +24,7 @@ from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._transitions import escalate_task
 from gobby.storage.tasks._updates import update_task
 from gobby.utils.git import git_subprocess_env
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +110,10 @@ def _find_resume_candidate(
     context: object | None,
 ) -> AgentRun | None:
     stage_name, stage_state = _action_stage(action, context)
-    for run in LocalAgentRunManager(db).list_daemon_stop_resume_candidates(action.task_id):
+    for run in LocalAgentRunManager(db).list_daemon_stop_resume_candidates(
+        action.task_id,
+        machine_id=require_machine_id(),
+    ):
         metadata = run.resume_metadata_json or {}
         if not metadata:
             continue

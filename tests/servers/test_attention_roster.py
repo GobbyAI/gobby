@@ -255,8 +255,13 @@ def test_interactive_entry_end_to_end(
         def __init__(self, _db: HubDatabase) -> None:
             pass
 
-        def list_active(self, limit: int = 500, offset: int = 0) -> list[Any]:
-            del limit
+        def list_active_for_machine(
+            self,
+            machine_id: str,
+            limit: int = 500,
+            offset: int = 0,
+        ) -> list[Any]:
+            del machine_id, limit
             if offset:
                 return []
             return [run]

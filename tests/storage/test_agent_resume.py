@@ -16,6 +16,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -273,7 +274,9 @@ def test_rollback_prepared_daemon_resume_restores_binding_before_delete(
     assert original_after is not None
     metadata = original_after.resume_metadata_json or {}
     assert not metadata.get("daemon_stop_resume_consumed_at")
-    parked = runs.list_parked_non_task_resume_candidates(max_age_hours=24)
+    parked = runs.list_parked_non_task_resume_candidates(
+        machine_id=require_machine_id(), max_age_hours=24
+    )
     assert [run.id for run in parked] == [original.id]
 
 
@@ -416,7 +419,7 @@ def test_orphan_reap_claim_stamps_elapsed_unconsumed_orphan(
         (old_timestamp, old_timestamp, original.id),
     )
 
-    orphans = runs.list_daemon_stop_orphans(max_age_hours=24)
+    orphans = runs.list_daemon_stop_orphans(machine_id=require_machine_id(), max_age_hours=24)
     assert [run.id for run in orphans] == [original.id]
 
     assert claim_daemon_stop_orphan_reap(

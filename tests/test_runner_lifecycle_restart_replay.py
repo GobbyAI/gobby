@@ -7,7 +7,7 @@ from copy import copy
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -61,17 +61,17 @@ class TestAgentRestartReconciliation:
             SimpleNamespace(id=f"run-{index}", continuation_prompt=None)
             for index in range(page_size + 3)
         ]
-        list_active = MagicMock(
-            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        list_active_for_machine = MagicMock(
+            side_effect=lambda _machine_id, *, limit, offset=0: runs[offset : offset + limit]
         )
-        runner = self._runner(SimpleNamespace(list_active=list_active))
+        runner = self._runner(SimpleNamespace(list_active_for_machine=list_active_for_machine))
 
         rehydrated = await runner_lifecycle._recover_agent_runs_after_restart(runner)
 
         assert rehydrated == page_size + 3
-        assert list_active.call_args_list == [
-            call(limit=page_size, offset=0),
-            call(limit=page_size, offset=page_size),
+        assert list_active_for_machine.call_args_list == [
+            call(ANY, limit=page_size, offset=0),
+            call(ANY, limit=page_size, offset=page_size),
         ]
         assert runner.completion_registry.register.call_count == page_size + 3
 
@@ -81,7 +81,7 @@ class TestAgentRestartReconciliation:
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
             resume_metadata_json={"reconciliation_pending": True},
         )
-        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
         subscriber_manager = SimpleNamespace(get_completion_subscribers=MagicMock())
         runner = self._runner(run_storage, db=object())
 
@@ -102,7 +102,7 @@ class TestAgentRestartReconciliation:
         assert subscriber_manager.get_completion_subscribers.call_count == 0
         runner.completion_registry.register.assert_not_called()
         assert runner.completion_registry.register.call_count == 0
-        assert run_storage.list_active.call_count == 1
+        assert run_storage.list_active_for_machine.call_count == 1
 
     @pytest.mark.asyncio
     async def test_provisional_resolution_skips_reconciliation_pending_run(self) -> None:
@@ -114,7 +114,7 @@ class TestAgentRestartReconciliation:
             },
         )
         run_storage = SimpleNamespace(
-            list_active=MagicMock(return_value=[]),
+            list_active_for_machine=MagicMock(return_value=[]),
         )
         runner = self._runner(run_storage, provisional_runs=[run])
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
@@ -142,17 +142,17 @@ class TestAgentRestartReconciliation:
             SimpleNamespace(id=f"run-{index}", tmux_session_name=None)
             for index in range(page_size + 2)
         ]
-        list_active = MagicMock(
-            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        list_active_for_machine = MagicMock(
+            side_effect=lambda _machine_id, *, limit, offset=0: runs[offset : offset + limit]
         )
-        runner = self._runner(SimpleNamespace(list_active=list_active))
+        runner = self._runner(SimpleNamespace(list_active_for_machine=list_active_for_machine))
 
         active_runs = _list_active_agent_runs_once(runner)
 
         assert active_runs == runs
-        assert list_active.call_args_list == [
-            call(limit=page_size, offset=0),
-            call(limit=page_size, offset=page_size),
+        assert list_active_for_machine.call_args_list == [
+            call(ANY, limit=page_size, offset=0),
+            call(ANY, limit=page_size, offset=page_size),
         ]
 
     @pytest.mark.asyncio
@@ -164,7 +164,7 @@ class TestAgentRestartReconciliation:
             continuation_prompt="continue later",
         )
         run_storage = SimpleNamespace(
-            list_active=MagicMock(return_value=[run]),
+            list_active_for_machine=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
         )
         runner = self._runner(run_storage)
@@ -213,7 +213,7 @@ class TestAgentRestartReconciliation:
             id="ac314d27-4314-5fe3-a0ab-01645086e137", tmux_session_name="gobby-run-1", pid=111
         )
         run_storage = SimpleNamespace(
-            list_active=MagicMock(return_value=[run]),
+            list_active_for_machine=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
         )
         runner = self._runner(run_storage)
@@ -256,7 +256,7 @@ class TestAgentRestartReconciliation:
             child_session_id="child-1",
         )
         run_storage = SimpleNamespace(
-            list_active=MagicMock(return_value=[run]),
+            list_active_for_machine=MagicMock(return_value=[run]),
             update_runtime=MagicMock(),
         )
         runner = self._runner(run_storage, parked_run=run)
@@ -300,7 +300,7 @@ class TestAgentRestartReconciliation:
             resume_metadata_json={},
             child_session_id="child-1",
         )
-        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
         runner = self._runner(run_storage, parked_run=run)
         tmux_manager = SimpleNamespace(
             list_sessions=AsyncMock(
@@ -339,7 +339,7 @@ class TestAgentRestartReconciliation:
             tmux_session_name=None,
             continuation_prompt=None,
         )
-        run_storage = SimpleNamespace(list_active=MagicMock(return_value=[run]))
+        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
         runner = self._runner(run_storage)
 
         reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
@@ -531,7 +531,10 @@ class TestReclassifyReconciliationPendingRuns:
         assert reclassified == 0
         assert barrier.await_count == 0
         run_storage.merge_resume_metadata.assert_not_called()
-        run_storage.list_reconciliation_pending.assert_called_once_with(limit=_RUN_REPLAY_PAGE_SIZE)
+        run_storage.list_reconciliation_pending.assert_called_once_with(
+            machine_id=ANY,
+            limit=_RUN_REPLAY_PAGE_SIZE,
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_services_available", [True, False])

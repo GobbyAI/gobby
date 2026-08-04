@@ -53,7 +53,7 @@ def get_build_status(
     root = _resolve_root(input_ref, db=db, project_id=project_id, task_manager=task_manager)
     tasks = _subtree_tasks(task_manager, root)
     task_ids = [task.id for task in tasks]
-    active_agents = LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
+    active_agents = LocalAgentRunManager(db).list_active_global(task_ids=task_ids, limit=1000)
     history = BuildHistoryStorage(db)
     recent_history = history.list_runs(
         project_id=project_id,
@@ -386,7 +386,7 @@ def _mutex_diagnosis(db: HubDatabase, task_id: str) -> dict[str, Any]:
         return {"task_id": task_id, "state": "none", "blocks_dispatch": False}
     now = datetime.now(UTC)
     lease_until = _parse_time(mutex.lease_until)
-    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
+    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active_global(limit=1000)}
     expired = lease_until is not None and lease_until <= now
     run_active = bool(mutex.run_id and mutex.run_id in active_run_ids)
     no_run = mutex.run_id is None

@@ -43,13 +43,18 @@ async def test_acknowledged_stale_sweeps_deliver_each_transitioned_run() -> None
         new_callable=AsyncMock,
     ) as deliver:
         run_ids = await handler.run_acknowledged_stale_sweeps(
+            machine_id="machine-local",
             running_timeout_minutes=30,
             pending_timeout_minutes=60,
         )
 
     assert run_ids == ["run-timeout", "run-pending"]
-    run_manager.cleanup_stale_runs.assert_called_once_with(default_timeout_minutes=30)
+    run_manager.cleanup_stale_runs.assert_called_once_with(
+        machine_id="machine-local",
+        default_timeout_minutes=30,
+    )
     run_manager.cleanup_stale_pending_runs.assert_called_once_with(
+        machine_id="machine-local",
         timeout_minutes=60,
         long_timeout_minutes=1440,
     )

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gobby.utils.machine_id import require_machine_id
+
 if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun
     from gobby.storage.hub.protocol import HubDatabase
@@ -484,7 +486,9 @@ class TestBuildStopParkedDaemonStopRuns:
         assert flagged.resume_metadata_json[REAP_REQUESTED_AT_KEY]
         # The reaper's own default selection now picks up the fresh flagged
         # run, so the real reap_daemon_stop_orphans performs the give-up.
-        orphan_ids = {run.id for run in runs.list_daemon_stop_orphans()}
+        orphan_ids = {
+            run.id for run in runs.list_daemon_stop_orphans(machine_id=require_machine_id())
+        }
         assert parked.id in orphan_ids
         untouched = runs.get(outside_parked.id)
         assert untouched is not None
@@ -548,4 +552,6 @@ class TestBuildStopParkedDaemonStopRuns:
         assert flagged.resume_metadata_json[REAP_REQUESTED_AT_KEY]
         # The durable flag keeps the run eligible for the daemon's next
         # lifecycle tick even though no monitor was available here.
-        assert parked.id in {run.id for run in runs.list_daemon_stop_orphans()}
+        assert parked.id in {
+            run.id for run in runs.list_daemon_stop_orphans(machine_id=require_machine_id())
+        }

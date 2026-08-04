@@ -12,6 +12,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from gobby.utils.machine_id import require_machine_id
+
 if TYPE_CHECKING:
     from gobby.config.ai import GenerationEndpointConfig
     from gobby.storage.agents import LocalAgentRunManager
@@ -34,7 +36,9 @@ def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     Returns:
         Number of active agents using local models
     """
-    return sum(1 for run in run_manager.list_active() if run.is_local)
+    return sum(
+        1 for run in run_manager.list_active_for_machine(require_machine_id()) if run.is_local
+    )
 
 
 def _origin(api_base: str) -> str:

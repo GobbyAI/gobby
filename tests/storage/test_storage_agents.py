@@ -15,6 +15,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_lifecycle import rebind_agent_run
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -991,7 +992,9 @@ class TestLocalAgentRunManager:
             (unbound_session_id,),
         )
 
-        candidates = agent_manager.list_parked_non_task_resume_candidates(max_age_hours=24)
+        candidates = agent_manager.list_parked_non_task_resume_candidates(
+            machine_id=require_machine_id(), max_age_hours=24
+        )
 
         assert [run.id for run in candidates] == [candidate.id]
 
@@ -1703,7 +1706,9 @@ class TestLocalAgentRunManager:
             (run1.id,),
         )
 
-        run_ids = cleanup_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = cleanup_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
         assert run_ids == [run1.id]
 
         cleaned = agent_manager.get(run1.id)
@@ -1739,7 +1744,9 @@ class TestLocalAgentRunManager:
             ('{"reconciliation_pending": true}', run.id),
         )
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
 
         assert run_ids == [run.id]
         assert agent_manager.get(run.id).status == "timeout"
@@ -1762,7 +1769,9 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
 
         assert run_ids == []
         stale_live = agent_manager.get(run.id)
@@ -1800,7 +1809,9 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
 
         assert run_ids == []
         refreshed = agent_manager.get(run.id)
@@ -1820,7 +1831,9 @@ class TestLocalAgentRunManager:
         )
         agent_manager.start(run.id)
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
         assert run_ids == []
 
         # Verify run is still running
@@ -1852,7 +1865,9 @@ class TestLocalAgentRunManager:
         )
 
         with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
-            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+            run_ids = agent_manager.cleanup_stale_runs(
+                machine_id=require_machine_id(), default_timeout_minutes=30
+            )
             assert run_ids == [run.id]
             mock_logger.info.assert_called_once_with(
                 "Timed out %s stale agent runs (%s explicit, %s default)",
@@ -1889,7 +1904,9 @@ class TestLocalAgentRunManager:
             (pending.id, completed.id),
         )
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(
+            machine_id=require_machine_id(), default_timeout_minutes=30
+        )
         assert run_ids == []
 
     def test_cleanup_stale_runs_continues_after_transition_failure(
@@ -1915,7 +1932,9 @@ class TestLocalAgentRunManager:
             ) as timeout,
             patch("gobby.storage.agents._cleanup.logger") as mock_logger,
         ):
-            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+            run_ids = agent_manager.cleanup_stale_runs(
+                machine_id=require_machine_id(), default_timeout_minutes=30
+            )
 
         assert run_ids == ["run-first", "run-last"]
         assert timeout.call_count == 3
@@ -1944,7 +1963,9 @@ class TestLocalAgentRunManager:
             (12345, pending.id),
         )
 
-        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        run_ids = agent_manager.cleanup_stale_pending_runs(
+            machine_id=require_machine_id(), timeout_minutes=60
+        )
         assert run_ids == [pending.id]
 
         cleaned = agent_manager.get(pending.id)
@@ -1974,7 +1995,9 @@ class TestLocalAgentRunManager:
             ('{"reconciliation_pending": true}', pending.id),
         )
 
-        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_pending_runs(
+            machine_id=require_machine_id(), timeout_minutes=30
+        )
 
         assert run_ids == [pending.id]
         assert agent_manager.get(pending.id).status == "error"
@@ -1991,7 +2014,9 @@ class TestLocalAgentRunManager:
             prompt="Fresh pending",
         )
 
-        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        run_ids = agent_manager.cleanup_stale_pending_runs(
+            machine_id=require_machine_id(), timeout_minutes=60
+        )
         assert run_ids == []
 
         # Verify run is still pending
@@ -2014,13 +2039,20 @@ class TestLocalAgentRunManager:
             (pending.id,),
         )
 
-        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == []
+        assert (
+            agent_manager.cleanup_stale_pending_runs(
+                machine_id=require_machine_id(), timeout_minutes=60
+            )
+            == []
+        )
 
         agent_manager.db.execute(
             "UPDATE agent_runs SET created_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (pending.id,),
         )
-        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == [pending.id]
+        assert agent_manager.cleanup_stale_pending_runs(
+            machine_id=require_machine_id(), timeout_minutes=60
+        ) == [pending.id]
         cleaned = agent_manager.get(pending.id)
         assert cleaned.status == "error"
         assert cleaned.error == "Pending tmux-initialized run never started"
@@ -2044,7 +2076,9 @@ class TestLocalAgentRunManager:
         )
 
         with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
-            run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+            run_ids = agent_manager.cleanup_stale_pending_runs(
+                machine_id=require_machine_id(), timeout_minutes=60
+            )
             assert run_ids == [pending.id]
             mock_logger.info.assert_called_once()
             assert mock_logger.info.call_args.args == (
@@ -2083,7 +2117,9 @@ class TestLocalAgentRunManager:
             (running.id, completed.id),
         )
 
-        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        run_ids = agent_manager.cleanup_stale_pending_runs(
+            machine_id=require_machine_id(), timeout_minutes=60
+        )
         assert run_ids == []
 
 
@@ -2349,7 +2385,9 @@ class TestAgentRunEdgeCases:
         mock_cursor.rowcount = None
 
         with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+            run_ids = agent_manager.cleanup_stale_runs(
+                machine_id=require_machine_id(), default_timeout_minutes=30
+            )
             assert run_ids == []
 
     def test_cleanup_stale_pending_runs_cursor_rowcount_none(
@@ -2362,5 +2400,7 @@ class TestAgentRunEdgeCases:
         mock_cursor.fetchall.return_value = []
 
         with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+            run_ids = agent_manager.cleanup_stale_pending_runs(
+                machine_id=require_machine_id(), timeout_minutes=60
+            )
             assert run_ids == []

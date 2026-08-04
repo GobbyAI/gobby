@@ -38,7 +38,7 @@ def _has_active_dispatch_mutex(db: HubDatabase, task_id: str) -> bool:
 
 
 def _has_active_agent_run(db: HubDatabase, task_id: str) -> bool:
-    return bool(LocalAgentRunManager(db).list_active(task_ids=[task_id], limit=1))
+    return bool(LocalAgentRunManager(db).list_active_global(task_ids=[task_id], limit=1))
 
 
 def _active_build_automation_message(task: Task, task_id: str) -> str:

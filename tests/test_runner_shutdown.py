@@ -1212,7 +1212,7 @@ class TestStopShutdownAgentPreservation:
             resume_metadata_json=None,
         )
         run_storage = MagicMock()
-        run_storage.list_active.return_value = [run]
+        run_storage.list_active_for_machine.return_value = [run]
         reap = AsyncMock()
         runner = SimpleNamespace(
             _shutdown_intent=ShutdownIntent.STOP,
@@ -1267,8 +1267,10 @@ class TestStopShutdownAgentPreservation:
         # The old shutdown-time cancellation helper is gone; run storage sees
         # only the preservation listing and no cancel/fail/terminalize writes.
         assert not hasattr(runner_lifecycle_shutdown, "_cancel_active_agent_runs_for_shutdown")
-        assert run_storage.list_active.called
-        assert {name for name, _args, _kwargs in run_storage.mock_calls} == {"list_active"}
+        assert run_storage.list_active_for_machine.called
+        assert {name for name, _args, _kwargs in run_storage.mock_calls} == {
+            "list_active_for_machine"
+        }
         reap.assert_awaited_once_with(preserve_agents=True, preserved_agent_pids={4242})
         runner.agent_lifecycle_monitor.stop.assert_awaited_once()
 
@@ -1329,4 +1331,4 @@ class TestStopShutdownAgentPreservation:
         reap.assert_not_awaited()
         assert "preserve" in events
         assert "telemetry" in events
-        assert events[-2:] == ["executor", "telemetry"]
+        assert events[-2:] == ["telemetry", "executor"]

@@ -33,7 +33,7 @@ class TestSpawnAgentDedup:
         active_run.parent_session_id = "parent-789"
         active_run.task_id = "task-uuid-123"
         active_run.agent_name = "backend-developer"
-        runner.run_storage.list_active.return_value = [active_run]
+        runner.run_storage.list_active_global.return_value = [active_run]
         runner.run_storage.get_active_run_for_task.return_value = active_run
 
         agent_body = AgentDefinitionBody(
@@ -273,7 +273,7 @@ class TestSpawnAgentDedup:
         parent_run.id = "run-orchestrator"
         parent_run.agent_name = "merge-orchestrator"
         parent_run.child_session_id = "parent-merge-session"
-        runner.run_storage.list_active.return_value = [parent_run]
+        runner.run_storage.list_active_global.return_value = [parent_run]
         runner.run_storage.get_active_run_for_task.return_value = parent_run
 
         agent_body = AgentDefinitionBody(
@@ -376,7 +376,7 @@ class TestSpawnAgentDedup:
         active_worker.id = "run-existing-worker"
         active_worker.agent_name = "merge-worker"
         active_worker.child_session_id = "child-existing-worker"
-        runner.run_storage.list_active.return_value = [active_worker]
+        runner.run_storage.list_active_global.return_value = [active_worker]
         runner.run_storage.get_active_run_for_task.return_value = active_worker
 
         agent_body = AgentDefinitionBody(

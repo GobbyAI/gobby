@@ -97,7 +97,7 @@ def active_task_spawn_blocker(
 
     active_runs: list[Any] = []
     try:
-        maybe_runs = run_storage.list_active(task_ids=[task_id], limit=100)
+        maybe_runs = run_storage.list_active_global(task_ids=[task_id], limit=100)
     except (AttributeError, TypeError):
         maybe_runs = None
     if isinstance(maybe_runs, list | tuple):

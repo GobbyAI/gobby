@@ -146,7 +146,14 @@ async def test_startup_sweep_reaps_orphan_and_spares_live_run(
     processes = [live_runner, live_child, orphan_runner, orphan_child, unrelated]
 
     class RunStorage:
-        def list_active(self, *, limit: int, offset: int) -> list[SimpleNamespace]:
+        def list_active_for_machine(
+            self,
+            machine_id: str,
+            *,
+            limit: int,
+            offset: int,
+        ) -> list[SimpleNamespace]:
+            del machine_id
             assert limit > 0
             return [SimpleNamespace(id="live-run")] if offset == 0 else []
 

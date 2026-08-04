@@ -15,7 +15,7 @@ from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.sessions.activity import last_session_activity
 from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.utils.datetime import parse_stored_datetime
-from gobby.utils.machine_id import get_machine_id
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -155,7 +155,7 @@ class IdleCheckHandler:
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Get active terminal agent runs with tmux sessions from DB."""
-        runs = self._agent_run_manager.list_active()
+        runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
         return [run for run in runs if run.tmux_session_name]
 
     def _idle_timeout_seconds_for_run(self, run: AgentRun) -> int:

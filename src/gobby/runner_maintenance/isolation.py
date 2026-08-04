@@ -16,6 +16,7 @@ from gobby.sessions.tmux_window_naming import (
     resolve_tmux_repair_owner,
 )
 from gobby.terminal_ownership import TERMINAL_TITLE_REPAIR_STATUSES
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
@@ -244,8 +245,19 @@ async def _cleanup_missing_isolation_records_async(
     limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
 ) -> dict[str, int]:
     """Async missing-record cleanup that keeps path checks off the DB executor."""
-    worktrees = await _run_db(run_db, worktree_storage.list_worktrees, limit=limit)
-    clones = await _run_db(run_db, clone_storage.list_clones, limit=limit)
+    machine_id = require_machine_id()
+    worktrees = await _run_db(
+        run_db,
+        worktree_storage.list_worktrees,
+        limit=limit,
+        machine_id=machine_id,
+    )
+    clones = await _run_db(
+        run_db,
+        clone_storage.list_clones,
+        limit=limit,
+        machine_id=machine_id,
+    )
 
     removed_worktrees = 0
     for worktree in worktrees:
@@ -287,7 +299,10 @@ async def _cleanup_missing_isolation_records_async(
 
 def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> int:
     removed = 0
-    for worktree in worktree_storage.list_worktrees(limit=limit):
+    for worktree in worktree_storage.list_worktrees(
+        limit=limit,
+        machine_id=require_machine_id(),
+    ):
         path = worktree.worktree_path
         if path and os.path.isdir(path):
             continue
@@ -304,7 +319,10 @@ def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> in
 
 def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
     removed = 0
-    for clone in clone_storage.list_clones(limit=limit):
+    for clone in clone_storage.list_clones(
+        limit=limit,
+        machine_id=require_machine_id(),
+    ):
         path = clone.clone_path
         if path and os.path.isdir(path):
             continue

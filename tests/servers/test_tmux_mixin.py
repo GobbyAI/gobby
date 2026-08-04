@@ -304,7 +304,7 @@ class TestTmuxKillSession:
 
         mock_session_mgr = MagicMock()
         mock_arm = MagicMock()
-        mock_arm.list_active.return_value = [mock_run]
+        mock_arm.list_active_for_machine.return_value = [mock_run]
         server.session_manager = mock_session_mgr
 
         with patch("gobby.storage.agents.LocalAgentRunManager", return_value=mock_arm):
@@ -334,7 +334,7 @@ class TestTmuxKillSession:
             lambda status: [gobby_session] if status == "active" else []
         )
         mock_arm = MagicMock()
-        mock_arm.list_active.return_value = []
+        mock_arm.list_active_for_machine.return_value = []
         server.session_manager = mock_session_mgr
         server.broadcast_session_event = AsyncMock()
 
@@ -387,7 +387,7 @@ class TestTmuxKillSession:
             lambda status: [gobby_session] if status == "active" else []
         )
         mock_arm = MagicMock()
-        mock_arm.list_active.return_value = []
+        mock_arm.list_active_for_machine.return_value = []
         server.session_manager = mock_session_mgr
 
         with (

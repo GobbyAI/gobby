@@ -19,11 +19,13 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
+import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
+from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
 from gobby.agents.tmux import configure_tmux
 from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
@@ -51,10 +53,89 @@ pytestmark = pytest.mark.unit
 
 configure_tmux(TmuxConfig())
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+REMOTE_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
 
 def _rid(label: str) -> str:
     """Deterministic uuid for a readable run label (agent_runs.id is uuid)."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:{label}"))
+
+
+def test_monitor_ignores_other_machines_runs(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The local terminal monitor never returns another machine's run."""
+    local = replace(
+        _metadata_run(_rid("machine-local"), None),
+        machine_id=LOCAL_MACHINE_ID,
+        tmux_session_name="gobby-local",
+    )
+    remote = replace(
+        _metadata_run(_rid("machine-remote"), None),
+        machine_id=REMOTE_MACHINE_ID,
+        tmux_session_name="gobby-remote",
+    )
+    run_manager = MagicMock()
+    run_manager.list_active_for_machine.return_value = [local, remote]
+    run_manager.list_active_for_machine.return_value = [local]
+    monkeypatch.setattr(
+        lifecycle_monitor_module,
+        "require_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+        raising=False,
+    )
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=run_manager,
+        db=temp_db,
+        tmux_config=TmuxConfig(),
+    )
+
+    assert [run.id for run in monitor._get_active_terminal_runs()] == [local.id]
+    run_manager.list_active_for_machine.assert_called_once_with(LOCAL_MACHINE_ID)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_and_termination_ignore_other_machine_runs(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cleanup and termination sweeps pass the local machine into storage."""
+    run_manager = MagicMock()
+    run_manager.cleanup_stale_runs.return_value = []
+    run_manager.cleanup_stale_pending_runs.return_value = []
+    run_manager.list_termination_candidates.return_value = []
+    monkeypatch.setattr(
+        lifecycle_monitor_module,
+        "require_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+        raising=False,
+    )
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=run_manager,
+        db=temp_db,
+        tmux_config=TmuxConfig(),
+    )
+
+    await monitor.run_acknowledged_stale_sweeps(
+        running_timeout_minutes=5,
+        pending_timeout_minutes=7,
+    )
+    await monitor.reconcile_pending_terminations()
+
+    run_manager.cleanup_stale_runs.assert_called_once_with(
+        machine_id=LOCAL_MACHINE_ID,
+        default_timeout_minutes=5,
+    )
+    run_manager.cleanup_stale_pending_runs.assert_called_once_with(
+        machine_id=LOCAL_MACHINE_ID,
+        timeout_minutes=7,
+        long_timeout_minutes=1440,
+    )
+    run_manager.list_termination_candidates.assert_called_once_with(machine_id=LOCAL_MACHINE_ID)
 
 
 @pytest.fixture
@@ -291,7 +372,7 @@ def test_has_dispatch_stage_context_requires_string_stage_fields(
     expected: bool,
 ) -> None:
     assert (
-        _has_dispatch_stage_context(_metadata_run(_rid("run-stage-context"), metadata)) is expected
+        has_dispatch_stage_context(_metadata_run(_rid("run-stage-context"), metadata)) is expected
     )
 
 
@@ -301,7 +382,7 @@ def test_has_dispatch_stage_context_handles_metadata_access_failure() -> None:
         def resume_metadata_json(self) -> object:
             raise RuntimeError("metadata unavailable")
 
-    assert _has_dispatch_stage_context(cast(AgentRun, BrokenMetadataRun())) is False
+    assert has_dispatch_stage_context(cast(AgentRun, BrokenMetadataRun())) is False
 
 
 @pytest.mark.asyncio
@@ -311,7 +392,7 @@ async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
     agent_run_manager = MagicMock()
     first_batch = [_metadata_run(_rid(f"run-no-task-{idx}"), None) for idx in range(100)]
     second_batch = [_metadata_run(_rid("run-no-task-tail"), None)]
-    agent_run_manager.list_active.side_effect = [first_batch, second_batch]
+    agent_run_manager.list_active_for_machine.side_effect = [first_batch, second_batch]
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
@@ -320,12 +401,12 @@ async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
     )
 
     assert await monitor.refresh_active_run_dispatch_mutexes() == 0
-    assert monitor._dispatch_refresh_cursor == 100
+    assert monitor._reconciliation._dispatch_refresh_cursor == 100
     assert await monitor.refresh_active_run_dispatch_mutexes() == 0
-    assert monitor._dispatch_refresh_cursor == 0
-    assert agent_run_manager.list_active.call_args_list == [
-        call(limit=100, offset=0),
-        call(limit=100, offset=100),
+    assert monitor._reconciliation._dispatch_refresh_cursor == 0
+    assert agent_run_manager.list_active_for_machine.call_args_list == [
+        call(ANY, limit=100, offset=0),
+        call(ANY, limit=100, offset=100),
     ]
 
 
@@ -937,7 +1018,7 @@ class TestCheckDeadAgents:
         agent_run_manager: LocalAgentRunManager,
         sample_session: dict,
     ) -> None:
-        """Already-completed DB records are not returned by list_active and not cleaned."""
+        """Already-completed DB records are not returned by list_active_for_machine and not cleaned."""
         run = agent_run_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
@@ -949,7 +1030,7 @@ class TestCheckDeadAgents:
 
         cleaned = await monitor.check_unhealthy_agents()
 
-        # list_active() won't return completed runs, so nothing to clean
+        # list_active_for_machine() won't return completed runs, so nothing to clean
         assert cleaned == 0
         # DB status should remain 'success'
         updated = agent_run_manager.get(run.id)
@@ -4251,19 +4332,21 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         tmux_config=TmuxConfig(),
         run_db=executor.run,
     )
-    original_list_active = agent_run_manager.list_active
+    original_list_active = agent_run_manager.list_active_for_machine
 
     list_active_started = threading.Event()
     release_list_active = threading.Event()
 
-    def slow_list_active() -> list[AgentRun]:
+    def slow_list_active(machine_id: str) -> list[AgentRun]:
         list_active_started.set()
         release_list_active.wait(timeout=1)
-        return original_list_active()
+        return original_list_active(machine_id)
 
     try:
         with (
-            patch.object(agent_run_manager, "list_active", side_effect=slow_list_active),
+            patch.object(
+                agent_run_manager, "list_active_for_machine", side_effect=slow_list_active
+            ),
             patch.object(monitor._tmux, "send_keys", new=AsyncMock(return_value=True)),
         ):
 
@@ -4720,7 +4803,7 @@ class TestReapDaemonStopOrphans:
         )
         no_tmux = _metadata_run(_rid("no-tmux-run"), None)
         run_manager = MagicMock()
-        run_manager.list_active.return_value = [live, fenced, provisional, no_tmux]
+        run_manager.list_active_for_machine.return_value = [live, fenced, provisional, no_tmux]
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=run_manager,

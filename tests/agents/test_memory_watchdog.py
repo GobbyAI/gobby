@@ -78,7 +78,7 @@ def make_handler(
 ) -> tuple[MemoryWatchdogHandler, dict[str, Any]]:
     config = config or TmuxConfig()
     agent_run_manager = MagicMock()
-    agent_run_manager.list_active.return_value = runs
+    agent_run_manager.list_active_for_machine.return_value = runs
     agent_run_manager.clear_tmux_session_name = MagicMock()
     runs_by_id = {run.id: run for run in runs}
     agent_run_manager.get.side_effect = runs_by_id.get
@@ -221,7 +221,7 @@ async def test_disabled_watchdog_is_inert() -> None:
         config=config,
     )
     assert await handler.check_agent_memory() == 0
-    mocks["agent_run_manager"].list_active.assert_not_called()
+    mocks["agent_run_manager"].list_active_for_machine.assert_not_called()
 
 
 @pytest.mark.asyncio

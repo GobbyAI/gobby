@@ -451,6 +451,7 @@ class TestWorktreeHandlers:
         assert mock_dependencies["worktree_manager"].create.call_args is not None
 
     def test_worktree_remove_deletes_git_worktree_and_record(self, mock_dependencies: dict) -> None:
+        mock_dependencies["worktree_manager"].has_path_on_other_machine.return_value = False
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
             id="wt-123",
             branch_name="feature-auth",
@@ -487,6 +488,27 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].delete.assert_called_once_with("wt-123")
         assert mock_dependencies["worktree_manager"].delete.call_count == 1
         assert mock_dependencies["worktree_manager"].delete.call_args is not None
+
+    def test_worktree_remove_ignores_remote_record(self, mock_dependencies: dict) -> None:
+        worktree_manager = mock_dependencies["worktree_manager"]
+        worktree_manager.has_path_on_other_machine.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.WORKTREE_REMOVE,
+            data={"worktree_path": "/shared/worktrees/remote"},
+            source="claude",
+        )
+
+        with patch("gobby.hooks.event_handlers._misc.WorktreeGitManager") as mock_git_cls:
+            response = handlers.handle_worktree_remove(event)
+
+        assert response.decision == "allow"
+        worktree_manager.has_path_on_other_machine.assert_called_once_with(
+            "/shared/worktrees/remote"
+        )
+        worktree_manager.get_by_path.assert_not_called()
+        worktree_manager.delete.assert_not_called()
+        mock_git_cls.assert_not_called()
 
 
 class TestPermissionRequestEdgeCases:
@@ -601,7 +623,7 @@ class TestAcpHandlerEdgeCases:
         assert response.decision == "allow"
 
     def test_after_model_de_overlaps_cached_and_thinking_tokens(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         """Typed-JSON usage must de-overlap cached input and fold thinking into output."""
         handlers = EventHandlers(**mock_dependencies)

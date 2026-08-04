@@ -458,7 +458,7 @@ class TestSpawnAgentConcurrencyGuards:
                 ),
             )
 
-        runs = run_storage.list_active(task_ids=[task.id], limit=10)
+        runs = run_storage.list_active_global(task_ids=[task.id], limit=10)
         assert len(runs) == 1
         assert mock_execute.await_count == 1
         assert {result.get("run_id") for result in results if result.get("run_id")} == {runs[0].id}

@@ -11,6 +11,7 @@ from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -724,6 +725,7 @@ class TestLocalCloneManagerStatusMethods:
         assert call_args[0][1][0] == "sess-1"
         assert call_args[0][1][2:] == (
             "clone-123",
+            require_machine_id(),
             "sess-1",
             CloneStatus.CLEANUP.value,
         )
@@ -1020,7 +1022,8 @@ class TestLocalCloneManagerFindStale:
 
         assert result[0].status == "syncing"
         params = mock_db.fetchall.call_args.args[1]
-        assert params[1:3] == ("active", "syncing")
+        assert params[1] == require_machine_id()
+        assert params[2:4] == ("active", "syncing")
 
     def test_find_stale_empty(self, manager, mock_db) -> None:
         """find_stale returns empty list when no stale clones."""
@@ -1038,11 +1041,12 @@ class TestLocalCloneManagerFindStale:
 
         call_args = mock_db.fetchall.call_args
         params = call_args[0][1]
-        # params: (project_id, active status, syncing status, cutoff, limit)
+        # params: (project_id, machine_id, active status, syncing status, cutoff, limit)
         assert params[0] == "proj-abc"
-        assert params[1] == "active"
-        assert params[2] == "syncing"
-        assert params[4] == 5
+        assert params[1] == require_machine_id()
+        assert params[2] == "active"
+        assert params[3] == "syncing"
+        assert params[5] == 5
 
 
 class TestLocalCloneManagerCleanupStale:

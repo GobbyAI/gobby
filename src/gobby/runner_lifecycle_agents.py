@@ -20,6 +20,7 @@ from gobby.storage.agents import (
 )
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -57,7 +58,8 @@ async def _rehydrate_active_agent_completion_subscribers(runner: GobbyRunner) ->
     while True:
         runs = await _run_db(
             runner,
-            run_manager.list_active,
+            run_manager.list_active_for_machine,
+            require_machine_id(),
             limit=_RUN_REPLAY_PAGE_SIZE,
             offset=offset,
         )
@@ -169,7 +171,8 @@ async def _recover_agent_runs_after_restart(
     while True:
         batch = await _run_db(
             runner,
-            runner.agent_runner.run_storage.list_active,
+            runner.agent_runner.run_storage.list_active_for_machine,
+            require_machine_id(),
             limit=_RUN_REPLAY_PAGE_SIZE,
             offset=offset,
         )
@@ -487,6 +490,7 @@ async def _resolve_provisional_daemon_resumes(
     provisional = await _run_db(
         runner,
         run_storage.list_provisional_daemon_resumes,
+        machine_id=require_machine_id(),
         limit=_RUN_REPLAY_PAGE_SIZE,
     )
     if not provisional:
@@ -562,7 +566,11 @@ def _list_active_agent_runs_once(
     seen_ids: set[str] = set()
     offset = 0
     while True:
-        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE, offset=offset)
+        batch = run_storage.list_active_for_machine(
+            require_machine_id(),
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
+        )
         if not batch:
             break
         for run in batch:
@@ -687,6 +695,7 @@ async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
     pending = await _run_db(
         runner,
         run_storage.list_reconciliation_pending,
+        machine_id=require_machine_id(),
         limit=_RUN_REPLAY_PAGE_SIZE,
     )
     if not pending:
@@ -738,6 +747,7 @@ async def _retry_parked_non_task_resumes(runner: GobbyRunner) -> int:
         candidates = await _run_db(
             runner,
             run_storage.list_parked_non_task_resume_candidates,
+            machine_id=require_machine_id(),
         )
     except Exception:
         logger.warning("Failed to list parked non-task resume candidates", exc_info=True)

@@ -18,6 +18,7 @@ from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,9 @@ class TmuxMixin:
             try:
                 from gobby.storage.agents import LocalAgentRunManager
 
-                active_runs = LocalAgentRunManager(session_mgr.db).list_active()
+                active_runs = LocalAgentRunManager(session_mgr.db).list_active_for_machine(
+                    require_machine_id()
+                )
             except Exception:
                 logger.debug("Failed to load active agent runs", exc_info=True)
 
@@ -465,7 +468,9 @@ class TmuxMixin:
             try:
                 from gobby.storage.agents import LocalAgentRunManager
 
-                for run in LocalAgentRunManager(session_mgr.db).list_active():
+                for run in LocalAgentRunManager(session_mgr.db).list_active_for_machine(
+                    require_machine_id()
+                ):
                     if run.tmux_session_name == session_name:
                         await self._send_error(
                             websocket,

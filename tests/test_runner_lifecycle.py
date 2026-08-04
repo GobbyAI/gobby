@@ -10,7 +10,7 @@ from contextlib import ExitStack, nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -1916,8 +1916,8 @@ class TestShutdownDaemonServices:
             )
             for index in range(run_count)
         ]
-        list_active = MagicMock(
-            side_effect=lambda *, limit, offset=0: runs[offset : offset + limit]
+        list_active_for_machine = MagicMock(
+            side_effect=lambda _machine_id, *, limit, offset=0: runs[offset : offset + limit]
         )
         db_calls: list[tuple[object, tuple[object, ...], dict[str, object]]] = []
 
@@ -1928,7 +1928,7 @@ class TestShutdownDaemonServices:
 
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_active=list_active),
+                run_storage=SimpleNamespace(list_active_for_machine=list_active_for_machine),
             ),
             db_executor=SimpleNamespace(run=run_db),
         )
@@ -1960,7 +1960,7 @@ class TestShutdownDaemonServices:
                 {"include_fenced": True},
             ),
         ]
-        assert [invocation.kwargs for invocation in list_active.call_args_list] == [
+        assert [invocation.kwargs for invocation in list_active_for_machine.call_args_list] == [
             {"limit": runner_lifecycle_agents._RUN_REPLAY_PAGE_SIZE, "offset": offset}
             for offset in range(
                 0,
@@ -3461,7 +3461,7 @@ class TestAgentRestartRecoveryHelpers:
         )
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
+                run_storage=SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["sess-1"]),
@@ -3476,7 +3476,11 @@ class TestAgentRestartRecoveryHelpers:
 
         assert recovered == 1
         assert runner.completion_registry.register.call_count == 1
-        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500, offset=0)
+        runner.agent_runner.run_storage.list_active_for_machine.assert_called_once_with(
+            ANY,
+            limit=500,
+            offset=0,
+        )
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
             subscribers=[],
@@ -3507,7 +3511,7 @@ class TestAgentRestartRecoveryHelpers:
         run = SimpleNamespace(id="ac314d27-4314-5fe3-a0ab-01645086e137", continuation_prompt=None)
         runner = SimpleNamespace(
             agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
+                run_storage=SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["sess-1"]),
@@ -3546,7 +3550,7 @@ class TestAgentRestartRecoveryHelpers:
         }.get(run_id, [])
         subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
         run_manager = MagicMock()
-        run_manager.list_active.return_value = [active]
+        run_manager.list_active_for_machine.return_value = [active]
         run_manager.get.return_value = terminal
         wake = AsyncMock(return_value={"ism_persisted": True})
         registry = CompletionEventRegistry(wake_callback=wake)
@@ -3626,7 +3630,7 @@ class TestAgentRestartRecoveryHelpers:
         subscriber_manager.get_completion_subscribers.side_effect = get_subscribers
         subscriber_manager.list_completion_ids.return_value = ["racing-run"]
         run_manager = MagicMock()
-        run_manager.list_active.return_value = [run]
+        run_manager.list_active_for_machine.return_value = [run]
         run_manager.get.return_value = run
         wake = AsyncMock(return_value={"ism_persisted": True})
         runner = SimpleNamespace(
@@ -3680,7 +3684,7 @@ class TestAgentRestartRecoveryHelpers:
         subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
         subscriber_manager.list_completion_ids.return_value = []
         run_manager = MagicMock()
-        run_manager.list_active.return_value = [run]
+        run_manager.list_active_for_machine.return_value = [run]
         registry = CompletionEventRegistry()
         runner = SimpleNamespace(
             database=MagicMock(),

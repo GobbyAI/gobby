@@ -37,6 +37,8 @@ class _AgentRunCleanupHost(Protocol):
 class _AgentRunCleanupMixin:
     def cleanup_stale_runs(
         self: _AgentRunCleanupHost,
+        *,
+        machine_id: str,
         default_timeout_minutes: int = 30,
     ) -> list[str]:
         """Mark stale running agent runs as timed out and expire their sessions.
@@ -76,6 +78,7 @@ class _AgentRunCleanupMixin:
                 LEFT JOIN sessions child ON child.id = ar.child_session_id
                 LEFT JOIN sessions parent ON parent.id = ar.parent_session_id
                 WHERE ar.status = 'running'
+                  AND ar.machine_id = %s
                   AND (
                         (
                             COALESCE({pending_flag_sql}, 'false') != 'true'
@@ -104,7 +107,7 @@ class _AgentRunCleanupMixin:
                 )
               )
             """,  # nosec B608 # timeout expressions are selected by storage dialect.
-            (_PROVISIONAL_EXEMPTION_MINUTES, default_timeout_minutes),
+            (machine_id, _PROVISIONAL_EXEMPTION_MINUTES, default_timeout_minutes),
         )
 
         explicit_count = 0
@@ -148,6 +151,8 @@ class _AgentRunCleanupMixin:
 
     def cleanup_stale_pending_runs(
         self: _AgentRunCleanupHost,
+        *,
+        machine_id: str,
         timeout_minutes: int = 60,
         long_timeout_minutes: int = 1440,
     ) -> list[str]:
@@ -176,6 +181,7 @@ class _AgentRunCleanupMixin:
                     completed_at = %s,
                     updated_at = %s
                 WHERE status = 'pending'
+                AND machine_id = %s
                 AND (
                     (
                         COALESCE({pending_flag_sql}, 'false') != 'true'
@@ -196,7 +202,14 @@ class _AgentRunCleanupMixin:
                 )
                 RETURNING id
                 """,  # nosec B608 # timeout expression is selected by storage dialect.
-                (now, now, _PROVISIONAL_EXEMPTION_MINUTES, timeout_minutes, long_timeout_minutes),
+                (
+                    now,
+                    now,
+                    machine_id,
+                    _PROVISIONAL_EXEMPTION_MINUTES,
+                    timeout_minutes,
+                    long_timeout_minutes,
+                ),
             )
             run_ids = [str(row["id"]) for row in cursor.fetchall()]
         if run_ids:

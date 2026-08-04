@@ -116,12 +116,15 @@ class _AgentRunTerminationMixin:
 
     def list_termination_candidates(
         self: _AgentRunTerminationHost,
+        *,
+        machine_id: str,
         limit: int = 100,
     ) -> list[AgentRun]:
         """List durable intents and terminal-child fallback candidates."""
         return self._fetch_runs_with_live_stats(
             """
             WHERE ar.status IN ('pending', 'running')
+              AND ar.machine_id = %s
               AND (
                   ar.pending_terminal_action IS NOT NULL
                   OR (
@@ -138,6 +141,7 @@ class _AgentRunTerminationMixin:
                   )
               )
             """,
+            (machine_id,),
             order_by="ORDER BY ar.termination_requested_at NULLS LAST, ar.updated_at ASC",
             limit=limit,
         )

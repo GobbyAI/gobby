@@ -3,6 +3,7 @@ from __future__ import annotations
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 
 def _create_run(
@@ -159,7 +160,9 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
     )
     no_tmux_manager.clear_tmux_session_name(no_tmux_id, "gobby-no-tmux")
 
-    candidate_ids = {run.id for run in manager.list_termination_candidates()}
+    candidate_ids = {
+        run.id for run in manager.list_termination_candidates(machine_id=require_machine_id())
+    }
     assert intended_id in candidate_ids
     assert terminal_child_id in candidate_ids
     assert active_child_id not in candidate_ids

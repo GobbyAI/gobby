@@ -199,14 +199,28 @@ class LocalWorktreeManager:
 
     def get_by_path(self, worktree_path: str) -> Worktree | None:
         """Get worktree by path."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE worktree_path = %s", (worktree_path,))
+        row = self.db.fetchone(
+            "SELECT * FROM worktrees WHERE worktree_path = %s AND machine_id = %s",
+            (worktree_path, require_machine_id()),
+        )
         return Worktree.from_row(row) if row else None
+
+    def has_path_on_other_machine(self, worktree_path: str) -> bool:
+        """Return whether another machine owns a record for this filesystem path."""
+        row = self.db.fetchone(
+            """SELECT 1 FROM worktrees
+               WHERE worktree_path = %s AND machine_id != %s
+               LIMIT 1""",
+            (worktree_path, require_machine_id()),
+        )
+        return row is not None
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Worktree | None:
         """Get worktree by project and branch name."""
         row = self.db.fetchone(
-            "SELECT * FROM worktrees WHERE project_id = %s AND branch_name = %s",
-            (project_id, branch_name),
+            """SELECT * FROM worktrees
+               WHERE project_id = %s AND branch_name = %s AND machine_id = %s""",
+            (project_id, branch_name, require_machine_id()),
         )
         return Worktree.from_row(row) if row else None
 
@@ -216,6 +230,7 @@ class LocalWorktreeManager:
             """
             SELECT * FROM worktrees
             WHERE task_id = %s
+              AND machine_id = %s
             ORDER BY
                 CASE status
                     WHEN %s THEN 0
@@ -230,6 +245,7 @@ class LocalWorktreeManager:
             """,
             (
                 task_id,
+                require_machine_id(),
                 WorktreeStatus.ACTIVE.value,
                 WorktreeStatus.STALE.value,
                 WorktreeStatus.MERGED.value,
@@ -244,6 +260,8 @@ class LocalWorktreeManager:
         status: str | None = None,
         agent_session_id: str | None = None,
         limit: int = 50,
+        *,
+        machine_id: str | None = None,
     ) -> list[Worktree]:
         """
         List worktrees with optional filters.
@@ -269,6 +287,9 @@ class LocalWorktreeManager:
         if agent_session_id:
             conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
+        if machine_id is not None:
+            conditions.append("machine_id = %s")
+            params.append(machine_id)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -356,7 +377,10 @@ class LocalWorktreeManager:
         Returns:
             True if deleted, False if not found
         """
-        cursor = self.db.execute("DELETE FROM worktrees WHERE id = %s", (worktree_id,))
+        cursor = self.db.execute(
+            "DELETE FROM worktrees WHERE id = %s AND machine_id = %s",
+            (worktree_id, require_machine_id()),
+        )
         return cursor.rowcount > 0
 
     # Status transition methods
@@ -400,9 +424,9 @@ class LocalWorktreeManager:
     ) -> Worktree | None:
         """Claim a worktree only if it is unowned or owned by an allowed prior session."""
         allowed = [value for value in allowed_existing_session_ids if value]
-        conditions = ["id = %s", "(agent_session_id IS NULL"]
+        conditions = ["id = %s", "machine_id = %s", "(agent_session_id IS NULL"]
         now = utc_now()
-        params: list[Any] = [session_id, now, now, worktree_id]
+        params: list[Any] = [session_id, now, now, worktree_id, require_machine_id()]
         if allowed:
             placeholders = ", ".join("%s" for _ in allowed)
             conditions[-1] += f" OR agent_session_id IN ({placeholders})"
@@ -502,13 +526,14 @@ class LocalWorktreeManager:
             """
             SELECT * FROM worktrees
             WHERE project_id = %s
+              AND machine_id = %s
               AND status = %s
               AND agent_session_id IS NULL
               AND COALESCE(last_activity_at, updated_at) < %s
             ORDER BY COALESCE(last_activity_at, updated_at) ASC
             LIMIT %s
             """,
-            (project_id, WorktreeStatus.ACTIVE.value, cutoff, limit),
+            (project_id, require_machine_id(), WorktreeStatus.ACTIVE.value, cutoff, limit),
         )
         return [Worktree.from_row(row) for row in rows]
 
@@ -534,11 +559,12 @@ class LocalWorktreeManager:
         sql = """
             SELECT * FROM worktrees
             WHERE status = %s
+              AND machine_id = %s
               AND agent_session_id IS NULL
               AND cleanup_after IS NOT NULL
               AND cleanup_after < %s
         """
-        params: list[Any] = [WorktreeStatus.MERGED.value, now]
+        params: list[Any] = [WorktreeStatus.MERGED.value, require_machine_id(), now]
         if project_id:
             sql += " AND project_id = %s"
             params.append(project_id)

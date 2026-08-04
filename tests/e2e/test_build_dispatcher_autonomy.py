@@ -291,7 +291,7 @@ class MiniBuildHarness:
         assert all(row["closed_at"] for row in rows)
         assert all(row["claimed_by_session_id"] is None for row in rows)
         assert all(not row["is_escalated"] and row["escalated_at"] is None for row in rows)
-        assert self.run_manager.list_active(task_ids=task_ids) == []
+        assert self.run_manager.list_active_global(task_ids=task_ids) == []
         assert self.db.fetchone("SELECT COUNT(*) AS count FROM task_dispatch_mutex")["count"] == 0
         assert self.db.fetchone("SELECT COUNT(*) AS count FROM task_dependencies")["count"] == 0
 

@@ -83,7 +83,7 @@ async def test_no_tmux_agents_noop() -> None:
             "gobby.storage.agents.LocalAgentRunManager",
         ) as mock_arm_cls,
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent_no_tmux]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent_no_tmux]
         await monitor._check_panes()
 
     callback.assert_not_called()
@@ -100,7 +100,13 @@ async def test_active_runs_are_paginated_on_worker_thread() -> None:
     worker_threads: set[int] = set()
     main_thread = threading.get_ident()
 
-    def list_active(*, limit: int, offset: int) -> list[AgentRun]:
+    def list_active_for_machine(
+        machine_id: str,
+        *,
+        limit: int,
+        offset: int,
+    ) -> list[AgentRun]:
+        del machine_id
         calls.append((limit, offset))
         worker_threads.add(threading.get_ident())
         return runs[offset : offset + limit]
@@ -113,7 +119,7 @@ async def test_active_runs_are_paginated_on_worker_thread() -> None:
         patch("gobby.storage.agents.LocalAgentRunManager") as mock_arm_cls,
         patch.object(monitor, "_check_attention_panes", new_callable=AsyncMock),
     ):
-        mock_arm_cls.return_value.list_active.side_effect = list_active
+        mock_arm_cls.return_value.list_active_for_machine.side_effect = list_active_for_machine
         await monitor._check_panes()
 
     assert calls == [(100, 0), (100, 100)]
@@ -199,7 +205,7 @@ async def test_all_alive_noop() -> None:
             "gobby.storage.agents.LocalAgentRunManager",
         ) as mock_arm_cls,
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         await monitor._check_panes()
 
     callback.assert_not_called()
@@ -227,7 +233,7 @@ async def test_alive_tmux_reused_pid_triggers_callback() -> None:
             return_value=False,
         ) as mock_identity,
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         await monitor._check_panes()
 
     mock_identity.assert_awaited_once_with(
@@ -266,7 +272,7 @@ async def test_dead_session_triggers_callback() -> None:
         ) as mock_arm_cls,
         patch.object(monitor, "_lookup_session", return_value=session_obj),
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         await monitor._check_panes()
 
     callback.assert_called_once()
@@ -298,7 +304,7 @@ async def test_recently_ended_prevents_double_fire() -> None:
             "gobby.storage.agents.LocalAgentRunManager",
         ) as mock_arm_cls,
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         await monitor._check_panes()
 
     callback.assert_not_called()
@@ -327,7 +333,7 @@ async def test_recently_ended_expires() -> None:
         ) as mock_arm_cls,
         patch.object(monitor, "_lookup_session", return_value=session_obj),
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         await monitor._check_panes()
 
     callback.assert_called_once()
@@ -353,7 +359,7 @@ async def test_callback_exception_no_crash() -> None:
         ) as mock_arm_cls,
         patch.object(monitor, "_lookup_session", return_value=session_obj),
     ):
-        mock_arm_cls.return_value.list_active.return_value = [agent]
+        mock_arm_cls.return_value.list_active_for_machine.return_value = [agent]
         # Should not raise
         await monitor._check_panes()
 
@@ -385,7 +391,7 @@ async def test_pool_outage_logs_throttled_warning_without_traceback(
         ) as mock_arm_cls,
         caplog.at_level(logging.DEBUG, logger="gobby.agents.tmux.pane_monitor"),
     ):
-        mock_arm_cls.return_value.list_active.side_effect = PoolTimeout(
+        mock_arm_cls.return_value.list_active_for_machine.side_effect = PoolTimeout(
             "couldn't get a connection after 5.00 sec"
         )
         await monitor._check_panes()

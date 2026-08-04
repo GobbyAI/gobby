@@ -24,6 +24,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_se
 from gobby.storage.attention import session_attention_entry_id
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.utils.logging import ThrottledLogger
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -408,7 +409,8 @@ class TmuxPaneMonitor:
         offset = 0
         while True:
             page = await asyncio.to_thread(
-                manager.list_active,
+                manager.list_active_for_machine,
+                require_machine_id(),
                 limit=_AGENT_RUN_PAGE_SIZE,
                 offset=offset,
             )

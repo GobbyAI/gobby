@@ -100,7 +100,7 @@ def test_active_read_methods_use_child_session_stats(
         "list_by_session": _only(agent_manager.list_by_session(parent_id)),
         "list_by_status": _only(agent_manager.list_by_status("running")),
         "list_running": _only(agent_manager.list_running()),
-        "list_active": _only(agent_manager.list_active()),
+        "list_active": _only(agent_manager.list_active_global()),
         "list_by_parent": _only(agent_manager.list_by_parent(parent_id)),
     }
 
@@ -144,10 +144,10 @@ def test_list_active_filters_by_task_ids_in_sql(
     agent_manager.start(included.id)
     agent_manager.start(excluded.id)
 
-    runs = agent_manager.list_active(task_ids=[included_task.id])
+    runs = agent_manager.list_active_global(task_ids=[included_task.id])
 
     assert [run.id for run in runs] == [included.id]
-    assert agent_manager.list_active(task_ids=[]) == []
+    assert agent_manager.list_active_global(task_ids=[]) == []
 
 
 def test_active_run_without_child_session_uses_parent_session_stats(

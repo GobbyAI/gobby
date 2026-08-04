@@ -13,6 +13,7 @@ from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.stall_classifier import StallStatus
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -176,7 +177,10 @@ class AgentHealthMonitor:
         """Detect and clean up dead or expired agents."""
         runs = [
             run
-            for run in await self._run_db(self._agent_run_manager.list_active)
+            for run in await self._run_db(
+                self._agent_run_manager.list_active_for_machine,
+                require_machine_id(),
+            )
             if not is_recovery_protected(run)
         ]
         now = datetime.now(UTC)
@@ -298,7 +302,10 @@ class AgentHealthMonitor:
         """Detect agents that never initialized (provider hung on connect)."""
         runs = [
             run
-            for run in await self._run_db(self._agent_run_manager.list_active)
+            for run in await self._run_db(
+                self._agent_run_manager.list_active_for_machine,
+                require_machine_id(),
+            )
             if not is_recovery_protected(run)
         ]
         now = datetime.now(UTC)
@@ -429,5 +436,5 @@ class AgentHealthMonitor:
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Get active terminal agent runs with tmux sessions from DB."""
-        runs = self._agent_run_manager.list_active()
+        runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
         return [run for run in runs if run.tmux_session_name and not is_recovery_protected(run)]

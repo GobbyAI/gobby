@@ -304,12 +304,12 @@ class TestAgentRunnerDBTracking:
     def test_get_running_agents(self, runner) -> None:
         """get_running_agents returns all active agents from DB."""
         mock_runs = [MagicMock(id="run-1"), MagicMock(id="run-2")]
-        runner._run_storage.list_active = MagicMock(return_value=mock_runs)
+        runner._run_storage.list_active_for_machine = MagicMock(return_value=mock_runs)
 
         agents = runner.get_running_agents()
 
         assert len(agents) == 2
-        runner._run_storage.list_active.assert_called_once()
+        runner._run_storage.list_active_for_machine.assert_called_once()
 
     def test_get_running_agents_filter_by_parent(self, runner) -> None:
         """get_running_agents filters by parent_session_id via DB."""
@@ -323,10 +323,10 @@ class TestAgentRunnerDBTracking:
 
     def test_get_running_agents_count(self, runner) -> None:
         """get_running_agents_count returns correct count from DB."""
-        runner._run_storage.list_active = MagicMock(return_value=[])
+        runner._run_storage.list_active_for_machine = MagicMock(return_value=[])
         assert runner.get_running_agents_count() == 0
 
-        runner._run_storage.list_active = MagicMock(return_value=[MagicMock()])
+        runner._run_storage.list_active_for_machine = MagicMock(return_value=[MagicMock()])
         assert runner.get_running_agents_count() == 1
 
     def test_is_agent_running(self, runner) -> None:

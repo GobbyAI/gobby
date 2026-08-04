@@ -423,14 +423,18 @@ class AgentCleanupHandler:
             logger.info("Closed %s lingering tmux session(s) for terminal agent runs", closed)
         return cast(int, expired)
 
-    async def cleanup_stale_pending_runs(self) -> int:
+    async def cleanup_stale_pending_runs(self, *, machine_id: str) -> int:
         """Clean up agent runs stuck in pending status after daemon restart."""
-        run_ids = await self.run_acknowledged_stale_sweeps(pending_timeout_minutes=60)
+        run_ids = await self.run_acknowledged_stale_sweeps(
+            machine_id=machine_id,
+            pending_timeout_minutes=60,
+        )
         return len(run_ids)
 
     async def run_acknowledged_stale_sweeps(
         self,
         *,
+        machine_id: str,
         running_timeout_minutes: int | None = None,
         pending_timeout_minutes: int | None = None,
         pending_long_timeout_minutes: int = 1440,
@@ -443,6 +447,7 @@ class AgentCleanupHandler:
                 transitioned.extend(
                     await self._run_db(
                         self._agent_run_manager.cleanup_stale_runs,
+                        machine_id=machine_id,
                         default_timeout_minutes=running_timeout_minutes,
                     )
                 )
@@ -450,6 +455,7 @@ class AgentCleanupHandler:
                 transitioned.extend(
                     await self._run_db(
                         self._agent_run_manager.cleanup_stale_pending_runs,
+                        machine_id=machine_id,
                         timeout_minutes=pending_timeout_minutes,
                         long_timeout_minutes=pending_long_timeout_minutes,
                     )

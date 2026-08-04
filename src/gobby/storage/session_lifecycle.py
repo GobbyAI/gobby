@@ -122,6 +122,7 @@ def expire_stale_sessions(
     Returns:
         Number of sessions expired.
     """
+    # Intentionally global: inactivity expiry must cover sessions left by a sleeping machine.
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
     empty_terminal_context_sql = "terminal_context IS NULL"
@@ -316,6 +317,7 @@ def pause_inactive_active_sessions(
     Returns:
         Number of sessions paused.
     """
+    # Intentionally global: inactivity pausing must cover sessions left by a sleeping machine.
     transitioned_at = utc_now()
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
     with db.transaction() as conn:

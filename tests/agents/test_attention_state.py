@@ -316,7 +316,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     manager = _attention_manager(temp_db)
     run = _agent_run()
     run_manager = MagicMock()
-    run_manager.list_active.return_value = [run]
+    run_manager.list_active_for_machine.return_value = [run]
     tmux = MagicMock()
     tmux.capture_pane = AsyncMock(
         return_value="Permission required: press Enter to approve this command"
@@ -359,7 +359,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
     manager = _attention_manager(temp_db)
     run = _agent_run()
     run_manager = MagicMock()
-    run_manager.list_active.return_value = [run]
+    run_manager.list_active_for_machine.return_value = [run]
     run_manager.get.return_value = run
     tmux = MagicMock()
     tmux.capture_pane = AsyncMock(

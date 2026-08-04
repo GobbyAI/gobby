@@ -13,6 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -245,6 +246,104 @@ def test_worktree_uniqueness_is_machine_scoped(
     assert {str(row["machine_id"]) for row in rows} == set(machine_ids)
 
 
+def test_cleanup_scoped_to_local_machine(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stale discovery, cleanup, and deletion refuse remote worktree rows."""
+    local_machine_id = str(uuid.uuid4())
+    remote_machine_id = str(uuid.uuid4())
+    for machine_id in (local_machine_id, remote_machine_id):
+        temp_db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
+            (machine_id, f"host-{machine_id}"),
+        )
+
+    owners = iter((local_machine_id, remote_machine_id))
+    monkeypatch.setattr(worktrees_module, "get_machine_id", lambda: next(owners))
+    monkeypatch.setattr(
+        worktrees_module,
+        "require_machine_id",
+        lambda: local_machine_id,
+        raising=False,
+    )
+    manager = LocalWorktreeManager(temp_db)
+    local = manager.create(
+        project_id=sample_project["id"],
+        branch_name="task/local-stale",
+        worktree_path="/tmp/local-stale",
+    )
+    remote = manager.create(
+        project_id=sample_project["id"],
+        branch_name="task/remote-stale",
+        worktree_path="/tmp/remote-stale",
+    )
+    stale_at = datetime.now(UTC) - timedelta(hours=48)
+    temp_db.execute(
+        "UPDATE worktrees SET last_activity_at = %s, updated_at = %s WHERE id IN (%s, %s)",
+        (stale_at, stale_at, local.id, remote.id),
+    )
+
+    stale = manager.find_stale(sample_project["id"], hours=24)
+    cleaned = manager.cleanup_stale(sample_project["id"], hours=24, dry_run=False)
+
+    assert [worktree.id for worktree in stale] == [local.id]
+    assert [worktree.id for worktree in cleaned] == [local.id]
+    assert manager.delete(remote.id) is False
+    stored_remote = manager.get(remote.id)
+    assert stored_remote is not None
+    assert stored_remote.status == WorktreeStatus.ACTIVE.value
+
+
+def test_claim_scoped_to_local_machine(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Lookup and claim surfaces never reuse a remote machine's worktree."""
+    local_machine_id = str(uuid.uuid4())
+    remote_machine_id = str(uuid.uuid4())
+    for machine_id in (local_machine_id, remote_machine_id):
+        temp_db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
+            (machine_id, f"host-{machine_id}"),
+        )
+
+    owners = iter((remote_machine_id, local_machine_id))
+    monkeypatch.setattr(worktrees_module, "get_machine_id", lambda: next(owners))
+    monkeypatch.setattr(
+        worktrees_module,
+        "require_machine_id",
+        lambda: local_machine_id,
+        raising=False,
+    )
+    manager = LocalWorktreeManager(temp_db)
+    session = session_manager.register(
+        external_id=f"worktree-scope-{uuid.uuid4()}",
+        machine_id=local_machine_id,
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    remote = manager.create(
+        project_id=sample_project["id"],
+        branch_name="task/shared",
+        worktree_path="/same/path",
+    )
+    local = manager.create(
+        project_id=sample_project["id"],
+        branch_name="task/shared",
+        worktree_path="/same/path",
+    )
+
+    assert manager.get_by_path("/same/path") == local
+    assert manager.get_by_branch(sample_project["id"], "task/shared") == local
+    assert manager.has_path_on_other_machine("/same/path") is True
+    assert manager.claim(remote.id, session.id) is None
+    assert manager.claim_if_available(remote.id, session.id) is None
+
+
 class TestLocalWorktreeManagerGet:
     """Tests for LocalWorktreeManager.get method."""
 
@@ -407,7 +506,7 @@ class TestLocalWorktreeManagerGetBy:
             def fetchone(self, query: str, params: tuple[str, ...]) -> dict[str, Any] | None:
                 self.query = query
                 self.params = params
-                task_id, *statuses = params
+                task_id, _machine_id, *statuses = params
                 status_rank = {status: rank for rank, status in enumerate(statuses)}
                 candidates = [row for row in self.rows if row["task_id"] == task_id]
                 candidates.sort(
@@ -441,6 +540,7 @@ class TestLocalWorktreeManagerGetBy:
         assert "CASE status" in mock_db.query
         assert mock_db.params == (
             "gt-task123",
+            require_machine_id(),
             WorktreeStatus.ACTIVE.value,
             WorktreeStatus.STALE.value,
             WorktreeStatus.MERGED.value,

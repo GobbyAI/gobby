@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from gobby.agents import runner_queries as _queries
 from gobby.agents.session import ChildSessionManager
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.utils.machine_id import require_machine_id
 
 __all__ = ["AgentRunner"]
 
@@ -148,11 +149,11 @@ class AgentRunner:
         """Get all running agents from DB."""
         if parent_session_id:
             return self._run_storage.list_by_parent(parent_session_id)
-        return self._run_storage.list_active()
+        return self._run_storage.list_active_for_machine(require_machine_id())
 
     def get_running_agents_count(self) -> int:
         """Get count of running agents."""
-        return len(self._run_storage.list_active())
+        return len(self._run_storage.list_active_for_machine(require_machine_id()))
 
     def is_agent_running(self, run_id: str) -> bool:
         """Check if an agent is running."""

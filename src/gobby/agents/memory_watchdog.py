@@ -20,6 +20,7 @@ import psutil
 from gobby.agents.capture import TerminationErrorCode, capture_then_kill_async
 from gobby.agents.kill import kill_agent
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -233,7 +234,10 @@ class MemoryWatchdogHandler:
         return True
 
     async def _collect_samples(self) -> list[_TreeSample]:
-        runs = await self._run_db(self._agent_run_manager.list_active)
+        runs = await self._run_db(
+            self._agent_run_manager.list_active_for_machine,
+            require_machine_id(),
+        )
         samples: list[_TreeSample] = []
         for run in runs:
             if not run.tmux_session_name:
