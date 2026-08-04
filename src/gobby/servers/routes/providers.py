@@ -14,7 +14,7 @@ from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
-from gobby.providers.capabilities.models import ModelCapability
+from gobby.providers.capabilities.models import ModelCapability, ProviderSnapshot
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
@@ -36,48 +36,91 @@ _CODEX_REQUIRED_REASON = "Codex CLI is required to run local models in web chat"
 _CODEX_UNHEALTHY_REASON = "Codex runtime is unavailable"
 
 
-def _legacy_model_entry(model: ModelCapability) -> dict[str, Any]:
-    entry: dict[str, Any] = {
-        "value": model.canonical_model,
-        "canonical_id": model.canonical_model,
-        "label": model.display_name,
+def _fact(model: ModelCapability, name: str, value: int | None) -> dict[str, Any]:
+    provenance = model.provenance.get(name)
+    source = provenance.source_key if value is not None and provenance is not None else "unknown"
+    return {"value": value, "source": source}
+
+
+def _matrix_model_entry(model: ModelCapability) -> dict[str, Any]:
+    route_provenance = {
+        name: provenance.to_dict()
+        for route in model.routes
+        for name, provenance in route.provenance.items()
+    }
+    return {
+        "canonical_model": model.canonical_model,
+        "display_name": model.display_name,
+        "aliases": list(model.aliases),
+        "available": model.available,
         "hidden": model.hidden,
         "is_default": model.is_default,
-        "context_length": model.context_length,
-        "context_length_source": (
-            "provider_catalog" if model.context_length is not None else "unknown"
-        ),
-    }
-    if model.supported_efforts is not None:
-        entry["reasoning"] = {
-            "supported_efforts": list(model.supported_efforts),
+        "context_length": _fact(model, "context_length", model.context_length),
+        "max_output_tokens": _fact(model, "max_output_tokens", model.max_output_tokens),
+        "latency_class": model.latency_class,
+        "reasoning": {
+            "status": model.reasoning.value,
+            "supported_efforts": (
+                list(model.supported_efforts) if model.supported_efforts is not None else None
+            ),
             "default_effort": model.default_effort,
-        }
-    if model.input_modalities is not None:
-        entry["input_modalities"] = list(model.input_modalities)
-    return entry
+        },
+        "input_modalities": (
+            list(model.input_modalities) if model.input_modalities is not None else None
+        ),
+        "supports_tools": model.supports_tools,
+        "routes": {
+            route.speed_mode.value: {
+                "selector": route.selector,
+                "available": route.available,
+                "usage_multiplier": (
+                    str(route.usage_multiplier) if route.usage_multiplier is not None else None
+                ),
+                "throughput_multiplier": (
+                    str(route.throughput_multiplier)
+                    if route.throughput_multiplier is not None
+                    else None
+                ),
+                "latency_class": route.latency_class,
+                "activations": [activation.to_dict() for activation in route.activations],
+            }
+            for route in model.routes
+        },
+        "provenance": route_provenance,
+    }
 
 
-def _build_model_catalog(
-    server: HTTPServer | None = None,
-) -> dict[str, tuple[list[dict[str, Any]], str]]:
-    """Return the current capability snapshots in the legacy route envelope."""
-    service = getattr(getattr(server, "services", None), "provider_capability_service", None)
-    catalog: dict[str, tuple[list[dict[str, Any]], str]] = {}
-    for provider, _binary in _PROVIDER_DEFS:
-        if provider == "agy":
-            catalog[provider] = (
-                [
-                    {key: value for key, value in model.items() if key != "effort_display"}
-                    for model in AGY_MODELS.values()
-                ],
-                "static",
-            )
-            continue
-        snapshot = service.get_provider_snapshot(provider) if service is not None else None
-        models = [_legacy_model_entry(model) for model in snapshot.models] if snapshot else []
-        catalog[provider] = (models, "provider_matrix" if snapshot else "pending")
-    return catalog
+def _matrix_snapshot_payload(snapshot: ProviderSnapshot) -> dict[str, Any]:
+    return {
+        "models": [_matrix_model_entry(model) for model in snapshot.models if not model.hidden],
+        "refresh": {
+            "generation": snapshot.generation,
+            "sources": [source.to_dict() for source in snapshot.sources],
+        },
+    }
+
+
+def _pending_snapshot_payload() -> dict[str, Any]:
+    return {
+        "models": [],
+        "refresh": {
+            "generation": 0,
+            "sources": [{"source_key": "local", "state": "pending"}],
+        },
+    }
+
+
+def _agy_snapshot_payload() -> dict[str, Any]:
+    return {
+        "models": [
+            {key: value for key, value in model.items() if key != "effort_display"}
+            for model in AGY_MODELS.values()
+        ],
+        "refresh": {
+            "generation": 0,
+            "sources": [{"source_key": "static", "state": "ok"}],
+        },
+    }
 
 
 async def _local_generation_model_groups(
@@ -164,18 +207,6 @@ def _provider_health(
     if provider in _LAZY_ACP_PROVIDERS:
         return path is not None, health.startup_error
     return health.available, health.startup_error
-
-
-def _filter_models_for_web_chat(
-    provider: str, models: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    """Drop hidden models from the web-chat picker.
-
-    Only the provider-reported ``hidden`` flag may exclude a model here. Do not
-    re-add value-based blocklists for models a reviewer or bot does not
-    recognize; live discovery is the source of truth.
-    """
-    return [model for model in models if not bool(model.get("hidden", False))]
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:
@@ -287,33 +318,46 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
     async def list_provider_models() -> dict[str, Any]:
         """Return available models grouped by provider."""
         probed = await _probe_providers()
-        model_catalog = _build_model_catalog(server)
-        local_model_groups = await _local_generation_model_groups(server)
-        fallback_entry: tuple[list[dict[str, Any]], str] = (
-            [{"value": "default", "label": "Default"}],
-            "static",
+        capability_service = getattr(
+            getattr(server, "services", None),
+            "provider_capability_service",
+            None,
         )
+        local_model_groups = await _local_generation_model_groups(server)
         result: list[dict[str, Any]] = []
         codex_installed = False
         codex_available = False
         codex_unavailable_reason: str | None = None
         for name, path in probed:
             available, startup_error = _provider_health(server, name, path)
-            models, source = model_catalog.get(name, fallback_entry)
-            filtered_models = _filter_models_for_web_chat(name, models)
+            if name == "agy":
+                capability_payload = _agy_snapshot_payload()
+            else:
+                snapshot = (
+                    capability_service.get_provider_snapshot(name)
+                    if capability_service is not None
+                    else None
+                )
+                capability_payload = (
+                    _matrix_snapshot_payload(snapshot)
+                    if snapshot is not None
+                    else _pending_snapshot_payload()
+                )
             entry = {
                 "provider": name,
                 "available": available,
-                "models": filtered_models,
-                "source": source,
                 "startup_error": startup_error,
                 **_provider_metadata_fields(name, path),
+                **capability_payload,
             }
             if name == "codex":
                 codex_installed = path is not None
                 codex_available = available
                 codex_unavailable_reason = startup_error
-                entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
+                entry["models"] = [
+                    *capability_payload["models"],
+                    *_responses_endpoint_models(server),
+                ]
                 entry["execution_provider"] = "codex"
             result.append(entry)
         result.extend(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import MagicMock, patch
@@ -12,7 +14,17 @@ from fastapi.testclient import TestClient
 
 from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
-from gobby.providers.capabilities.models import ModelCapability
+from gobby.providers.capabilities.models import (
+    ActivationDescriptor,
+    FactProvenance,
+    ModelCapability,
+    ModelRoute,
+    ProviderSnapshot,
+    ReasoningSupport,
+    SourceHealth,
+    SourceState,
+    SpeedMode,
+)
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
 from gobby.servers.provider_model_defaults import AGY_MODELS
@@ -37,25 +49,56 @@ def _model(
     default_effort: str | None = None,
     input_modalities: tuple[str, ...] | None = None,
 ) -> ModelCapability:
-    return cast(
-        ModelCapability,
-        SimpleNamespace(
-            canonical_model=value,
-            display_name=label or value,
-            hidden=hidden,
-            is_default=is_default,
-            context_length=context_length,
-            supported_efforts=supported_efforts,
-            default_effort=default_effort,
-            input_modalities=input_modalities,
+    observed_at = datetime(2026, 8, 4, tzinfo=UTC)
+    provenance = FactProvenance(
+        source_key="test-source",
+        source_url=None,
+        observed_at=observed_at,
+    )
+    return ModelCapability(
+        canonical_model=value,
+        display_name=label or value,
+        aliases=(),
+        available=True,
+        hidden=hidden,
+        is_default=is_default,
+        context_length=context_length,
+        max_output_tokens=None,
+        reasoning=(
+            ReasoningSupport.KNOWN if supported_efforts is not None else ReasoningSupport.UNKNOWN
         ),
+        supported_efforts=supported_efforts,
+        default_effort=default_effort,
+        latency_class=None,
+        input_modalities=input_modalities,
+        supports_tools=None,
+        routes=(),
+        provenance={"context_length": provenance} if context_length is not None else {},
     )
 
 
 def _capability_service(**snapshots: tuple[ModelCapability, ...]) -> MagicMock:
     service = MagicMock()
     service.get_provider_snapshot.side_effect = lambda provider: (
-        SimpleNamespace(models=snapshots[provider]) if provider in snapshots else None
+        ProviderSnapshot(
+            provider=provider,
+            generation=1,
+            models=snapshots[provider],
+            sources=(
+                SourceHealth(
+                    source_key="test-source",
+                    source_url=None,
+                    required=True,
+                    state=SourceState.OK,
+                    attempts=1,
+                    last_attempt_at=datetime(2026, 8, 4, tzinfo=UTC),
+                    last_success_at=datetime(2026, 8, 4, tzinfo=UTC),
+                    last_error=None,
+                ),
+            ),
+        )
+        if provider in snapshots
+        else None
     )
     return service
 
@@ -206,6 +249,145 @@ class TestProviderRoutes:
 class TestProviderModelsRoute:
     """Tests for GET /api/providers/models."""
 
+    def _assert_models_response_matrix_shape(self) -> None:
+        observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
+        provenance = FactProvenance(
+            source_key="factory-docs",
+            source_url="https://docs.factory.ai/models.md",
+            observed_at=observed_at,
+        )
+        activation = ActivationDescriptor(
+            kind="model_selector",
+            surface="spawn-cli",
+            params={},
+        )
+        model = ModelCapability(
+            canonical_model="gpt-5.4",
+            display_name="GPT-5.4",
+            aliases=(),
+            available=True,
+            hidden=False,
+            is_default=False,
+            context_length=200_000,
+            max_output_tokens=None,
+            reasoning=ReasoningSupport.KNOWN,
+            supported_efforts=("low", "medium", "high"),
+            default_effort="medium",
+            latency_class=None,
+            input_modalities=("text",),
+            supports_tools=True,
+            routes=(
+                ModelRoute(
+                    speed_mode=SpeedMode.STANDARD,
+                    selector="gpt-5.4",
+                    available=True,
+                    usage_multiplier=Decimal("1"),
+                    throughput_multiplier=None,
+                    latency_class=None,
+                    activations=(activation,),
+                    provenance={"usage_multiplier": provenance},
+                ),
+                ModelRoute(
+                    speed_mode=SpeedMode.FAST,
+                    selector="gpt-5.4-fast",
+                    available=True,
+                    usage_multiplier=Decimal("5"),
+                    throughput_multiplier=None,
+                    latency_class="fast",
+                    activations=(activation,),
+                    provenance={"usage_multiplier": provenance},
+                ),
+            ),
+            provenance={"context_length": provenance},
+        )
+        snapshot = ProviderSnapshot(
+            provider="droid",
+            generation=12,
+            models=(model,),
+            sources=(
+                SourceHealth(
+                    source_key="factory-docs",
+                    source_url="https://docs.factory.ai/models.md",
+                    required=True,
+                    state=SourceState.OK,
+                    attempts=1,
+                    last_attempt_at=observed_at,
+                    last_success_at=observed_at,
+                    last_error=None,
+                ),
+            ),
+        )
+        service = MagicMock()
+        service.get_provider_snapshot.side_effect = lambda provider: (
+            snapshot if provider == "droid" else None
+        )
+        app = FastAPI()
+        app.include_router(
+            create_providers_router(_server_stub(provider_capability_service=service))
+        )
+
+        response = TestClient(app).get("/api/providers/models")
+
+        providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+        assert providers["droid"]["refresh"] == {
+            "generation": 12,
+            "sources": [
+                {
+                    "source_key": "factory-docs",
+                    "source_url": "https://docs.factory.ai/models.md",
+                    "required": True,
+                    "state": "ok",
+                    "attempts": 1,
+                    "last_attempt_at": observed_at.isoformat(),
+                    "last_success_at": observed_at.isoformat(),
+                    "last_error": None,
+                }
+            ],
+        }
+        assert providers["droid"]["models"] == [
+            {
+                "canonical_model": "gpt-5.4",
+                "display_name": "GPT-5.4",
+                "aliases": [],
+                "available": True,
+                "hidden": False,
+                "is_default": False,
+                "context_length": {"value": 200_000, "source": "factory-docs"},
+                "max_output_tokens": {"value": None, "source": "unknown"},
+                "latency_class": None,
+                "reasoning": {
+                    "status": "known",
+                    "supported_efforts": ["low", "medium", "high"],
+                    "default_effort": "medium",
+                },
+                "input_modalities": ["text"],
+                "supports_tools": True,
+                "routes": {
+                    "standard": {
+                        "selector": "gpt-5.4",
+                        "available": True,
+                        "usage_multiplier": "1",
+                        "throughput_multiplier": None,
+                        "latency_class": None,
+                        "activations": [
+                            {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
+                        ],
+                    },
+                    "fast": {
+                        "selector": "gpt-5.4-fast",
+                        "available": True,
+                        "usage_multiplier": "5",
+                        "throughput_multiplier": None,
+                        "latency_class": "fast",
+                        "activations": [
+                            {"kind": "model_selector", "surface": "spawn-cli", "params": {}}
+                        ],
+                    },
+                },
+                "provenance": {"usage_multiplier": provenance.to_dict()},
+            }
+        ]
+
     def test_returns_all_providers_with_models(self, client: TestClient) -> None:
         """Endpoint returns supported providers with model lists."""
         response = client.get("/api/providers/models")
@@ -223,7 +405,10 @@ class TestProviderModelsRoute:
         }
         agy_models = providers["agy"]["models"]
         assert [model["value"] for model in agy_models] == list(AGY_MODELS)
-        assert providers["agy"]["source"] == "static"
+        assert providers["agy"]["refresh"] == {
+            "generation": 0,
+            "sources": [{"source_key": "static", "state": "ok"}],
+        }
         assert providers["agy"]["supports_web_chat"] is False
         assert providers["agy"]["available"] is False
         agy_by_id = {model["value"]: model for model in agy_models}
@@ -247,7 +432,7 @@ class TestProviderModelsRoute:
         assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
         for provider in ("claude", "codex", "droid", "grok", "qwen"):
             assert providers[provider]["models"] == []
-            assert providers[provider]["source"] == "pending"
+            assert providers[provider]["refresh"]["sources"][0]["state"] == "pending"
 
     def test_availability_reflects_binary_presence(self, client: TestClient) -> None:
         """Provider availability matches shutil.which results."""
@@ -347,7 +532,7 @@ class TestProviderModelsRoute:
             providers["grok"]["startup_error"] == "Timed out starting Grok ACP backend after 15.0s"
         )
         assert providers["grok"]["models"] == []
-        assert providers["grok"]["source"] == "pending"
+        assert providers["grok"]["refresh"]["sources"][0]["state"] == "pending"
 
     def test_models_route_uses_provider_capability_snapshots_when_available(self) -> None:
         app = FastAPI()
@@ -370,15 +555,17 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
-        assert providers["claude"]["models"][0]["value"] == "claude-model"
-        assert providers["qwen"]["models"][0]["value"] == "qwen-model"
-        assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
-        assert providers["codex"]["models"][0]["context_length"] is None
-        assert providers["codex"]["models"][0]["context_length_source"] == "unknown"
-        assert providers["droid"]["models"][0]["value"] == "droid-model"
+        assert providers["claude"]["models"][0]["canonical_model"] == "claude-model"
+        assert providers["qwen"]["models"][0]["canonical_model"] == "qwen-model"
+        assert providers["codex"]["models"][0]["canonical_model"] == "gpt-5.4"
+        assert providers["codex"]["models"][0]["context_length"] == {
+            "value": None,
+            "source": "unknown",
+        }
+        assert providers["droid"]["models"][0]["canonical_model"] == "droid-model"
         assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
-        assert providers["agy"]["source"] == "static"
-        assert providers["codex"]["source"] == "provider_matrix"
+        assert providers["agy"]["refresh"]["sources"] == [{"source_key": "static", "state": "ok"}]
+        assert providers["codex"]["refresh"]["generation"] == 1
 
     def test_models_route_serializes_droid_capability_snapshot(
         self,
@@ -403,11 +590,15 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         droid = providers["droid"]["models"]
-        assert providers["droid"]["source"] == "provider_matrix"
-        assert droid[0]["value"] == "gemini-3.5-flash"
-        assert droid[0]["label"] == "Gemini 3.5 Flash"
-        assert droid[0]["context_length"] == 1_048_576
+        assert providers["droid"]["refresh"]["generation"] == 1
+        assert droid[0]["canonical_model"] == "gemini-3.5-flash"
+        assert droid[0]["display_name"] == "Gemini 3.5 Flash"
+        assert droid[0]["context_length"] == {
+            "value": 1_048_576,
+            "source": "test-source",
+        }
         assert droid[0]["reasoning"] == {
+            "status": "known",
             "supported_efforts": ["minimal", "low", "medium", "high"],
             "default_effort": "medium",
         }
@@ -421,7 +612,7 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
-        assert providers["droid"]["source"] == "pending"
+        assert providers["droid"]["refresh"]["sources"][0]["state"] == "pending"
         assert providers["droid"]["models"] == []
 
     def test_responses_endpoint_is_grouped_under_codex_with_capabilities(self) -> None:
@@ -764,7 +955,7 @@ class TestProviderModelsRoute:
 
         assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         for provider in ("claude", "codex", "droid", "grok", "qwen"):
-            assert providers[provider]["source"] == "pending"
+            assert providers[provider]["refresh"]["sources"][0]["state"] == "pending"
             assert providers[provider]["models"] == []
 
     def test_filters_hidden_codex_models_from_web_chat_surface(self) -> None:
@@ -794,9 +985,112 @@ class TestProviderModelsRoute:
             response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
-        assert [m["value"] for m in providers["codex"]["models"]] == [
+        assert [m["canonical_model"] for m in providers["codex"]["models"]] == [
             "gpt-5.6-sol",
             "gpt-5.4",
             "gpt-5.2",
             "gpt-5.1-codex-max",
         ]
+
+
+def test_models_response_matrix_shape() -> None:
+    TestProviderModelsRoute()._assert_models_response_matrix_shape()
+
+
+def test_cold_start_seed_and_pending() -> None:
+    def seeded(provider: str) -> ProviderSnapshot:
+        return ProviderSnapshot(
+            provider=provider,
+            generation=1,
+            models=(_model(f"{provider}-seed"),),
+            sources=(
+                SourceHealth(
+                    source_key="bundled",
+                    source_url=None,
+                    required=True,
+                    state=SourceState.STALE,
+                    attempts=0,
+                    last_attempt_at=None,
+                    last_success_at=None,
+                    last_error=None,
+                ),
+            ),
+        )
+
+    snapshots = {provider: seeded(provider) for provider in ("claude", "droid")}
+    service = MagicMock()
+    service.get_provider_snapshot.side_effect = snapshots.get
+    app = FastAPI()
+    app.include_router(create_providers_router(_server_stub(provider_capability_service=service)))
+
+    response = TestClient(app).get("/api/providers/models")
+
+    providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+    for provider in ("claude", "droid"):
+        assert providers[provider]["models"][0]["canonical_model"] == f"{provider}-seed"
+        assert providers[provider]["refresh"]["sources"][0]["state"] == "stale"
+    assert providers["qwen"]["models"] == []
+    assert providers["qwen"]["refresh"] == {
+        "generation": 0,
+        "sources": [{"source_key": "local", "state": "pending"}],
+    }
+
+
+def test_agy_and_endpoint_groups_unchanged() -> None:
+    config = DaemonConfig(
+        ai=AIConfig(
+            generation=GenerationConfig(
+                endpoints={
+                    "openrouter": {
+                        "wire_api": "responses",
+                        "api_base": "https://openrouter.ai/api/v1",
+                        "model": "moonshotai/kimi-k3",
+                    },
+                    "studio": {
+                        "protocol": "lmstudio",
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "qwen-coder",
+                    },
+                }
+            )
+        )
+    )
+    app = FastAPI()
+    app.include_router(create_providers_router(_server_stub(config=config)))
+
+    async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
+        return LocalEndpointModelGroup(
+            endpoint_name="studio",
+            provider_type="lmstudio",
+            provider_label="LM Studio",
+            source="live",
+            models=[
+                {
+                    "value": "endpoint:studio/qwen-coder",
+                    "label": "Qwen Coder",
+                    "canonical_id": "qwen-coder",
+                }
+            ],
+        )
+
+    with (
+        patch(
+            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+            side_effect=fake_discover,
+        ),
+        patch(
+            "gobby.servers.routes.providers.shutil.which",
+            side_effect=lambda binary: f"/usr/local/bin/{binary}",
+        ),
+    ):
+        response = TestClient(app).get("/api/providers/models")
+
+    providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+    assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
+    assert providers["agy"]["refresh"]["sources"] == [{"source_key": "static", "state": "ok"}]
+    assert any(
+        model.get("value") == "endpoint:openrouter/moonshotai/kimi-k3"
+        for model in providers["codex"]["models"]
+    )
+    assert providers["endpoint:studio"]["source"] == "live"
+    assert providers["endpoint:studio"]["models"][0]["value"] == ("endpoint:studio/qwen-coder")
