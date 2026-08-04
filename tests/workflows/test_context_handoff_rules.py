@@ -78,8 +78,10 @@ class _SessionWithContextRatio:
 class _SessionManagerWithContextRatio:
     def __init__(self, ratio: float | None) -> None:
         self.ratio = ratio
+        self.get_calls = 0
 
     def get(self, _session_id: str) -> _SessionWithContextRatio:
+        self.get_calls += 1
         return _SessionWithContextRatio(self.ratio)
 
 
@@ -543,6 +545,155 @@ class TestNudgeCompactOnContextPressure:
         assert "Context pressure is 70%" in injections[1]
         variables = variable_manager.get_variables(SESSION_ID)
         assert variables["parent_turn_seq"] == 15
+        assert variables["context_compact_mid_turn_pressure_band"] == "strong"
+        assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
+
+    @pytest.mark.parametrize(
+        "source",
+        [
+            SessionSource.CLAUDE,
+            SessionSource.CODEX,
+            SessionSource.QWEN,
+            SessionSource.GROK,
+            SessionSource.DROID,
+        ],
+    )
+    async def test_pending_reset_suppresses_after_tool_guidance_across_providers(
+        self,
+        db: HubDatabase,
+        source: SessionSource,
+    ) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _sync_bundled(db)
+        session_manager = _SessionManagerWithContextRatio(0.90)
+        handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db),
+            session_manager=session_manager,
+        )
+        variable_manager = SessionVariableManager(db)
+        variable_manager.merge_variables(
+            SESSION_ID,
+            {
+                "chat_mode": "normal",
+                "pending_context_reset": True,
+                "context_compact_guidance_kind": "strong",
+                "context_compact_guidance_message": "stale guidance",
+                "context_compact_mid_turn_pressure_band": "none",
+                "context_compact_guidance_shown_kinds": [],
+            },
+        )
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=SESSION_ID,
+            source=source,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Read",
+                "tool_input": {"file_path": "/repo/src/module.py"},
+                "tool_output": "contents",
+            },
+            cwd=".",
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        response = await handler._evaluate_rules(event)
+
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert "Context pressure" not in (response.context or "")
+        assert session_manager.get_calls == 0
+        assert variables["context_compact_guidance_kind"] == ""
+        assert variables["context_compact_guidance_message"] == ""
+        assert variables["context_compact_mid_turn_pressure_band"] == "none"
+        assert variables["context_compact_guidance_shown_kinds"] == []
+
+    async def test_codex_interrupted_compaction_suppresses_trailing_guidance_until_start(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        _sync_bundled(db)
+        session_manager = _SessionManagerWithContextRatio(0.90)
+        handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(db),
+            session_manager=session_manager,
+        )
+        variable_manager = SessionVariableManager(db)
+        variable_manager.merge_variables(
+            SESSION_ID,
+            {
+                "chat_mode": "normal",
+                "parent_turn_seq": 15,
+                "context_compact_guidance_kind": "strong",
+                "context_compact_guidance_message": "stale guidance",
+                "context_compact_mid_turn_pressure_band": "strong",
+                "context_compact_guidance_shown_kinds": ["soft", "strong"],
+            },
+        )
+
+        def event(event_type: HookEventType, data: dict[str, Any]) -> HookEvent:
+            return HookEvent(
+                event_type=event_type,
+                session_id=SESSION_ID,
+                source=SessionSource.CODEX,
+                timestamp=datetime.now(UTC),
+                data=data,
+                cwd=".",
+                metadata={"_platform_session_id": SESSION_ID},
+            )
+
+        await handler._evaluate_rules(event(HookEventType.PRE_COMPACT, {"trigger": "manual"}))
+
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert variables["pending_context_reset"] is True
+        assert variables["context_compact_mid_turn_pressure_band"] == "none"
+        assert variables["context_compact_guidance_shown_kinds"] == []
+
+        trailing_response = await handler._evaluate_rules(
+            event(
+                HookEventType.AFTER_TOOL,
+                {
+                    "tool_name": "mcp__gobby__call_tool",
+                    "tool_input": {
+                        "server_name": "gobby-sessions",
+                        "tool_name": "compact_self",
+                        "arguments": {},
+                    },
+                    "tool_output": {"success": False, "error": "interrupted"},
+                },
+            )
+        )
+
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert "Context pressure" not in (trailing_response.context or "")
+        assert session_manager.get_calls == 0
+        assert variables["context_compact_guidance_kind"] == ""
+        assert variables["context_compact_guidance_message"] == ""
+        assert variables["context_compact_mid_turn_pressure_band"] == "none"
+        assert variables["context_compact_guidance_shown_kinds"] == []
+
+        await handler._evaluate_rules(event(HookEventType.SESSION_START, {}))
+
+        variables = variable_manager.get_variables(SESSION_ID)
+        assert variables["pending_context_reset"] is False
+
+        after_tool = event(
+            HookEventType.AFTER_TOOL,
+            {
+                "tool_name": "functions.exec_command",
+                "tool_input": {"cmd": "true"},
+                "tool_output": {"exit_code": 0},
+            },
+        )
+        session_manager.ratio = 0.40
+        soft_response = await handler._evaluate_rules(after_tool)
+        session_manager.ratio = 0.70
+        strong_response = await handler._evaluate_rules(after_tool)
+
+        assert "Context pressure is 40%" in (soft_response.context or "")
+        assert "Context pressure is 70%" in (strong_response.context or "")
+        variables = variable_manager.get_variables(SESSION_ID)
         assert variables["context_compact_mid_turn_pressure_band"] == "strong"
         assert variables["context_compact_guidance_shown_kinds"] == ["soft", "strong"]
 

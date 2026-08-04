@@ -107,6 +107,11 @@ def detect_mid_turn_context_compact_guidance(
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
+    if variables.get("pending_context_reset") is True:
+        variables["context_compact_mid_turn_pressure_band"] = "none"
+        variables["context_compact_guidance_shown_kinds"] = []
+        return
+
     if _is_plan_mode(variables):
         variables["context_compact_mid_turn_pressure_band"] = "none"
         variables["context_compact_guidance_shown_kinds"] = []
