@@ -216,6 +216,7 @@ class AgentCleanupHandler:
         notify_result: dict[str, Any],
         message: str,
         completion_result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> bool:
         """Complete an active run through the cancellation-shielded delivery scope."""
 
@@ -225,6 +226,7 @@ class AgentCleanupHandler:
                 notify_result=notify_result,
                 message=message,
                 completion_result=completion_result,
+                terminal_reason=terminal_reason,
             )
 
         return bool(await terminal_delivery.shielded_terminal_delivery(run_id, operation))
@@ -236,6 +238,7 @@ class AgentCleanupHandler:
         notify_result: dict[str, Any],
         message: str,
         completion_result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> bool:
         """Complete an active run, notify subscribers, and clean child-owned state.
 
@@ -245,6 +248,7 @@ class AgentCleanupHandler:
             message: Completion message delivered alongside the payload.
             completion_result: Optional final result to persist instead of the
                 run's current result.
+            terminal_reason: Optional reason for successful terminalization.
 
         Returns:
             True when the run transitioned to complete; False when the run was
@@ -268,6 +272,7 @@ class AgentCleanupHandler:
                     result=completion_result,
                     tool_calls_count=tool_calls_count,
                     turns_used=turns_used,
+                    terminal_reason=terminal_reason,
                 ),
             )
             transitioned_here = completed is not None

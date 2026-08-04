@@ -250,6 +250,7 @@ class _AgentRunLifecycleMixin:
         result: str | None = None,
         tool_calls_count: int = 0,
         turns_used: int = 0,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         """
         Mark agent run as completed successfully.
@@ -260,6 +261,7 @@ class _AgentRunLifecycleMixin:
                 current stored result is preserved.
             tool_calls_count: Number of tool calls made.
             turns_used: Number of turns used.
+            terminal_reason: Optional reason for successful terminalization.
 
         Returns:
             Updated AgentRun.
@@ -272,7 +274,7 @@ class _AgentRunLifecycleMixin:
             UPDATE agent_runs
             SET status = 'success',
                 result = COALESCE(%s, result),
-                terminal_reason = NULL,
+                terminal_reason = %s,
                 pending_terminal_action = NULL,
                 pending_terminal_reason = NULL,
                 termination_requested_at = NULL,
@@ -285,7 +287,7 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            params=(result, tool_calls_count, turns_used, now, now, run_id),
+            params=(result, terminal_reason, tool_calls_count, turns_used, now, now, run_id),
         )
 
     def fail(

@@ -32,6 +32,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.tasks import TaskDispatchMutexManager
+from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 if TYPE_CHECKING:
@@ -303,6 +304,7 @@ class AgentLifecycleMonitor:
         notify_result: dict[str, Any],
         message: str,
         completion_result: str | None = None,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> bool:
         """Terminalize a successful active run.
 
@@ -311,6 +313,7 @@ class AgentLifecycleMonitor:
             notify_result: Payload sent to completion subscribers.
             message: Human-readable completion notification.
             completion_result: Optional persisted result override.
+            terminal_reason: Optional reason for successful terminalization.
 
         Returns:
             True when the run was completed by this call; False for an already
@@ -324,6 +327,7 @@ class AgentLifecycleMonitor:
             notify_result=notify_result,
             message=message,
             completion_result=completion_result,
+            terminal_reason=terminal_reason,
         )
 
     async def start(self) -> None:
@@ -386,6 +390,7 @@ class AgentLifecycleMonitor:
                 await self.check_initialization_timeout()
                 await self.check_idle_agents()
                 await self.check_provider_stalls()
+                await self.check_completed_task_agents()
                 await self.check_autonomous_stuck_agents()
                 await self.refresh_active_run_dispatch_mutexes()
 
@@ -683,6 +688,51 @@ class AgentLifecycleMonitor:
 
         if handled:
             inc_counter("agent_lifecycle_autonomous_stuck_detected_total", handled)
+        return handled
+
+    async def check_completed_task_agents(self) -> int:
+        """Complete active task-bound runs whose authoritative task is closed."""
+        task_manager = getattr(self, "_task_manager", None)
+        if task_manager is None:
+            return 0
+
+        runs = await self._run_db(self._get_active_terminal_runs)
+        handled = 0
+        for run in runs:
+            if run.task_id is None:
+                continue
+            try:
+                task = await self._run_db(task_manager.get_task, run.task_id)
+            except Exception as e:
+                logger.warning(
+                    "Bound task lookup failed for active agent run %s task_id=%s: %s",
+                    run.id,
+                    run.task_id,
+                    e,
+                )
+                continue
+            if not is_task_closed(task):
+                continue
+
+            task_ref = f"#{task.seq_num}" if task.seq_num is not None else task.id[:8]
+            completed = await self.terminalize_successful_run(
+                run.id,
+                notify_result={
+                    "status": "success",
+                    "run_id": run.id,
+                    "task_id": run.task_id,
+                },
+                message=f"Agent {run.id} completed bound task {task_ref}",
+                terminal_reason="task_completed",
+            )
+            if completed:
+                handled += 1
+                logger.info(
+                    "Completed active agent run %s after bound task %s closed",
+                    run.id,
+                    task_ref,
+                )
+
         return handled
 
     @staticmethod

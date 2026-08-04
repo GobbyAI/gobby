@@ -8,7 +8,7 @@ import pytest
 
 from gobby.agents import terminal_cleanup, terminal_delivery
 from gobby.agents.agent_cleanup import AgentCleanupHandler
-from gobby.storage.agents import AgentRun, AgentRunStatus
+from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReason
 from tests.agents.cleanup_test_support import (
     AcknowledgingCompletionRegistry,
     RecordingDb,
@@ -217,6 +217,7 @@ class _CaptureWrapperStorage(FakeCaptureStorage):
         result: str | None = None,
         tool_calls_count: int = 0,
         turns_used: int = 0,
+        terminal_reason: AgentRunTerminalReason | None = None,
     ) -> AgentRun | None:
         return self._terminal(run_id, "success")
 
