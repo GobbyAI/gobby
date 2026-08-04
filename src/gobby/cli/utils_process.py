@@ -59,6 +59,26 @@ def is_port_available(port: int, host: str = "localhost") -> bool:
         return False
 
 
+def get_port_listener_pid(port: int) -> int | None:
+    """Return the PID owning a TCP listener on ``port``, if observable."""
+    try:
+        for proc in psutil.process_iter(["pid"]):
+            try:
+                if proc.status() in (psutil.STATUS_DEAD, psutil.STATUS_ZOMBIE):
+                    continue
+                for conn in proc.net_connections(kind="tcp"):
+                    if (
+                        conn.status == psutil.CONN_LISTEN
+                        and getattr(conn.laddr, "port", None) == port
+                    ):
+                        return int(proc.pid)
+            except (psutil.AccessDenied, psutil.NoSuchProcess, psutil.ZombieProcess):
+                continue
+    except (OSError, psutil.Error):
+        return None
+    return None
+
+
 def wait_for_port_available(port: int, host: str = "localhost", timeout: float = 5.0) -> bool:
     """Wait for a port to become available."""
     deps = facade()

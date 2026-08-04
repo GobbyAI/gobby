@@ -64,6 +64,7 @@ from .utils import (
 from .utils import (
     stop_daemon as stop_daemon_util,
 )
+from .utils_process import get_port_listener_pid
 
 logger = logging.getLogger(__name__)
 
@@ -758,30 +759,46 @@ def status(ctx: click.Context) -> None:
 
     config = get_cli_runtime(ctx).config
     gobby_home = get_gobby_home()
-    pid_file = gobby_home / "gobby.pid"
     log_dir = resolved_logs_dir(config.logging)
 
-    # Read PID from file, falling back to launchctl service detection
-    pid: int | None = None
-    if pid_file.exists():
-        try:
-            with open(pid_file) as f:
-                pid = int(f.read().strip())
-        except Exception:
-            pid = None
-
-    if pid is None:
+    reported_pid = _read_pid_file()
+    pid_source = "PID file"
+    if reported_pid is None:
         svc = get_service_status()
         if svc.get("running") and svc.get("pid"):
-            pid = svc["pid"]
+            reported_pid = svc["pid"]
+            pid_source = "Service manager"
         else:
             click.echo(format_status_message(running=False))
             sys.exit(0)
 
-    # Check if process is actually running
-    if not _is_process_alive(pid):
+    http_port = config.daemon_port
+    reported_is_live = _is_process_alive(reported_pid)
+    try:
+        listener_pid = get_port_listener_pid(http_port)
+    except (OSError, psutil.Error) as exc:
+        logger.debug("Failed to inspect HTTP port %s ownership: %s", http_port, exc)
+        listener_pid = None
+    listener_is_live = (
+        listener_pid is not None
+        and listener_pid != reported_pid
+        and _is_process_alive(listener_pid)
+    )
+    pid = listener_pid if listener_is_live else reported_pid if reported_is_live else None
+
+    notes: list[str] = []
+    if pid_source == "PID file" and not reported_is_live:
+        notes.append(f"Note: Stale PID file found (PID {reported_pid})")
+    if listener_is_live:
+        notes.append(
+            f"Note: PID mismatch: {pid_source} reports {reported_pid}; "
+            f"HTTP port {http_port} is owned by PID {listener_pid}"
+        )
+
+    if pid is None:
         click.echo(format_status_message(running=False))
-        click.echo(f"Note: Stale PID file found (PID {pid})")
+        for note in notes:
+            click.echo(note)
         sys.exit(0)
 
     # Get process info for uptime
@@ -797,7 +814,6 @@ def status(ctx: click.Context) -> None:
     except Exception:
         uptime_str = None
 
-    http_port = config.daemon_port
     websocket_port = config.websocket.port
 
     # Check UI server status
@@ -899,6 +915,8 @@ def status(ctx: click.Context) -> None:
         process_uptime_seconds=uptime_seconds,
     )
     click.echo(message)
+    for note in notes:
+        click.echo(note)
     sys.exit(0)
 
 

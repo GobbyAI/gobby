@@ -1508,6 +1508,11 @@ class TestRestartCommand:
 class TestStatusCommand:
     """Tests for the 'status' command."""
 
+    @pytest.fixture(autouse=True)
+    def mock_port_listener_pid(self) -> Generator[MagicMock]:
+        with patch("gobby.cli.daemon.get_port_listener_pid", return_value=None) as mock_probe:
+            yield mock_probe
+
     @pytest.fixture
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
@@ -1620,6 +1625,62 @@ class TestStatusCommand:
             assert result.exit_code == 0
             assert "Stopped" in result.output
             assert "Stale PID file found" in result.output
+            assert "Uptime:" not in result.output
+
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.daemon.fetch_rich_status", return_value={"process": {}})
+    @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon._is_process_alive", side_effect=[False, True])
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_status_uses_live_listener_for_stale_pid_file(
+        self,
+        mock_load_config: MagicMock,
+        mock_is_process_alive: MagicMock,
+        mock_psutil_process: MagicMock,
+        mock_fetch_status: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+        mock_port_listener_pid: MagicMock,
+    ) -> None:
+        reported_pid = 40286
+        listener_pid = 67485
+        mock_load_config.return_value = mock_daemon_config
+        mock_port_listener_pid.return_value = listener_pid
+        mock_psutil_process.return_value.create_time.return_value = 2800.0
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "gobby.pid").write_text(str(reported_pid))
+            mock_get_gobby_home.return_value = gobby_dir
+
+            with (
+                patch("gobby.cli.daemon.time.time", return_value=10000.0),
+                patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()),
+            ):
+                result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert f"Running (PID: {listener_pid})" in result.output
+        assert "Uptime:" in result.output
+        assert "2h" in result.output
+        assert f"Note: Stale PID file found (PID {reported_pid})" in result.output
+        assert (
+            f"Note: PID mismatch: PID file reports {reported_pid}; "
+            f"HTTP port {mock_daemon_config.daemon_port} is owned by PID {listener_pid}"
+            in result.output
+        )
+        mock_psutil_process.assert_called_once_with(listener_pid)
 
     @patch("gobby.cli.daemon._is_process_alive", return_value=False)
     @patch("gobby.cli.daemon.get_gobby_home")
@@ -1672,10 +1733,12 @@ class TestStatusCommand:
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
+        mock_port_listener_pid: MagicMock,
     ) -> None:
         """Test status when daemon is running."""
         mock_load_config.return_value = mock_daemon_config
         mock_fetch_status.return_value = {"process": {}}
+        mock_port_listener_pid.return_value = os.getpid()
 
         # Mock psutil.Process
         mock_proc = MagicMock()
@@ -1697,6 +1760,7 @@ class TestStatusCommand:
 
             assert result.exit_code == 0
             assert "Running" in result.output
+            assert "PID mismatch" not in result.output
             mock_fetch_status.assert_called_once()
 
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
@@ -2081,7 +2145,10 @@ class TestEdgeCases:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text(str(os.getpid()))
 
-            with patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir):
+            with (
+                patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
+                patch("gobby.cli.daemon.get_port_listener_pid", return_value=None),
+            ):
                 with patch(
                     "gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()
                 ):

@@ -32,6 +32,7 @@ from gobby.cli.utils import (
     stop_daemon,
     wait_for_port_available,
 )
+from gobby.cli.utils_process import get_port_listener_pid
 
 pytestmark = pytest.mark.unit
 
@@ -291,10 +292,16 @@ class TestResolveSessionId:
 
         session_manager = SessionManager(hub_db)
         session1 = session_manager.register(
-            source="test", external_id="ext-1", machine_id="21000000-0000-4000-8000-000000000006", project_id=project1.id
+            source="test",
+            external_id="ext-1",
+            machine_id="21000000-0000-4000-8000-000000000006",
+            project_id=project1.id,
         )
         session2 = session_manager.register(
-            source="test", external_id="ext-2", machine_id="21000000-0000-4000-8000-000000000006", project_id=project2.id
+            source="test",
+            external_id="ext-2",
+            machine_id="21000000-0000-4000-8000-000000000006",
+            project_id=project2.id,
         )
 
         # Both sessions are #1 in their respective projects
@@ -426,6 +433,72 @@ class TestIsPortAvailable:
         result = is_port_available(60887)
         assert result is False
         mock_sock.close.assert_called_once_with()
+
+
+class TestGetPortListenerPid:
+    """Tests for TCP listener ownership lookup."""
+
+    @patch("gobby.cli.utils_process.psutil.process_iter")
+    def test_port_listener_returns_matching_owner(self, mock_process_iter: MagicMock) -> None:
+        proc = MagicMock()
+        proc.pid = 67485
+        proc.status.return_value = psutil.STATUS_RUNNING
+        conn = MagicMock(status=psutil.CONN_LISTEN)
+        conn.laddr.port = 60887
+        proc.net_connections.return_value = [conn]
+        mock_process_iter.return_value = [proc]
+
+        assert get_port_listener_pid(60887) == 67485
+        proc.net_connections.assert_called_once_with(kind="tcp")
+
+    @patch("gobby.cli.utils_process.psutil.process_iter")
+    def test_port_listener_ignores_irrelevant_connections(
+        self, mock_process_iter: MagicMock
+    ) -> None:
+        proc = MagicMock()
+        proc.status.return_value = psutil.STATUS_RUNNING
+        established = MagicMock(status=psutil.CONN_ESTABLISHED)
+        established.laddr.port = 60887
+        other_listener = MagicMock(status=psutil.CONN_LISTEN)
+        other_listener.laddr.port = 60888
+        proc.net_connections.return_value = [established, other_listener]
+        mock_process_iter.return_value = [proc]
+
+        assert get_port_listener_pid(60887) is None
+        assert mock_process_iter.call_args.args == (["pid"],)
+        assert proc.net_connections.call_args.kwargs == {"kind": "tcp"}
+
+    @patch("gobby.cli.utils_process.psutil.process_iter")
+    def test_port_listener_skips_inaccessible_and_exited_processes(
+        self, mock_process_iter: MagicMock
+    ) -> None:
+        inaccessible = MagicMock()
+        inaccessible.status.side_effect = psutil.AccessDenied()
+        exited = MagicMock()
+        exited.status.side_effect = psutil.NoSuchProcess(pid=10)
+        zombie = MagicMock()
+        zombie.status.return_value = psutil.STATUS_ZOMBIE
+        owner = MagicMock()
+        owner.pid = 67485
+        owner.status.return_value = psutil.STATUS_RUNNING
+        listener = MagicMock(status=psutil.CONN_LISTEN)
+        listener.laddr.port = 60887
+        owner.net_connections.return_value = [listener]
+        mock_process_iter.return_value = [inaccessible, exited, zombie, owner]
+
+        assert get_port_listener_pid(60887) == 67485
+        assert inaccessible.net_connections.call_count == 0
+        assert exited.net_connections.call_count == 0
+        assert zombie.net_connections.call_count == 0
+        assert owner.net_connections.call_args.kwargs == {"kind": "tcp"}
+        assert mock_process_iter.call_args.args == (["pid"],)
+
+    @patch("gobby.cli.utils_process.psutil.process_iter", return_value=[])
+    def test_port_listener_returns_none_without_listener(
+        self, mock_process_iter: MagicMock
+    ) -> None:
+        assert get_port_listener_pid(60887) is None
+        mock_process_iter.assert_called_once_with(["pid"])
 
 
 # ==============================================================================
