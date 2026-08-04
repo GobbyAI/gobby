@@ -848,3 +848,369 @@ provider's session-toggle semantics; Gobby-owned requests remain one-shot.
   `fast_unavailable`.
 - Registered-plan validation at execution time: `uv run gobby plans validate
   <plan-file>` after registering the artifact.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Add provider capability tables (capability-matrix migration + baseline)
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: The capability-matrix migration creates the three tables
+    and the baseline matches it. test: `tests/storage/test_migration_contract.py::test_provider_capability_tables_match_baseline`.
+
+    1.1.2: Migration chain remains contiguous through the assigned slot. test: `tests/storage/test_migration_contract.py::test_postgres_migrations_preserve_known_post_baseline_sequence`.
+
+    1.1.3: Routes cascade-delete with their capability row. test: `tests/storage/test_provider_capability_store.py::test_route_rows_cascade_on_capability_delete`.'
+  labels:
+  - covers:provider-capability-matrix:1.1:1.1.1
+  - covers:provider-capability-matrix:1.1:1.1.2
+  - covers:provider-capability-matrix:1.1:1.1.3
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Typed capability domain and activation validation
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: Typed domain round-trips all 1.1 fields incl. NULL-vs-empty
+    efforts. test: `tests/providers/capabilities/test_models.py::test_supported_efforts_null_vs_empty_distinct`.
+
+    1.2.2: Unknown activation kind rejected. test: `tests/providers/capabilities/test_activation.py::test_unknown_activation_kind_rejected`.
+
+    1.2.3: Source-derived payloads cannot smuggle exec/env/path params. test: `tests/providers/capabilities/test_activation.py::test_activation_params_reject_non_string_and_disallowed_keys`.
+
+    1.2.4: New handler kinds register without touching schema or resolver. test: `tests/providers/capabilities/test_activation.py::test_register_new_handler_kind`.'
+  labels:
+  - covers:provider-capability-matrix:1.2:1.2.1
+  - covers:provider-capability-matrix:1.2:1.2.2
+  - covers:provider-capability-matrix:1.2:1.2.3
+  - covers:provider-capability-matrix:1.2:1.2.4
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Capability store with atomic snapshot replacement
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: '1.3.1: Replacement is atomic: a failing insert leaves prior
+    rows intact. test: `tests/providers/capabilities/test_store.py::test_failed_replace_retains_last_good_rows`.
+
+    1.3.2: Provider rows exist without any OpenRouter `model_metadata` row. test:
+    `tests/providers/capabilities/test_store.py::test_capability_rows_independent_of_model_metadata`.
+
+    1.3.3: Source failure marks health without touching model rows. test: `tests/providers/capabilities/test_store.py::test_source_failure_updates_health_only`.'
+  labels:
+  - covers:provider-capability-matrix:1.3:1.3.1
+  - covers:provider-capability-matrix:1.3:1.3.2
+  - covers:provider-capability-matrix:1.3:1.3.3
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Collector protocol, registry, and snapshot validation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  validation_criteria: '2.1.1: Registry dispatches by provider key. symbol: `register_collector`.
+    file: `src/gobby/providers/capabilities/collectors/base.py`.
+
+    2.1.2: Empty/malformed snapshots are rejected before write. test: `tests/providers/capabilities/test_collector_validation.py::test_empty_snapshot_rejected`.
+
+    2.1.3: Fake provider + fake activation adapter integrate without editing schema
+    or core resolver. test: `tests/providers/capabilities/test_extensibility.py::test_fake_provider_end_to_end`.'
+  labels:
+  - covers:provider-capability-matrix:2.1:2.1.1
+  - covers:provider-capability-matrix:2.1:2.1.2
+  - covers:provider-capability-matrix:2.1:2.1.3
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Claude collector
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "2.2.1: Alias\u2192canonical changes in fixtures propagate\
+    \ to rows. test: `tests/providers/capabilities/collectors/test_claude.py::test_alias_to_canonical_mapping`.\n\
+    2.2.2: Latency/context/output facts carry per-fact provenance with source URLs.\
+    \ test: `tests/providers/capabilities/collectors/test_claude.py::test_fact_provenance`.\n\
+    2.2.3: Layout drift in either required feed fails the snapshot. test: `tests/providers/capabilities/collectors/test_claude.py::test_malformed_table_fails_snapshot`."
+  labels:
+  - covers:provider-capability-matrix:2.2:2.2.1
+  - covers:provider-capability-matrix:2.2:2.2.2
+  - covers:provider-capability-matrix:2.2:2.2.3
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Codex collector (local app-server)
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.3.1: Same-selector fast tier becomes a fast route with request_parameter
+    activation. test: `tests/providers/capabilities/collectors/test_codex.py::test_fast_tier_same_selector_route`.
+
+    2.3.2: Protocol effort variants map into supported_efforts verbatim. test: `tests/providers/capabilities/collectors/test_codex.py::test_reasoning_effort_variants`.
+
+    2.3.3: App-server unavailability fails the snapshot without dropping rows. test:
+    `tests/providers/capabilities/collectors/test_codex.py::test_app_server_down_retains_last_good`.'
+  labels:
+  - covers:provider-capability-matrix:2.3:2.3.1
+  - covers:provider-capability-matrix:2.3:2.3.2
+  - covers:provider-capability-matrix:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Droid collector (Factory docs, multipliers, fast pairing)
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.4.1: Usage multipliers parse into route rows. test: `tests/providers/capabilities/collectors/test_droid.py::test_usage_multiplier_parsed`.
+
+    2.4.2: Explicit Fast + matching standard entry pairs a fast route; suffix-only
+    does not. test: `tests/providers/capabilities/collectors/test_droid.py::test_fast_pairing_requires_explicit_label_and_standard_match`.
+
+    2.4.3: Missing context stays NULL and resolves via model_metadata. test: `tests/providers/capabilities/collectors/test_droid.py::test_context_falls_back_to_model_metadata`.'
+  labels:
+  - covers:provider-capability-matrix:2.4:2.4.1
+  - covers:provider-capability-matrix:2.4:2.4.2
+  - covers:provider-capability-matrix:2.4:2.4.3
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Grok and Qwen collectors (local discovery)
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.5.1: Grok/Qwen discovery yields standard-only routes. test:
+    `tests/providers/capabilities/collectors/test_grok_qwen.py::test_standard_only_discovery`.
+
+    2.5.2: Silent sources produce reasoning=unknown with NULL efforts. test: `tests/providers/capabilities/collectors/test_grok_qwen.py::test_unknown_reasoning_null_efforts`.'
+  labels:
+  - covers:provider-capability-matrix:2.5:2.5.1
+  - covers:provider-capability-matrix:2.5:2.5.2
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Bundled seed for remote-source providers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.6.1: Seed applies only to empty providers and marks health
+    stale. test: `tests/providers/capabilities/test_seed.py::test_seed_only_when_empty`.
+
+    2.6.2: A successful refresh atomically replaces seed rows and clears stale. test:
+    `tests/providers/capabilities/test_seed.py::test_refresh_replaces_seed`.'
+  labels:
+  - covers:provider-capability-matrix:2.6:2.6.1
+  - covers:provider-capability-matrix:2.6:2.6.2
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Refresh coordinator and daemon wiring
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '2.6'
+  validation_criteria: '3.1.1: Startup serves stored rows without blocking on refresh.
+    test: `tests/providers/capabilities/test_refresh.py::test_startup_nonblocking`.
+
+    3.1.2: Network failure / empty / malformed responses retain last-good rows and
+    mark health stale or error. test: `tests/providers/capabilities/test_refresh.py::test_failed_refresh_retains_last_good`.
+
+    3.1.3: Refresh reruns on the 24-hour schedule after an immediate first pass. test:
+    `tests/providers/capabilities/test_refresh.py::test_schedule_immediate_then_daily`.
+
+    3.1.4: Atomic replacement: readers never observe a half-written provider. test:
+    `tests/providers/capabilities/test_refresh.py::test_atomic_snapshot_swap`.'
+  labels:
+  - covers:provider-capability-matrix:3.1:3.1.1
+  - covers:provider-capability-matrix:3.1:3.1.2
+  - covers:provider-capability-matrix:3.1:3.1.3
+  - covers:provider-capability-matrix:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Capability resolver and typed speed results
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Context precedence resolves in the specified order
+    with source tags. test: `tests/providers/capabilities/test_resolve.py::test_context_precedence_order`.
+
+    3.2.2: Explicitly unsupported reasoning is rejected; unknown passes through as
+    unverified. test: `tests/providers/capabilities/test_resolve.py::test_reasoning_tristate`.
+
+    3.2.3: fast on a fast-route-less model/surface yields fast_unavailable before
+    dispatch. test: `tests/providers/capabilities/test_resolve.py::test_fast_unavailable_pre_dispatch`.
+
+    3.2.4: standard default; fast route resolution returns surface-filtered ordered
+    activations. test: `tests/providers/capabilities/test_resolve.py::test_route_resolution_surface_filtering`.'
+  labels:
+  - covers:provider-capability-matrix:3.2:3.2.1
+  - covers:provider-capability-matrix:3.2:3.2.2
+  - covers:provider-capability-matrix:3.2:3.2.3
+  - covers:provider-capability-matrix:3.2:3.2.4
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Rewire spawn reasoning and retire the legacy catalog
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: Spawn reasoning resolves through the matrix; unknown
+    model passes through unverified instead of unsupported_model. test: `tests/agents/test_reasoning.py::test_unknown_model_passes_through_unverified`.
+
+    3.3.2: `ProviderModelCatalog` and the JSON cache are gone from src. behavior:
+    "no references to provider-model-catalog.json or ProviderModelCatalog remain"
+    in `src/gobby/`.
+
+    3.3.3: Transport mechanics (reasoning flag styles, sandbox) still drive CLI argv
+    construction. test: `tests/agents/spawners/test_command_builder.py::test_reasoning_flag_styles_unchanged`.'
+  labels:
+  - covers:provider-capability-matrix:3.3:3.3.1
+  - covers:provider-capability-matrix:3.3:3.3.2
+  - covers:provider-capability-matrix:3.3:3.3.3
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Replace the /api/providers/models response
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  validation_criteria: '4.1.1: Route serves matrix rows with refresh health, reasoning
+    metadata, routes, multipliers, and provenance per model. test: `tests/servers/routes/test_providers.py::test_models_response_matrix_shape`.
+
+    4.1.2: Cold start (seed rows) serves claude/droid with health stale; a never-refreshed
+    local-source provider serves empty models with state pending, not an error. test:
+    `tests/servers/routes/test_providers.py::test_cold_start_seed_and_pending`.
+
+    4.1.3: AGY, configured endpoints, and local generation groups keep composing.
+    test: `tests/servers/routes/test_providers.py::test_agy_and_endpoint_groups_unchanged`.'
+  labels:
+  - covers:provider-capability-matrix:4.1:4.1.1
+  - covers:provider-capability-matrix:4.1:4.1.2
+  - covers:provider-capability-matrix:4.1:4.1.3
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Frontend compatibility in providerModels.ts
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Catalog fetch validates and maps the new response;
+    existing pickers render models and efforts. test: `web/src/lib/__tests__/providerModels.test.ts::maps_matrix_response`.
+
+    4.2.2: Routes/refresh fields are typed and passed through untouched. test: `web/src/lib/__tests__/providerModels.test.ts::exposes_routes_and_refresh`.'
+  labels:
+  - covers:provider-capability-matrix:4.2:4.2.1
+  - covers:provider-capability-matrix:4.2:4.2.2
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: frontend
+- title: Update gwiki daemon contract string
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.3.1: Contract string matches the new envelope and gwiki
+    tests pass. test: `crates/gwiki/src/daemon.rs` unit tests via `cargo test -p gobby-wiki`.'
+  labels:
+  - covers:provider-capability-matrix:4.3:4.3.1
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Update provider/model documentation
+  category: docs
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.4.1: All five guides describe the new contract with no references
+    to the retired catalog/cache. behavior: "matrix response and speed_mode documented"
+    in `docs/guides/providers-and-models.md`.'
+  labels:
+  - covers:provider-capability-matrix:4.4:4.4.1
+  tdd: false
+  source_section: '4.4'
+  assigned_agent: tech-writer
+- title: Speed activation service and result reporting
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '5.1.1: Ordered activations apply per surface; model_selector
+    swaps selector, cli_config extends codex overrides, request_parameter sets payload
+    fields. test: `tests/providers/capabilities/test_apply.py::test_activation_application_per_surface`.
+
+    5.1.2: Provider-confirmed fallback yields fast_degraded with preserved output
+    and reason. test: `tests/providers/capabilities/test_apply.py::test_fast_degraded_upgrade`.
+
+    5.1.3: fast_unavailable fails before dispatch with no model substitution. test:
+    `tests/providers/capabilities/test_apply.py::test_fast_unavailable_no_dispatch`.'
+  labels:
+  - covers:provider-capability-matrix:5.1:5.1.1
+  - covers:provider-capability-matrix:5.1:5.1.2
+  - covers:provider-capability-matrix:5.1:5.1.3
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: speed_mode on spawn surfaces (REST, MCP, dispatch)
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: REST and MCP spawn accept speed_mode, default standard,
+    and report the typed result. test: `tests/servers/routes/test_agent_spawn.py::test_spawn_speed_mode_contract`.
+
+    5.2.2: Droid fast spawn launches with the fast selector via model_selector activation.
+    test: `tests/mcp_proxy/tools/test_spawn_agent_speed.py::test_droid_fast_selector_spawn`.
+
+    5.2.3: speed_mode is never persisted to launch defaults or resume metadata. test:
+    `tests/mcp_proxy/tools/test_spawn_agent_speed.py::test_speed_mode_not_persisted`.'
+  labels:
+  - covers:provider-capability-matrix:5.2:5.2.1
+  - covers:provider-capability-matrix:5.2:5.2.2
+  - covers:provider-capability-matrix:5.2:5.2.3
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: speed_mode on web chat and tool-chat
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.3.1: Per-send WS speed_mode applies for that turn only and
+    resets to standard. test: `tests/servers/websocket/test_chat_speed_mode.py::test_per_send_not_sticky`.
+
+    5.3.2: Codex tool-chat fast rides the request_parameter activation and reports
+    fast_configured/fast_applied from tier echo. test: `tests/ai/test_tool_chat_speed.py::test_codex_tier_activation`.
+
+    5.3.3: Unknown speed_mode values 422 on ChatCompletionsPayload. test: `tests/servers/routes/test_llm.py::test_chat_completions_rejects_bad_speed_mode`.'
+  labels:
+  - covers:provider-capability-matrix:5.3:5.3.1
+  - covers:provider-capability-matrix:5.3:5.3.2
+  - covers:provider-capability-matrix:5.3:5.3.3
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+```
