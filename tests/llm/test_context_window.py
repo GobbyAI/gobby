@@ -3,7 +3,7 @@
 Verifies the priority order:
 1. Config overrides (model substring -> context window)
 2. Provider-reported runtime metadata
-3. Provider-reported/provider-owned catalog metadata
+3. Provider capability matrix metadata
 4. Registry lookup (OpenRouter data via model_metadata cache)
 5. Explicit unknown result
 
@@ -21,13 +21,11 @@ import pytest
 import gobby.llm.context_windows as context_windows
 from gobby.llm.context_windows import (
     coerce_context_length,
-    provider_catalog_context_length_for_model,
     reconcile_model_context,
     reset_unknown_context_window_warnings,
     resolve_context_window,
     resolve_context_window_with_source,
 )
-from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 
 pytestmark = pytest.mark.unit
@@ -68,10 +66,6 @@ def test_genuine_model_switch_accepts_observed_model_and_window() -> None:
 
     assert reconciled.model == "claude-haiku-4-5"
     assert reconciled.context_window == 200_000
-
-
-def test_droid_sonnet_context_window_remains_provider_owned() -> None:
-    assert provider_catalog_context_length_for_model("droid", "claude-sonnet-4-6") == 200_000
 
 
 def test_unknown_window_consumers_guard() -> None:
@@ -118,7 +112,9 @@ def _mock_lookup(model: str) -> int | None:
 def test_db_failure_degrades_to_explicit_unknown() -> None:
     db = MagicMock()
     db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
-    app_context = SimpleNamespace(database=db, provider_model_catalog=None)
+    app_context = SimpleNamespace(
+        database=db, provider_capability_resolver=None, provider_capability_service=None
+    )
 
     with patch("gobby.app_context.get_app_context", return_value=app_context):
         result = resolve_context_window_with_source("gpt-5.4")
@@ -153,7 +149,6 @@ def test_nonprimitive_provider_reported_context_window_is_safe(value: object) ->
             "codex/nonprimitive-context-window",
             provider="codex",
             provider_reported_context_window=value,
-            catalog=None,
         )
 
     assert result is not None
@@ -175,7 +170,7 @@ def test_unknown_context_window_warning_dedup_is_bounded(
             patch("gobby.llm.model_registry.lookup_context_window", return_value=None),
         ):
             for model in models:
-                resolve_context_window_with_source(model, provider="codex", catalog=None)
+                resolve_context_window_with_source(model, provider="codex")
     finally:
         reset_unknown_context_window_warnings()
 
@@ -183,38 +178,6 @@ def test_unknown_context_window_warning_dedup_is_bounded(
     assert sum("codex/future-a" in message for message in warnings) == 2
     assert sum("codex/future-b" in message for message in warnings) == 1
     assert sum("codex/future-c" in message for message in warnings) == 1
-
-
-class _FakeCatalog:
-    def __init__(self, values: dict[tuple[str | None, str], int]) -> None:
-        self.values = values
-
-    def get_context_window(self, provider: str | None, model: str) -> int | None:
-        return self.values.get((provider, model))
-
-
-class _SourceCatalog:
-    def __init__(self, values: dict[tuple[str | None, str], tuple[int, str]]) -> None:
-        self.values = values
-
-    def get_context_window_with_source(
-        self,
-        provider: str | None,
-        model: str,
-    ) -> tuple[int, str] | None:
-        return self.values.get((provider, model))
-
-
-class _BareSourceCatalog:
-    def __init__(self, value: object) -> None:
-        self.value = value
-
-    def get_context_window_with_source(
-        self,
-        provider: str | None,
-        model: str,
-    ) -> object:
-        return self.value
 
 
 class TestResolveContextWindow:
@@ -283,16 +246,7 @@ class TestResolveContextWindow:
         [
             ({"overrides": {"sonnet": 200_000}}, None, "override"),
             ({"provider_reported_context_window": 200_000}, None, "provider_reported"),
-            (
-                {
-                    "catalog": _SourceCatalog(
-                        {(None, "claude-sonnet-4-6[1m]"): (200_000, "provider_catalog")}
-                    )
-                },
-                None,
-                "provider_catalog",
-            ),
-            ({"catalog": _FakeCatalog({})}, 200_000, "registry"),
+            ({}, 200_000, "registry"),
         ],
     )
     def test_one_million_marker_floors_all_sources_without_changing_attribution(
@@ -403,8 +357,8 @@ class TestResolveContextWindow:
             caplog.at_level("WARNING", logger="gobby.llm.context_windows"),
             patch("gobby.llm.model_registry.lookup_context_window", return_value=None),
         ):
-            first = resolve_context_window_with_source(model, provider="codex", catalog=None)
-            second = resolve_context_window_with_source(model, provider="codex", catalog=None)
+            first = resolve_context_window_with_source(model, provider="codex")
+            second = resolve_context_window_with_source(model, provider="codex")
 
         assert first is not None
         assert first.value is None
@@ -436,123 +390,27 @@ class TestResolveContextWindow:
             result = resolve_context_window("claude-opus-4-6", None, overrides=overrides)
         assert result == 500_000
 
-    def test_config_overrides_win_over_catalog(self) -> None:
-        """Config overrides take precedence over provider catalog data."""
-        overrides = {"opus": 500_000}
-        catalog = _FakeCatalog({("claude", "claude-opus-4-6"): 1_000_000})
-
-        result = resolve_context_window(
-            "claude-opus-4-6",
-            None,
-            overrides=overrides,
-            provider="claude",
-            catalog=catalog,
-        )
-
-        assert result == 500_000
-
     def test_provider_reported_runtime_metadata_wins(self) -> None:
-        """Provider-reported runtime metadata wins over catalog and registry data."""
-        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "provider_catalog")})
+        """Provider-reported runtime metadata wins over registry data."""
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(
                 "gpt-5.4",
                 {"model_context_window": 258_400},
                 provider="codex",
-                catalog=catalog,
             )
 
         assert result == 258_400
 
     def test_provider_reported_runtime_metadata_accepts_camel_alias(self) -> None:
         """Runtime metadata accepts modelContextWindow alias."""
-        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "provider_catalog")})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(
                 "gpt-5.4",
                 {"modelContextWindow": 258_400},
                 provider="codex",
-                catalog=catalog,
             )
 
         assert result == 258_400
-
-    def test_source_less_catalog_is_provider_catalog(self) -> None:
-        catalog = _FakeCatalog({("codex", "gpt-4o"): 256_000})
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
-
-        assert result == 256_000
-
-    def test_bare_catalog_int_must_be_positive(self) -> None:
-        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
-            assert (
-                resolve_context_window(
-                    "unknown-model-xyz",
-                    None,
-                    provider="codex",
-                    catalog=_BareSourceCatalog(123_000),
-                )
-                == 123_000
-            )
-            assert (
-                resolve_context_window(
-                    "unknown-model-xyz",
-                    None,
-                    provider="codex",
-                    catalog=_BareSourceCatalog(0),
-                )
-                is None
-            )
-
-    def test_retired_static_catalog_source_is_rejected(self) -> None:
-        catalog = _SourceCatalog({("codex", "gpt-4o"): (200_000, "static_default")})
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
-
-        assert result == 128_000
-
-    def test_registry_catalog_source_remains_an_eligible_fallback(self) -> None:
-        catalog = _SourceCatalog({("codex", "unknown-model"): (200_000, "registry")})
-        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
-            result = resolve_context_window_with_source(
-                "unknown-model",
-                provider="codex",
-                catalog=catalog,
-            )
-
-        assert result is not None
-        assert result.value == 200_000
-        assert result.source == "registry"
-
-    def test_source_less_catalog_value_precedes_registry(self) -> None:
-        catalog = _FakeCatalog({("codex", "gpt-4o"): 200_000})
-        with patch("gobby.llm.model_registry.lookup_context_window", return_value=128_000):
-            result = resolve_context_window_with_source(
-                "gpt-4o",
-                provider="codex",
-                catalog=catalog,
-            )
-
-        assert result is not None
-        assert result.value == 200_000
-        assert result.source == "provider_catalog"
-
-    def test_provider_catalog_source_wins_over_registry(self) -> None:
-        """Provider-owned catalog values outrank generic registry data."""
-        catalog = _SourceCatalog({("droid", "gpt-5.4"): (200_000, "provider_catalog")})
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("gpt-5.4", None, provider="droid", catalog=catalog)
-
-        assert result == 200_000
-
-    def test_registry_fills_catalog_gap(self) -> None:
-        """OpenRouter/model_metadata fills gaps when catalog data is absent."""
-        catalog = _FakeCatalog({})
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
-
-        assert result == 128_000
 
     def test_registry_lookup_uses_bare_model_id(self) -> None:
         def lookup(model: str) -> int | None:
@@ -607,32 +465,3 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("qwen3-coder(openai)", None, provider="qwen")
         assert result == 262_144
-
-    def test_source_less_cached_codex_value_is_provider_catalog(
-        self,
-        temp_dir,
-    ) -> None:
-        """Source-less cached Codex metadata is provider-catalog data."""
-        cache_path = temp_dir / "provider-model-catalog.json"
-        cache_path.write_text(
-            """
-            {
-              "version": 4,
-              "providers": {
-                "codex": {
-                  "source": "cache",
-                  "models": [
-                    {"value": "gpt-5.4", "label": "GPT-5.4", "context_length": 200000}
-                  ]
-                }
-              }
-            }
-            """,
-            encoding="utf-8",
-        )
-        catalog = ProviderModelCatalog(cache_path=cache_path)
-
-        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("gpt-5.4", None, provider="codex", catalog=catalog)
-
-        assert result == 200_000

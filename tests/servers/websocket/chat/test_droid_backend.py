@@ -1130,7 +1130,6 @@ async def test_attach_session_rejects_missing_cwd(tmp_path: Path) -> None:
     [
         ("--help", None, "Invalid Droid model"),
         ("gpt-5.4", "--help", "Invalid Droid reasoning effort"),
-        ("gpt-5.4", "extreme", "Unsupported Droid reasoning effort"),
     ],
 )
 @pytest.mark.asyncio

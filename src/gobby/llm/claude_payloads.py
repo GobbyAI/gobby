@@ -2,21 +2,14 @@
 
 from typing import Any
 
-from gobby.agents.provider_capabilities import provider_reasoning_efforts
 from gobby.agents.reasoning import normalize_reasoning_effort
 
 
 def claude_reasoning_options(reasoning_effort: str | None) -> dict[str, Any]:
-    """Return SDK kwargs for a normalized, Claude-supported reasoning effort."""
+    """Return SDK kwargs for a normalized reasoning effort."""
     normalized = normalize_reasoning_effort(reasoning_effort)
     if normalized is None:
         return {}
-    supported_efforts = provider_reasoning_efforts("claude")
-    if normalized not in supported_efforts:
-        supported = ", ".join(sorted(supported_efforts))
-        raise ValueError(
-            f"Unsupported Claude reasoning effort '{normalized}' (expected {supported})"
-        )
     return {"effort": normalized}
 
 

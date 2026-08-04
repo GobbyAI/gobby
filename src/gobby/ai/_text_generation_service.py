@@ -10,11 +10,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.agents.provider_capabilities import (
-    KNOWN_REASONING_EFFORTS,
-    provider_reasoning_efforts,
-    provider_reasoning_flag,
-)
+from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_effort
 from gobby.ai._text_generation_contracts import (
@@ -48,6 +44,7 @@ from gobby.config.feature_base import (
     candidate_runtime_entries,
 )
 from gobby.llm.base import LLMProviderCancellation
+from gobby.providers.capabilities.resolve import ReasoningStatus
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -155,28 +152,34 @@ def _gate_reasoning_effort(
             return request
         return replace(request, reasoning_effort=None)
 
-    if normalized not in KNOWN_REASONING_EFFORTS:
-        raise _ReasoningEffortRejectedError(
-            f"Unknown reasoning_effort {request.reasoning_effort!r} for "
-            f"{binding.provider}/{request.model or next(iter(binding.models), None)}"
-        )
-
     execution_provider = binding.metadata.get("execution_provider")
     reasoning_provider = (
         execution_provider
         if isinstance(execution_provider, str) and execution_provider
         else binding.provider
     )
-    accepted_efforts = provider_reasoning_efforts(reasoning_provider)
-    if normalized not in accepted_efforts:
-        accepted = ", ".join(sorted(accepted_efforts)) or "<none>"
-        raise _ReasoningEffortRejectedError(
-            f"Unsupported reasoning_effort {normalized!r} for provider "
-            f"{binding.provider!r}; accepted: {accepted}"
-        )
-
-    if provider_reasoning_flag(reasoning_provider) is None:
+    transport_supports_effort = provider_reasoning_flag(reasoning_provider) is not None
+    if not transport_supports_effort:
         return replace(request, reasoning_effort=None)
+
+    from gobby.app_context import get_app_context
+
+    ctx = get_app_context()
+    resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
+    if resolver is not None:
+        model = request.model or next(iter(binding.models), "")
+        resolution = resolver.resolve_reasoning(
+            reasoning_provider,
+            model,
+            normalized,
+            transport_supports_effort=True,
+        )
+        if resolution.status is ReasoningStatus.REJECTED:
+            raise _ReasoningEffortRejectedError(
+                f"Unsupported reasoning_effort {normalized!r} for provider "
+                f"{binding.provider!r}: {resolution.reason}"
+            )
+        normalized = resolution.effective_effort or normalized
 
     if normalized == request.reasoning_effort:
         return request

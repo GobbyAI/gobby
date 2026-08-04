@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent
-from gobby.agents.provider_capabilities import provider_reasoning_efforts
+from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
@@ -469,10 +469,16 @@ class DroidWebChatBackend:
             cmd.extend(["--model", session._model])
         if session.reasoning_effort and session.reasoning_effort != "auto":
             reasoning_effort = _validated_droid_option(session.reasoning_effort, "reasoning effort")
-            if reasoning_effort not in provider_reasoning_efforts("droid"):
-                raise ValueError(f"Unsupported Droid reasoning effort: {reasoning_effort}")
-            session.reasoning_effort = reasoning_effort
-            cmd.extend(["--reasoning-effort", reasoning_effort])
+            resolution = resolve_spawn_reasoning(
+                provider="droid",
+                model=session._model,
+                requested_effort=reasoning_effort,
+                reasoning_required=False,
+            )
+            if resolution.effective_effort is None:
+                raise ValueError(resolution.message or "Unsupported Droid reasoning effort")
+            session.reasoning_effort = resolution.effective_effort
+            cmd.extend(["--reasoning-effort", resolution.effective_effort])
 
         env = os.environ.copy()
         env["GOBBY_HOOKS_DISABLED"] = "1"

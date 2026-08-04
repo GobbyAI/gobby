@@ -7,6 +7,22 @@ from gobby.agents.spawners.command_builder import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    ("provider", "expected"),
+    [
+        ("claude", ["--effort", "high"]),
+        ("codex", ["-c", 'model_reasoning_effort="high"']),
+        ("droid", ["--reasoning-effort", "high"]),
+        ("grok", ["--reasoning-effort", "high"]),
+    ],
+)
+def test_reasoning_flag_styles_unchanged(provider: str, expected: list[str]) -> None:
+    cmd, _env = build_cli_command(provider, reasoning_effort="high", prompt="hello")
+
+    start = cmd.index(expected[0])
+    assert cmd[start : start + len(expected)] == expected
+
+
 class TestBuildCliCommand:
     def test_claude_basic(self) -> None:
         cmd, _env = build_cli_command("claude", prompt="hello")

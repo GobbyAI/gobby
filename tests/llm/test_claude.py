@@ -824,18 +824,25 @@ class TestGenerateText:
         assert ["effort" in kwargs for kwargs in captured_kwargs] == [False, False]
 
     @pytest.mark.asyncio
-    async def test_generate_text_sdk_rejects_unsupported_reasoning_effort(
+    async def test_generate_text_sdk_passes_unverified_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        async def mock_query(prompt: str, options: object) -> object:
+        captured_kwargs: list[dict[str, object]] = []
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
             yield MockAssistantMessage([MockTextBlock("unused")])
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            with pytest.raises(ValueError, match="Unsupported Claude reasoning effort"):
-                await provider.generate_text_result("Generate text", reasoning_effort="extreme")
+            result = await provider.generate_text_result(
+                "Generate text", reasoning_effort="extreme"
+            )
+
+        assert result.applied_reasoning_effort == "extreme"
+        assert captured_kwargs[0]["effort"] == "extreme"
 
 
 class TestGenerateAgentic:

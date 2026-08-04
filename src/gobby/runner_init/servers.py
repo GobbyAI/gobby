@@ -9,13 +9,14 @@ from typing import TYPE_CHECKING
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
+from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.servers.http import HTTPServer
-from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
+from gobby.storage.model_metadata import ModelMetadataStore
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -33,6 +34,10 @@ def init_servers(runner: GobbyRunner) -> None:
         run_db=getattr(runner.db_executor, "run", None),
     )
     provider_capability_service.prepare()
+    provider_capability_resolver = CapabilityResolver(
+        provider_capability_service,
+        ModelMetadataStore(runner.database),
+    )
 
     def tool_proxy_getter() -> object | None:
         http_server = http_server_ref() if http_server_ref is not None else None
@@ -83,7 +88,7 @@ def init_servers(runner: GobbyRunner) -> None:
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
         provider_capability_service=provider_capability_service,
-        provider_model_catalog=ProviderModelCatalog(),
+        provider_capability_resolver=provider_capability_resolver,
         web_chat_runtime_manager=None,
         web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,

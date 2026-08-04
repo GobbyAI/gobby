@@ -1362,9 +1362,7 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair(
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_rejects_known_effort_when_provider_efforts_empty(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
+async def test_text_generation_service_clears_effort_when_transport_has_no_flag() -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1374,169 +1372,22 @@ async def test_text_generation_service_rejects_known_effort_when_provider_effort
                 available=True,
                 models=("qwen-model",),
             ),
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="droid",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("droid-model",),
-            ),
         ]
     )
     qwen = RecordingAdapter("qwen")
-    droid = RecordingAdapter("droid")
-    service = TextGenerationService(registry, {"qwen": qwen, "droid": droid})
+    service = TextGenerationService(registry, {"qwen": qwen})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
                 FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
-                FeatureCandidateConfig(candidate="droid/droid-model", reasoning_effort="high"),
             ),
         )
     )
 
-    assert result.provider == "droid"
-    assert not qwen.requests
-    assert droid.requests[0].reasoning_effort == "high"
-    assert (
-        "Unsupported reasoning_effort 'high' for provider 'qwen'; accepted: <none>" in caplog.text
-    )
-
-
-@pytest.mark.asyncio
-async def test_text_generation_service_skips_unknown_reasoning_effort_even_without_emit_flag(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    registry = AICapabilityRegistry(
-        [
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("qwen-model",),
-            ),
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="droid",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("droid-model",),
-            ),
-        ]
-    )
-    qwen = RecordingAdapter("qwen")
-    droid = RecordingAdapter("droid")
-    service = TextGenerationService(registry, {"qwen": qwen, "droid": droid})
-    caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
-
-    result = await service.generate_result(
-        TextGenerationRequest(
-            prompt="summarize",
-            candidates=(
-                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="banana"),
-                FeatureCandidateConfig(candidate="droid/droid-model", reasoning_effort="high"),
-            ),
-        )
-    )
-
-    assert result.provider == "droid"
-    assert qwen.requests == []
-    assert droid.requests[0].reasoning_effort == "high"
-    assert "Unknown reasoning_effort 'banana'" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_text_generation_service_skips_provider_unsupported_reasoning_effort(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    registry = AICapabilityRegistry(
-        [
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="droid",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("claude-opus-4-7",),
-            ),
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="grok",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("grok-4",),
-            ),
-        ]
-    )
-    droid = RecordingAdapter("droid")
-    grok = RecordingAdapter("grok")
-    service = TextGenerationService(registry, {"droid": droid, "grok": grok})
-    caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
-
-    result = await service.generate_result(
-        TextGenerationRequest(
-            prompt="summarize",
-            candidates=(
-                FeatureCandidateConfig(
-                    candidate="droid/claude-opus-4-7",
-                    reasoning_effort="xhigh",
-                ),
-                FeatureCandidateConfig(candidate="grok/grok-4", reasoning_effort="high"),
-            ),
-        )
-    )
-
-    assert result.provider == "grok"
-    assert droid.requests == []
-    assert grok.requests[0].reasoning_effort == "high"
-    assert "Unsupported reasoning_effort 'xhigh' for provider 'droid'" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_text_generation_service_raises_last_reasoning_effort_error_when_all_reject() -> None:
-    registry = AICapabilityRegistry(
-        [
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="qwen",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("qwen-model",),
-            ),
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="grok",
-                adapter_style=AIAdapterStyle.CLI,
-                available=True,
-                models=("grok-model",),
-            ),
-        ]
-    )
-    qwen = RecordingAdapter("qwen")
-    grok = RecordingAdapter("grok")
-    service = TextGenerationService(registry, {"qwen": qwen, "grok": grok})
-
-    with pytest.raises(ValueError, match="Unknown reasoning_effort 'kumquat'"):
-        await service.generate_result(
-            TextGenerationRequest(
-                prompt="summarize",
-                candidates=(
-                    FeatureCandidateConfig(
-                        candidate="qwen/qwen-model",
-                        reasoning_effort="banana",
-                    ),
-                    FeatureCandidateConfig(
-                        candidate="grok/grok-model",
-                        reasoning_effort="kumquat",
-                    ),
-                ),
-            )
-        )
-
-    assert qwen.requests == []
-    assert grok.requests == []
+    assert result.provider == "qwen"
+    assert qwen.requests[0].reasoning_effort is None
 
 
 def test_coerce_text_result_applies_reasoning_effort_to_raw_string() -> None:

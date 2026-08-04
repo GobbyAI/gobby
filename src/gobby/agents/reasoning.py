@@ -2,29 +2,44 @@
 
 from __future__ import annotations
 
-import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
-from gobby.agents.provider_capabilities import (
-    provider_reasoning_efforts,
-    provider_supports_terminal_reasoning,
+from gobby.agents.provider_capabilities import provider_supports_terminal_reasoning
+from gobby.providers.capabilities.resolve import (
+    CapabilityResolver,
+)
+from gobby.providers.capabilities.resolve import (
+    ReasoningStatus as CapabilityReasoningStatus,
 )
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
-    from gobby.servers.provider_models import ProviderModelCatalog
 
 AUTO_REASONING_EFFORT = "auto"
 ReasoningStatus = Literal[
     "not_requested",
     "applied",
+    "unverified",
     "unsupported_provider",
     "unsupported_model",
 ]
 
-_fallback_catalog: ProviderModelCatalog | None = None
-_fallback_catalog_lock = threading.Lock()
+
+class _UnavailableCapabilityService:
+    def get_provider_snapshot(self, provider: str) -> None:
+        return None
+
+
+class _UnavailableModelMetadataStore:
+    def get_context_window(self, model: str) -> None:
+        return None
+
+
+_fallback_resolver = CapabilityResolver(
+    _UnavailableCapabilityService(),
+    _UnavailableModelMetadataStore(),
+)
 
 
 def normalize_reasoning_effort(value: str | None) -> str | None:
@@ -35,13 +50,6 @@ def normalize_reasoning_effort(value: str | None) -> str | None:
     if not normalized or normalized == AUTO_REASONING_EFFORT:
         return None
     return normalized
-
-
-def _normalize_identifier(value: str | None) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip().lower()
-    return normalized or None
 
 
 @dataclass(frozen=True)
@@ -64,88 +72,12 @@ class SpawnReasoningResolution:
         }
 
 
-def _get_provider_model_catalog() -> ProviderModelCatalog:
+def _get_capability_resolver() -> CapabilityResolver:
     from gobby.app_context import get_app_context
 
-    global _fallback_catalog
-
     ctx = get_app_context()
-    catalog = getattr(ctx, "provider_model_catalog", None) if ctx else None
-    if catalog is None:
-        with _fallback_catalog_lock:
-            if _fallback_catalog is None:
-                _fallback_catalog = _new_fallback_catalog()
-            catalog = _fallback_catalog
-    return catalog
-
-
-def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
-    catalog = _get_provider_model_catalog()
-    snapshot = catalog.get_provider_snapshot(provider)
-    models = snapshot.get("models")
-    return list(models) if isinstance(models, list) else []
-
-
-def _new_fallback_catalog() -> ProviderModelCatalog:
-    """Instantiate the provider catalog."""
-    from gobby.servers.provider_models import ProviderModelCatalog
-
-    return ProviderModelCatalog()
-
-
-def _select_model_entries(
-    models: list[dict[str, Any]],
-    requested_model: str | None,
-) -> list[dict[str, Any]]:
-    normalized_requested = _normalize_identifier(requested_model)
-    if normalized_requested is None:
-        return models
-
-    matched = []
-    for model in models:
-        candidates = {
-            _normalize_identifier(str(model.get("value") or "")),
-            _normalize_identifier(str(model.get("canonical_id") or "")),
-        }
-        if normalized_requested in candidates:
-            matched.append(model)
-    return matched
-
-
-def _supported_efforts(models: list[dict[str, Any]], provider: str) -> set[str]:
-    supported: set[str] = set()
-    for model in models:
-        reasoning = model.get("reasoning")
-        if not isinstance(reasoning, dict):
-            continue
-        efforts = reasoning.get("supported_efforts")
-        if not isinstance(efforts, list):
-            continue
-        supported.update(
-            normalized
-            for value in efforts
-            if isinstance(value, str)
-            if (normalized := normalize_reasoning_effort(value)) is not None
-        )
-    if supported:
-        return supported
-    return set(provider_reasoning_efforts(provider))
-
-
-def _is_codex_responses_endpoint(
-    provider: str,
-    model: str | None,
-    daemon_config: DaemonConfig | None,
-) -> bool:
-    if provider != "codex" or daemon_config is None:
-        return False
-    from gobby.ai.endpoints import resolve_generation_endpoint_selector
-
-    try:
-        selection = resolve_generation_endpoint_selector(daemon_config, model)
-    except ValueError:
-        return False
-    return selection is not None and selection.endpoint.wire_api == "responses"
+    resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
+    return cast(CapabilityResolver, resolver) if resolver is not None else _fallback_resolver
 
 
 def resolve_spawn_reasoning(
@@ -167,64 +99,41 @@ def resolve_spawn_reasoning(
         )
 
     required = bool(reasoning_required)
-    capability = _get_provider_model_catalog().capability_for(provider, model) if model else None
-    if capability is not None:
-        supported_efforts = {
-            normalized
-            for effort in capability.supported_reasoning_efforts
-            if (normalized := normalize_reasoning_effort(effort)) is not None
-        }
-    else:
-        models = (
-            []
-            if _is_codex_responses_endpoint(provider, model, daemon_config)
-            else _get_provider_models(provider, daemon_config)
+    transport_supports_effort = provider_supports_terminal_reasoning(provider)
+    resolution = _get_capability_resolver().resolve_reasoning(
+        provider,
+        model or "",
+        normalized_request,
+        transport_supports_effort=transport_supports_effort,
+    )
+    if resolution.status is CapabilityReasoningStatus.REJECTED:
+        status: ReasoningStatus = (
+            "unsupported_model" if transport_supports_effort else "unsupported_provider"
         )
-        matched_models = _select_model_entries(models, model)
-
-        if model and models and not matched_models:
-            return SpawnReasoningResolution(
-                requested_effort=normalized_request,
-                effective_effort=None,
-                reasoning_required=required,
-                status="unsupported_model",
-                message=(
-                    f"Requested reasoning '{normalized_request}' was not applied because "
-                    f"model '{model}' is not in the {provider} startup catalog."
-                ),
-            )
-
-        supported_efforts = _supported_efforts(matched_models or models, provider)
-
-    if normalized_request not in supported_efforts:
-        model_label = f" model '{model}'" if model else ""
-        supported_label = ", ".join(sorted(supported_efforts)) or "none"
-        return SpawnReasoningResolution(
-            requested_effort=normalized_request,
-            effective_effort=None,
-            reasoning_required=required,
-            status="unsupported_model",
-            message=(
-                f"Requested reasoning '{normalized_request}' is not supported for "
-                f"{provider}{model_label}. Supported efforts: {supported_label}."
-            ),
-        )
-
-    if not provider_supports_terminal_reasoning(provider):
-        return SpawnReasoningResolution(
-            requested_effort=normalized_request,
-            effective_effort=None,
-            reasoning_required=required,
-            status="unsupported_provider",
-            message=(
+        if not transport_supports_effort:
+            message = (
                 f"Requested reasoning '{normalized_request}' was not applied because "
                 f"spawned-terminal reasoning is not wired for provider '{provider}'."
-            ),
+            )
+        else:
+            model_label = f" model '{model}'" if model else ""
+            message = (
+                f"Requested reasoning '{normalized_request}' is not supported for "
+                f"{provider}{model_label}: {resolution.reason}."
+            )
+        return SpawnReasoningResolution(
+            requested_effort=normalized_request,
+            effective_effort=None,
+            reasoning_required=required,
+            status=status,
+            message=message,
         )
 
     return SpawnReasoningResolution(
         requested_effort=normalized_request,
-        effective_effort=normalized_request,
+        effective_effort=resolution.effective_effort,
         reasoning_required=required,
-        status="applied",
+        status=(
+            "unverified" if resolution.status is CapabilityReasoningStatus.UNVERIFIED else "applied"
+        ),
     )

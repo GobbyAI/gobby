@@ -1,17 +1,65 @@
-from typing import cast
+from unittest.mock import Mock
 
 import pytest
 
 import gobby.agents.reasoning as reasoning
-from gobby.agents.reasoning import (
-    normalize_reasoning_effort,
-    resolve_spawn_reasoning,
+from gobby.agents.reasoning import normalize_reasoning_effort, resolve_spawn_reasoning
+from gobby.providers.capabilities.models import (
+    ModelCapability,
+    ProviderSnapshot,
+    ReasoningSupport,
 )
-from gobby.config.ai import GenerationEndpointConfig
-from gobby.config.app import DaemonConfig
-from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
+from gobby.providers.capabilities.resolve import (
+    CapabilityResolver,
+    ReasoningResolution,
+    ReasoningStatus,
+)
 
 pytestmark = pytest.mark.unit
+
+
+class _Store:
+    def __init__(self, snapshot: ProviderSnapshot | None) -> None:
+        self.snapshot = snapshot
+
+    def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
+        if self.snapshot is None or self.snapshot.provider != provider:
+            return None
+        return self.snapshot
+
+
+class _MetadataStore:
+    def get_context_window(self, model: str) -> None:
+        return None
+
+
+def _resolver(
+    provider: str,
+    model: str,
+    *,
+    support: ReasoningSupport = ReasoningSupport.KNOWN,
+    efforts: tuple[str, ...] | None = ("low", "medium", "high"),
+) -> CapabilityResolver:
+    capability = ModelCapability(
+        canonical_model=model,
+        display_name=model,
+        aliases=(),
+        available=True,
+        hidden=False,
+        is_default=True,
+        context_length=None,
+        max_output_tokens=None,
+        reasoning=support,
+        supported_efforts=efforts,
+        default_effort=None,
+        latency_class=None,
+        input_modalities=None,
+        supports_tools=None,
+        routes=(),
+        provenance={},
+    )
+    snapshot = ProviderSnapshot(provider=provider, generation=1, models=(capability,), sources=())
+    return CapabilityResolver(_Store(snapshot), _MetadataStore())
 
 
 def test_normalize_reasoning_effort_treats_auto_as_unset() -> None:
@@ -21,144 +69,78 @@ def test_normalize_reasoning_effort_treats_auto_as_unset() -> None:
     assert normalize_reasoning_effort("High") == "high"
 
 
-def test_resolve_spawn_reasoning_applies_supported_claude_effort(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_unknown_model_passes_through_unverified(monkeypatch: pytest.MonkeyPatch) -> None:
+    resolver = Mock(spec=CapabilityResolver)
+    resolver.resolve_reasoning.return_value = ReasoningResolution(
+        requested_effort="high",
+        effective_effort="high",
+        status=ReasoningStatus.UNVERIFIED,
+        reason=None,
+    )
+    monkeypatch.setattr(reasoning, "_get_capability_resolver", lambda: resolver)
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="future-claude-model",
+        requested_effort="high",
+        reasoning_required=True,
+    )
+
+    assert result.status == "unverified"
+    assert result.effective_effort == "high"
+    assert result.reasoning_required is True
+    resolver.resolve_reasoning.assert_called_once_with(
+        "claude",
+        "future-claude-model",
+        "high",
+        transport_supports_effort=True,
+    )
+
+
+def test_supported_model_effort_is_applied(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "gobby.agents.reasoning._get_provider_models",
-        lambda provider, daemon_config: [
-            {
-                "value": "claude-sonnet-4",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            }
-        ],
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("claude", "claude-sonnet-5"),
     )
 
     result = resolve_spawn_reasoning(
         provider="claude",
-        model="claude-sonnet-4",
+        model="claude-sonnet-5",
         requested_effort="high",
         reasoning_required=False,
     )
 
     assert result.status == "applied"
-    assert result.requested_effort == "high"
     assert result.effective_effort == "high"
-    assert result.message is None
 
 
-def test_resolve_spawn_reasoning_rejects_unsupported_model_effort(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_unsupported_model_effort_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "gobby.agents.reasoning._get_provider_models",
-        lambda provider, daemon_config: [
-            {
-                "value": "claude-sonnet-4",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            }
-        ],
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("claude", "claude-sonnet-5"),
     )
 
     result = resolve_spawn_reasoning(
         provider="claude",
-        model="claude-sonnet-4",
+        model="claude-sonnet-5",
         requested_effort="xhigh",
         reasoning_required=True,
     )
 
     assert result.status == "unsupported_model"
-    assert result.requested_effort == "xhigh"
     assert result.effective_effort is None
     assert result.reasoning_required is True
-    assert result.message is not None
 
 
-def test_resolve_spawn_reasoning_applies_claude_opus_xhigh(
+def test_transport_without_reasoning_flag_is_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "gobby.agents.reasoning._get_provider_models",
-        lambda provider, daemon_config: [
-            {
-                "value": "opus",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            }
-        ],
-    )
-
-    result = resolve_spawn_reasoning(
-        provider="claude",
-        model="opus",
-        requested_effort="xhigh",
-        reasoning_required=True,
-    )
-
-    assert result.status == "applied"
-    assert result.effective_effort == "xhigh"
-    assert result.reasoning_required is True
-    assert result.message is None
-
-
-def test_resolve_spawn_reasoning_applies_codex_gpt_56_sol_xhigh(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "gobby.agents.reasoning._get_provider_models",
-        lambda provider, daemon_config: [
-            {
-                "value": "gpt-5.6-sol",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            }
-        ],
-    )
-
-    result = resolve_spawn_reasoning(
-        provider="codex",
-        model="gpt-5.6-sol",
-        requested_effort="xhigh",
-        reasoning_required=True,
-    )
-
-    assert result.status == "applied"
-    assert result.effective_effort == "xhigh"
-    assert result.reasoning_required is True
-    assert result.message is None
-
-
-def test_resolve_spawn_reasoning_applies_high_to_codex_responses_endpoint() -> None:
-    config = DaemonConfig()
-    config.ai.generation.endpoints["openrouter"] = GenerationEndpointConfig(
-        api_base="https://openrouter.ai/api/v1",
-        model="moonshotai/kimi-k3",
-        wire_api="responses",
-    )
-
-    result = resolve_spawn_reasoning(
-        provider="codex",
-        model="endpoint:openrouter/moonshotai/kimi-k3",
-        requested_effort="high",
-        reasoning_required=True,
-        daemon_config=config,
-    )
-
-    assert result.status == "applied"
-    assert result.effective_effort == "high"
-    assert result.reasoning_required is True
-    assert result.message is None
-
-
-def test_resolve_spawn_reasoning_rejects_qwen_terminal_reasoning(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "gobby.agents.reasoning._get_provider_models",
-        lambda provider, daemon_config: [
-            {
-                "value": "qwen3-coder",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            }
-        ],
+        reasoning,
+        "_get_capability_resolver",
+        lambda: _resolver("qwen", "qwen3-coder"),
     )
 
     result = resolve_spawn_reasoning(
@@ -169,163 +151,17 @@ def test_resolve_spawn_reasoning_rejects_qwen_terminal_reasoning(
     )
 
     assert result.status == "unsupported_provider"
-    assert result.requested_effort == "high"
     assert result.effective_effort is None
-    assert result.message == (
-        "Requested reasoning 'high' was not applied because spawned-terminal reasoning "
-        "is not wired for provider 'qwen'."
-    )
 
 
-def test_resolve_spawn_reasoning_applies_droid_high() -> None:
+def test_absent_reasoning_request_skips_resolution() -> None:
     result = resolve_spawn_reasoning(
         provider="droid",
-        model=None,
-        requested_effort="high",
+        model="gpt-5.4",
+        requested_effort="auto",
         reasoning_required=True,
     )
 
-    assert result.status == "applied"
-    assert result.requested_effort == "high"
-    assert result.effective_effort == "high"
-    assert result.reasoning_required is True
-    assert result.message is None
-
-
-def test_resolve_spawn_reasoning_applies_required_droid_glm_52_max(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        reasoning,
-        "_get_provider_models",
-        lambda provider, daemon_config: DROID_MODEL_CATALOG,
-    )
-
-    result = resolve_spawn_reasoning(
-        provider="droid",
-        model="glm-5.2",
-        requested_effort="max",
-        reasoning_required=True,
-    )
-
-    assert result.status == "applied"
-    assert result.requested_effort == "max"
-    assert result.effective_effort == "max"
-    assert result.reasoning_required is True
-    assert result.message is None
-
-
-def test_get_provider_models_reuses_fallback_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    created_for: list[object | None] = []
-
-    class FakeCatalog:
-        def __init__(self) -> None:
-            created_for.append(None)
-
-        def get_provider_snapshot(self, provider: str) -> dict[str, object]:
-            return {"models": [{"value": f"{provider}-sonnet"}]}
-
-    monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    first = reasoning._get_provider_models("claude", None)
-    second = reasoning._get_provider_models("claude", None)
-
-    assert first == second == [{"value": "claude-sonnet"}]
-    assert created_for == [None]
-
-
-def test_new_fallback_catalog_uses_no_arg_constructor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    created_for: list[DaemonConfig | None] = []
-
-    class FakeCatalog:
-        def __init__(self) -> None:
-            created_for.append(None)
-
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    catalog = cast(FakeCatalog, reasoning._new_fallback_catalog())
-    assert catalog.__class__ is FakeCatalog
-    assert created_for == [None]
-
-
-def test_new_fallback_catalog_supports_no_arg_constructor(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    created = 0
-
-    class FakeCatalog:
-        def __init__(self) -> None:
-            nonlocal created
-            created += 1
-
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    catalog = cast(FakeCatalog, reasoning._new_fallback_catalog())
-    assert catalog.__class__ is FakeCatalog
-    assert created == 1
-
-
-def test_new_fallback_catalog_chains_last_constructor_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FakeCatalog:
-        def __init__(self, *args: object, **kwargs: object) -> None:
-            raise TypeError("constructor failed")
-
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    with pytest.raises(TypeError, match="constructor failed"):
-        reasoning._new_fallback_catalog()
-
-
-def test_get_provider_models_reuses_fallback_catalog_for_equal_config(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_a = DaemonConfig()
-    config_b = DaemonConfig()
-    created_for: list[DaemonConfig | None] = []
-
-    class FakeCatalog:
-        def __init__(self) -> None:
-            created_for.append(None)
-
-        def get_provider_snapshot(self, provider: str) -> dict[str, object]:
-            return {"models": [{"value": provider}]}
-
-    monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    reasoning._get_provider_models("claude", config_a)
-    reasoning._get_provider_models("claude", config_b)
-
-    assert config_a == config_b
-    assert created_for == [None]
-
-
-def test_get_provider_models_reuses_fallback_catalog_on_config_change(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    config_a = DaemonConfig(daemon_port=60887)
-    config_b = DaemonConfig(daemon_port=60888)
-    created_for: list[DaemonConfig | None] = []
-
-    class FakeCatalog:
-        def __init__(self) -> None:
-            created_for.append(None)
-
-        def get_provider_snapshot(self, provider: str) -> dict[str, object]:
-            return {"models": [{"value": provider}]}
-
-    monkeypatch.setattr(reasoning, "_fallback_catalog", None)
-    monkeypatch.setattr("gobby.app_context.get_app_context", lambda: None)
-    monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
-
-    reasoning._get_provider_models("claude", config_a)
-    reasoning._get_provider_models("claude", config_b)
-
-    assert created_for == [None]
+    assert result.status == "not_requested"
+    assert result.effective_effort is None
+    assert result.reasoning_required is False

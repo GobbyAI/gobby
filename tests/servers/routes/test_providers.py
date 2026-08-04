@@ -12,9 +12,10 @@ from fastapi.testclient import TestClient
 
 from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
+from gobby.providers.capabilities.models import ModelCapability
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
-from gobby.servers.provider_model_defaults import AGY_MODELS, DROID_MODEL_CATALOG
+from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.routes.providers import _configured_endpoints, create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -23,6 +24,40 @@ pytestmark = pytest.mark.unit
 def _server_stub(**services: object) -> HTTPServer:
     services.setdefault("config", DaemonConfig())
     return cast(HTTPServer, SimpleNamespace(services=SimpleNamespace(**services)))
+
+
+def _model(
+    value: str,
+    *,
+    label: str | None = None,
+    hidden: bool = False,
+    is_default: bool = False,
+    context_length: int | None = None,
+    supported_efforts: tuple[str, ...] | None = None,
+    default_effort: str | None = None,
+    input_modalities: tuple[str, ...] | None = None,
+) -> ModelCapability:
+    return cast(
+        ModelCapability,
+        SimpleNamespace(
+            canonical_model=value,
+            display_name=label or value,
+            hidden=hidden,
+            is_default=is_default,
+            context_length=context_length,
+            supported_efforts=supported_efforts,
+            default_effort=default_effort,
+            input_modalities=input_modalities,
+        ),
+    )
+
+
+def _capability_service(**snapshots: tuple[ModelCapability, ...]) -> MagicMock:
+    service = MagicMock()
+    service.get_provider_snapshot.side_effect = lambda provider: (
+        SimpleNamespace(models=snapshots[provider]) if provider in snapshots else None
+    )
+    return service
 
 
 @pytest.fixture
@@ -186,34 +221,6 @@ class TestProviderModelsRoute:
             "droid",
             "agy",
         }
-        # Claude should expose explicit shorthand choices.
-        claude_values = [m["value"] for m in providers["claude"]["models"]]
-        assert claude_values == ["fable", "opus", "sonnet", "haiku"]
-        assert providers["claude"]["models"][0]["reasoning"] == {
-            "supported_efforts": ["low", "medium", "high", "xhigh", "max"]
-        }
-        claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
-        assert claude_by_id["fable"]["context_length"] is None
-        assert claude_by_id["fable"]["context_length_source"] == "unknown"
-        assert claude_by_id["sonnet"]["context_length"] is None
-
-        # Qwen intentionally owns its provider slot even before a static model catalog exists
-        qwen = providers["qwen"]["models"]
-        assert qwen == []
-
-        grok = providers["grok"]["models"]
-        assert [m["value"] for m in grok] == ["grok-composer-2.5-fast", "grok-build"]
-        assert grok[0]["context_length"] == 200_000
-        assert grok[0]["is_default"] is True
-        assert grok[0]["reasoning"]["supported_efforts"] == [
-            "low",
-            "medium",
-            "high",
-            "xhigh",
-            "max",
-        ]
-        assert grok[1]["context_length"] == 512_000
-
         agy_models = providers["agy"]["models"]
         assert [model["value"] for model in agy_models] == list(AGY_MODELS)
         assert providers["agy"]["source"] == "static"
@@ -238,62 +245,9 @@ class TestProviderModelsRoute:
             "default_effort": "high",
         }
         assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
-
-        # Codex should expose the hardcoded web-chat defaults, not a placeholder
-        codex = providers["codex"]["models"]
-        assert [m["value"] for m in codex] == [
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex",
-            "gpt-5.3-codex-spark",
-            "gpt-5.2",
-        ]
-        assert [m["label"] for m in codex] == [
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "codex-5.4",
-            "mini-5.4",
-            "codex-5.3",
-            "spark-5.3",
-            "gpt-5.2",
-        ]
-        assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
-        assert [m["context_length"] for m in codex] == [None] * 8
-        assert {m["context_length_source"] for m in codex} == {"unknown"}
-
-        droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert len(droid_values) == len(DROID_MODEL_CATALOG)
-        assert "glm-5.2" in droid_values
-        assert "claude-fable-5" in droid_values
-        assert "claude-opus-4-7" in droid_values
-        assert "gpt-5.4" in droid_values
-        assert "gemini-3.5-flash" in droid_values
-        assert "gemini-3-flash-preview" in droid_values
-        assert "minimax-m2.7" in droid_values
-        droid_by_id = {m["value"]: m for m in providers["droid"]["models"]}
-        assert droid_by_id["claude-fable-5"]["label"] == "Claude Fable 5"
-        assert droid_by_id["claude-fable-5"]["context_length"] == 1_000_000
-        assert droid_by_id["claude-fable-5"]["reasoning"] == {
-            "supported_efforts": ["off", "low", "medium", "high", "xhigh", "max"],
-            "default_effort": "high",
-        }
-        assert droid_by_id["claude-opus-4-7"]["context_length"] == 1_000_000
-        assert droid_by_id["claude-sonnet-4-6"]["context_length"] == 200_000
-        assert droid_by_id["gpt-5.4"]["context_length"] == 200_000
-        assert droid_by_id["gemini-3.5-flash"]["label"] == "Gemini 3.5 Flash"
-        assert droid_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
-        assert droid_by_id["gemini-3.5-flash"]["reasoning"] == {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
-            "default_effort": "medium",
-        }
-
-        # Each entry should have source field
-        for p in data["providers"]:
-            assert p["source"] == "static"
+        for provider in ("claude", "codex", "droid", "grok", "qwen"):
+            assert providers[provider]["models"] == []
+            assert providers[provider]["source"] == "pending"
 
     def test_availability_reflects_binary_presence(self, client: TestClient) -> None:
         """Provider availability matches shutil.which results."""
@@ -368,7 +322,7 @@ class TestProviderModelsRoute:
         assert providers["endpoint:studio"]["available"] is False
         assert providers["endpoint:studio"]["unavailable_reason"] == "codex failed"
 
-    def test_models_route_keeps_lazy_acp_models_available_after_warmup_failure(self) -> None:
+    def test_models_route_keeps_lazy_acp_provider_available_after_warmup_failure(self) -> None:
         app = FastAPI()
         runtime_manager = MagicMock()
         runtime_manager.health.side_effect = lambda provider: SimpleNamespace(
@@ -392,22 +346,19 @@ class TestProviderModelsRoute:
         assert (
             providers["grok"]["startup_error"] == "Timed out starting Grok ACP backend after 15.0s"
         )
-        assert providers["grok"]["models"]
+        assert providers["grok"]["models"] == []
+        assert providers["grok"]["source"] == "pending"
 
-    def test_models_route_prefers_provider_model_catalog_when_available(self) -> None:
+    def test_models_route_uses_provider_capability_snapshots_when_available(self) -> None:
         app = FastAPI()
-        provider_model_catalog = MagicMock()
-        provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
-            "source": "live",
-            "models": (
-                [
-                    {"value": "gpt-5.4", "label": "gpt-5.4"},
-                ]
-                if provider == "codex"
-                else [{"value": f"{provider}-model", "label": f"{provider}-label"}]
-            ),
-        }
-        server = _server_stub(provider_model_catalog=provider_model_catalog)
+        service = _capability_service(
+            claude=(_model("claude-model", label="claude-label"),),
+            codex=(_model("gpt-5.4"),),
+            droid=(_model("droid-model", label="droid-label"),),
+            grok=(_model("grok-model", label="grok-label"),),
+            qwen=(_model("qwen-model", label="qwen-label"),),
+        )
+        server = _server_stub(provider_capability_service=service)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -427,18 +378,24 @@ class TestProviderModelsRoute:
         assert providers["droid"]["models"][0]["value"] == "droid-model"
         assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
         assert providers["agy"]["source"] == "static"
-        assert providers["codex"]["source"] == "live"
+        assert providers["codex"]["source"] == "provider_matrix"
 
-    def test_models_route_merges_live_droid_gemini_family_models_with_static_metadata(
+    def test_models_route_serializes_droid_capability_snapshot(
         self,
     ) -> None:
         app = FastAPI()
-        provider_model_catalog = MagicMock()
-        provider_model_catalog.get_provider_snapshot.side_effect = lambda provider: {
-            "source": "live",
-            "models": [{"value": "gemini-3.5-flash"}] if provider == "droid" else [],
-        }
-        server = _server_stub(provider_model_catalog=provider_model_catalog)
+        service = _capability_service(
+            droid=(
+                _model(
+                    "gemini-3.5-flash",
+                    label="Gemini 3.5 Flash",
+                    context_length=1_048_576,
+                    supported_efforts=("minimal", "low", "medium", "high"),
+                    default_effort="medium",
+                ),
+            )
+        )
+        server = _server_stub(provider_capability_service=service)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -446,7 +403,7 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         droid = providers["droid"]["models"]
-        assert providers["droid"]["source"] == "live"
+        assert providers["droid"]["source"] == "provider_matrix"
         assert droid[0]["value"] == "gemini-3.5-flash"
         assert droid[0]["label"] == "Gemini 3.5 Flash"
         assert droid[0]["context_length"] == 1_048_576
@@ -455,25 +412,17 @@ class TestProviderModelsRoute:
             "default_effort": "medium",
         }
 
-    def test_models_route_falls_back_to_static_droid_when_catalog_empty(self) -> None:
+    def test_models_route_has_no_static_droid_fallback(self) -> None:
         app = FastAPI()
-        provider_model_catalog = MagicMock()
-        provider_model_catalog.get_provider_snapshot.side_effect = lambda _provider: {
-            "source": "failed",
-            "models": [],
-        }
-        server = _server_stub(provider_model_catalog=provider_model_catalog)
+        server = _server_stub(provider_capability_service=_capability_service())
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
         response = client.get("/api/providers/models")
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
-        assert providers["droid"]["source"] == "static"
-        droid_values = [m["value"] for m in providers["droid"]["models"]]
-        assert "gemini-3.5-flash" in droid_values
-        assert "gemini-3.1-pro-preview" in droid_values
-        assert "gemini-3-flash-preview" in droid_values
+        assert providers["droid"]["source"] == "pending"
+        assert providers["droid"]["models"] == []
 
     def test_responses_endpoint_is_grouped_under_codex_with_capabilities(self) -> None:
         app = FastAPI()
@@ -803,8 +752,7 @@ class TestProviderModelsRoute:
         assert providers["endpoint:studio-east"]["display_name"] == "LM Studio (studio-east)"
         assert providers["endpoint:studio-west"]["display_name"] == "LM Studio (studio-west)"
 
-    def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:
-        """Provider model lists come from the catalog without daemon provider config."""
+    def test_missing_capability_service_returns_pending_empty_models(self) -> None:
         app = FastAPI()
         config = DaemonConfig()
         server = _server_stub(config=config)
@@ -815,70 +763,9 @@ class TestProviderModelsRoute:
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
         assert set(providers) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
-        assert providers["droid"]["source"] == "static"
-        assert providers["codex"]["source"] == "static"
-        assert [m["value"] for m in providers["claude"]["models"]] == [
-            "fable",
-            "opus",
-            "sonnet",
-            "haiku",
-        ]
-        assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "gpt-5.4",
-            "gpt-5.4-mini",
-            "gpt-5.3-codex",
-            "gpt-5.3-codex-spark",
-            "gpt-5.2",
-        ]
-        assert [m["label"] for m in providers["codex"]["models"]] == [
-            "gpt-5.6-sol",
-            "gpt-5.6-terra",
-            "gpt-5.6-luna",
-            "codex-5.4",
-            "mini-5.4",
-            "codex-5.3",
-            "spark-5.3",
-            "gpt-5.2",
-        ]
-
-    def test_current_catalog_uses_static_codex_models_without_provider_config(self) -> None:
-        """Codex model rows come from provider discovery/static catalog."""
-        app = FastAPI()
-        config = DaemonConfig()
-        server = _server_stub(config=config)
-        app.include_router(create_providers_router(server))
-        client = TestClient(app)
-
-        response = client.get("/api/providers/models")
-        providers = {p["provider"]: p for p in response.json()["providers"]}
-
-        assert providers["codex"]["models"][0]["value"] == "gpt-5.6-sol"
-
-    def test_current_catalog_keeps_gemini_family_models_in_droid_catalog(self) -> None:
-        """Gemini-family models remain as Droid catalog model-family data."""
-        app = FastAPI()
-        config = DaemonConfig()
-        server = _server_stub(config=config)
-        app.include_router(create_providers_router(server))
-        client = TestClient(app)
-
-        response = client.get("/api/providers/models")
-        providers = {p["provider"]: p for p in response.json()["providers"]}
-
-        droid_by_id = {m["value"]: m for m in providers["droid"]["models"]}
-        assert [
-            droid_by_id[value]["label"]
-            for value in (
-                "gemini-3.5-flash",
-                "gemini-3.1-pro-preview",
-                "gemini-3-flash-preview",
-            )
-        ] == ["Gemini 3.5 Flash", "Gemini 3.1 Pro", "Gemini 3 Flash"]
-        assert droid_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
-        assert droid_by_id["gemini-3.5-flash"]["reasoning"]["default_effort"] == "medium"
+        for provider in ("claude", "codex", "droid", "grok", "qwen"):
+            assert providers[provider]["source"] == "pending"
+            assert providers[provider]["models"] == []
 
     def test_filters_hidden_codex_models_from_web_chat_surface(self) -> None:
         """Only the provider-reported hidden flag excludes models from web chat.
@@ -887,24 +774,16 @@ class TestProviderModelsRoute:
         value-based blocklists; see task #17775.
         """
         app = FastAPI()
-        provider_model_catalog = MagicMock()
-
-        def snapshot(provider: str) -> dict[str, object]:
-            if provider != "codex":
-                return {"source": "live", "models": [{"value": f"{provider}-model"}]}
-            return {
-                "source": "live",
-                "models": [
-                    {"value": "gpt-5.6-sol", "label": "gpt-5.6-sol"},
-                    {"value": "gpt-5.4", "label": "gpt-5.4"},
-                    {"value": "gpt-5.2", "label": "gpt-5.2"},
-                    {"value": "gpt-5.1-codex-max", "label": "gpt-5.1-codex-max"},
-                    {"value": "gpt-5.1-codex", "label": "gpt-5.1-codex", "hidden": True},
-                ],
-            }
-
-        provider_model_catalog.get_provider_snapshot.side_effect = snapshot
-        server = _server_stub(provider_model_catalog=provider_model_catalog)
+        service = _capability_service(
+            codex=(
+                _model("gpt-5.6-sol"),
+                _model("gpt-5.4"),
+                _model("gpt-5.2"),
+                _model("gpt-5.1-codex-max"),
+                _model("gpt-5.1-codex", hidden=True),
+            )
+        )
+        server = _server_stub(provider_capability_service=service)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 

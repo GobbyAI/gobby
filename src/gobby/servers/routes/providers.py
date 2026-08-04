@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import shutil
 from collections import Counter
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
@@ -14,103 +13,18 @@ from fastapi import APIRouter
 from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoints import endpoint_provider
-from gobby.llm.context_windows import normalize_model_lookup_id
 from gobby.providers import provider_metadata
+from gobby.providers.capabilities.models import ModelCapability
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
     discover_local_endpoint_model_group,
     local_provider_display_label,
 )
-from gobby.servers.provider_model_capabilities import ProviderModelCapability
-from gobby.servers.provider_models import (
-    AGY_MODEL_CATALOG,
-    DROID_MODEL_CATALOG,
-    with_context_lengths,
-)
-from gobby.servers.provider_models_grok import static_models as grok_static_models
+from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-
-# Static model catalog per provider. Dynamic probing can augment this
-# later without breaking the contract. Entries may be newer than a reviewer's
-# or bot's knowledge cutoff; live discovery is the source of truth, so do not
-# remove models here on the grounds that the name is unrecognized.
-_BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
-    "claude": with_context_lengths(
-        "claude",
-        [
-            {
-                "value": "fable",
-                "label": "Fable",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-            {
-                "value": "opus",
-                "label": "Opus",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-            {
-                "value": "sonnet",
-                "label": "Sonnet",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-            {
-                "value": "haiku",
-                "label": "Haiku",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-        ],
-    ),
-    "grok": grok_static_models(),
-    "qwen": [],
-    "codex": with_context_lengths(
-        "codex",
-        [
-            {
-                "value": "gpt-5.6-sol",
-                "label": "gpt-5.6-sol",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-            {
-                "value": "gpt-5.6-terra",
-                "label": "gpt-5.6-terra",
-            },
-            {
-                "value": "gpt-5.6-luna",
-                "label": "gpt-5.6-luna",
-            },
-            {
-                "value": "gpt-5.4",
-                "label": "codex-5.4",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-            {
-                "value": "gpt-5.4-mini",
-                "label": "mini-5.4",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-            {
-                "value": "gpt-5.3-codex",
-                "label": "codex-5.3",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-            {
-                "value": "gpt-5.3-codex-spark",
-                "label": "spark-5.3",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-            {
-                "value": "gpt-5.2",
-                "label": "gpt-5.2",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
-        ],
-    ),
-    "droid": DROID_MODEL_CATALOG,
-    "agy": AGY_MODEL_CATALOG,
-}
 
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
 _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
@@ -122,73 +36,47 @@ _CODEX_REQUIRED_REASON = "Codex CLI is required to run local models in web chat"
 _CODEX_UNHEALTHY_REASON = "Codex runtime is unavailable"
 
 
-def _merge_static_model_metadata(
-    models: list[dict[str, Any]],
-    static_models: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    static_by_value = {
-        str(model.get("value") or "").strip(): model
-        for model in static_models
-        if str(model.get("value") or "").strip()
+def _legacy_model_entry(model: ModelCapability) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "value": model.canonical_model,
+        "canonical_id": model.canonical_model,
+        "label": model.display_name,
+        "hidden": model.hidden,
+        "is_default": model.is_default,
+        "context_length": model.context_length,
+        "context_length_source": (
+            "provider_catalog" if model.context_length is not None else "unknown"
+        ),
     }
-    merged: list[dict[str, Any]] = []
-    for model in models:
-        value = str(model.get("value") or "").strip()
-        entry = copy.deepcopy(model)
-        static_entry = static_by_value.get(value)
-        if static_entry:
-            for key, field_value in static_entry.items():
-                if key not in entry:
-                    entry[key] = copy.deepcopy(field_value)
-        merged.append(entry)
-    return merged
+    if model.supported_efforts is not None:
+        entry["reasoning"] = {
+            "supported_efforts": list(model.supported_efforts),
+            "default_effort": model.default_effort,
+        }
+    if model.input_modalities is not None:
+        entry["input_modalities"] = list(model.input_modalities)
+    return entry
 
 
 def _build_model_catalog(
     server: HTTPServer | None = None,
 ) -> dict[str, tuple[list[dict[str, Any]], str]]:
-    """Return the canonical web-chat provider model catalog.
-
-    Live discovery owns model availability when present; static catalog entries
-    fill in labels, reasoning, context windows, and fallbacks.
-    """
-    provider_model_catalog = getattr(
-        getattr(server, "services", None), "provider_model_catalog", None
-    )
-    if provider_model_catalog is not None:
-        catalog: dict[str, tuple[list[dict[str, Any]], str]] = {}
-        for provider, _binary in _PROVIDER_DEFS:
-            meta = _PROVIDER_META[provider]
-            static_models = _BASE_MODEL_CATALOG.get(provider, [])
-            if not meta.live_model_discovery:
-                source = "static" if static_models else "unsupported"
-                catalog[provider] = ([*static_models], source)
-                continue
-            snapshot = provider_model_catalog.get_provider_snapshot(provider)
-            models = snapshot.get("models", [])
-            source = snapshot.get("source", "failed")
-            if isinstance(models, list) and models:
-                catalog[provider] = (
-                    with_context_lengths(
-                        provider, _merge_static_model_metadata(models, static_models)
-                    ),
-                    source,
-                )
-            elif static_models:
-                catalog[provider] = ([*static_models], "static")
-            else:
-                catalog[provider] = ([], source)
-    else:
-        catalog = {
-            provider: (
-                [*models],
-                "static"
-                if models or _PROVIDER_META[provider].live_model_discovery
-                else "unsupported",
+    """Return the current capability snapshots in the legacy route envelope."""
+    service = getattr(getattr(server, "services", None), "provider_capability_service", None)
+    catalog: dict[str, tuple[list[dict[str, Any]], str]] = {}
+    for provider, _binary in _PROVIDER_DEFS:
+        if provider == "agy":
+            catalog[provider] = (
+                [
+                    {key: value for key, value in model.items() if key != "effort_display"}
+                    for model in AGY_MODELS.values()
+                ],
+                "static",
             )
-            for provider, models in _BASE_MODEL_CATALOG.items()
-        }
-
+            continue
+        snapshot = service.get_provider_snapshot(provider) if service is not None else None
+        models = [_legacy_model_entry(model) for model in snapshot.models] if snapshot else []
+        catalog[provider] = (models, "provider_matrix" if snapshot else "pending")
     return catalog
 
 
@@ -288,33 +176,6 @@ def _filter_models_for_web_chat(
     recognize; live discovery is the source of truth.
     """
     return [model for model in models if not bool(model.get("hidden", False))]
-
-
-def _with_model_capabilities(
-    provider: str,
-    models: list[dict[str, Any]],
-    capabilities: Mapping[tuple[str, str], ProviderModelCapability],
-) -> list[dict[str, Any]]:
-    """Add capability-matrix fields to matching provider models."""
-    result: list[dict[str, Any]] = []
-    for model in models:
-        raw_model_id = model.get("canonical_id") or model.get("value")
-        model_id = normalize_model_lookup_id(str(raw_model_id or ""))
-        capability = capabilities.get((provider, model_id))
-        if capability is None:
-            result.append(model)
-            continue
-        serialized = capability.to_dict()
-        result.append(
-            {
-                **model,
-                "supported_reasoning_efforts": serialized["supported_reasoning_efforts"],
-                "context_limit": serialized["context_limit"],
-                "speed_tier": serialized["speed_tier"],
-                "speed_multiplier": serialized["speed_multiplier"],
-            }
-        )
-    return result
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:
@@ -424,19 +285,9 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
 
     @router.get("/models")
     async def list_provider_models() -> dict[str, Any]:
-        """Return available models grouped by provider.
-
-        Merges provider availability with the startup-discovered model catalog.
-        Falls back to the static catalog when no daemon-backed catalog is present.
-        """
+        """Return available models grouped by provider."""
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
-        provider_model_catalog = getattr(
-            getattr(server, "services", None), "provider_model_catalog", None
-        )
-        capabilities = (
-            provider_model_catalog.all_capabilities() if provider_model_catalog is not None else {}
-        )
         local_model_groups = await _local_generation_model_groups(server)
         fallback_entry: tuple[list[dict[str, Any]], str] = (
             [{"value": "default", "label": "Default"}],
@@ -464,7 +315,6 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                 codex_unavailable_reason = startup_error
                 entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
                 entry["execution_provider"] = "codex"
-            entry["models"] = _with_model_capabilities(name, entry["models"], capabilities)
             result.append(entry)
         result.extend(
             _local_generation_provider_entries(

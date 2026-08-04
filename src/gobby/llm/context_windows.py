@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.llm.context_window_values import positive_context_window
+from gobby.providers.capabilities.resolve import (
+    CapabilityResolver,
+    ContextSource,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -100,39 +104,6 @@ def _remember_unknown_context_window(warning_key: str) -> bool:
     _UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER.append(warning_key)
     _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.add(warning_key)
     return True
-
-
-# Droid publishes its own model catalog and limits can differ from OpenRouter or
-# Codex defaults for the same visible IDs.
-_DROID_PROVIDER_CATALOG_CONTEXT_LENGTHS: dict[str, int] = {
-    "claude-opus-4-7": 1_000_000,
-    "claude-opus-4-6": 1_000_000,
-    "claude-opus-4-6-fast": 1_000_000,
-    "claude-opus-4-5": 1_000_000,
-    "claude-sonnet-4-6": 200_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-haiku-4-5": 200_000,
-    "claude-fable-5": 1_000_000,
-    "gpt-5.4": 200_000,
-    "gpt-5.4-fast": 200_000,
-    "gpt-5.4-mini": 200_000,
-    "gpt-5.3-codex": 200_000,
-    "gpt-5.3-codex-fast": 200_000,
-    "gpt-5.3-codex-spark": 200_000,
-    "gpt-5.2": 200_000,
-    "gpt-5.2-codex": 200_000,
-    "gpt-5.1-codex-max": 200_000,
-    "gemini-3.5-flash": 1_048_576,
-    "gemini-3.1-pro-preview": 1_000_000,
-    "gemini-3-flash-preview": 1_000_000,
-    "minimax-m2.7": 204_800,
-    "minimax-m2.5": 204_800,
-    "kimi-k2.6": 262_144,
-    "kimi-k2.5": 262_144,
-    "glm-5.1": 128_000,
-    "glm-5": 128_000,
-    "glm-4.7": 128_000,
-}
 
 
 @dataclass(frozen=True)
@@ -268,11 +239,11 @@ def provider_catalog_context_length_for_model(
     provider: str | None,
     model: str | None,
 ) -> int | None:
-    """Return provider-owned catalog context lengths that beat registry data."""
-    normalized_provider = provider.strip().lower() if isinstance(provider, str) else None
-    if normalized_provider != "droid":
+    """Return a provider-matrix context length when one is available."""
+    if not provider or not model:
         return None
-    return _lookup_context_length(_DROID_PROVIDER_CATALOG_CONTEXT_LENGTHS, provider, model)
+    resolution = _get_capability_resolver().resolve_context(provider, model)
+    return resolution.value if resolution.source is ContextSource.PROVIDER_MATRIX else None
 
 
 def extract_context_length_candidate(
@@ -309,7 +280,6 @@ def resolve_context_window(
     overrides: dict[str, int] | None = None,
     *,
     provider: str | None = None,
-    catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
     db: HubDatabase | None = None,
 ) -> int | None:
@@ -319,7 +289,6 @@ def resolve_context_window(
         provider_metadata,
         overrides,
         provider=provider,
-        catalog=catalog,
         provider_reported_context_window=provider_reported_context_window,
         db=db,
     )
@@ -332,7 +301,6 @@ def reconcile_model_context(
     observed_context_window: Any = None,
     *,
     provider: str | None = None,
-    catalog: Any | None = None,
 ) -> ReconciledModelContext:
     """Reconcile a provider observation with authoritative session model metadata."""
     model = reconcile_observed_model(existing_model, observed_model)
@@ -340,7 +308,6 @@ def reconcile_model_context(
     resolved_window = resolve_context_window(
         model,
         provider=provider,
-        catalog=catalog,
         provider_reported_context_window=reported_window,
     )
     return ReconciledModelContext(
@@ -355,7 +322,6 @@ def resolve_context_window_with_source(
     overrides: dict[str, int] | None = None,
     *,
     provider: str | None = None,
-    catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
     db: HubDatabase | None = None,
 ) -> ResolvedContextWindow | None:
@@ -369,12 +335,12 @@ def resolve_context_window_with_source(
 
     has_one_million_marker = _CONTEXT_WINDOW_MARKER_RE.search(model.strip()) is not None
     model_lower = model.lower()
+    caller_override: int | None = None
     for substr, window in (overrides or {}).items():
         context_window = coerce_context_length(window)
         if substr and context_window is not None and substr.lower() in model_lower:
-            return _apply_context_window_marker_floor(
-                ResolvedContextWindow(context_window, "override"), has_one_million_marker
-            )
+            caller_override = context_window
+            break
 
     reported = coerce_context_length(provider_reported_context_window)
     if reported is None and isinstance(provider_metadata, dict):
@@ -382,38 +348,25 @@ def resolve_context_window_with_source(
             provider_metadata,
             PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS,
         )
-    if reported is not None:
-        return _apply_context_window_marker_floor(
-            ResolvedContextWindow(reported, "provider_reported"), has_one_million_marker
-        )
-
     provider_name = provider.strip().lower() if isinstance(provider, str) else None
-    catalog_fallback: ResolvedContextWindow | None = None
-    catalog_result = _resolve_from_catalog(
-        catalog or _get_provider_model_catalog(),
-        provider_name,
+    resolution = _get_capability_resolver(db).resolve_context(
+        provider_name or "",
         model,
+        caller_override=caller_override,
+        route_override=reported,
     )
-    if catalog_result and catalog_result.source in _AUTHORITATIVE_CATALOG_SOURCES:
-        return _apply_context_window_marker_floor(catalog_result, has_one_million_marker)
-    if catalog_result and catalog_result.source == "registry":
-        catalog_fallback = catalog_result
-
-    provider_catalog_value = provider_catalog_context_length_for_model(provider_name, model)
-    if provider_catalog_value is not None:
+    source_map: dict[ContextSource, ContextWindowSource] = {
+        ContextSource.CALLER_OVERRIDE: "override",
+        ContextSource.ROUTE_OVERRIDE: "provider_reported",
+        ContextSource.PROVIDER_MATRIX: "provider_catalog",
+        ContextSource.OPENROUTER: "registry",
+        ContextSource.UNKNOWN: "unknown",
+    }
+    if resolution.value is not None:
         return _apply_context_window_marker_floor(
-            ResolvedContextWindow(provider_catalog_value, "provider_catalog"),
+            ResolvedContextWindow(resolution.value, source_map[resolution.source]),
             has_one_million_marker,
         )
-
-    registry_value = _registry_context_window(provider_name, model, db)
-    if registry_value is not None:
-        return _apply_context_window_marker_floor(
-            ResolvedContextWindow(registry_value, "registry"), has_one_million_marker
-        )
-
-    if catalog_fallback is not None:
-        return _apply_context_window_marker_floor(catalog_fallback, has_one_million_marker)
 
     warning_key = normalize_model_lookup_id(model)
     if _remember_unknown_context_window(warning_key):
@@ -463,43 +416,6 @@ def _lookup_context_length(
     return None
 
 
-def _resolve_from_catalog(
-    catalog: Any | None,
-    provider: str | None,
-    model: str,
-) -> ResolvedContextWindow | None:
-    if catalog is None:
-        return None
-
-    if hasattr(catalog, "get_context_window_with_source"):
-        raw = catalog.get_context_window_with_source(provider, model)
-        if isinstance(raw, ResolvedContextWindow):
-            return raw
-        if isinstance(raw, ContextLengthCandidate):
-            return ResolvedContextWindow(raw.value, raw.source)
-        if isinstance(raw, tuple) and len(raw) >= 2:
-            value = coerce_context_length(raw[0])
-            source = valid_context_length_source(raw[1])
-            if value is not None and source is not None:
-                return ResolvedContextWindow(value, source)
-        if isinstance(raw, dict):
-            value = coerce_context_length(raw.get("value") or raw.get("context_window"))
-            source = valid_context_length_source(raw.get("source"))
-            if value is not None and source is not None:
-                return ResolvedContextWindow(value, source)
-        if isinstance(raw, int) and not isinstance(raw, bool):
-            value = coerce_context_length(raw)
-            if value is not None:
-                return ResolvedContextWindow(value, "provider_catalog")
-
-    if hasattr(catalog, "get_context_window"):
-        value = catalog.get_context_window(provider, model)
-        context_window = coerce_context_length(value)
-        if context_window is not None:
-            return ResolvedContextWindow(context_window, "provider_catalog")
-    return None
-
-
 def _coerce_context_length_from_fields(
     values: Mapping[str, Any],
     fields: tuple[str, ...],
@@ -536,21 +452,31 @@ def _registry_lookup_candidates(model: str) -> list[str]:
     return list(dict.fromkeys(candidate for candidate in (model, stripped) if candidate))
 
 
-def _get_provider_model_catalog() -> Any | None:
-    try:
-        from gobby.app_context import get_app_context
+class _UnavailableCapabilityService:
+    def get_provider_snapshot(self, provider: str) -> None:
+        return None
 
-        ctx = get_app_context()
-    except (ImportError, AttributeError):
-        logger.debug("Provider model catalog lookup failed", exc_info=True)
-        return None
-    if not ctx:
-        logger.debug("Provider model catalog unavailable: app context is not initialized")
-        return None
-    catalog = getattr(ctx, "provider_model_catalog", None)
-    if not catalog:
-        logger.debug("Provider model catalog unavailable: context has no catalog")
-    return catalog
+
+class _RegistryMetadataStore:
+    def __init__(self, db: HubDatabase | None) -> None:
+        self._db = db
+
+    def get_context_window(self, model: str) -> int | None:
+        return _registry_context_window(None, model, self._db)
+
+
+def _get_capability_resolver(db: HubDatabase | None = None) -> CapabilityResolver:
+    from gobby.app_context import get_app_context
+
+    ctx = get_app_context()
+    resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
+    if resolver is not None and db is None:
+        return cast(CapabilityResolver, resolver)
+    service = getattr(ctx, "provider_capability_service", None) if ctx else None
+    return CapabilityResolver(
+        service if service is not None else _UnavailableCapabilityService(),
+        _RegistryMetadataStore(db),
+    )
 
 
 __all__ = [

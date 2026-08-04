@@ -2,32 +2,11 @@
 
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 from typing import Any
 
 from gobby.llm.context_windows import CONTEXT_LENGTH_SOURCE_KEY
-
-GROK_STATIC_MODEL_CATALOG: list[dict[str, Any]] = [
-    {
-        "value": "grok-composer-2.5-fast",
-        "label": "Grok Composer 2.5 Fast",
-        "description": "xAI coding model adopted by Cursor",
-        "context_length": 200_000,
-        "context_length_source": "provider_catalog",
-        "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-        "is_default": True,
-    },
-    {
-        "value": "grok-build",
-        "label": "Grok Build",
-        "description": "xAI coding model",
-        "context_length": 512_000,
-        "context_length_source": "provider_catalog",
-        "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-    },
-]
 
 
 def _grok_home() -> Path:
@@ -102,8 +81,3 @@ def models_from_cache(cache_path: Path | None = None) -> list[dict[str, Any]]:
         if entry:
             entries.append(entry)
     return entries
-
-
-def static_models() -> list[dict[str, Any]]:
-    """Return Grok static fallback models."""
-    return copy.deepcopy(GROK_STATIC_MODEL_CATALOG)

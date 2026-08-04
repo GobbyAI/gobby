@@ -483,12 +483,19 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         response_time_ms = (time.perf_counter() - start_time) * 1000
 
         provider_model_status = {}
-        provider_model_catalog = getattr(server.services, "provider_model_catalog", None)
-        if provider_model_catalog is not None:
+        provider_capability_service = getattr(server.services, "provider_capability_service", None)
+        if provider_capability_service is not None:
             try:
-                provider_model_status = provider_model_catalog.status_snapshot()
+                provider_model_status = {
+                    snapshot.provider: {
+                        "generation": snapshot.generation,
+                        "model_count": len(snapshot.models),
+                        "sources": [source.to_dict() for source in snapshot.sources],
+                    }
+                    for snapshot in provider_capability_service.get_all_snapshots()
+                }
             except Exception as e:
-                logger.warning("Failed to get provider model catalog status: %s", e)
+                logger.warning("Failed to get provider capability status: %s", e)
 
         database_status: dict[str, Any] = {}
         db_size_bytes: int | None = None
