@@ -8,12 +8,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import gobby.storage.worktrees as worktrees_module
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 
 pytestmark = pytest.mark.unit
+MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 class TestWorktreeStatus:
@@ -44,6 +46,7 @@ class TestWorktree:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": "sess-xyz",
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -70,6 +73,7 @@ class TestWorktree:
         worktree = Worktree(
             id="wt-123456",
             project_id="proj-abc",
+            machine_id=MACHINE_ID,
             task_id="gt-task123",
             branch_name="feature/test",
             worktree_path="/path/to/worktree",
@@ -203,6 +207,44 @@ class TestLocalWorktreeManagerCreate:
         assert worktree.created_at == worktree.updated_at
 
 
+def test_worktree_uniqueness_is_machine_scoped(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Identical branch and path values can coexist on distinct machines."""
+    machine_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    for machine_id in machine_ids:
+        temp_db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
+            (machine_id, f"host-{machine_id}"),
+        )
+
+    owners = iter(machine_ids)
+    monkeypatch.setattr(worktrees_module, "get_machine_id", lambda: next(owners), raising=False)
+    manager = LocalWorktreeManager(temp_db)
+    created = [
+        manager.create(
+            project_id=sample_project["id"],
+            branch_name="feature/shared-name",
+            worktree_path="/same/path/on/two/machines",
+        )
+        for _ in machine_ids
+    ]
+
+    assert [worktree.machine_id for worktree in created] == machine_ids
+    rows = temp_db.fetchall(
+        """
+        SELECT machine_id
+          FROM worktrees
+         WHERE branch_name = %s
+         ORDER BY machine_id
+        """,
+        ("feature/shared-name",),
+    )
+    assert {str(row["machine_id"]) for row in rows} == set(machine_ids)
+
+
 class TestLocalWorktreeManagerGet:
     """Tests for LocalWorktreeManager.get method."""
 
@@ -229,6 +271,7 @@ class TestLocalWorktreeManagerGet:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": None,
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -278,6 +321,7 @@ class TestLocalWorktreeManagerGetBy:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": "sess-xyz",
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -490,6 +534,7 @@ class TestLocalWorktreeManagerList:
                 "branch_name": "feature/one",
                 "worktree_path": "/path/one",
                 "base_branch": "main",
+                "machine_id": MACHINE_ID,
                 "agent_session_id": None,
                 "status": "active",
                 "created_at": "2025-01-01T00:00:00+00:00",
@@ -503,6 +548,7 @@ class TestLocalWorktreeManagerList:
                 "branch_name": "feature/two",
                 "worktree_path": "/path/two",
                 "base_branch": "main",
+                "machine_id": MACHINE_ID,
                 "agent_session_id": None,
                 "status": "stale",
                 "created_at": "2025-01-01T00:00:00+00:00",
@@ -624,6 +670,7 @@ class TestLocalWorktreeManagerUpdate:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": None,
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -677,6 +724,7 @@ class TestLocalWorktreeManagerUpdate:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": None,
             "status": "stale",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -706,6 +754,7 @@ class TestLocalWorktreeManagerUpdate:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": "sess-new",
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -797,6 +846,7 @@ class TestLocalWorktreeManagerStatusTransitions:
             "branch_name": "feature/test",
             "worktree_path": "/path/to/worktree",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": None,
             "status": "active",
             "created_at": "2025-01-01T00:00:00+00:00",
@@ -1094,6 +1144,7 @@ class TestLocalWorktreeManagerFindStale:
                 "branch_name": "feature/old",
                 "worktree_path": "/path/old",
                 "base_branch": "main",
+                "machine_id": MACHINE_ID,
                 "agent_session_id": None,
                 "status": "active",
                 "created_at": "2024-12-01T00:00:00+00:00",
@@ -1149,6 +1200,7 @@ class TestLocalWorktreeManagerCleanupStale:
                 "branch_name": "feature/old",
                 "worktree_path": "/path/old",
                 "base_branch": "main",
+                "machine_id": MACHINE_ID,
                 "agent_session_id": None,
                 "status": "active",
                 "created_at": "2024-12-01T00:00:00+00:00",
@@ -1178,6 +1230,7 @@ class TestLocalWorktreeManagerCleanupStale:
                 "branch_name": "feature/old",
                 "worktree_path": "/path/old",
                 "base_branch": "main",
+                "machine_id": MACHINE_ID,
                 "agent_session_id": None,
                 "status": "active",
                 "created_at": "2024-12-01T00:00:00+00:00",
@@ -1193,6 +1246,7 @@ class TestLocalWorktreeManagerCleanupStale:
             "branch_name": "feature/old",
             "worktree_path": "/path/old",
             "base_branch": "main",
+            "machine_id": MACHINE_ID,
             "agent_session_id": None,
             "status": "abandoned",
             "created_at": "2024-12-01T00:00:00+00:00",

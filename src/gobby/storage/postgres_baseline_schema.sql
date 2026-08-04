@@ -518,6 +518,7 @@ CREATE UNIQUE INDEX idx_tasks_github_issue_link
 CREATE INDEX idx_tasks_path_cache ON tasks(path_cache);
 
 ALTER TABLE agent_runs
+    ADD COLUMN machine_id UUID NOT NULL REFERENCES machines(id),
     ADD COLUMN parent_session_id UUID NOT NULL REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     ADD COLUMN child_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     ADD COLUMN claimed_session_id UUID REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
@@ -557,6 +558,8 @@ CREATE INDEX idx_agent_runs_parent_session ON agent_runs(parent_session_id);
 CREATE INDEX idx_agent_runs_child_session ON agent_runs(child_session_id);
 
 CREATE INDEX idx_agent_runs_status ON agent_runs(status);
+
+CREATE INDEX idx_agent_runs_machine_status ON agent_runs(machine_id, status);
 
 CREATE INDEX idx_agent_runs_provider ON agent_runs(provider);
 
@@ -1045,6 +1048,7 @@ ON memory_dream_snapshots(run_id);
 CREATE TABLE worktrees (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    machine_id UUID NOT NULL REFERENCES machines(id),
     task_id UUID REFERENCES tasks(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     branch_name TEXT NOT NULL,
     worktree_path TEXT NOT NULL,
@@ -1068,9 +1072,9 @@ CREATE INDEX idx_worktrees_task ON worktrees(task_id);
 
 CREATE INDEX idx_worktrees_session ON worktrees(agent_session_id);
 
-CREATE UNIQUE INDEX idx_worktrees_branch ON worktrees(project_id, branch_name);
+CREATE UNIQUE INDEX idx_worktrees_branch ON worktrees(project_id, branch_name, machine_id);
 
-CREATE UNIQUE INDEX idx_worktrees_path ON worktrees(worktree_path);
+CREATE UNIQUE INDEX idx_worktrees_path ON worktrees(machine_id, worktree_path);
 
 CREATE TABLE merge_resolutions (
     id UUID PRIMARY KEY,
@@ -1192,6 +1196,7 @@ CREATE INDEX idx_skill_files_type ON skill_files(file_type);
 CREATE TABLE clones (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    machine_id UUID NOT NULL REFERENCES machines(id),
     branch_name TEXT NOT NULL,
     clone_path TEXT NOT NULL,
     base_branch TEXT DEFAULT 'main',
@@ -1214,7 +1219,7 @@ CREATE INDEX idx_clones_task ON clones(task_id);
 
 CREATE INDEX idx_clones_session ON clones(agent_session_id);
 
-CREATE UNIQUE INDEX idx_clones_path ON clones(clone_path);
+CREATE UNIQUE INDEX idx_clones_path ON clones(machine_id, clone_path);
 
 CREATE TABLE cron_jobs (
     id UUID PRIMARY KEY,
@@ -1250,6 +1255,7 @@ CREATE INDEX idx_cron_jobs_due ON cron_jobs(project_id, enabled, next_run_at);
 CREATE TABLE cron_runs (
     id UUID PRIMARY KEY,
     cron_job_id UUID NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    machine_id UUID NOT NULL REFERENCES machines(id),
     triggered_at TIMESTAMPTZ NOT NULL,
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,

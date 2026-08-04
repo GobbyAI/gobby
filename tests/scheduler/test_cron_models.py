@@ -205,6 +205,7 @@ def test_cron_run_from_row() -> None:
     row_data = {
         "id": "cr-abc123",
         "cron_job_id": "cj-abc123",
+        "machine_id": "11111111-1111-4111-8111-111111111111",
         "triggered_at": "2026-02-10T12:00:00+00:00",
         "started_at": "2026-02-10T12:00:01+00:00",
         "completed_at": "2026-02-10T12:02:30+00:00",
@@ -218,6 +219,7 @@ def test_cron_run_from_row() -> None:
     row = _make_mock_row(row_data)
     run = CronRun.from_row(row)
     assert run.id == "cr-abc123"
+    assert run.machine_id == "11111111-1111-4111-8111-111111111111"
     assert run.status == "completed"
     assert run.output == "Job completed successfully"
     assert run.agent_run_id == "ar-123"

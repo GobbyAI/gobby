@@ -1,11 +1,11 @@
 header:
   plan_id: m0-shared-datastores-bridge
-  plan_hash: 7b6ead5c67da5b97423a9fbb418188ce2be6c485fa5a8a1603a827411a148fc2
+  plan_hash: 109b56c4ba2a4b06f68c8385fc896543abfa3bf012fa9867e24369e5a6f7028c
   root_task_ref: '19585'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-04T04:15:29Z'
+  generated_at: '2026-08-04T10:29:27Z'
   task_tree_source: db
-  task_tree_source_hash: 7685135b02a56d1c71cf1a3c1b78b4773b10b266a9f7a5adf22d49fc158ffdf0
+  task_tree_source_hash: 4babefff89604ab2150f2e88a50b96a45d969bae7966e59c8bd4f160310acdad
   evidence_summary: []
   evidence: []
 rows:
@@ -255,14 +255,14 @@ rows:
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.1
-  plan_node_hash: b6eb38e87b137cc15402085e12b4a8e1641bb6098f9c21c197834b209db9ef70
+  plan_node_hash: 5bbc7ed58f62c91951cf349c1de1300ae2a1359356ce981c27d8b65e7406db4c
   status: covered
   leaves:
   - leaf_task_ref: '#19594'
     validation_criteria_snippet: '2.1.1: Migration adds `UUID NOT NULL REFERENCES
       machines(id)` columns, swaps unique indexes, backfills only through the per-table
       conversion matrix, and aborts...'
-    matched_artifact_ref: src/gobby/storage/migrations/372_machine_scope.sql
+    matched_artifact_ref: src/gobby/storage/migrations/375_machine_scope.sql
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.2

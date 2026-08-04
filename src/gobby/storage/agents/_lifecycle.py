@@ -14,6 +14,7 @@ from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import get_machine_id
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
 from ._helpers import _positive_rowcount
@@ -129,11 +130,14 @@ class _AgentRunLifecycleMixin:
         if run_id is None:
             run_id = str(uuid.uuid4())
         now = utc_now()
+        machine_id = get_machine_id()
+        if machine_id is None:
+            raise RuntimeError("Local machine identity is required to create an agent run")
 
         self.db.execute(
             """
             INSERT INTO agent_runs (
-                id, parent_session_id, child_session_id, claimed_session_id,
+                id, machine_id, parent_session_id, child_session_id, claimed_session_id,
                 workflow_name, agent_name,
                 provider, model, is_local,
                 requested_reasoning_effort, effective_reasoning_effort,
@@ -141,10 +145,11 @@ class _AgentRunLifecycleMixin:
                 status, prompt, task_id, timeout_seconds, resume_metadata_json,
                 created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s, %s, %s, %s, %s)
             """,
             (
                 run_id,
+                machine_id,
                 parent_session_id,
                 child_session_id,
                 claimed_session_id,

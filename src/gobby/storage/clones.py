@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
@@ -20,6 +20,7 @@ from gobby.utils.datetime import (
     parse_stored_datetime,
     utc_now,
 )
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class Clone:
 
     id: str
     project_id: str
+    machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     branch_name: str
     clone_path: str
     base_branch: str
@@ -79,6 +81,7 @@ class Clone:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
+            machine_id=str(row["machine_id"]),
             branch_name=row["branch_name"],
             clone_path=row["clone_path"],
             base_branch=row["base_branch"],
@@ -98,6 +101,7 @@ class Clone:
         return {
             "id": self.id,
             "project_id": self.project_id,
+            "machine_id": self.machine_id,
             "branch_name": self.branch_name,
             "clone_path": self.clone_path,
             "base_branch": self.base_branch,
@@ -116,6 +120,7 @@ class Clone:
         """Slim representation for list operations."""
         return {
             "id": self.id,
+            "machine_id": self.machine_id,
             "branch_name": self.branch_name,
             "clone_path": self.clone_path,
             "status": self.status,
@@ -165,20 +170,24 @@ class LocalCloneManager:
         clone_id = str(uuid.uuid4())
         now = utc_now()
         cleanup_after_value = parse_stored_datetime(cleanup_after)
+        machine_id = get_machine_id()
+        if machine_id is None:
+            raise RuntimeError("Local machine identity is required to create a clone")
 
         self.db.execute(
             """
             INSERT INTO clones (
-                id, project_id, branch_name, clone_path, base_branch,
+                id, project_id, machine_id, branch_name, clone_path, base_branch,
                 task_id, agent_session_id, status, remote_url,
                 last_sync_at, cleanup_after, created_at, updated_at,
                 workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 clone_id,
                 project_id,
+                machine_id,
                 branch_name,
                 clone_path,
                 base_branch,
@@ -197,6 +206,7 @@ class LocalCloneManager:
         return Clone(
             id=clone_id,
             project_id=project_id,
+            machine_id=machine_id,
             branch_name=branch_name,
             clone_path=clone_path,
             base_branch=base_branch,

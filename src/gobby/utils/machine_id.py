@@ -12,6 +12,7 @@ from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
 __all__ = [
     "clear_cache",
     "get_machine_id",
+    "require_machine_id",
 ]
 
 # Thread-safe cache
@@ -54,6 +55,14 @@ def get_machine_id() -> str | None:
         raise OSError(f"Failed to retrieve or create machine ID: {e}") from e
 
     return None
+
+
+def require_machine_id() -> str:
+    """Return the local machine ID or fail closed when it cannot be resolved."""
+    machine_id = get_machine_id()
+    if machine_id is None:
+        raise RuntimeError("Local machine ID is unavailable")
+    return machine_id
 
 
 def _get_or_create_machine_id() -> str:

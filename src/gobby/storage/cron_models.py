@@ -5,11 +5,12 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
 from gobby.utils.datetime import normalize_datetime_model
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +170,7 @@ class CronRun:
 
     id: str
     cron_job_id: str
+    machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     triggered_at: datetime
     created_at: datetime
     started_at: datetime | None = None
@@ -188,6 +190,7 @@ class CronRun:
         return cls(
             id=row["id"],
             cron_job_id=row["cron_job_id"],
+            machine_id=str(row["machine_id"]),
             triggered_at=row["triggered_at"],
             created_at=row["created_at"],
             started_at=row["started_at"] if "started_at" in keys else None,
@@ -207,6 +210,7 @@ class CronRun:
         return {
             "id": self.id,
             "cron_job_id": self.cron_job_id,
+            "machine_id": self.machine_id,
             "triggered_at": self.triggered_at,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
@@ -225,6 +229,7 @@ class CronRun:
         return {
             "id": self.id,
             "cron_job_id": self.cron_job_id,
+            "machine_id": self.machine_id,
             "status": self.status,
             "started_at": self.started_at,
             "completed_at": self.completed_at,

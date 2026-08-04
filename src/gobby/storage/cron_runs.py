@@ -20,6 +20,7 @@ from gobby.storage.cron_children import (
 from gobby.storage.cron_models import CronRun
 from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +40,14 @@ class CronRunStorageMixin:
         """Create a cron run unless this job already has pending/running work."""
         run_id = str(uuid.uuid4())
         now = utc_now()
+        machine_id = get_machine_id()
+        if machine_id is None:
+            raise RuntimeError("Local machine identity is required to create a cron run")
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
+            machine_id=machine_id,
             triggered_at=now,
             created_at=now,
             started_at=now if start_immediately else None,
@@ -52,11 +57,11 @@ class CronRunStorageMixin:
         row = self.db.fetchone(
             """
             INSERT INTO cron_runs (
-                id, cron_job_id, triggered_at, started_at, completed_at,
+                id, cron_job_id, machine_id, triggered_at, started_at, completed_at,
                 status, output, error, agent_run_id,
                 pipeline_execution_id, scheduler_owner, created_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
             DO NOTHING
             RETURNING *
@@ -64,6 +69,7 @@ class CronRunStorageMixin:
             (
                 candidate.id,
                 candidate.cron_job_id,
+                candidate.machine_id,
                 now,
                 candidate.started_at,
                 candidate.completed_at,
@@ -97,10 +103,14 @@ class CronRunStorageMixin:
 
         run_id = str(uuid.uuid4())
         now = utc_now()
+        machine_id = get_machine_id()
+        if machine_id is None:
+            raise RuntimeError("Local machine identity is required to create a cron run")
 
         candidate = CronRun(
             id=run_id,
             cron_job_id=cron_job_id,
+            machine_id=machine_id,
             triggered_at=now,
             created_at=now,
         )
@@ -128,7 +138,7 @@ class CronRunStorageMixin:
             row = conn.execute(
                 """
                 INSERT INTO cron_runs (
-                    id, cron_job_id, triggered_at, started_at, completed_at,
+                    id, cron_job_id, machine_id, triggered_at, started_at, completed_at,
                     status, output, error, agent_run_id,
                     pipeline_execution_id, scheduler_owner, created_at
                 )
@@ -141,6 +151,7 @@ class CronRunStorageMixin:
                 """,
                 (
                     candidate.id,
+                    candidate.machine_id,
                     now,
                     candidate.started_at,
                     candidate.completed_at,

@@ -41,6 +41,7 @@ class _AgentRunSelectorMixin:
         sql = f"""
             SELECT
                 ar.id,
+                ar.machine_id,
                 ar.parent_session_id,
                 ar.child_session_id,
                 ar.claimed_session_id,

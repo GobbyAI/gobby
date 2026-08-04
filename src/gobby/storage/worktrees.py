@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.machine_id import get_machine_id, require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ class Worktree:
 
     id: str
     project_id: str
+    machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     task_id: str | None
     branch_name: str
     worktree_path: str
@@ -72,6 +74,7 @@ class Worktree:
         return cls(
             id=row["id"],
             project_id=row["project_id"],
+            machine_id=str(row["machine_id"]),
             task_id=row["task_id"],
             branch_name=row["branch_name"],
             worktree_path=row["worktree_path"],
@@ -92,6 +95,7 @@ class Worktree:
         return {
             "id": self.id,
             "project_id": self.project_id,
+            "machine_id": self.machine_id,
             "task_id": self.task_id,
             "branch_name": self.branch_name,
             "worktree_path": self.worktree_path,
@@ -141,19 +145,23 @@ class LocalWorktreeManager:
         """
         worktree_id = str(uuid.uuid4())
         now = utc_now()
+        machine_id = get_machine_id()
+        if machine_id is None:
+            raise RuntimeError("Local machine identity is required to create a worktree")
 
         self.db.execute(
             """
             INSERT INTO worktrees (
-                id, project_id, task_id, branch_name, worktree_path,
+                id, project_id, machine_id, task_id, branch_name, worktree_path,
                 base_branch, agent_session_id, status, created_at, updated_at,
                 last_activity_at, workspace_role
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 worktree_id,
                 project_id,
+                machine_id,
                 task_id,
                 branch_name,
                 worktree_path,
@@ -170,6 +178,7 @@ class LocalWorktreeManager:
         return Worktree(
             id=worktree_id,
             project_id=project_id,
+            machine_id=machine_id,
             task_id=task_id,
             branch_name=branch_name,
             worktree_path=worktree_path,

@@ -37,6 +37,7 @@ from gobby.storage.hub.postgres import (
     _BASELINE_BOOKKEEPING_TABLES,
     PostgresHubDatabase,
 )
+from gobby.utils.machine_id import get_machine_id
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
@@ -429,6 +430,12 @@ def postgres_canonical_seed(
             ON CONFLICT (id) DO NOTHING
             """
         )
+        local_machine_id = get_machine_id()
+        if local_machine_id is not None:
+            conn.execute(
+                "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+                (local_machine_id,),
+            )
         return _capture_canonical_seed(conn)
 
 

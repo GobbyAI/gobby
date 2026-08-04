@@ -119,12 +119,12 @@ Targets:
 - `src/gobby/cli/installers/qdrant.py::_update_config`
 - `src/gobby/cli/installers/qdrant.py::install_qdrant`
 - `src/gobby/cli/installers/postgres.py::install_postgres`
-- `src/gobby/cli/installers/managed_services_lock.py`
+- `src/gobby/cli/installers/managed_services_lock.py::*` — scope-reason: datastore exposure coordinates cross-platform lock acquisition, holder diagnostics, and release across this focused module
 - `src/gobby/cli/__init__.py::*` — scope-reason: root CLI groups are imported and registered here; the new datastores group must be added to the registry
 - `src/gobby/cli/daemon.py::start`
 - `src/gobby/cli/daemon.py::_services_start`
 - `src/gobby/cli/daemon.py::_services_stop`
-- `src/gobby/cli/datastores.py`
+- `src/gobby/cli/datastores.py::*` — scope-reason: the expose command validates addresses, stages managed services, rolls back failures, commits endpoints, and wires the CLI within this focused module
 - `src/gobby/config/bootstrap.py::BootstrapConfig`
 
 Parameterize the hub-side bind address and make exposure survive reinstalls:
@@ -195,7 +195,7 @@ shared endpoint keys untouched. Idempotent.
 Targets:
 - `src/gobby/cli/install.py::install`
 - `src/gobby/cli/_install_daemon.py::_run_install_preflight`
-- `src/gobby/cli/installers/remote_preflight.py`
+- `src/gobby/cli/installers/remote_preflight.py::*` — scope-reason: remote topology preflight reads shared configuration and credentials, probes all three datastores, and renders actionable diagnostics across this focused module
 - `src/gobby/cli/installers/postgres.py::install_postgres`
 - `src/gobby/cli/installers/qdrant.py::install_qdrant`
 - `src/gobby/cli/installers/falkor.py::install_falkordb`
@@ -253,7 +253,7 @@ state or lifecycle.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/372_machine_scope.sql`
+- `src/gobby/storage/migrations/375_machine_scope.sql`
 - `src/gobby/storage/postgres_baseline_schema.sql`
 - `src/gobby/storage/worktrees.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped uniqueness surfaces together
 - `src/gobby/storage/clones.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped path surfaces together
@@ -265,13 +265,14 @@ Targets:
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: propagate local machine ownership through worktree isolation setup
 - `src/gobby/agents/isolation_clone.py::*` — scope-reason: propagate local machine ownership through clone isolation setup
 
-The migration file is new. Slot allocation (serialized revalidation 2026-08-03):
-slots 354-371 are occupied on disk (369_scoped_agent_authorization.sql,
-370_runtime_function_execute.sql, and 371_managed_credential_lifecycle.sql);
-this M0 leaf reserves slot **372**. This plan revision is the serialized
-reservation; the provider-capability migration remains unassigned until the
-next serialized slot decision. Independent "next free number" probing is
-prohibited. Sequencing: this leaf gates #19422 → #19423
+The migration file is new. Slot allocation (serialized revalidation 2026-08-04):
+slots 354-374 are occupied on disk; the immutable head is
+372_parallel_scoped_project_authorization.sql,
+373_managed_credential_operations.sql, and
+374_provider_capability_matrix.sql. This M0 leaf reserves slot **375** after
+#19621 released its migration and baseline paths at commit `5ea4806af`. This
+plan revision is the serialized reservation. Independent "next free number"
+probing is prohibited. Sequencing: this leaf gates #19422 → #19423
 (filename-aware bookkeeping) → #19424 (flatten migrations into the regenerated
 baseline), so it lands as a numbered pre-flatten migration by construction;
 after #19424 the rule is NO new numbered migrations until 0.5.0 ships — were
@@ -333,7 +334,7 @@ clone and agent-run models) gain the field.
 
 **Acceptance:**
 
-- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through the per-table conversion matrix, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/372_machine_scope.sql`.
+- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through the per-table conversion matrix, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/375_machine_scope.sql`.
 - 2.1.2 - Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 2.1.3 - Same (project, branch) worktree can exist for two machine_ids; same path string can exist for two machine_ids. test: `tests/storage/test_worktrees.py::test_worktree_uniqueness_is_machine_scoped`.
 - 2.1.4 - Worktree/clone/agent-run/cron-run creation stamps the local machine_id, and the models round-trip it through from_row and serialization. test: `tests/storage/test_machine_scope_writers.py::test_creation_paths_stamp_machine_id`.
@@ -430,7 +431,7 @@ Targets:
 - `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: ownership-bearing caller wiring session machine identity into derive_transcript_path
 - `src/gobby/sessions/summary_generation.py::generate_summary`
 - `src/gobby/servers/routes/sessions/analytics.py::generate_session_summary`
-- `src/gobby/sessions/machine_scope.py`
+- `src/gobby/sessions/machine_scope.py::*` — scope-reason: the ownership protocol, local-owner predicate, and fail-closed guard form one reusable session boundary
 - `src/gobby/sessions/transcript_reader.py::TranscriptReader`
 - `src/gobby/agents/watchdog/transcript_resolver.py::WatchdogTranscriptResolver`
 - `src/gobby/cli/sessions.py::create_handoff`
@@ -841,7 +842,7 @@ for the pieces that need real machines:
   validation_criteria: '2.1.1: Migration adds `UUID NOT NULL REFERENCES machines(id)`
     columns, swaps unique indexes, backfills only through the per-table conversion
     matrix, and aborts with row diagnostics rather than assigning a guessed or sentinel
-    machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/372_machine_scope.sql`.
+    machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/375_machine_scope.sql`.
 
     2.1.2: Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 

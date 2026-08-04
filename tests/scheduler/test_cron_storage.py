@@ -1116,13 +1116,17 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     # Simulate old run by manually inserting
     old_time = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     cron_storage.db.execute(
-        """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
-        VALUES (%s, %s, %s, 'completed', %s)""",
+        """INSERT INTO cron_runs (
+            id, cron_job_id, machine_id, triggered_at, status, created_at
+        )
+        VALUES (%s, %s, (SELECT id FROM machines LIMIT 1), %s, 'completed', %s)""",
         ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0104", job.id, old_time, old_time),
     )
     cron_storage.db.execute(
-        """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
-        VALUES (%s, %s, %s, 'running', %s)""",
+        """INSERT INTO cron_runs (
+            id, cron_job_id, machine_id, triggered_at, status, created_at
+        )
+        VALUES (%s, %s, (SELECT id FROM machines LIMIT 1), %s, 'running', %s)""",
         ("eeeeeeee-eeee-4eee-8eee-eeeeeeee0105", running_job.id, old_time, old_time),
     )
     assert len(cron_storage.list_runs(job.id)) == 2
@@ -1148,8 +1152,10 @@ def test_cleanup_old_runs_rejects_invalid_days_before_delete(
     )
     old_time = (datetime.now(UTC) - timedelta(days=60)).isoformat()
     cron_storage.db.execute(
-        """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
-        VALUES (%s, %s, %s, 'completed', %s)""",
+        """INSERT INTO cron_runs (
+            id, cron_job_id, machine_id, triggered_at, status, created_at
+        )
+        VALUES (%s, %s, (SELECT id FROM machines LIMIT 1), %s, 'completed', %s)""",
         (str(uuid.uuid4()), job.id, old_time, old_time),
     )
 

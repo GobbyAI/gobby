@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from gobby.agents.resume_metadata import normalize_resume_metadata
 from gobby.utils.datetime import normalize_datetime_model
+from gobby.utils.machine_id import require_machine_id
 
 from ._constants import AgentRunStatus, AgentRunTerminalReason
 
@@ -29,6 +30,7 @@ class AgentRun:
 
     id: str
     parent_session_id: str
+    machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     provider: str
     prompt: str
     status: AgentRunStatus
@@ -80,6 +82,7 @@ class AgentRun:
         return cls(
             id=row["id"],
             parent_session_id=row["parent_session_id"],
+            machine_id=str(row["machine_id"]),
             child_session_id=row["child_session_id"],
             claimed_session_id=(
                 row["claimed_session_id"] if "claimed_session_id" in row.keys() else None
@@ -158,6 +161,7 @@ class AgentRun:
             "id": self.id,
             "session_id": self.child_session_id,
             "parent_session_id": self.parent_session_id,
+            "machine_id": self.machine_id,
             "child_session_id": self.child_session_id,
             "claimed_session_id": self.claimed_session_id,
             "workflow_name": self.workflow_name,
@@ -205,6 +209,7 @@ class AgentRun:
             "run_id": self.id,
             "session_id": self.child_session_id,
             "parent_session_id": self.parent_session_id,
+            "machine_id": self.machine_id,
             "started_at": self.started_at,
             "pid": self.pid,
             "agent_name": self.agent_name,
