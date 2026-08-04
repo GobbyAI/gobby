@@ -74,16 +74,18 @@ def test_bootstrap_ignores_removed_pool_sizes(
     import gobby.config.postgres_pool as postgres_pool
     from gobby.config.bootstrap import load_bootstrap
 
-    monkeypatch.setattr(postgres_pool, "_removed_size_warning_emitted", False)
+    monkeypatch.setattr(postgres_pool, "_removed_size_warning_emitted", False, raising=False)
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(bootstrap_file, "postgres_pool:\n  min_size: 2\n  max_size: 20\n")
 
     with caplog.at_level("WARNING"):
         pool = load_bootstrap(str(bootstrap_file)).postgres_pool
+        repeated_pool = load_bootstrap(str(bootstrap_file)).postgres_pool
 
     assert pool.min_size == 2
     assert pool.max_size == 2
-    assert "Ignoring removed bootstrap settings" in caplog.text
+    assert repeated_pool == pool
+    assert "Ignoring removed bootstrap settings" not in caplog.text
 
 
 def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
@@ -129,6 +131,33 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
         "max_lifetime_seconds": 300.0,
     }
     assert read_bootstrap_database_url(temp_dir) == database_url
+
+
+def test_write_postgres_defaults_removes_legacy_pool_sizes(temp_dir: Path) -> None:
+    from gobby.config.postgres_bootstrap import write_postgres_defaults
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "services_bind_address: 127.0.0.1\n"
+        "postgres_pool:\n"
+        "  min_size: 3\n"
+        "  max_size: 30\n"
+        "  acquire_timeout_seconds: 7.0\n",
+    )
+
+    write_postgres_defaults(
+        gobby_home=temp_dir,
+        database_url="postgresql://gobby:secret@localhost:60891/gobby",
+    )
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert persisted["services_bind_address"] == "127.0.0.1"
+    assert persisted["postgres_pool"] == {
+        "acquire_timeout_seconds": 7.0,
+        "open_timeout_seconds": 30.0,
+        "max_lifetime_seconds": 300.0,
+    }
 
 
 def test_postgres_defaults_follow_runtime_gobby_home_changes(

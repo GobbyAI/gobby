@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-import logging
 import math
 from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
-_removed_size_warning_emitted = False
 
 
 @dataclass(frozen=True)
@@ -49,20 +45,10 @@ class PostgresPoolConfig:
 
 def postgres_pool_config_from_mapping(data: object) -> PostgresPoolConfig:
     """Parse a bootstrap mapping into validated pool settings."""
-    global _removed_size_warning_emitted
     if data is None:
         return DEFAULT_POSTGRES_POOL_CONFIG
     if not isinstance(data, dict):
         raise ValueError("postgres_pool must be a mapping")
-    removed = {"min_size", "max_size"}.intersection(data)
-    if removed and not _removed_size_warning_emitted:
-        names = ", ".join(f"postgres_pool.{name}" for name in sorted(removed))
-        logger.warning(
-            "Ignoring removed bootstrap settings %s; use "
-            "database_concurrency.pool_max_size in ConfigStore",
-            names,
-        )
-        _removed_size_warning_emitted = True
 
     defaults = DEFAULT_POSTGRES_POOL_CONFIG
     return PostgresPoolConfig(

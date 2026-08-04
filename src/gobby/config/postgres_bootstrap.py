@@ -12,7 +12,7 @@ from .bootstrap_io import (
     update_bootstrap_yaml,
     write_bootstrap_yaml,
 )
-from .postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
+from .postgres_pool import postgres_pool_config_from_mapping
 
 __all__ = [
     "bootstrap_path",
@@ -37,7 +37,9 @@ def write_postgres_defaults(
         data["database_url"] = database_url
         data.pop("database_url_ref", None)
         data.pop("postgres_install_mode", None)
-        data.setdefault("postgres_pool", DEFAULT_POSTGRES_POOL_CONFIG.to_dict())
+        data["postgres_pool"] = postgres_pool_config_from_mapping(
+            data.get("postgres_pool")
+        ).to_dict()
 
     update_bootstrap_yaml(bootstrap_path(gobby_home), _apply)
 
