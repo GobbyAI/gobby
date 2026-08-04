@@ -6,6 +6,7 @@ import asyncio
 import sys
 from pathlib import Path
 from typing import Any, cast
+from uuid import UUID
 
 import click
 
@@ -18,9 +19,12 @@ from gobby.cli.installers.postgres import (
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
+from gobby.cli.utils_config import init_local_storage
 from gobby.code_index.bm25_health import render_bm25_status, repair_bm25_indexes
 from gobby.config.app import load_config
+from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.utils.json_helpers import json_dumps
+from gobby.utils.machine_id import get_machine_id
 
 
 @click.group("postgres")
@@ -74,6 +78,50 @@ def repair_code_index_cmd(as_json: bool) -> None:
         click.echo("\n".join(render_bm25_status(payload)))
     if not payload["healthy"]:
         raise click.exceptions.Exit(1)
+
+
+@postgres_cli.command("scoped-roles")
+@click.option("--json", "as_json", is_flag=True, help="Emit structured role metadata.")
+def scoped_roles_cmd(as_json: bool) -> None:
+    """List active run-scoped PostgreSQL roles without credential material."""
+    manager = _managed_credential_manager()
+    try:
+        roles = manager.list_active()
+    finally:
+        manager.close()
+    if as_json:
+        click.echo(json_dumps(roles, indent=2, sort_keys=True))
+        return
+    if not roles:
+        click.echo("No active scoped roles.")
+        return
+    for role in roles:
+        click.echo(
+            f"{role['managed_execution_id']} {role['owner_kind']} "
+            f"project={role['project_id']} expires={role['expires_at']} "
+            f"sessions={role['active_sessions']}"
+        )
+
+
+@postgres_cli.command("force-revoke-run")
+@click.argument("managed_execution_id", type=click.UUID)
+@click.option("--yes", is_flag=True, help="Revoke without an interactive confirmation.")
+def force_revoke_run_cmd(managed_execution_id: UUID, yes: bool) -> None:
+    """Force-revoke every scoped role for one managed execution."""
+    if not yes and not click.confirm(f"Force-revoke managed execution {managed_execution_id}?"):
+        click.echo("Aborted.")
+        return
+    manager = _managed_credential_manager()
+    try:
+        outcome = manager.revoke(managed_execution_id, reason="operator-forced")
+    finally:
+        manager.close()
+    if not outcome.completed:
+        raise click.ClickException(
+            "Scoped-role revocation is pending retry; no credential material was displayed"
+        )
+    noun = "role" if outcome.revoked_count == 1 else "roles"
+    click.echo(f"Revoked {outcome.revoked_count} scoped {noun}.")
 
 
 @postgres_cli.command("backup")
@@ -192,3 +240,17 @@ def _daemon_running() -> bool:
     except ValueError:
         return False
     return _is_process_alive(pid)
+
+
+def _managed_credential_manager() -> ManagedCredentialManager:
+    database = init_local_storage()
+    machine_id = get_machine_id()
+    if machine_id is None:
+        database.close()
+        raise click.ClickException("Local machine identity is unavailable")
+    return ManagedCredentialManager(
+        database=database,
+        machine_id=UUID(machine_id),
+        runtime_root=get_gobby_home() / "runtime" / "managed-executions",
+        owns_database=True,
+    )

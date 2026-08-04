@@ -657,8 +657,49 @@ and records `released_by_command = 'restore'`. Normal connections need no
 maintenance GUC after the command completes. The required `--database-url`
 keeps the configured origin database outside the restore mutation path.
 
+Hub backup drains run-scoped PostgreSQL logins before dumping cluster globals.
+The globals artifact includes the stable issuer, daemon-runtime, and capability
+roles; reserved `gobby_agent_<execution>_<generation>` login roles are excluded.
+Restore replays those stable roles, restores data, then removes any reserved
+login and retires its restored binding before the daemon can start.
+
 Qdrant, FalkorDB, and volume artifacts remain separate from this PostgreSQL
 restore command.
+
+### Managed credential recovery
+
+Inspect active scoped authority without displaying passwords, DSNs, tokens, or
+KEK material:
+
+```bash
+gobby postgres scoped-roles
+gobby postgres scoped-roles --json
+```
+
+Force-revoke one managed execution after confirming its execution ID:
+
+```bash
+gobby postgres force-revoke-run EXECUTION_UUID
+```
+
+Use these recovery sequences:
+
+- **Failed rotation:** list scoped roles, force-revoke the affected execution,
+  restart the daemon, then list again. Rotation rollback and startup
+  reconciliation remove predecessor and partial-successor authority.
+- **Daemon outage:** restore daemon service first when live agents will resume.
+  For a run that must remain stopped, force-revoke its execution before daemon
+  restart. Startup reconciliation removes expired, terminal, and orphan roles.
+- **Database restore:** keep the daemon stopped until `gobby hub-backup restore`
+  succeeds. The restore command removes reserved-prefix logins and reconciles
+  restored bindings before returning.
+- **Stale role:** list scoped roles and force-revoke its execution. A role with
+  no binding is an orphan; daemon startup reconciliation disables it,
+  terminates its sessions, and drops it before agent recovery proceeds.
+
+Generated runtime cleanup removes legacy shared-DSN bootstraps and runtime KEK
+links or copies before a managed gcode subprocess is launched. A runtime home
+is reusable only when its bootstrap user matches the scoped-role format.
 
 ## Admin And Diagnostics
 

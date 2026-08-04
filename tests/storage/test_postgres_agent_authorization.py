@@ -26,6 +26,7 @@ LIFECYCLE_MIGRATION = ROOT / "src/gobby/storage/migrations/371_managed_credentia
 PARALLEL_AUTH_MIGRATION = (
     ROOT / "src/gobby/storage/migrations/372_parallel_scoped_project_authorization.sql"
 )
+OPERATIONS_MIGRATION = ROOT / "src/gobby/storage/migrations/373_managed_credential_operations.sql"
 AUTH_SCHEMA = "gobby_agent_auth"
 CAPABILITY_ROLE = "gobby_gcode_capability"
 ISSUER_ROLE = "gobby_agent_issuer"
@@ -78,6 +79,8 @@ def _bootstrap_and_migrate(conn: psycopg.Connection[Any]) -> None:
     conn.execute(LIFECYCLE_MIGRATION.read_text(), prepare=False)
     assert PARALLEL_AUTH_MIGRATION.exists(), "migration slot 372 must preserve scoped parallelism"
     conn.execute(PARALLEL_AUTH_MIGRATION.read_text(), prepare=False)
+    assert OPERATIONS_MIGRATION.exists(), "migration slot 373 must add operator-safe role drains"
+    conn.execute(OPERATIONS_MIGRATION.read_text(), prepare=False)
 
 
 def _as_runtime(
@@ -531,6 +534,46 @@ def test_lifecycle_uses_derived_quoted_roles_and_reconciles_expiry(
         expiring_role_row = admin.execute("SELECT to_regrole(%s)", (expiring_role,)).fetchone()
         assert expiring_role_row is not None
         assert expiring_role_row[0] is None
+
+
+def test_operator_inventory_is_secret_free_and_drain_removes_login_authority(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        row = _as_runtime(
+            admin,
+            f"""
+            SELECT managed_execution_id, owner_kind, project_id, login_capable,
+                   active_sessions
+            FROM {AUTH_SCHEMA}.list_active_principals()
+            WHERE managed_execution_id = %s
+            """,
+            (fixture.execution_id,),
+        )
+        assert row == (
+            fixture.execution_id,
+            "agent_run",
+            fixture.project_id,
+            True,
+            0,
+        )
+
+        drained = _as_runtime(
+            admin,
+            f"SELECT {AUTH_SCHEMA}.drain_ephemeral_principals()",
+            (),
+        )
+        assert drained >= 1
+        role = admin.execute("SELECT to_regrole(%s)", (fixture.role_name,)).fetchone()
+        assert role is not None
+        assert role[0] is None
+        active = admin.execute(
+            f"SELECT count(*) FROM {AUTH_SCHEMA}.principal_bindings "
+            "WHERE managed_execution_id = %s AND revoked_at IS NULL",
+            (fixture.execution_id,),
+        ).fetchone()
+        assert active == (0,)
 
 
 def test_crafted_missing_expired_and_duplicate_issue_inputs_are_rejected(

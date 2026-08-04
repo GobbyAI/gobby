@@ -76,6 +76,14 @@ def test_issue_materializes_private_bootstrap_and_revoke_terminates_sessions(
         assert parsed["password"]
         assert parsed["application_name"] == f"gobby-agent-{execution_id}"
 
+        active = manager.list_active()
+        listed = next(item for item in active if item["managed_execution_id"] == str(execution_id))
+        assert listed["owner_kind"] == "agent_run"
+        assert listed["project_id"] == str(fixture.project_id)
+        assert listed["login_capable"] is True
+        assert "password" not in repr(listed).lower()
+        assert "database_url" not in listed
+
         connection = psycopg.connect(scoped_dsn, autocommit=True)
         connection.execute("SELECT 1")
         outcome = manager.revoke(execution_id, reason="test-terminal")

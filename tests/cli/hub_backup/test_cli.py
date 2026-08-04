@@ -61,9 +61,9 @@ STARTING_HEAD = 187
 
 ROW_PROBES = {"tasks": 1204, "sessions": 88}
 SCHEMA_OBJECTS = {"table": 22, "index": 37}
-# postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, and the
-# rule_allow_audit log archive_rule_allow_audit_logs adds (d41adc20c, #19418).
-NON_VOLUME_ARTIFACTS = 5
+# postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, machine
+# identity, and the rule_allow_audit log archive (d41adc20c, #19418).
+NON_VOLUME_ARTIFACTS = 6
 QDRANT_COLLECTION = "gobby_memories"
 QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
 QDRANT_POINTS = 4211
@@ -455,14 +455,30 @@ class TestRestore:
         backup_root = tmp_path / "backup"
         _run_ok(runtime, backup_root)
         calls: list[tuple[Path, dict[str, object]]] = []
+        restore_steps: list[str] = []
+
+        def restore_globals(_database_url: str, _globals_path: Path) -> None:
+            restore_steps.append("globals")
+
+        def reconcile_principals(_database_url: str) -> int:
+            restore_steps.append("reconcile")
+            return 1
 
         def restore_postgres(source: Path, **kwargs: object) -> dict[str, object]:
+            restore_steps.append("data")
             calls.append((source, kwargs))
             return {
                 "database_url": "postgresql://gobby:****@target:5432/gobby",
                 "released_epoch_id": "11111111-1111-1111-1111-111111111111",
             }
 
+        monkeypatch.setattr(hub_cli, "restore_postgres_globals", restore_globals, raising=False)
+        monkeypatch.setattr(
+            hub_cli,
+            "reconcile_restored_principals",
+            reconcile_principals,
+            raising=False,
+        )
         monkeypatch.setattr(hub_cli, "restore_postgres_backup", restore_postgres)
         monkeypatch.setattr(hub_cli, "_daemon_is_running", lambda: False)
         monkeypatch.setattr(
@@ -481,6 +497,7 @@ class TestRestore:
         )
 
         assert result.exit_code == 0, result.output
+        assert restore_steps == ["globals", "data", "reconcile"]
         assert calls == [
             (
                 backup_root / "postgres",

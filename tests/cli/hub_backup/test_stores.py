@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import re
 import subprocess
 import tarfile
 import time
@@ -84,6 +85,17 @@ class _FakeConnection:
             return _FakeCursor([(self.head,)])
         if "from pg_tables" in lowered:
             return _FakeCursor([(name,) for name in self.tables])
+        if "drain_ephemeral_principals" in lowered:
+            return _FakeCursor([(0,)])
+        if "from pg_roles" in lowered and "rolname ~" in lowered:
+            return _FakeCursor(
+                [
+                    tuple(role)
+                    for role in self.roles
+                    if re.fullmatch(r"gobby_agent_[0-9a-f]{32}_[1-9][0-9]*", str(role[0]))
+                    and bool(role[2])
+                ]
+            )
         if "from pg_roles" in lowered:
             return _FakeCursor([tuple(role) for role in self.roles])
         if "from pg_class" in lowered:
@@ -194,7 +206,14 @@ def test_collect_schema_object_counts_groups_public_schema_objects(
 def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    connection = _FakeConnection(roles=[("gobby", True, True), ("gobby_ro", False, True)])
+    connection = _FakeConnection(
+        roles=[
+            ("gobby", True, True),
+            ("gobby_ro", False, True),
+            ("gobby_agent_issuer", False, False),
+            ("gobby_agent_0123456789abcdef0123456789abcdef_1", False, True),
+        ]
+    )
     _patch_psycopg(monkeypatch, connection)
 
     roles = stores.collect_source_roles(DATABASE_URL)
@@ -202,9 +221,11 @@ def test_collect_source_roles_skips_builtin_roles_and_reports_flags(
     assert roles == [
         {"rolname": "gobby", "rolsuper": True, "rolcanlogin": True},
         {"rolname": "gobby_ro", "rolsuper": False, "rolcanlogin": True},
+        {"rolname": "gobby_agent_issuer", "rolsuper": False, "rolcanlogin": False},
     ]
     statement = next(s for s in connection.statements if "pg_roles" in s)
     assert "NOT LIKE 'pg\\_%'" in statement
+    assert "!~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$'" in statement
     assert "ORDER BY rolname" in statement
 
 
@@ -308,6 +329,55 @@ def test_dump_postgres_captures_cluster_globals_only(
         "gobby",
         "--globals-only",
     ]
+
+
+def test_dump_postgres_aborts_while_ephemeral_login_remains(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    connection = _FakeConnection(
+        roles=[("gobby_agent_0123456789abcdef0123456789abcdef_1", False, True)]
+    )
+    _patch_psycopg(monkeypatch, connection)
+    monkeypatch.setattr(subprocess, "run", _postgres_runner([]))
+
+    with pytest.raises(click.ClickException, match="ephemeral PostgreSQL login remains"):
+        stores.dump_postgres(DATABASE_URL, tmp_path)
+
+
+def test_restore_postgres_globals_tolerates_existing_stable_roles(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    globals_path = tmp_path / "globals.sql"
+    globals_path.write_bytes(b"CREATE ROLE gobby;\nALTER ROLE gobby WITH LOGIN;\n")
+    calls: list[tuple[list[str], bytes]] = []
+
+    def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append((list(args), kwargs["input"]))
+        return _completed(args)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    stores.restore_postgres_globals(DATABASE_URL, globals_path)
+
+    assert calls[0][0] == [
+        "docker",
+        "exec",
+        "-i",
+        "gobby-postgres",
+        "psql",
+        "-U",
+        "gobby",
+        "-d",
+        "postgres",
+        "-v",
+        "ON_ERROR_STOP=1",
+    ]
+    replay = calls[0][1]
+    assert b"EXCEPTION WHEN duplicate_object THEN" in replay
+    assert b"CREATE ROLE gobby;" in replay
+    assert b"ALTER ROLE gobby WITH LOGIN;" in replay
 
 
 def test_dump_postgres_forwards_maintenance_pgoptions_into_container(

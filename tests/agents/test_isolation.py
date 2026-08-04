@@ -89,19 +89,20 @@ class TestEnsureIsolationCodeIndex:
     @staticmethod
     def _credential(tmp_path: Path) -> ManagedCredential:
         execution_id = uuid4()
+        role_name = f"gobby_agent_{execution_id.hex}_1"
         bootstrap_path = tmp_path / "managed" / f"{execution_id}.json"
         bootstrap_path.parent.mkdir(exist_ok=True)
         bootstrap_path.write_text(
             json.dumps(
                 {
-                    "database_url": "postgresql://scoped:secret@localhost/gobby",
+                    "database_url": f"postgresql://{role_name}:secret@localhost/gobby",
                     "managed_execution_id": str(execution_id),
                 }
             )
         )
         return ManagedCredential(
             managed_execution_id=execution_id,
-            role_name=f"gobby_agent_{execution_id.hex}_1",
+            role_name=role_name,
             credential_generation=1,
             issued_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(minutes=30),
@@ -173,7 +174,7 @@ class TestEnsureIsolationCodeIndex:
         )
         bootstrap = Path(result.runtime_home) / "bootstrap.yaml"
         assert bootstrap.read_text() == (
-            "database_url: postgresql://scoped:secret@localhost/gobby\n"
+            f"database_url: postgresql://{credential.role_name}:secret@localhost/gobby\n"
         )
         runtime_token = Path(result.runtime_home) / "local_cli_token"
         assert not runtime_token.exists()
@@ -248,12 +249,12 @@ class TestEnsureIsolationCodeIndex:
         symlink_kek = symlink_home / ".secret_kek"
         symlink_kek.symlink_to(tmp_path / "operator-kek")
 
-        preserved_files = {
+        legacy_bootstraps = {
             symlink_home / "bootstrap.yaml": "symlink-home\n",
             file_home / "bootstrap.yaml": "file-home\n",
             live_home / "bootstrap.yaml": "live-home\n",
         }
-        for path, contents in preserved_files.items():
+        for path, contents in legacy_bootstraps.items():
             path.write_text(contents)
 
         _reap_stale_gcode_runtime_tokens(runtime_root)
@@ -264,8 +265,33 @@ class TestEnsureIsolationCodeIndex:
         assert not stale_kek.exists()
         assert not symlink_kek.is_symlink()
         assert source_token.exists()
-        for path, contents in preserved_files.items():
-            assert path.read_text() == contents
+        for path in legacy_bootstraps:
+            assert not path.exists()
+
+    def test_reaps_legacy_shared_dsn_bootstrap_and_preserves_scoped_bootstrap(
+        self, tmp_path: Path
+    ) -> None:
+        runtime_root = tmp_path / "gcode-runtime"
+        legacy_home = runtime_root / "legacy"
+        scoped_home = runtime_root / "scoped"
+        legacy_home.mkdir(parents=True)
+        scoped_home.mkdir(parents=True)
+        legacy_bootstrap = legacy_home / "bootstrap.yaml"
+        scoped_bootstrap = scoped_home / "bootstrap.yaml"
+        legacy_bootstrap.write_text(
+            "database_url: postgresql://gobby:operator-secret@localhost/gobby\n",
+            encoding="utf-8",
+        )
+        scoped_bootstrap.write_text(
+            "database_url: "
+            "postgresql://gobby_agent_0123456789abcdef0123456789abcdef_1:scoped@localhost/gobby\n",
+            encoding="utf-8",
+        )
+
+        _reap_stale_gcode_runtime_tokens(runtime_root)
+
+        assert not legacy_bootstrap.exists()
+        assert scoped_bootstrap.exists()
 
     def test_reap_survives_unwritable_sibling_home(self, tmp_path: Path) -> None:
         runtime_root = tmp_path / "gcode-runtime"

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import click
 import pytest
@@ -274,6 +277,70 @@ def test_postgres_uninstall_command_is_not_registered(
     assert "hub_backend" not in bootstrap
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
     assert "postgres_install_mode" not in bootstrap
+
+
+def test_postgres_scoped_roles_lists_metadata_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    manager = SimpleNamespace(
+        close=lambda: None,
+        list_active=lambda: [
+            {
+                "managed_execution_id": "01234567-89ab-cdef-0123-456789abcdef",
+                "owner_kind": "agent_run",
+                "project_id": "11111111-1111-1111-1111-111111111111",
+                "expires_at": "2026-08-04T08:00:00+00:00",
+                "active_sessions": 1,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        postgres_cli_module,
+        "_managed_credential_manager",
+        lambda: manager,
+        raising=False,
+    )
+
+    result = CliRunner().invoke(postgres_cli, ["scoped-roles", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload[0]["owner_kind"] == "agent_run"
+    assert "password" not in result.output.lower()
+    assert "database_url" not in result.output
+
+
+def test_postgres_force_revoke_run_uses_execution_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.cli.postgres as postgres_cli_module
+    from gobby.cli.postgres import postgres_cli
+
+    calls: list[tuple[UUID, str]] = []
+
+    def revoke(execution_id: UUID, *, reason: str) -> SimpleNamespace:
+        calls.append((execution_id, reason))
+        return SimpleNamespace(completed=True, revoked_count=1)
+
+    monkeypatch.setattr(
+        postgres_cli_module,
+        "_managed_credential_manager",
+        lambda: SimpleNamespace(close=lambda: None, revoke=revoke),
+        raising=False,
+    )
+
+    execution_id = "01234567-89ab-cdef-0123-456789abcdef"
+    result = CliRunner().invoke(
+        postgres_cli,
+        ["force-revoke-run", execution_id, "--yes"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert calls == [(UUID(execution_id), "operator-forced")]
+    assert "Revoked 1 scoped role" in result.output
 
 
 def _write_postgres_bootstrap(home: Path) -> None:

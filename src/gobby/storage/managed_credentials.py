@@ -343,6 +343,35 @@ class ManagedCredentialManager:
             rotated_credentials.append(credential)
         return rotated_credentials
 
+    def list_active(self) -> list[dict[str, object]]:
+        """Return active scoped-role metadata without credential material."""
+        rows = self._database.fetchall(f"SELECT * FROM {AUTH_SCHEMA}.list_active_principals()")
+        results: list[dict[str, object]] = []
+        for row in rows:
+            expires_at = _row_value(row, "expires_at")
+            results.append(
+                {
+                    "role_name": str(_row_value(row, "role_name")),
+                    "managed_execution_id": str(_row_value(row, "managed_execution_id")),
+                    "owner_kind": str(_row_value(row, "owner_kind")),
+                    "agent_run_id": (
+                        str(value)
+                        if (value := _row_value(row, "agent_run_id")) is not None
+                        else None
+                    ),
+                    "session_id": str(_row_value(row, "session_id")),
+                    "project_id": str(_row_value(row, "project_id")),
+                    "expires_at": (
+                        expires_at.isoformat()
+                        if isinstance(expires_at, datetime)
+                        else str(expires_at)
+                    ),
+                    "login_capable": bool(_row_value(row, "login_capable")),
+                    "active_sessions": int(_row_value(row, "active_sessions")),
+                }
+            )
+        return results
+
     def reconcile(self) -> int:
         self.heartbeat()
         deadline = time.monotonic() + REVOCATION_DRAIN_TIMEOUT_SECONDS

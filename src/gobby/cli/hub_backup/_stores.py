@@ -8,6 +8,7 @@ here proves a backup is restorable, it only makes one.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import stat
 import subprocess  # nosec B404 # fixed docker/pg_dump/redis-cli argv, never shell=True
@@ -77,8 +78,16 @@ _REDIS_DBSIZE = "DBSIZE"
 _TABLE_LIST_SQL = "SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename"
 _ROLE_LIST_SQL = (
     "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
-    "WHERE rolname NOT LIKE 'pg\\_%' ORDER BY rolname"
+    "WHERE rolname NOT LIKE 'pg\\_%' "
+    "AND rolname !~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$' ORDER BY rolname"
 )
+_SCOPED_ROLE_NAME_RE = re.compile(r"gobby_agent_[0-9a-f]{32}_[1-9][0-9]*")
+_EPHEMERAL_ROLE_SQL = (
+    "SELECT rolname, rolsuper, rolcanlogin FROM pg_roles "
+    "WHERE rolcanlogin AND rolname ~ '^gobby_agent_[0-9a-f]{32}_[1-9][0-9]*$' "
+    "ORDER BY rolname"
+)
+_ROLE_CREATE_LINE_RE = re.compile(rb"^CREATE ROLE .+;$", re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +184,82 @@ def collect_source_roles(database_url: str) -> list[dict[str, object]]:
             "rolcanlogin": bool(row[2]),
         }
         for row in rows
+        if _SCOPED_ROLE_NAME_RE.fullmatch(str(row[0])) is None
     ]
+
+
+def drain_ephemeral_principals(database_url: str) -> int:
+    """Revoke every scoped login and prove the reserved login namespace is empty."""
+    try:
+        with psycopg.connect(database_url, connect_timeout=_CONNECT_TIMEOUT_SECONDS) as conn:
+            row = conn.execute("SELECT gobby_agent_auth.drain_ephemeral_principals()").fetchone()
+            if row is None:
+                raise click.ClickException("Managed-role drain returned no result")
+            drained = int(row[0])
+            remaining = conn.execute(_EPHEMERAL_ROLE_SQL).fetchall()
+    except psycopg.Error as exc:
+        raise click.ClickException(f"Unable to drain scoped PostgreSQL roles: {exc}") from exc
+    if drained < 0 or remaining:
+        raise click.ClickException(
+            "Hub backup aborted: an ephemeral PostgreSQL login remains after agent-role drain"
+        )
+    return drained
+
+
+def reconcile_restored_principals(database_url: str) -> int:
+    """Remove restored reserved-prefix roles and retire their restored bindings."""
+    return drain_ephemeral_principals(database_url)
+
+
+def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
+    """Replay verified stable cluster globals into the managed PostgreSQL container."""
+    require_regular_file(globals_path, label="PostgreSQL globals")
+    user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
+    with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
+        replay = _idempotent_global_role_creates(globals_file.read())
+        result = subprocess.run(  # nosec B603 - fixed docker/psql argv and verified file input
+            _postgres_client_command(
+                "psql",
+                "-U",
+                user,
+                "-d",
+                "postgres",
+                "-v",
+                "ON_ERROR_STOP=1",
+                interactive=True,
+            ),
+            input=replay,
+            capture_output=True,
+            check=False,
+            timeout=_docker_pg_dump_timeout_seconds(),
+        )
+    _raise_for_subprocess_error(result, "Docker psql globals restore")
+
+
+def _idempotent_global_role_creates(script: bytes) -> bytes:
+    """Wrap generated role creation so stable roles can already exist on restore."""
+    if _ROLE_CREATE_LINE_RE.search(script) is None:
+        return script
+    tag_index = 0
+    tag = b"$gobby_role_0$"
+    while tag in script:
+        tag_index += 1
+        tag = f"$gobby_role_{tag_index}$".encode()
+
+    def wrap(match: re.Match[bytes]) -> bytes:
+        return b"\n".join(
+            (
+                b"DO " + tag,
+                b"BEGIN",
+                b"    " + match.group(0),
+                b"EXCEPTION WHEN duplicate_object THEN",
+                b"    NULL;",
+                b"END",
+                tag + b";",
+            )
+        )
+
+    return _ROLE_CREATE_LINE_RE.sub(wrap, script)
 
 
 def dump_postgres(
@@ -187,6 +271,7 @@ def dump_postgres(
     The dump deliberately keeps ownership and ACLs: roles are restored from the
     globals dump first, so a stripped dump would silently drop privileges.
     """
+    drain_ephemeral_principals(database_url)
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     database = _dsn_db(database_url) or DEFAULT_POSTGRES_DB
     postgres_version = _server_version(database_url)
@@ -221,10 +306,16 @@ def dump_postgres(
     return artifacts, details
 
 
-def _postgres_client_command(client: str, *args: str) -> list[str]:
+def _postgres_client_command(
+    client: str,
+    *args: str,
+    interactive: bool = False,
+) -> list[str]:
     command = ["docker", "exec"]
     if os.environ.get(MAINTENANCE_EPOCH_ENV):
         command.extend(["-e", "PGOPTIONS"])
+    if interactive:
+        command.append("-i")
     return [*command, POSTGRES_CONTAINER, client, *args]
 
 

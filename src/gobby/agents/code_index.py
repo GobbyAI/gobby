@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from gobby.config.bootstrap_io import write_bootstrap_yaml
+from psycopg.conninfo import conninfo_to_dict
+
+from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 from gobby.paths import get_gobby_home
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
@@ -37,6 +39,7 @@ _RUNTIME_HOME_ENV = "GOBBY_CODE_INDEX_RUNTIME_HOME"
 _WRAPPER_RELATIVE_PATH = Path(".gobby") / "bin" / "gcode"
 _WRAPPER_EXCLUDE_PATTERN = ".gobby/bin/"
 _POSTGRES_URL_RE = re.compile(r"(postgres(?:ql)?://[^:\s/@]+:)[^@\s]+@", re.IGNORECASE)
+_SCOPED_ROLE_RE = re.compile(r"gobby_agent_[0-9a-f]{32}_[1-9][0-9]*")
 
 
 class IndexInventoryError(RuntimeError):
@@ -391,7 +394,7 @@ def _runtime_home_for_workspace(workspace: Path, runtime_root: Path) -> Path:
 
 
 def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
-    """Drop operator credentials from every runtime home under `runtime_root`.
+    """Drop legacy shared credentials from every runtime home under `runtime_root`.
 
     Best effort: this sweeps homes owned by other sessions, so an unreadable or
     concurrently torn-down home must never abort the caller's preflight.
@@ -414,6 +417,30 @@ def _reap_stale_gcode_runtime_tokens(runtime_root: Path) -> None:
                     runtime_home,
                     exc_info=True,
                 )
+        bootstrap = runtime_home / "bootstrap.yaml"
+        if _has_scoped_runtime_bootstrap(bootstrap):
+            continue
+        try:
+            bootstrap.unlink(missing_ok=True)
+        except OSError:
+            logger.debug(
+                "Failed to reap legacy gcode runtime bootstrap in %s",
+                runtime_home,
+                exc_info=True,
+            )
+
+
+def _has_scoped_runtime_bootstrap(path: Path) -> bool:
+    """Return whether a runtime bootstrap uses the reserved scoped-role shape."""
+    try:
+        database_url = read_bootstrap_yaml(path).get("database_url")
+        if not isinstance(database_url, str):
+            return False
+        user = conninfo_to_dict(database_url).get("user")
+    except Exception:
+        logger.debug("Invalid gcode runtime bootstrap %s", path, exc_info=True)
+        return False
+    return isinstance(user, str) and _SCOPED_ROLE_RE.fullmatch(user) is not None
 
 
 def _gcode_wrapper_script(

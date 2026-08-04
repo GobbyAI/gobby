@@ -51,6 +51,8 @@ from gobby.cli.hub_backup._stores import (
     collect_source_roles,
     dump_falkordb,
     dump_postgres,
+    reconcile_restored_principals,
+    restore_postgres_globals,
     snapshot_qdrant,
     tar_volumes,
 )
@@ -236,6 +238,7 @@ def restore_hub_backup(
         click.echo("Aborted.")
         return
 
+    restore_postgres_globals(database_url, backup_root / GLOBALS_DUMP_RELPATH)
     result = restore_postgres_backup(
         backup_root / Path(POSTGRES_DUMP_RELPATH).parent,
         clean=clean,
@@ -243,6 +246,7 @@ def restore_hub_backup(
         gobby_home=get_gobby_home(),
         database_url=database_url,
     )
+    reconcile_restored_principals(database_url)
     click.echo("Hub PostgreSQL restore completed.")
     if target := result.get("database_url"):
         click.echo(f"  Target: {target}")
