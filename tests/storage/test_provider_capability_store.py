@@ -61,4 +61,5 @@ def test_route_rows_cascade_on_capability_delete(postgres_database_url: str) -> 
                 "SELECT COUNT(*) FROM provider_model_routes"
             ).fetchone()
 
-    assert route_count == (0,)
+    assert route_count is not None
+    assert route_count[0] == 0
