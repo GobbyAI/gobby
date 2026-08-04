@@ -111,7 +111,6 @@ def _resolve_context_window_for_source_model(
     source: ContextUsageSource | None,
     model: str | None,
     *,
-    catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
     overrides: dict[str, int] | None = None,
     db: HubDatabase | None = None,
@@ -138,7 +137,6 @@ def _resolve_context_window_for_source_model(
             model,
             overrides=overrides,
             provider=provider,
-            catalog=catalog,
             db=db,
         )
     reported = _coerce_positive_int(provider_reported_context_window)
@@ -146,7 +144,6 @@ def _resolve_context_window_for_source_model(
         model,
         overrides=overrides,
         provider=provider,
-        catalog=catalog,
         provider_reported_context_window=reported,
         db=db,
     )
@@ -203,7 +200,6 @@ def effective_context_window_for_session(
     *,
     variables: dict[str, Any] | None = None,
     db: HubDatabase | None = None,
-    catalog: Any | None = None,
     overrides: dict[str, int] | None = None,
 ) -> int | None:
     """Return the best context window for session hydration payloads."""
@@ -225,7 +221,6 @@ def effective_context_window_for_session(
     resolved = _resolve_context_window_for_source_model(
         snapshot_source,
         model,
-        catalog=catalog,
         overrides=overrides,
         db=db,
     )
@@ -382,7 +377,6 @@ class ContextWindowBackfillResult:
 def backfill_session_context_windows(
     db: HubDatabase,
     *,
-    catalog: Any | None = None,
     dry_run: bool = False,
     overrides: dict[str, int] | None = None,
 ) -> ContextWindowBackfillResult:
@@ -420,7 +414,6 @@ def backfill_session_context_windows(
         resolved = _resolve_context_window_for_source_model(
             snapshot_source,
             model,
-            catalog=catalog,
             overrides=overrides,
             db=db,
         )

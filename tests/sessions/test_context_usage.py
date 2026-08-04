@@ -89,13 +89,11 @@ def test_private_resolver_uses_normalized_source_without_renormalizing(
         model: str | None,
         *,
         provider: str | None,
-        catalog: object | None = None,
         overrides: dict[str, int] | None = None,
         db: object | None = None,
     ) -> int:
         assert model == "model-x"
         assert provider == "claude"
-        assert catalog is None
         assert overrides is None
         assert db is None
         return 123
