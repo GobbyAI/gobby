@@ -13,7 +13,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from gobby.agents.sandbox_policy import secure_policy_directory
+from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.sandbox_policy import (
+    assert_sensitive_path_contract,
+    canonical_path,
+    prepare_sandbox_run_paths,
+    previous_run_write_paths,
+)
 from gobby.paths import get_gobby_home
 from gobby.sync.jsonl_io import export_file_lock
 from gobby.utils.dependency_requirements import (
@@ -24,13 +30,21 @@ from gobby.utils.dependency_requirements import (
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
-    from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig, SandboxResolver
+from gobby.agents.sandbox import (
+    ResolvedSandboxPaths,
+    SandboxConfig,
+    SandboxResolver,
+    preflight_provider_native_settings,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class SrtRuntimeError(RuntimeError):
     """Raised when the pinned runtime or policy cannot be used safely."""
+
+
+_CONTENT_MANIFEST_NAME = "content-manifest.json"
 
 
 @dataclass(frozen=True)
@@ -104,6 +118,60 @@ def srt_install_root() -> Path:
     return get_gobby_home() / "tools" / "srt" / SRT_RELEASE.version
 
 
+def build_srt_content_manifest(root: Path) -> dict[str, str]:
+    """Hash every file or link used by the managed SRT dependency graph."""
+    candidates = [root / "runner.mjs", root / "package-lock.json"]
+    node_modules = root / "node_modules"
+    if node_modules.exists():
+        candidates.extend(node_modules.rglob("*"))
+    manifest: dict[str, str] = {}
+    for path in sorted(candidates, key=lambda item: item.as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            manifest[relative] = f"link:{os.readlink(path)}"
+        elif path.is_file():
+            manifest[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return manifest
+
+
+def write_srt_content_manifest(root: Path) -> None:
+    """Write the deterministic package-content manifest before promotion."""
+    payload = json.dumps(build_srt_content_manifest(root), sort_keys=True, separators=(",", ":"))
+    (root / _CONTENT_MANIFEST_NAME).write_text(payload, encoding="utf-8")
+
+
+def make_srt_installation_immutable(root: Path) -> None:
+    """Remove write bits from the complete promoted SRT tree."""
+    paths = sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True)
+    for path in paths:
+        if path.is_symlink():
+            continue
+        path.chmod(0o555 if path.is_dir() else 0o444)
+    root.chmod(0o555)
+
+
+def _verify_srt_content(root: Path, manifest: dict[str, str]) -> None:
+    actual = build_srt_content_manifest(root)
+    if actual != manifest:
+        raise SrtRuntimeError("managed SRT content manifest mismatch; rerun `gobby install`")
+    protected = [
+        root,
+        root / "receipt.json",
+        root / _CONTENT_MANIFEST_NAME,
+        *(root / relative for relative in manifest),
+        *((root / "node_modules").rglob("*")),
+    ]
+    for path in protected:
+        if path.is_symlink():
+            continue
+        try:
+            mode = path.stat().st_mode
+        except OSError as exc:
+            raise SrtRuntimeError("managed SRT content manifest mismatch") from exc
+        if mode & 0o222:
+            raise SrtRuntimeError(f"managed SRT content is writable: {path.relative_to(root)}")
+
+
 @contextmanager
 def srt_install_lock() -> Iterator[None]:
     """Serialize installation and verification of the pinned SRT version."""
@@ -155,6 +223,7 @@ def verify_srt_installation_locked(
     runner = root / "runner.mjs"
     bundled_runner = Path(__file__).with_name("srt_runner.mjs")
     package_json = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
+    content_manifest = root / _CONTENT_MANIFEST_NAME
     try:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         package = json.loads(package_json.read_text(encoding="utf-8"))
@@ -169,6 +238,16 @@ def verify_srt_installation_locked(
             policy_hash=policy_hash,
             cause=exc,
         )
+    try:
+        manifest = json.loads(content_manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _raise_srt_lockout(
+            "managed SRT content manifest is missing or invalid; rerun `gobby install`",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+            cause=exc,
+        )
     if not isinstance(receipt, dict) or not isinstance(package, dict):
         _raise_srt_lockout(
             f"managed SRT {SRT_RELEASE.version} receipt or package metadata is invalid",
@@ -176,7 +255,20 @@ def verify_srt_installation_locked(
             provider=provider,
             policy_hash=policy_hash,
         )
-
+    if not isinstance(manifest, dict):
+        _raise_srt_lockout(
+            "managed SRT content manifest is invalid",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in manifest.items()):
+        _raise_srt_lockout(
+            "managed SRT content manifest is invalid",
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+        )
     expected_receipt = SRT_RELEASE.receipt_fields()
     if any(receipt.get(key) != value for key, value in expected_receipt.items()):
         _raise_srt_lockout(
@@ -213,6 +305,16 @@ def verify_srt_installation_locked(
             run_id=run_id,
             provider=provider,
             policy_hash=policy_hash,
+        )
+    try:
+        _verify_srt_content(root, manifest)
+    except SrtRuntimeError as exc:
+        _raise_srt_lockout(
+            str(exc),
+            run_id=run_id,
+            provider=provider,
+            policy_hash=policy_hash,
+            cause=exc,
         )
 
     node_status = node_dependency_status()
@@ -288,6 +390,21 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
     return settings
 
 
+def _preflight_provider_native(
+    provider: str,
+    provider_args: list[str],
+    paths: ResolvedSandboxPaths,
+) -> None:
+    """Verify the effective provider policy carries every sensitive exclusion."""
+    if provider != "claude" or len(provider_args) < 2 or provider_args[0] != "--settings":
+        raise SrtRuntimeError(f"{provider} cannot prove the sensitive-root contract")
+    try:
+        settings = json.loads(provider_args[1])
+        preflight_provider_native_settings(provider, settings, paths)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise SrtRuntimeError(f"{provider} emitted an unverifiable sensitive-root policy") from exc
+
+
 async def prepare_sandbox_launch(
     *,
     config: SandboxConfig,
@@ -323,39 +440,61 @@ async def prepare_sandbox_launch(
             policy_hash=hashlib.sha256(rejected_policy).hexdigest(),
         )
 
+    capabilities = provider_capabilities(provider)
+    if config.backend == "provider-native" and (
+        resolver is None or not capabilities.sensitive_path_enforcement
+    ):
+        raise SrtRuntimeError(f"{provider} cannot prove the sensitive-root contract")
+
     provider_executable = (
         _resolve_provider_executable(provider, env) if config.backend == "srt" else None
     )
+
+    run_paths = prepare_sandbox_run_paths(run_id, env)
+    run_environment = run_paths.environment(provider)
+    prompt_file = env.get("GOBBY_PROMPT_FILE")
+    if prompt_file and Path(prompt_file).is_file():
+        run_prompt = run_paths.assets / "prompt.md"
+        shutil.copyfile(prompt_file, run_prompt)
+        run_prompt.chmod(0o600)
+        run_environment["GOBBY_PROMPT_FILE"] = str(run_prompt)
+    superseded_writes = previous_run_write_paths(env)
+    retained_writes = [
+        path
+        for path in config.extra_write_paths
+        if canonical_path(path, base=Path(workspace_path)) not in superseded_writes
+    ]
+    effective_config = config.model_copy(
+        update={
+            "extra_write_paths": [*retained_writes, *(str(path) for path in run_paths.writable)]
+        }
+    )
+    effective_env = {**env, **run_environment}
     paths = compute_sandbox_paths(
-        config,
+        effective_config,
         workspace_path,
         daemon_port,
         gobby_websocket_port=websocket_port,
         provider=provider,
         provider_executable=provider_executable,
         api_base=api_base,
-        env=env,
+        env=effective_env,
     )
+    paths.read_paths.append(str(run_paths.assets.resolve()))
+    assert_sensitive_path_contract(paths.read_paths, paths.write_paths)
     if config.backend == "provider-native":
-        if resolver is None:
-            raise SrtRuntimeError(f"{provider} does not support provider-native sandboxing")
-        provider_args, provider_env = resolver.resolve(config, paths)
+        assert resolver is not None
+        provider_args, provider_env = resolver.resolve(effective_config, paths)
         if not provider_args and not provider_env:
             raise SrtRuntimeError(f"{provider} did not activate its provider-native sandbox")
+        _preflight_provider_native(provider, provider_args, paths)
         return SandboxLaunch(
             backend="provider-native",
             enforced=True,
             provider_args=provider_args,
-            provider_env=provider_env,
+            provider_env={**run_environment, **provider_env},
         )
 
-    policy_dir = secure_policy_directory(run_id)
-    temp_dir = policy_dir / "tmp"
-    temp_dir.mkdir(mode=0o700, exist_ok=True)
-    temp_dir.chmod(0o700)
-    temp_path = str(temp_dir.resolve())
-    paths.read_paths.append(temp_path)
-    paths.write_paths.append(temp_path)
     settings = render_srt_settings(paths)
     policy_bytes = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
     policy_hash = hashlib.sha256(policy_bytes).hexdigest()
@@ -364,8 +503,8 @@ async def prepare_sandbox_launch(
         provider=provider,
         policy_hash=policy_hash,
     )
-    policy_path = policy_dir / "settings.json"
-    violation_path = policy_dir / "violations.jsonl"
+    policy_path = run_paths.assets / "settings.json"
+    violation_path = run_paths.logs / "violations.jsonl"
     _write_private_file(policy_path, policy_bytes)
     _write_private_file(violation_path, b"")
     launch = SandboxLaunch(
@@ -375,9 +514,7 @@ async def prepare_sandbox_launch(
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),
-        provider_env={
-            "CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR": temp_path,
-        },
+        provider_env=run_environment,
         provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),

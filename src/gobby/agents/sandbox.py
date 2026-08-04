@@ -327,9 +327,14 @@ class ClaudeSandboxResolver(SandboxResolver):
         # workspace (notably a worktree's Git metadata dirs in the main
         # repo's .git/worktrees/<name> and .git), so sandboxed commits
         # don't fail with EPERM creating index.lock.
+        filesystem: dict[str, list[str]] = {
+            "denyRead": list(paths.deny_read_paths),
+            "denyWrite": list(paths.deny_write_paths),
+        }
         allow_write = _external_write_paths(paths)
         if allow_write:
-            sandbox["filesystem"] = {"allowWrite": allow_write}
+            filesystem["allowWrite"] = allow_write
+        sandbox["filesystem"] = filesystem
 
         return {
             "allowManagedPermissionRulesOnly": True,
@@ -473,6 +478,99 @@ def merge_claude_settings(
     return _merge(base_settings, overlay)
 
 
+def preflight_provider_native_settings(
+    provider: str,
+    settings: dict[str, Any],
+    paths: ResolvedSandboxPaths,
+    *,
+    policy_path: str | None = None,
+    policy_hash: str | None = None,
+) -> dict[str, Any]:
+    """Verify provider-native settings prove the sensitive-path contract."""
+    from gobby.agents.sandbox_policy import assert_sensitive_path_contract, sensitive_roots
+
+    if provider != "claude":
+        raise ValueError(f"{provider} cannot prove the sensitive-root contract")
+    try:
+        sandbox = settings["sandbox"]
+        filesystem = sandbox["filesystem"]
+        denied_read = filesystem["denyRead"]
+        denied_write = filesystem["denyWrite"]
+        allow_read = filesystem.get("allowRead", [])
+        allow_write = filesystem.get("allowWrite", [])
+        path_lists = (denied_read, denied_write, allow_read, allow_write)
+        if not all(
+            isinstance(items, list) and all(isinstance(item, str) for item in items)
+            for items in path_lists
+        ):
+            raise TypeError("provider-native filesystem paths must be string lists")
+        if sandbox["enabled"] is not True or sandbox["allowUnsandboxedCommands"] is not False:
+            raise ValueError("provider-native sandbox permits unenforced commands")
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"{provider} emitted an unverifiable sensitive-root policy") from exc
+
+    assert_sensitive_path_contract(paths.read_paths, paths.write_paths, allow_read, allow_write)
+    protected = set(sensitive_roots())
+    if not protected <= set(denied_read) or not protected <= set(denied_write):
+        raise ValueError(f"{provider} emitted an incomplete sensitive-root policy")
+
+    encoded = json.dumps(settings, sort_keys=True, separators=(",", ":")).encode()
+    return {
+        "backend": "provider-native",
+        "enforced": True,
+        "policy_hash": policy_hash or hashlib.sha256(encoded).hexdigest(),
+        "policy_path": policy_path,
+    }
+
+
+def preflight_provider_native_settings_file(
+    *,
+    provider: str,
+    settings_path: str | None,
+    config: SandboxConfig,
+    workspace_path: str,
+    policy_hash: str | None = None,
+) -> dict[str, Any]:
+    """Load and verify a provider-native settings file after materialization."""
+    if not config.enabled:
+        return {"backend": "none", "enforced": False, "policy_hash": policy_hash}
+    if not settings_path:
+        raise ValueError(f"{provider} did not materialize provider-native settings")
+    try:
+        settings = json.loads(Path(settings_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{provider} emitted unreadable provider-native settings") from exc
+    if not isinstance(settings, dict):
+        raise ValueError(f"{provider} emitted invalid provider-native settings")
+    paths = compute_sandbox_paths(config, workspace_path, provider=provider)
+    return preflight_provider_native_settings(
+        provider,
+        settings,
+        paths,
+        policy_path=settings_path,
+        policy_hash=policy_hash,
+    )
+
+
+async def preflight_provider_native_settings_file_async(
+    *,
+    provider: str,
+    settings_path: str | None,
+    config: SandboxConfig,
+    workspace_path: str,
+    policy_hash: str | None = None,
+) -> dict[str, Any]:
+    """Verify provider-native settings without blocking the event loop."""
+    return await asyncio.to_thread(
+        preflight_provider_native_settings_file,
+        provider=provider,
+        settings_path=settings_path,
+        config=config,
+        workspace_path=workspace_path,
+        policy_hash=policy_hash,
+    )
+
+
 def materialize_claude_settings(
     *,
     base_settings_path: str | Path | None,
@@ -597,6 +695,7 @@ def compute_sandbox_paths(
     """
     from gobby.agents.sandbox_policy import (
         allowed_domains,
+        assert_sensitive_path_contract,
         canonical_path,
         canonical_paths,
         credential_env_vars,
@@ -606,7 +705,7 @@ def compute_sandbox_paths(
         mcp_config_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
-        sensitive_home_roots,
+        sensitive_roots,
         sensitive_write_roots,
         tmux_socket_roots,
         toolchain_credential_paths,
@@ -646,7 +745,7 @@ def compute_sandbox_paths(
     )
     deny_read_paths = canonical_paths(
         [
-            *sensitive_home_roots(),
+            *sensitive_roots(),
             *toolchain_credential_paths(),
             *config.extra_deny_read_paths,
         ],
@@ -661,6 +760,7 @@ def compute_sandbox_paths(
         base=workspace,
     )
     domains = allowed_domains(config, provider, api_base)
+    assert_sensitive_path_contract(read_paths, write_paths)
 
     return ResolvedSandboxPaths(
         workspace_path=str(workspace),

@@ -406,6 +406,11 @@ class TestCreateChatSessionInner:
             mock_session.model = "opus"
             mock_session.sdk_session_id = "sdk-session-123"
             mock_session._transcript_path = "/tmp/runtime-session.jsonl"
+            mock_session.sandbox_metadata = {
+                "backend": "provider-native",
+                "enforced": True,
+                "policy_hash": "verified-hash",
+            }
             MockSessionClass.return_value = mock_session
 
             mock_db_sess = MagicMock()
@@ -423,6 +428,9 @@ class TestCreateChatSessionInner:
                 "db-id-meta",
                 external_id="sdk-session-123",
                 transcript_path="/tmp/runtime-session.jsonl",
+                sandbox_enabled=True,
+                sandbox_policy_hash="verified-hash",
+                terminal_context={"sandbox": mock_session.sandbox_metadata},
             )
             assert mixin.session_manager.update.call_count == 1
             assert mixin.session_manager.update.call_args is not None
@@ -749,7 +757,7 @@ class TestCreateChatSessionInner:
             assert update_args.kwargs["session_type"] == "web_chat"
             assert update_args.kwargs["status"] == "active"
             assert update_args.kwargs["terminal_context"] == {}
-            assert update_args.kwargs["sandbox_enabled"] is True
+            assert update_args.kwargs["sandbox_enabled"] is False
             assert isinstance(update_args.kwargs["sandbox_policy_hash"], str)
             assert update_args.kwargs["sandbox_policy_hash"]
             mixin.session_manager.update_model.assert_called_once_with(

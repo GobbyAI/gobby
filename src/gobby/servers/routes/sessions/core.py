@@ -14,7 +14,6 @@ from fastapi import APIRouter, HTTPException, Query
 
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
-    web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
 from gobby.servers.models import (
@@ -228,10 +227,8 @@ def register_core_routes(
             )
             runtime_manager = server.services.web_chat_runtime_manager
             if runtime_manager is not None:
-                sandbox_enabled = runtime_manager.sandbox_config.enabled
                 sandbox_policy_hash = runtime_manager.sandbox_policy_hash
             else:
-                sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
             session = await server.run_db(
@@ -243,7 +240,7 @@ def register_core_routes(
                 model=model,
                 is_local=is_local,
                 chat_mode=chat_mode,
-                sandbox_enabled=sandbox_enabled,
+                sandbox_enabled=False,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
 

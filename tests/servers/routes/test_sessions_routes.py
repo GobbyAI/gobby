@@ -645,7 +645,7 @@ class TestCreateWebChatSession:
             model="sonnet",
             is_local=False,
             chat_mode="plan",
-            sandbox_enabled=True,
+            sandbox_enabled=False,
             sandbox_policy_hash="hash-123",
         )
         mock_server.session_manager.update_model.assert_not_called()

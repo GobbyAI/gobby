@@ -22,7 +22,11 @@ from claude_agent_sdk.types import (
     PermissionMode,
 )
 
-from gobby.agents.sandbox import SandboxConfig, materialize_claude_settings_async
+from gobby.agents.sandbox import (
+    SandboxConfig,
+    materialize_claude_settings_async,
+    preflight_provider_native_settings_file_async,
+)
 from gobby.config.feature_base import parse_feature_candidate
 from gobby.servers.chat_session_helpers import (
     PendingApproval,
@@ -106,6 +110,8 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     _active_reasoning_effort: str | None = field(default=None, repr=False)
     _preapproved_tool_use_ids: set[str] = field(default_factory=set, repr=False)
     sandbox_config: SandboxConfig | None = field(default=None, repr=False)
+    sandbox_policy_hash: str | None = field(default=None, repr=False)
+    sandbox_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
 
     # Lifecycle callbacks — set by ChatMixin to bridge SDK hooks to workflow engine
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None = field(
@@ -258,6 +264,13 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             workspace_path=cwd,
             name="web-chat",
         )
+        verified_sandbox = await preflight_provider_native_settings_file_async(
+            provider="claude",
+            settings_path=settings_path,
+            config=self.sandbox_config or SandboxConfig(enabled=False),
+            workspace_path=cwd,
+            policy_hash=self.sandbox_policy_hash,
+        )
         options = ClaudeAgentOptions(
             system_prompt=system_prompt,
             max_turns=None,
@@ -290,6 +303,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         self._client = ClaudeSDKClient(options=options)
         await self._client.connect()
+        self.sandbox_metadata = verified_sandbox
         self._connected = True
         self._active_reasoning_effort = resolved_effort
         self.last_activity = datetime.now(UTC)

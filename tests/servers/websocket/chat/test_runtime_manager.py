@@ -51,7 +51,10 @@ def _async_stream(*items: Any):
 
 class TestWebChatRuntimeManager:
     def test_create_session_routes_by_provider(self) -> None:
-        manager = WebChatRuntimeManager(codex_client=None)
+        manager = WebChatRuntimeManager(
+            codex_client=None,
+            daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
+        )
 
         claude_session = manager.create_session(provider="claude", conversation_id="conv-1")
         grok_session = manager.create_session(provider="grok", conversation_id="conv-2")
@@ -112,19 +115,15 @@ class TestWebChatRuntimeManager:
         assert manager.get_acp_session_info("grok", "s1") == {"sessionId": "s1", "cwd": "/repo"}
         assert manager.acp_session_infos() == {("grok", "s1"): {"sessionId": "s1", "cwd": "/repo"}}
 
-    def test_create_session_routes_droid_to_managed_backend(self) -> None:
-        from gobby.servers.websocket.chat.backends import DroidManagedChatSession
-
+    def test_create_session_rejects_droid_without_sensitive_path_enforcement(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
-        droid_session = manager.create_session(provider="droid", conversation_id="conv-droid")
-
-        assert isinstance(droid_session, DroidManagedChatSession)
-        assert droid_session.provider == "droid"
-        assert droid_session._provider_label() == "droid"
+        with pytest.raises(RuntimeError, match="droid cannot prove the sensitive-root contract"):
+            manager.create_session(provider="droid", conversation_id="conv-droid")
 
     def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
         config = DaemonConfig(
+            web_chat_sandbox={"enabled": False},
             ai={
                 "generation": {
                     "endpoints": {
@@ -135,7 +134,7 @@ class TestWebChatRuntimeManager:
                         }
                     }
                 }
-            }
+            },
         )
         manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
 
@@ -162,6 +161,7 @@ class TestWebChatRuntimeManager:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         config = DaemonConfig(
+            web_chat_sandbox={"enabled": False},
             ai={
                 "generation": {
                     "endpoints": {
@@ -173,7 +173,7 @@ class TestWebChatRuntimeManager:
                         }
                     }
                 }
-            }
+            },
         )
         monkeypatch.setattr(
             "gobby.servers.websocket.chat.runtime_manager.codex_endpoint_config_overrides",
@@ -186,6 +186,7 @@ class TestWebChatRuntimeManager:
 
     async def test_codex_endpoint_selector_uses_canonical_wire_model(self) -> None:
         config = DaemonConfig(
+            web_chat_sandbox={"enabled": False},
             ai={
                 "generation": {
                     "endpoints": {
@@ -198,7 +199,7 @@ class TestWebChatRuntimeManager:
                         }
                     }
                 }
-            }
+            },
         )
         manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
         selector = "endpoint:openrouter/moonshotai/kimi-k3"
@@ -230,6 +231,7 @@ class TestWebChatRuntimeManager:
             codex_client=None,
             codex_transcript_retry_attempts=2,
             codex_transcript_retry_delay_seconds=0.25,
+            daemon_config=DaemonConfig(web_chat_sandbox={"enabled": False}),
         )
 
         codex_session = manager.create_session(provider="codex", conversation_id="conv-3")

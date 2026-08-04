@@ -16,9 +16,11 @@ from urllib.request import Request, urlopen
 
 from gobby.agents.srt_runtime import (
     SrtRuntimeError,
+    make_srt_installation_immutable,
     srt_install_lock,
     srt_install_root,
     verify_srt_installation_locked,
+    write_srt_content_manifest,
 )
 from gobby.utils.dependency_requirements import SRT_RELEASE, node_dependency_status
 
@@ -117,6 +119,8 @@ def _install_srt_runtime() -> SrtInstallResult:
                 staging / "receipt.json",
                 SRT_RELEASE.receipt_fields() | {"node": str(node)},
             )
+            write_srt_content_manifest(staging)
+            make_srt_installation_immutable(staging)
             _promote_install(staging, target)
         finally:
             if staging.exists():

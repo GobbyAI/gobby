@@ -1,5 +1,6 @@
 """Tests for SpawnExecutor unified spawn dispatch."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
-from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import PATH_ENV_VAR, hook_inbox_dir, managed_tool_bin_dir
 from gobby.agents.spawn_executor import (
@@ -903,36 +904,10 @@ class TestExecuteSpawn:
         ):
             result = await execute_spawn(request)
 
-        mock_preapprove.assert_called_once_with("codex", "/path")
-        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
-            "gobby-sess-123",
-            True,
-        )
-        command = mock_spawner.spawn.call_args.kwargs["command"]
-        assert "--ask-for-approval" in command
-        assert command[command.index("--ask-for-approval") + 1] == "never"
-        assert command[command.index("--disable") + 1] == "guardian_approval"
-        assert "--sandbox" in command
-        assert "workspace-write" in command
-        assert "-c" in command
-        assert "sandbox_workspace_write.network_access=true" in command
-        assert "--add-dir" in command
-        assert command[command.index("--add-dir") + 1] == str(
-            Path("/tmp/gobby/uv-cache/gobby-sess-123").resolve()
-        )
-        assert "--full-auto" not in command
-        prompt_arg = command[-1]
-        # Sandbox args must appear before the final prompt argv entry, which
-        # is the raw Codex prompt.
-        assert prompt_arg == request.prompt
-        assert request.prompt in prompt_arg
-        assert command.index("--ask-for-approval") < command.index("--sandbox")
-        assert command.index("--disable") < command.index("--sandbox")
-        assert command.index("sandbox_workspace_write.network_access=true") < command.index(
-            prompt_arg
-        )
-        assert command.index("--sandbox") < command.index(prompt_arg)
-        assert result.success is True
+        mock_preapprove.assert_not_called()
+        mock_spawner.spawn.assert_not_called()
+        assert result.success is False
+        assert "codex cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_claude_terminal_requires_session_manager(self):
@@ -1120,15 +1095,9 @@ class TestExecuteSpawn:
         ):
             result = await execute_spawn(request)
 
-        command = mock_spawner.spawn.call_args.kwargs["command"]
-        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
-            "gobby-sess-123",
-            True,
-        )
-        assert "--sandbox" in command
-        assert "strict" in command
-        assert command.index("--sandbox") < command.index("Test")
-        assert result.success is True
+        mock_spawner.spawn.assert_not_called()
+        assert result.success is False
+        assert "grok cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_agy_spawn_rejects_unavailable_provider(self):
@@ -1188,10 +1157,24 @@ class TestExecuteSpawnSandbox:
 
         # Mock the sandbox resolver (imported locally in _spawn_claude_terminal)
         mock_resolver = MagicMock()
-        mock_resolver.resolve.return_value = (
-            ["--settings", '{"sandbox":{"enabled":true}}'],
-            {"SEATBELT_PROFILE": "permissive-open"},
-        )
+
+        def resolve_with_sensitive_denies(
+            _config: SandboxConfig,
+            paths: ResolvedSandboxPaths,
+        ) -> tuple[list[str], dict[str, str]]:
+            settings = {
+                "sandbox": {
+                    "enabled": True,
+                    "allowUnsandboxedCommands": False,
+                    "filesystem": {
+                        "denyRead": paths.deny_read_paths,
+                        "denyWrite": paths.deny_write_paths,
+                    },
+                }
+            }
+            return ["--settings", json.dumps(settings)], {"SEATBELT_PROFILE": "verified"}
+
+        mock_resolver.resolve.side_effect = resolve_with_sensitive_denies
 
         with (
             patch(
@@ -1214,17 +1197,32 @@ class TestExecuteSpawnSandbox:
             True,
         )
         resolved_config = mock_resolver.resolve.call_args.args[0]
-        assert "/tmp/gobby/uv-cache/child-session-id" in resolved_config.extra_write_paths
+        assert "/tmp/gobby/uv-cache/child-session-id" not in resolved_config.extra_write_paths
+        assert {Path(path).name for path in resolved_config.extra_write_paths} == {
+            "tmp",
+            "hooks",
+            "logs",
+            "cache",
+        }
         mock_spawner.spawn.assert_called_once()
         call_kwargs = mock_spawner.spawn.call_args.kwargs
         assert "env" in call_kwargs
         assert "SEATBELT_PROFILE" in call_kwargs["env"]
-        assert call_kwargs["env"][UV_CACHE_DIR] == "/tmp/gobby/uv-cache/child-session-id"
+        assert Path(call_kwargs["env"][UV_CACHE_DIR]).is_relative_to(
+            Path(
+                next(
+                    path for path in resolved_config.extra_write_paths if Path(path).name == "cache"
+                )
+            )
+        )
         assert call_kwargs["env"][CARGO_HOME]
-        cargo_home_parts = Path(call_kwargs["env"][CARGO_HOME]).parts
-        assert cargo_home_parts[-3:-1] == ("gobby", "cargo-home")
-        assert cargo_home_parts[-1].startswith("child-session-id-")
-        assert call_kwargs["env"][CARGO_HOME] in resolved_config.extra_write_paths
+        assert Path(call_kwargs["env"][CARGO_HOME]).is_relative_to(
+            Path(
+                next(
+                    path for path in resolved_config.extra_write_paths if Path(path).name == "cache"
+                )
+            )
+        )
         # Command should include sandbox args
         command = call_kwargs.get("command")
         assert "--dangerously-skip-permissions" in command
@@ -1422,41 +1420,9 @@ class TestExecuteSpawnSandbox:
         ):
             result = await execute_spawn(request)
 
-        mock_spawner.spawn.assert_called_once()
-        call_kwargs = mock_spawner.spawn.call_args.kwargs
-        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
-            "gobby-sess-123",
-            True,
-        )
-        # Env should include both Gobby session vars and sandbox vars
-        assert call_kwargs.get("env") is not None
-        assert "GOBBY_SESSION_ID" in call_kwargs["env"]
-        assert "SEATBELT_PROFILE" in call_kwargs["env"]
-        assert call_kwargs["env"]["SEATBELT_PROFILE"] == "permissive-open"
-        # Command should include -s flag (passed as keyword arg)
-        command = call_kwargs.get("command")
-        assert command is not None
-        assert "--approval-mode" in command
-        assert "yolo" in command
-        assert "-s" in command
-        assert "--include-directories" in command
-        include_dirs = [
-            Path(command[index + 1])
-            for index, arg in enumerate(command)
-            if arg == "--include-directories"
-        ]
-        assert len(include_dirs) <= 5
-        for expected_path in [extra_write_path, uv_cache_dir, git_dir, git_worktree_dir]:
-            resolved_expected_path = expected_path.resolve(strict=False)
-            assert any(
-                resolved_expected_path == include_dir
-                or resolved_expected_path.is_relative_to(include_dir)
-                for include_dir in include_dirs
-            )
-        assert command[-1] == request.prompt
-        assert command.index("-s") < len(command) - 1
-        assert command.index("--include-directories") < len(command) - 1
-        assert result.success is True
+        mock_spawner.spawn.assert_not_called()
+        assert result.success is False
+        assert "qwen cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_qwen_terminal_spawn_uses_qwen_resolver_for_sandbox_config(self) -> None:
@@ -1503,18 +1469,10 @@ class TestExecuteSpawnSandbox:
             result = await execute_spawn(request)
 
         mock_get_resolver.assert_called_once_with("qwen")
-        mock_resolver.resolve.assert_called_once()
-        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
-            "gobby-sess-123",
-            True,
-        )
-        command = mock_spawner.spawn.call_args.kwargs["command"]
-        assert command[0] == "qwen"
-        assert command[-1] == request.prompt
-        assert command.index("-s") < len(command) - 1
-        assert command.index("--include-directories") < len(command) - 1
-        assert mock_spawner.spawn.call_args.kwargs["env"]["SEATBELT_PROFILE"] == "permissive-open"
-        assert result.success is True
+        mock_resolver.resolve.assert_not_called()
+        mock_spawner.spawn.assert_not_called()
+        assert result.success is False
+        assert "qwen cannot prove the sensitive-root contract" in (result.error or "")
 
 
 class TestExecuteSpawnErrorPaths:

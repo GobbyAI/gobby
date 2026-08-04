@@ -100,6 +100,8 @@ class ManagedChatSessionBase:
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     _model: str | None = field(default=None, repr=False)
     reasoning_effort: str | None = field(default=None, repr=False)
+    sandbox_policy_hash: str | None = field(default=None, repr=False)
+    sandbox_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)

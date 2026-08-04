@@ -32,6 +32,8 @@ class ChatSessionProtocol(Protocol):
     last_activity: datetime
     provider: str
     reasoning_effort: str | None
+    sandbox_policy_hash: str | None
+    sandbox_metadata: dict[str, Any]
 
     # Lifecycle callbacks
     _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None

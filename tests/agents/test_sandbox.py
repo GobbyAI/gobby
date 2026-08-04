@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.agents.constants import GOBBY_SESSION_ID, get_agent_session_cache_dir
+from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox import (
     ClaudeSandboxResolver,
     CodexSandboxResolver,
@@ -523,8 +524,7 @@ class TestClaudeSandboxResolver:
             str(git_meta.resolve(strict=False))
         ]
 
-    def test_no_external_paths_omits_filesystem_key(self) -> None:
-        """Workspace-only write paths should not emit a filesystem block."""
+    def test_no_external_paths_still_emits_sensitive_denies(self) -> None:
         import json
 
         paths = ResolvedSandboxPaths(
@@ -537,7 +537,7 @@ class TestClaudeSandboxResolver:
         args, _env = ClaudeSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
         settings = json.loads(args[1])
 
-        assert "filesystem" not in settings["sandbox"]
+        assert settings["sandbox"]["filesystem"] == {"denyRead": [], "denyWrite": []}
 
     def test_returns_empty_env(self) -> None:
         """Test that Claude resolver always returns empty env dict."""
@@ -860,7 +860,7 @@ class TestComputeSandboxPaths:
         assert str(real_workspace) in paths.write_paths
         assert str(linked_workspace) not in paths.write_paths
 
-    def test_srt_policy_denies_home_but_grants_gobby_home(
+    def test_sensitive_gobby_roots_are_effectively_denied(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
@@ -878,16 +878,41 @@ class TestComputeSandboxPaths:
             env={"PATH": "", "GOBBY_CODE_INDEX_RUNTIME_HOME": str(runtime_home)},
         )
 
-        assert str(gobby_home.resolve()) not in paths.deny_read_paths
-        assert str(gobby_home.resolve()) in paths.write_paths
-        assert str(gobby_home.resolve()) in paths.read_paths
-        assert str(Path.home().resolve()) in paths.deny_read_paths
-        for required_read_path in ("machine_id", "logs", "bin", "local_cli_token"):
-            assert str((gobby_home / required_read_path).resolve()) not in paths.deny_read_paths
-        assert str((gobby_home / "local_cli_token").resolve()) in paths.deny_write_paths
-        assert str((gobby_home / "gcode-runtime").resolve()) in paths.deny_read_paths
+        protected = {
+            str((gobby_home / name).resolve())
+            for name in (
+                "bootstrap.yaml",
+                ".secret_kek",
+                "local_cli_token",
+                "gcode-runtime",
+                "tools/srt",
+            )
+        }
+        assert protected <= set(paths.deny_read_paths)
+        assert protected <= set(paths.deny_write_paths)
+        for allowed in (*paths.read_paths, *paths.write_paths):
+            allowed_path = Path(allowed)
+            assert all(
+                sensitive != allowed_path and not sensitive.is_relative_to(allowed_path)
+                for sensitive in map(Path, protected)
+            )
         assert str(runtime_home.resolve()) in paths.read_paths
         assert str(workspace.resolve()) in paths.write_paths
+
+    @pytest.mark.parametrize(
+        ("provider", "expected"),
+        [
+            ("claude", True),
+            ("codex", False),
+            ("droid", False),
+            ("qwen", False),
+            ("grok", False),
+        ],
+    )
+    def test_provider_declares_sensitive_path_enforcement(
+        self, provider: str, expected: bool
+    ) -> None:
+        assert provider_capabilities(provider).sensitive_path_enforcement is expected
 
     def test_normalize_sandbox_path_tolerates_value_error(
         self, monkeypatch: pytest.MonkeyPatch

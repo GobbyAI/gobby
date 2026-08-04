@@ -13,9 +13,14 @@ import pytest
 
 from gobby.agents import srt_runtime
 from gobby.agents.sandbox import (
+    ClaudeSandboxResolver,
+    CodexSandboxResolver,
+    GrokSandboxResolver,
+    QwenSandboxResolver,
     ResolvedSandboxPaths,
     SandboxConfig,
     SandboxCredentialEnv,
+    SandboxResolver,
     compute_sandbox_paths,
 )
 from gobby.agents.sandbox_policy import _nearest_package_root
@@ -108,7 +113,7 @@ def test_package_root_discovery_preserves_worktree_carveout(
 
     assert str(home.resolve()) not in filesystem["allowRead"]
     assert str(workspace.resolve()) in filesystem["allowRead"]
-    assert str(home.resolve()) in filesystem["denyRead"]
+    assert str((home / ".gobby" / "bootstrap.yaml").resolve()) in filesystem["denyRead"]
     assert str((home / ".gobby").resolve()) not in filesystem["denyRead"]
 
 
@@ -137,9 +142,10 @@ def test_provider_state_roots_are_writable(
         assert state_path in filesystem["allowRead"]
         assert str((home / ".ssh").resolve()) in filesystem["denyWrite"]
 
-        gobby_home = str((home / ".gobby").resolve())
-        assert gobby_home in filesystem["allowRead"]
-        assert gobby_home in filesystem["allowWrite"]
+        gobby_home = (home / ".gobby").resolve()
+        assert str(gobby_home) not in filesystem["allowRead"]
+        assert str(gobby_home) not in filesystem["allowWrite"]
+        assert str(gobby_home / "bootstrap.yaml") in filesystem["denyRead"]
 
         uv_root = str((home / ".local" / "share" / "uv").resolve())
         assert uv_root in filesystem["allowRead"]
@@ -366,25 +372,26 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert launch.enforced is True
     assert launch.provider_executable == str(provider_target.resolve())
     assert launch.runtime_version == SRT_RELEASE.version
-    assert policy_path.parent == expected_parent
-    assert violation_path.parent == expected_parent
+    assert policy_path.parent == expected_parent / "assets"
+    assert violation_path.parent == expected_parent / "logs"
     temp_path = expected_parent / "tmp"
-    assert launch.provider_env == {temp_env_name: str(temp_path)}
+    assert launch.provider_env[temp_env_name] == str(temp_path)
+    assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
+    assert Path(launch.provider_env["CARGO_HOME"]).is_relative_to(expected_parent / "cache")
+    for writable_name in ("tmp", "hooks", "logs", "cache"):
+        writable = expected_parent / writable_name
+        assert writable.is_dir()
+        assert writable.stat().st_mode & 0o777 == 0o700
     assert temp_path.stat().st_mode & 0o777 == 0o700
     assert workspace not in policy_path.parents
     assert policy_path.stat().st_mode & 0o777 == 0o600
     assert violation_path.stat().st_mode & 0o777 == 0o600
     assert expected_parent.stat().st_mode & 0o777 == 0o700
-    assert preflights == [
-        (
-            launch,
-            str(workspace),
-            {
-                "PATH": str(shim_dir),
-                temp_env_name: str(temp_path),
-            },
-        )
-    ]
+    assert len(preflights) == 1
+    preflight_launch, preflight_cwd, preflight_env = preflights[0]
+    assert preflight_launch is launch
+    assert preflight_cwd == str(workspace)
+    assert preflight_env == {"PATH": str(shim_dir), **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     allowed_reads = policy["filesystem"]["allowRead"]
     assert str(provider_target.resolve()) in allowed_reads
@@ -396,6 +403,63 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert wrapped[wrapped.index("--") + 1] == str(provider_target.resolve())
     assert launch.metadata()["provider_executable"] == str(provider_target.resolve())
     assert provider_lookups == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "resolver"),
+    [
+        ("codex", CodexSandboxResolver()),
+        ("droid", None),
+        ("qwen", QwenSandboxResolver()),
+        ("grok", GrokSandboxResolver()),
+    ],
+)
+async def test_provider_native_launch_rejects_unproven_sensitive_path_enforcement(
+    tmp_path: Path,
+    provider: str,
+    resolver: SandboxResolver | None,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    with pytest.raises(SrtRuntimeError, match="sensitive-root contract"):
+        await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="provider-native", allow_network=False),
+            provider=provider,
+            workspace_path=str(workspace),
+            run_id="run-1",
+            resolver=resolver,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={"PATH": ""},
+        )
+
+
+@pytest.mark.asyncio
+async def test_claude_provider_native_preflight_emits_sensitive_denies(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    gobby_home = tmp_path / "gobby-home"
+    workspace.mkdir()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        launch = await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="provider-native", allow_network=False),
+            provider="claude",
+            workspace_path=str(workspace),
+            run_id="run-1",
+            resolver=ClaudeSandboxResolver(),
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={"PATH": ""},
+        )
+
+    settings = json.loads(launch.provider_args[1])
+    filesystem = settings["sandbox"]["filesystem"]
+    assert str((gobby_home / "bootstrap.yaml").resolve()) in filesystem["denyRead"]
+    assert str((gobby_home / "tools" / "srt").resolve()) in filesystem["denyWrite"]
 
 
 @pytest.mark.asyncio
@@ -559,6 +623,8 @@ def _write_valid_srt_install(root: Path) -> None:
         json.dumps(SRT_RELEASE.receipt_fields() | {"node": "/usr/bin/node"}),
         encoding="utf-8",
     )
+    srt_runtime.write_srt_content_manifest(root)
+    srt_runtime.make_srt_installation_immutable(root)
 
 
 def _patch_srt_verification_runtime(
@@ -594,6 +660,21 @@ def test_verify_srt_installation_accepts_release_contract(
     assert installation.runner == (root / "runner.mjs").resolve()
 
 
+def test_verify_srt_installation_rejects_unmanifested_package_content(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "runtime"
+    _write_valid_srt_install(root)
+    _patch_srt_verification_runtime(monkeypatch, root)
+    (root / "node_modules").chmod(0o755)
+    injected = root / "node_modules" / "injected.js"
+    injected.write_text("export default 'persisted payload';\n", encoding="utf-8")
+
+    with pytest.raises(SrtRuntimeError, match="content manifest"):
+        verify_srt_installation()
+
+
 @pytest.mark.parametrize(
     ("corruption", "expected_error"),
     [
@@ -612,16 +693,19 @@ def test_verify_srt_installation_rejects_corruption(
     _write_valid_srt_install(root)
     _patch_srt_verification_runtime(monkeypatch, root)
     if corruption == "receipt":
+        (root / "receipt.json").chmod(0o644)
         receipt = json.loads((root / "receipt.json").read_text(encoding="utf-8"))
         receipt["tarball_sha256"] = "wrong"
         (root / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
     elif corruption == "version":
         package_json = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
+        package_json.chmod(0o644)
         package_json.write_text(
             json.dumps({"name": SRT_RELEASE.package, "version": "0.0.65"}),
             encoding="utf-8",
         )
     else:
+        (root / "runner.mjs").chmod(0o644)
         (root / "runner.mjs").write_text("corrupted", encoding="utf-8")
 
     with pytest.raises(SrtRuntimeError, match=expected_error):

@@ -137,7 +137,9 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     ]
     assert not staging.exists()
     assert (target / "runner.mjs").is_file()
-    assert (target / "runner.mjs").stat().st_mode & 0o777 == 0o700
+    assert (target / "runner.mjs").stat().st_mode & 0o777 == 0o444
+    assert (target / "content-manifest.json").is_file()
+    assert target.stat().st_mode & 0o777 == 0o555
     receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
     assert receipt["package"] == SRT_RELEASE.package
     assert receipt["version"] == SRT_RELEASE.version

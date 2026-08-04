@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -46,6 +47,51 @@ _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "droid": ("FACTORY_API_KEY",),
     "grok": ("XAI_API_KEY",),
 }
+
+_RUN_CACHE_ENV_VARS = (
+    "UV_CACHE_DIR",
+    "CARGO_HOME",
+    "GOCACHE",
+    "GOMODCACHE",
+    "npm_config_cache",
+    "YARN_CACHE_FOLDER",
+    "PNPM_HOME",
+    "PIP_CACHE_DIR",
+    "GRADLE_USER_HOME",
+    "COURSIER_CACHE",
+    "NUGET_PACKAGES",
+    "COMPOSER_CACHE_DIR",
+    "PUB_CACHE",
+    "GEM_HOME",
+    "BUNDLE_PATH",
+    "HEX_HOME",
+    "MIX_HOME",
+    "XDG_CACHE_HOME",
+)
+
+
+@dataclass(frozen=True)
+class SandboxRunPaths:
+    root: Path
+    assets: Path
+    tmp: Path
+    hooks: Path
+    logs: Path
+    cache: Path
+
+    @property
+    def writable(self) -> tuple[Path, Path, Path, Path]:
+        return (self.tmp, self.hooks, self.logs, self.cache)
+
+    def environment(self, provider: str) -> dict[str, str]:
+        values = {
+            name: str(self.cache / name.replace("_", "-").lower()) for name in _RUN_CACHE_ENV_VARS
+        }
+        values["CLAUDE_CODE_TMPDIR" if provider == "claude" else "TMPDIR"] = str(self.tmp)
+        values["GOBBY_HOOK_SPOOL"] = str(self.hooks)
+        values["GOBBY_LOG_DIR"] = str(self.logs)
+        return values
+
 
 _GIT_DOMAINS = (
     "github.com",
@@ -230,20 +276,28 @@ def canonical_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
     return list(dict.fromkeys(canonical_path(path, base=base) for path in paths))
 
 
-def sensitive_home_roots() -> list[str]:
-    """Return broad home roots denied before narrow read exceptions are applied.
-
-    Sandboxed agents get broad access to Gobby state, with persistent gcode
-    runtimes explicitly removed from that carveout.
-    """
-    home = Path.home().resolve(strict=False)
+def sensitive_roots() -> list[str]:
+    """Return Gobby roots excluded from every managed allow surface."""
     gobby_home = get_gobby_home()
     return canonical_paths(
         [
-            str(home),
+            str(gobby_home / "bootstrap.yaml"),
+            str(gobby_home / ".secret_kek"),
+            str(gobby_home / "local_cli_token"),
             str(gobby_home / "gcode-runtime"),
+            str(gobby_home / "tools" / "srt"),
         ]
     )
+
+
+def assert_sensitive_path_contract(*allow_lists: list[str]) -> None:
+    """Reject an allow entry that contains a sensitive root."""
+    protected = [Path(path) for path in sensitive_roots()]
+    for allowed_text in (item for paths in allow_lists for item in paths):
+        allowed = Path(allowed_text).resolve(strict=False)
+        for sensitive in protected:
+            if sensitive == allowed or sensitive.is_relative_to(allowed):
+                raise ValueError(f"sandbox allow path contains sensitive root: {allowed}")
 
 
 def sensitive_write_roots() -> list[str]:
@@ -255,7 +309,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".gnupg",
         home / ".kube",
         home / ".config" / "gcloud",
-        get_gobby_home() / "local_cli_token",
+        *map(Path, sensitive_roots()),
     ]
     return canonical_paths([str(path) for path in roots])
 
@@ -273,7 +327,7 @@ def gobby_write_exceptions() -> list[str]:
     snapshots the spawned `gobby mcp-server` writes, and leaves that
     subprocess writing outside its own sandbox tmp.
     """
-    return canonical_paths([str(get_gobby_home())])
+    return []
 
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
@@ -285,7 +339,6 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     # The credential remains write-denied by sensitive_write_roots().
     home = Path.home()
     paths = [
-        get_gobby_home(),
         # Codex scrubs the MCP subprocess environment, so uv falls back to its
         # default cache roots. Shared cache contents remain readable while
         # writable cache state is routed through a per-run extra_write_path.
@@ -295,6 +348,9 @@ def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:
     runtime_home = env.get("GOBBY_CODE_INDEX_RUNTIME_HOME")
     if runtime_home:
         paths.append(Path(runtime_home))
+    managed_bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+    if managed_bootstrap:
+        paths.append(Path(managed_bootstrap))
     prompt_file = env.get("GOBBY_PROMPT_FILE")
     if prompt_file:
         paths.append(Path(prompt_file))
@@ -480,3 +536,41 @@ def secure_policy_directory(run_id: str) -> Path:
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
     return directory
+
+
+def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRunPaths:
+    """Materialize one daemon-owned run root with four writable siblings."""
+    managed_root = get_gobby_home() / "runtime" / "managed-executions"
+    bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+    bootstrap_path = Path(bootstrap).resolve(strict=False) if bootstrap else None
+    if bootstrap_path is not None and bootstrap_path.parent.is_relative_to(
+        managed_root.resolve(strict=False)
+    ):
+        root = bootstrap_path.parent
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    else:
+        root = secure_policy_directory(run_id)
+    paths = SandboxRunPaths(
+        root=root,
+        assets=root / "assets",
+        tmp=root / "tmp",
+        hooks=root / "hooks",
+        logs=root / "logs",
+        cache=root / "cache",
+    )
+    for path in (paths.assets, *paths.writable):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.chmod(0o700)
+    for cache_path in paths.environment("unknown").values():
+        candidate = Path(cache_path)
+        if candidate.is_relative_to(paths.cache):
+            candidate.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return paths
+
+
+def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:
+    """Return superseded shared cache/spool grants replaced by a run root."""
+    paths = {canonical_path(value) for name in _RUN_CACHE_ENV_VARS if (value := env.get(name))}
+    paths.add(canonical_path(get_gobby_home() / "hooks" / "inbox"))
+    paths.add(canonical_path(Path.home() / ".gobby" / "hooks" / "inbox"))
+    return paths

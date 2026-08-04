@@ -16,6 +16,7 @@ class ProviderCapabilities:
     fallback_reasoning_efforts: frozenset[str] = frozenset()
     reasoning_flag: ReasoningFlagStyle | None = None
     sandbox: bool = False
+    sensitive_path_enforcement: bool = False
 
 
 _STANDARD_REASONING_EFFORTS = frozenset({"low", "medium", "high"})
@@ -26,30 +27,35 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         fallback_reasoning_efforts=frozenset({"low", "medium", "high", "xhigh", "max"}),
         reasoning_flag="claude-effort",
         sandbox=True,
+        sensitive_path_enforcement=True,
     ),
     "codex": ProviderCapabilities(
         terminal_reasoning=True,
         fallback_reasoning_efforts=frozenset({"low", "medium", "high", "xhigh"}),
         reasoning_flag="codex-config",
         sandbox=True,
+        sensitive_path_enforcement=False,
     ),
     "droid": ProviderCapabilities(
         terminal_reasoning=True,
         fallback_reasoning_efforts=_STANDARD_REASONING_EFFORTS,
         reasoning_flag="reasoning-effort",
         sandbox=False,
+        sensitive_path_enforcement=False,
     ),
     "grok": ProviderCapabilities(
         terminal_reasoning=True,
         fallback_reasoning_efforts=_STANDARD_REASONING_EFFORTS,
         reasoning_flag="reasoning-effort",
         sandbox=True,
+        sensitive_path_enforcement=False,
     ),
     "qwen": ProviderCapabilities(
         terminal_reasoning=False,
         fallback_reasoning_efforts=frozenset(),
         reasoning_flag=None,
         sandbox=True,
+        sensitive_path_enforcement=False,
     ),
 }
 

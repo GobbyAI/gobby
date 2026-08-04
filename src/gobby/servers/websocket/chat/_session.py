@@ -13,7 +13,6 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 from gobby.adapters.plan_options import serialize_plan_accept_options
 from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
-    web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
 from gobby.config.feature_base import parse_feature_candidate
@@ -436,12 +435,9 @@ class ChatSessionMixin:
         # silently re-route a restored session onto a different backend.
         runtime_manager = getattr(self, "web_chat_runtime_manager", None)
         if runtime_manager is not None:
-            current_web_chat_sandbox = runtime_manager.sandbox_config
             current_web_chat_policy_hash = runtime_manager.sandbox_policy_hash
         else:
-            current_web_chat_sandbox = web_chat_sandbox_config(daemon_cfg)
             current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_cfg)
-        current_web_chat_sandbox_enabled = bool(current_web_chat_sandbox.enabled)
         provider_name = effective_provider or "claude"
         session: ChatSessionProtocol
         if runtime_manager is not None:
@@ -457,7 +453,7 @@ class ChatSessionMixin:
                     f"Web chat provider '{provider_name}' requires the managed runtime backend"
                 )
             session = ChatSession(conversation_id=conversation_id, provider=provider_name)
-            session.reasoning_effort = effective_reasoning_effort
+        session.sandbox_policy_hash = current_web_chat_policy_hash
 
         if effective_reasoning_effort is not None:
             session.reasoning_effort = effective_reasoning_effort
@@ -584,7 +580,7 @@ class ChatSessionMixin:
                     session_type="web_chat",
                     status="active",
                     terminal_context={},
-                    sandbox_enabled=current_web_chat_sandbox_enabled,
+                    sandbox_enabled=False,
                     sandbox_policy_hash=current_web_chat_policy_hash,
                 )
                 if normalized_session is not None:
@@ -610,14 +606,6 @@ class ChatSessionMixin:
             ):
                 mismatch_reason = web_chat_policy_mismatch_message()
 
-            stored_sandbox_enabled = getattr(existing_db_session, "sandbox_enabled", None)
-            if (
-                mismatch_reason is None
-                and isinstance(stored_sandbox_enabled, bool)
-                and stored_sandbox_enabled != current_web_chat_sandbox_enabled
-            ):
-                mismatch_reason = web_chat_policy_mismatch_message()
-
             if mismatch_reason and runtime_manager is not None:
                 runtime_mismatch_reason = runtime_manager.policy_mismatch_reason(
                     existing_db_session
@@ -634,7 +622,7 @@ class ChatSessionMixin:
                             self,
                             session_manager.update,
                             existing_db_session.id,
-                            sandbox_enabled=current_web_chat_sandbox_enabled,
+                            sandbox_enabled=False,
                             sandbox_policy_hash=current_web_chat_policy_hash,
                         )
                         if migrated is not None:
@@ -692,7 +680,7 @@ class ChatSessionMixin:
                     source=effective_provider or "claude",
                     project_id=effective_pid,
                     session_type="web_chat",
-                    sandbox_enabled=current_web_chat_sandbox_enabled,
+                    sandbox_enabled=False,
                     sandbox_policy_hash=current_web_chat_policy_hash,
                 )
                 session.db_session_id = db_session.id
@@ -871,7 +859,7 @@ class ChatSessionMixin:
                 raise
 
         if session_manager and session.db_session_id:
-            update_kwargs: dict[str, str] = {}
+            update_kwargs: dict[str, Any] = {}
             if project_context_changed:
                 update_kwargs["project_id"] = effective_pid
             runtime_external_id = _get_runtime_external_id(session)
@@ -881,6 +869,14 @@ class ChatSessionMixin:
             runtime_transcript_path = _get_runtime_transcript_path(session)
             if runtime_transcript_path:
                 update_kwargs["transcript_path"] = runtime_transcript_path
+
+            sandbox_metadata = session.sandbox_metadata
+            if isinstance(sandbox_metadata, dict) and isinstance(
+                sandbox_metadata.get("enforced"), bool
+            ):
+                update_kwargs["sandbox_enabled"] = sandbox_metadata["enforced"]
+                update_kwargs["sandbox_policy_hash"] = sandbox_metadata.get("policy_hash")
+                update_kwargs["terminal_context"] = {"sandbox": sandbox_metadata}
 
             if update_kwargs:
                 try:
