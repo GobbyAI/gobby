@@ -120,7 +120,7 @@ const SYNTHESIS: EndpointContract = EndpointContract {
     path: "/api/providers/models",
     probe_method: "GET",
     request_shape: "none",
-    response_shape: r#"{"providers":[{"provider","available","models","source","startup_error",...}]}"#,
+    response_shape: r#"{"providers":[{"provider","display_name","available","installed","deprecated","deprecation_message","supports_web_chat","supports_agent_spawn","unavailable_reason","execution_provider","provider_type","refresh":{"generation","sources":[{"source_key","state","last_success_at","last_error"}]},"models":[{"canonical_model","display_name","aliases","available","hidden","is_default","context_length","max_output_tokens","latency_class","reasoning","input_modalities","supports_tools","routes","provenance"}]}]}"#,
     fallback: "Skip daemon-assisted synthesis and return source/manually-authored wiki content.",
 };
 
@@ -356,6 +356,14 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::*;
+
+    #[test]
+    fn synthesis_contract_describes_provider_capability_matrix_envelope() {
+        assert_eq!(
+            SYNTHESIS.response_shape,
+            r#"{"providers":[{"provider","display_name","available","installed","deprecated","deprecation_message","supports_web_chat","supports_agent_spawn","unavailable_reason","execution_provider","provider_type","refresh":{"generation","sources":[{"source_key","state","last_success_at","last_error"}]},"models":[{"canonical_model","display_name","aliases","available","hidden","is_default","context_length","max_output_tokens","latency_class","reasoning","input_modalities","supports_tools","routes","provenance"}]}]}"#
+        );
+    }
 
     struct FakeTransport {
         statuses: HashMap<(&'static str, &'static str), ProbeObservation>,
