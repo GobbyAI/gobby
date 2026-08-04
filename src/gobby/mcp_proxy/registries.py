@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
     from gobby.memory.manager import MemoryManager
     from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.concurrency import CoverageExecutor
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -74,6 +75,7 @@ def setup_internal_registries(
     web_chat_session_registry: Any | None = None,
     code_index: Any | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    coverage_executor: CoverageExecutor | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
     dream_coordinator_resolver: Callable[[], Any | None] | None = None,
 ) -> InternalRegistryManager:
@@ -167,6 +169,7 @@ def setup_internal_registries(
             db,
             default_project_id=project_id,
             run_db=run_db,
+            coverage_executor=coverage_executor,
         )
         manager.add_registry(plan_registry)
         logger.debug("Plans registry initialized")

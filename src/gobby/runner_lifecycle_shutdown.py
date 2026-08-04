@@ -457,14 +457,19 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
             logger.warning("VectorStore close failed: %s", e)
 
 
-async def _shutdown_database_executor(db_executor: Any) -> None:
-    """Revoke queued database work and join bounded operations off-loop."""
+async def _shutdown_database_executor(
+    db_executor: Any,
+    *,
+    label: str = "Database executor",
+    join_thread_name: str = "gobby-db-join",
+) -> None:
+    """Revoke queued thread work and join bounded operations off-loop."""
     if db_executor.is_joined():
         return
     try:
         db_executor.shutdown(cancel_futures=True)
     except Exception as e:
-        logger.warning("Database executor shutdown failed: %s", e)
+        logger.warning("%s shutdown failed: %s", label, e)
         return
 
     loop = asyncio.get_running_loop()
@@ -486,13 +491,29 @@ async def _shutdown_database_executor(db_executor: Any) -> None:
         else:
             loop.call_soon_threadsafe(finish_join)
 
-    threading.Thread(target=join_executor, name="gobby-db-join", daemon=True).start()
+    threading.Thread(target=join_executor, name=join_thread_name, daemon=True).start()
     try:
         await asyncio.wait_for(joined, timeout=_DATABASE_EXECUTOR_JOIN_SECONDS)
     except TimeoutError:
-        logger.error("Database executor did not settle before the shutdown deadline")
+        logger.error("%s did not settle before the shutdown deadline", label)
     except Exception as e:
-        logger.warning("Database executor join failed: %s", e)
+        logger.warning("%s join failed: %s", label, e)
+
+
+async def _shutdown_database_concurrency(runner: GobbyRunner) -> None:
+    watchdog = getattr(runner, "database_watchdog", None)
+    if watchdog is not None:
+        watchdog.stop()
+    coverage_executor = getattr(runner, "coverage_executor", None)
+    if coverage_executor is not None:
+        await _shutdown_database_executor(
+            coverage_executor,
+            label="Coverage executor",
+            join_thread_name="gobby-coverage-join",
+        )
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        await _shutdown_database_executor(db_executor)
 
 
 async def _settle_terminal_delivery_barrier() -> None:
@@ -522,9 +543,7 @@ async def _settle_terminal_delivery_barrier() -> None:
 async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
     """Settle delivery scopes and revoke/join their owned executor."""
     await _settle_terminal_delivery_barrier()
-    db_executor = getattr(runner, "db_executor", None)
-    if db_executor is not None:
-        await _shutdown_database_executor(db_executor)
+    await _shutdown_database_concurrency(runner)
     reset_terminal_delivery_offload()
 
 
@@ -576,6 +595,17 @@ async def _settle_finalizers_under_cancellation(
 
     owned.add_done_callback(consume_detached_result)
     owned.cancel()
+    watchdog = getattr(runner, "database_watchdog", None)
+    if watchdog is not None:
+        watchdog.stop()
+    coverage_executor = getattr(runner, "coverage_executor", None)
+    if coverage_executor is not None:
+        try:
+            coverage_executor.shutdown(cancel_futures=True)
+        except Exception:
+            logger.warning(
+                "Coverage executor revocation failed after finalizer expiry", exc_info=True
+            )
     db_executor = getattr(runner, "db_executor", None)
     if db_executor is not None:
         try:
@@ -726,14 +756,11 @@ async def _run_async_shutdown_cleanup(
             ),
             "Child process reap",
         )
+    await _best_effort(
+        lambda: _shutdown_database_concurrency(runner),
+        "Database concurrency shutdown",
+    )
     _best_effort_sync(shutdown_telemetry, "Telemetry shutdown")
-
-    db_executor = getattr(runner, "db_executor", None)
-    if db_executor is not None:
-        await _best_effort(
-            lambda: _shutdown_database_executor(db_executor),
-            "Database executor shutdown",
-        )
     reset_terminal_delivery_offload()
 
 

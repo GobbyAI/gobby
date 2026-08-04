@@ -71,6 +71,13 @@ def rollback_runner_resources(runner: Any) -> None:
         if callable(close):
             settle(name, close)
 
+    database_watchdog = getattr(runner, "database_watchdog", None)
+    if database_watchdog is not None:
+        settle("database watchdog", database_watchdog.stop)
+    coverage_executor = getattr(runner, "coverage_executor", None)
+    if coverage_executor is not None:
+        settle("coverage executor revocation", coverage_executor.shutdown)
+        settle("coverage executor join", coverage_executor.join)
     db_executor = getattr(runner, "db_executor", None)
     if db_executor is not None:
         settle("database executor revocation", db_executor.shutdown)

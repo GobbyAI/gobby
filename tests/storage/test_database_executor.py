@@ -50,9 +50,11 @@ async def test_database_executor_limits_worker_count() -> None:
         assert stats.threads <= 2
         assert stats.active <= 2
         assert stats.queued >= 1
+        assert stats.oldest_queue_seconds > 0
 
         start_event.set()
         assert await asyncio.gather(*tasks) == list(range(8))
+        assert executor.stats().completed == 8
         assert max_active <= 2
         assert len(thread_ids) <= 2
     finally:

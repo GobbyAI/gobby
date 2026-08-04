@@ -22,7 +22,7 @@ def test_bootstrap_defaults_without_runtime_url(temp_dir: Path) -> None:
 
     assert bootstrap.database_url is None
     assert bootstrap.postgres_pool.min_size == 2
-    assert bootstrap.postgres_pool.max_size == 20
+    assert bootstrap.postgres_pool.max_size == 2
     assert bootstrap.postgres_pool.acquire_timeout_seconds == 5.0
     assert bootstrap.postgres_pool.open_timeout_seconds == 30.0
 
@@ -33,17 +33,13 @@ def test_bootstrap_loads_postgres_pool_settings(temp_dir: Path) -> None:
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "postgres_pool:\n"
-        "  min_size: 4\n"
-        "  max_size: 24\n"
-        "  acquire_timeout_seconds: 7.5\n"
-        "  open_timeout_seconds: 12.5\n",
+        "postgres_pool:\n  acquire_timeout_seconds: 7.5\n  open_timeout_seconds: 12.5\n",
     )
 
     pool = load_bootstrap(str(bootstrap_file)).postgres_pool
 
-    assert pool.min_size == 4
-    assert pool.max_size == 24
+    assert pool.min_size == 2
+    assert pool.max_size == 2
     assert pool.acquire_timeout_seconds == 7.5
     assert pool.open_timeout_seconds == 12.5
 
@@ -51,11 +47,8 @@ def test_bootstrap_loads_postgres_pool_settings(temp_dir: Path) -> None:
 @pytest.mark.parametrize(
     ("pool_yaml", "expected_message"),
     [
-        ("min_size: 0", "min_size must be a positive integer"),
-        ("max_size: -1", "max_size must be a positive integer"),
         ("acquire_timeout_seconds: 0", "acquire_timeout_seconds.*positive"),
         ("open_timeout_seconds: -1", "open_timeout_seconds.*positive"),
-        ("min_size: 21\nmax_size: 20", "min_size must be less than or equal"),
     ],
 )
 def test_bootstrap_rejects_invalid_postgres_pool_settings(
@@ -71,6 +64,26 @@ def test_bootstrap_rejects_invalid_postgres_pool_settings(
 
     with pytest.raises(BootstrapConfigError, match=expected_message):
         load_bootstrap(str(bootstrap_file))
+
+
+def test_bootstrap_ignores_removed_pool_sizes(
+    temp_dir: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.config.postgres_pool as postgres_pool
+    from gobby.config.bootstrap import load_bootstrap
+
+    monkeypatch.setattr(postgres_pool, "_removed_size_warning_emitted", False)
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "postgres_pool:\n  min_size: 2\n  max_size: 20\n")
+
+    with caplog.at_level("WARNING"):
+        pool = load_bootstrap(str(bootstrap_file)).postgres_pool
+
+    assert pool.min_size == 2
+    assert pool.max_size == 2
+    assert "Ignoring removed bootstrap settings" in caplog.text
 
 
 def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
@@ -111,8 +124,6 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     assert "database_url_ref" not in persisted
     assert "postgres_install_mode" not in persisted
     assert persisted["postgres_pool"] == {
-        "min_size": 2,
-        "max_size": 20,
         "acquire_timeout_seconds": 5.0,
         "open_timeout_seconds": 30.0,
         "max_lifetime_seconds": 300.0,
@@ -142,8 +153,6 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
         assert "hub_backend" not in persisted
         assert "database_path" not in persisted
         assert persisted["postgres_pool"] == {
-            "min_size": 2,
-            "max_size": 20,
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
             "max_lifetime_seconds": 300.0,

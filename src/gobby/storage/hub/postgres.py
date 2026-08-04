@@ -19,6 +19,7 @@ from psycopg_pool import ConnectionPool
 
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
 from gobby.deployment import deployment_token
+from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE, PostgresCapacity
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import (
@@ -271,6 +272,38 @@ class PostgresHubDatabase:
             return dict(get_stats())
         except Exception as exc:
             return {"pool_stats_error": f"{type(exc).__name__}: {exc}"}
+
+    def server_capacity(self) -> PostgresCapacity:
+        """Read the server connection settings used by daemon sizing."""
+        self.open()
+        with self._pool_connection() as conn:
+            rows = conn.execute(
+                "SELECT name, setting FROM pg_settings "
+                "WHERE name IN ('max_connections', 'superuser_reserved_connections', "
+                "'reserved_connections')"
+            ).fetchall()
+        settings = {str(_row_value(row, "name")): int(_row_value(row, "setting")) for row in rows}
+        missing = {
+            "max_connections",
+            "superuser_reserved_connections",
+        }.difference(settings)
+        if missing:
+            raise RuntimeError(
+                "PostgreSQL did not report required connection settings: "
+                + ", ".join(sorted(missing))
+            )
+        return PostgresCapacity(
+            max_connections=settings["max_connections"],
+            superuser_reserved_connections=settings["superuser_reserved_connections"],
+            reserved_connections=settings.get("reserved_connections", 0),
+        )
+
+    def resize_pool(self, max_size: int) -> None:
+        """Apply the resolved runtime pool size after ConfigStore loading."""
+        if max_size < BOOTSTRAP_POOL_SIZE:
+            raise ValueError(f"max_size must be at least {BOOTSTRAP_POOL_SIZE}")
+        self.open()
+        self._pool.resize(min_size=BOOTSTRAP_POOL_SIZE, max_size=max_size)
 
     def verify_runtime_identity(self) -> None:
         """Acquire and verify one connection from a served runtime-role pool."""

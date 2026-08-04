@@ -510,6 +510,12 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         executor_stats = server.services.db_executor_stats()
         if executor_stats is not None:
             database_status["executor"] = executor_stats
+        database_watchdog = getattr(server.services, "database_watchdog", None)
+        if database_watchdog is not None:
+            try:
+                database_status["concurrency"] = database_watchdog.status_snapshot()
+            except Exception as exc:
+                logger.warning("Failed to collect database concurrency status: %s", exc)
 
         postgres_status = await _get_postgres_dashboard_status(server, database_status)
         postgres_code_index_healthy = True

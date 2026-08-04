@@ -207,6 +207,45 @@ class TelemetryMetrics:
             description="Daemon CPU usage percentage",
         )
 
+        # Database concurrency and saturation metrics
+        self._register_histogram(
+            "database_executor_queue_wait_seconds",
+            "Time database executor submissions wait before running",
+        )
+        self._register_histogram(
+            "database_pool_acquire_wait_seconds",
+            "Time callers wait to acquire a PostgreSQL pool connection",
+        )
+        self._register_histogram(
+            "database_coverage_admission_wait_seconds",
+            "Time plan coverage work waits for bounded executor admission",
+        )
+        self._register_counter(
+            "database_saturation_events_total",
+            "Database saturation boundary transitions",
+        )
+        database_gauges = {
+            "database_executor_active": "Active database executor submissions",
+            "database_executor_queued": "Queued database executor submissions",
+            "database_executor_oldest_queue_age_seconds": (
+                "Age of the oldest queued database executor submission"
+            ),
+            "database_pool_size": "Current PostgreSQL pool size",
+            "database_pool_available": "Currently available PostgreSQL pool connections",
+            "database_pool_waiting": "Callers waiting for a PostgreSQL pool connection",
+            "database_coverage_active": "Active plan coverage evaluations",
+            "database_coverage_waiting": "Plan coverage evaluations waiting for admission",
+            "database_coverage_oldest_wait_age_seconds": (
+                "Age of the oldest plan coverage admission waiter"
+            ),
+        }
+        for name, description in database_gauges.items():
+            self._meter.create_observable_gauge(
+                name,
+                callbacks=[self._observe_gauge_callback(name)],
+                description=description,
+            )
+
         # MCP tool listing metrics
         self._register_histogram(
             "list_mcp_tools",

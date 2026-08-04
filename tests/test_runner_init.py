@@ -75,8 +75,11 @@ class TestGobbyRunnerInit:
 
             assert runner.config == mock_config_with_websocket
             assert runner.verbose is True
-            assert runner.machine_id == "test-machine"
+            assert runner.machine_id == "00000000-0000-4000-8000-000000000001"
             assert runner._shutdown_requested is False
+            assert runner.db_executor.max_workers >= 8
+            assert runner.coverage_executor.max_concurrency >= 1
+            runner.database.resize_pool.assert_called_once_with(64)
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
 
@@ -166,10 +169,13 @@ class TestGobbyRunnerInit:
             patch("gobby.runner_init.storage.load_config", return_value=mock_config),
             patch("gobby.runner_init.storage.init_telemetry"),
             patch("gobby.runner_init.storage.setup_file_logging"),
-            patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
+            patch(
+                "gobby.runner_init.storage.get_machine_id",
+                return_value="00000000-0000-4000-8000-000000000001",
+            ),
             patch(
                 "gobby.runner_init.storage.ensure_machine_identity",
-                return_value="test-machine",
+                return_value="00000000-0000-4000-8000-000000000001",
             ),
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
@@ -458,11 +464,11 @@ class TestInitHubDatabase:
         assert postgres_database.call_args_list == [
             call(
                 "postgresql://gobby:secret@localhost:60891/gobby",
-                pool_config=config.postgres_pool,
+                pool_config=PostgresPoolConfig(min_size=2, max_size=2),
             ),
             call(
                 "postgresql://gobby:secret@localhost:60891/gobby",
-                pool_config=config.postgres_pool,
+                pool_config=PostgresPoolConfig(min_size=2, max_size=2),
                 runtime_role="gobby_daemon_runtime",
             ),
         ]

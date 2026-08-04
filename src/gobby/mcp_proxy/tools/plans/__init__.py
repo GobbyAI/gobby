@@ -11,6 +11,7 @@ import psycopg
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
+from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
@@ -29,6 +30,7 @@ def create_plan_registry(
     *,
     default_project_id: str | None = None,
     run_db: RunDb | None = None,
+    coverage_executor: CoverageExecutor | None = None,
 ) -> InternalToolRegistry:
     """Create the gobby-plans registry."""
 
@@ -71,7 +73,7 @@ def create_plan_registry(
         try:
             record = await _run_db_call(run_db, create_record)
             if plan_kind == "implementation":
-                await asyncio.to_thread(manager.generate_coverage_manifest, record)
+                await _run_coverage(coverage_executor, manager.generate_coverage_manifest, record)
         except (ValueError, OSError, psycopg.Error) as exc:
             return {"ok": False, "error": "create_plan_failed", "message": str(exc)}
         return {"ok": True, "plan": record.to_dict()}
@@ -195,7 +197,7 @@ def create_plan_registry(
         try:
             record, changed = await _run_db_call(run_db, update_record)
             if changed and record.plan_kind == "implementation":
-                await asyncio.to_thread(manager.generate_coverage_manifest, record)
+                await _run_coverage(coverage_executor, manager.generate_coverage_manifest, record)
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except (ValueError, OSError, psycopg.Error) as exc:
@@ -225,7 +227,11 @@ def create_plan_registry(
 
         try:
             record = await _run_db_call(run_db, get_record)
-            path = await asyncio.to_thread(manager.generate_coverage_manifest, record)
+            path = await _run_coverage(
+                coverage_executor,
+                manager.generate_coverage_manifest,
+                record,
+            )
         except PlanNotFoundError as exc:
             return {"ok": False, "error": "plan_not_found", "message": str(exc)}
         except (ValueError, OSError, psycopg.Error) as exc:
@@ -310,6 +316,17 @@ def create_plan_registry(
         ),
     )
     return registry
+
+
+async def _run_coverage(
+    executor: CoverageExecutor | None,
+    func: Callable[P, T],
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> T:
+    if executor is None:
+        raise RuntimeError("Plan coverage requires a configured CoverageExecutor")
+    return await executor.run(func, *args, **kwargs)
 
 
 async def _run_db_call(

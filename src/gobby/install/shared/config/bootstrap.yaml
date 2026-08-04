@@ -5,8 +5,6 @@ auth_mode: "required"
 datastore_mode: "local"
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_pool:
-  min_size: 2
-  max_size: 20
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
 daemon_port: 60887

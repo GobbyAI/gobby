@@ -34,6 +34,7 @@ from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.cron import CronConfig
 from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
+from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.embedding_keys import storage_embedding_config_entries_to_runtime
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.feature_base import iter_feature_default_configs, validate_feature_candidates
@@ -236,6 +237,10 @@ class DaemonConfig(BaseModel):
         default_factory=PostgresPoolConfig,
         description="PostgreSQL client pool settings selected by bootstrap.yaml.",
         exclude=True,
+    )
+    database_concurrency: DatabaseConcurrencyConfig = Field(
+        default_factory=DatabaseConcurrencyConfig,
+        description="Restart-required single-daemon database concurrency limits.",
     )
 
     # Sub-configs

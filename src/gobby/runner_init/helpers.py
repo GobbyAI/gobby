@@ -7,6 +7,7 @@ import platform
 import socket
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 from uuid import UUID
@@ -19,6 +20,7 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.maintenance_epoch import admitted_database_url
 from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
@@ -90,13 +92,18 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
     admitted_url = admitted_database_url(database_url)
+    bootstrap_pool = replace(
+        config.postgres_pool,
+        min_size=BOOTSTRAP_POOL_SIZE,
+        max_size=BOOTSTRAP_POOL_SIZE,
+    )
     migration_db = _initialize_postgres_with_startup_retry(
-        lambda: PostgresHubDatabase(admitted_url, pool_config=config.postgres_pool)
+        lambda: PostgresHubDatabase(admitted_url, pool_config=bootstrap_pool)
     )
     migration_db.close()
     postgres_db = PostgresHubDatabase(
         admitted_url,
-        pool_config=config.postgres_pool,
+        pool_config=bootstrap_pool,
         runtime_role="gobby_daemon_runtime",
     )
     try:

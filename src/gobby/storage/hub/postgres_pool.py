@@ -49,6 +49,7 @@ from gobby.storage.hub.protocol import (
     Transaction,
     WebChatSessionBootstrap,
 )
+from gobby.telemetry.instruments import observe_histogram
 from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
@@ -111,11 +112,20 @@ def pool_connection(
     pool to check (and recycle) its connections, then waits with exponential
     backoff plus jitter before the next acquisition attempt.
     """
+    started = time.monotonic()
     with ExitStack() as stack:
         try:
-            conn = stack.enter_context(pool.connection())
-        except PoolTimeout:
-            conn = _acquire_with_backoff(stack, pool, pool_stats)
+            try:
+                conn = stack.enter_context(pool.connection())
+            except PoolTimeout:
+                conn = _acquire_with_backoff(stack, pool, pool_stats)
+        except BaseException:
+            observe_histogram(
+                "database_pool_acquire_wait_seconds",
+                time.monotonic() - started,
+            )
+            raise
+        observe_histogram("database_pool_acquire_wait_seconds", time.monotonic() - started)
         yield conn
 
 

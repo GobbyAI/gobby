@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+_removed_size_warning_emitted = False
 
 
 @dataclass(frozen=True)
@@ -11,7 +15,7 @@ class PostgresPoolConfig:
     """Settings used to construct and open the PostgreSQL client pool."""
 
     min_size: int = 2
-    max_size: int = 20
+    max_size: int = 2
     acquire_timeout_seconds: float = 5.0
     open_timeout_seconds: float = 30.0
     max_lifetime_seconds: float = 300.0
@@ -37,8 +41,6 @@ class PostgresPoolConfig:
     def to_dict(self) -> dict[str, int | float]:
         """Return the YAML/Pydantic representation of these settings."""
         return {
-            "min_size": self.min_size,
-            "max_size": self.max_size,
             "acquire_timeout_seconds": self.acquire_timeout_seconds,
             "open_timeout_seconds": self.open_timeout_seconds,
             "max_lifetime_seconds": self.max_lifetime_seconds,
@@ -47,15 +49,23 @@ class PostgresPoolConfig:
 
 def postgres_pool_config_from_mapping(data: object) -> PostgresPoolConfig:
     """Parse a bootstrap mapping into validated pool settings."""
+    global _removed_size_warning_emitted
     if data is None:
         return DEFAULT_POSTGRES_POOL_CONFIG
     if not isinstance(data, dict):
         raise ValueError("postgres_pool must be a mapping")
+    removed = {"min_size", "max_size"}.intersection(data)
+    if removed and not _removed_size_warning_emitted:
+        names = ", ".join(f"postgres_pool.{name}" for name in sorted(removed))
+        logger.warning(
+            "Ignoring removed bootstrap settings %s; use "
+            "database_concurrency.pool_max_size in ConfigStore",
+            names,
+        )
+        _removed_size_warning_emitted = True
 
     defaults = DEFAULT_POSTGRES_POOL_CONFIG
     return PostgresPoolConfig(
-        min_size=_parse_int(data.get("min_size", defaults.min_size), "postgres_pool.min_size"),
-        max_size=_parse_int(data.get("max_size", defaults.max_size), "postgres_pool.max_size"),
         acquire_timeout_seconds=_parse_float(
             data.get("acquire_timeout_seconds", defaults.acquire_timeout_seconds),
             "postgres_pool.acquire_timeout_seconds",
@@ -69,12 +79,6 @@ def postgres_pool_config_from_mapping(data: object) -> PostgresPoolConfig:
             "postgres_pool.max_lifetime_seconds",
         ),
     )
-
-
-def _parse_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{field_name} must be an integer")
-    return value
 
 
 def _parse_float(value: object, field_name: str) -> float:

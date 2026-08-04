@@ -6,6 +6,7 @@ import asyncio
 import textwrap
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -16,6 +17,7 @@ from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
@@ -24,6 +26,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def coverage_executor() -> Iterator[CoverageExecutor]:
+    executor = CoverageExecutor(max_concurrency=1)
+    yield executor
+    executor.shutdown(cancel_futures=False)
+    executor.join()
 
 
 def _write_plan(root: Path) -> Path:
@@ -143,6 +153,7 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    coverage_executor: CoverageExecutor,
 ) -> None:
     caller_thread = threading.get_ident()
     db_threads: list[int] = []
@@ -206,6 +217,7 @@ async def test_plan_storage_tools_dispatch_off_event_loop(
         temp_db,
         default_project_id="project-1",
         run_db=executor.run,
+        coverage_executor=coverage_executor,
     )
 
     try:
@@ -247,6 +259,7 @@ async def test_large_plan_coverage_does_not_starve_short_db_job(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    coverage_executor: CoverageExecutor,
 ) -> None:
     project_id = LocalProjectManager(temp_db).create(name="large-plan", repo_path=str(tmp_path)).id
     root_task = LocalTaskManager(temp_db).create_task(
@@ -270,6 +283,7 @@ async def test_large_plan_coverage_does_not_starve_short_db_job(
         temp_db,
         default_project_id=project_id,
         run_db=executor.run,
+        coverage_executor=coverage_executor,
     )
     registration = asyncio.create_task(
         registry.call(
@@ -303,7 +317,11 @@ async def test_large_plan_coverage_does_not_starve_short_db_job(
 
 
 @pytest.mark.asyncio
-async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: Path) -> None:
+async def test_plan_tool_schemas_and_happy_path(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    coverage_executor: CoverageExecutor,
+) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     root_task = LocalTaskManager(temp_db).create_task(
         project_id,
@@ -311,7 +329,11 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         validation_criteria="Plan tool operations preserve the root task.",
     )
     plan_path = _write_plan(tmp_path)
-    registry = create_plan_registry(temp_db, default_project_id=project_id)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        coverage_executor=coverage_executor,
+    )
 
     names = {tool["name"] for tool in registry.list_tools()}
     assert {
@@ -477,6 +499,7 @@ async def test_plan_tools_reject_unresolvable_project_ref(
 async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_plan(
     temp_db: HubDatabase,
     tmp_path: Path,
+    coverage_executor: CoverageExecutor,
 ) -> None:
     project_id = LocalProjectManager(temp_db).create(name="plans", repo_path=str(tmp_path)).id
     root_task = LocalTaskManager(temp_db).create_task(
@@ -485,7 +508,11 @@ async def test_delete_plan_with_unresolvable_project_does_not_delete_unscoped_pl
         validation_criteria="Unresolvable project deletion preserves the scoped plan.",
     )
     plan_path = _write_plan(tmp_path)
-    registry = create_plan_registry(temp_db, default_project_id=project_id)
+    registry = create_plan_registry(
+        temp_db,
+        default_project_id=project_id,
+        coverage_executor=coverage_executor,
+    )
     created = await registry.call(
         "create_plan",
         {

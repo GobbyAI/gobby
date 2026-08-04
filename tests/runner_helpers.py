@@ -4,7 +4,12 @@ from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.logging import LoggingSettings
+from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.concurrency import PostgresCapacity
+
+TEST_MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
 RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
 
@@ -49,6 +54,8 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     config.bind_host = "localhost"
     config.hub_backend = "postgres"
     config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    config.database_concurrency = DatabaseConcurrencyConfig()
+    config.postgres_pool = PostgresPoolConfig()
 
     if getattr(config, "websocket", None) is None:
         config.websocket = None
@@ -133,15 +140,23 @@ def create_base_patches(
     mock_agent_monitor = AsyncMock()
     mock_agent_monitor.recover_or_cleanup_agents.return_value = (0, 0)
 
+    def make_postgres_db(*_args: Any, **_kwargs: Any) -> MagicMock:
+        database = MagicMock()
+        database.server_capacity.return_value = PostgresCapacity(
+            max_connections=100,
+            superuser_reserved_connections=3,
+        )
+        return database
+
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
         patch("gobby.runner_init.storage.setup_file_logging"),
-        patch("gobby.runner_init.storage.get_machine_id", return_value="test-machine"),
+        patch("gobby.runner_init.storage.get_machine_id", return_value=TEST_MACHINE_ID),
         patch(
             "gobby.runner_init.storage.ensure_machine_identity",
             side_effect=lambda _database, machine_id: machine_id,
         ),
-        patch("gobby.storage.hub.postgres.PostgresHubDatabase"),
+        patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
         patch(
             "gobby.runner_init.helpers.admitted_database_url",
             side_effect=lambda database_url: database_url,
@@ -160,6 +175,7 @@ def create_base_patches(
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),
         patch("gobby.runner_init.storage.ensure_local_api_token"),
+        patch("gobby.runner_init.storage.DatabaseSaturationWatchdog"),
         patch(
             "gobby.runner_service_readiness.require_managed_services_ready",
             new=AsyncMock(),

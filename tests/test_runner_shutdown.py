@@ -1329,4 +1329,4 @@ class TestStopShutdownAgentPreservation:
         reap.assert_not_awaited()
         assert "preserve" in events
         assert "telemetry" in events
-        assert events[-1] == "executor"
+        assert events[-2:] == ["executor", "telemetry"]

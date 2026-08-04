@@ -233,6 +233,7 @@ class HTTPServer:
             web_chat_session_registry=services.web_chat_session_registry,
             code_index=services.code_indexer,
             run_db=services.run_db,
+            coverage_executor=services.coverage_executor,
             detection_registry=services.detection_registry,
             dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
         )

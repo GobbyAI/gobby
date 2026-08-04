@@ -18,6 +18,8 @@ from gobby.config.app import DaemonConfig
 from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.concurrency import CoverageExecutor, DatabaseConcurrencyResolution
+from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -46,6 +48,9 @@ class ServiceContainer:
     session_manager: SessionManager | None
     task_manager: LocalTaskManager
     db_executor: DatabaseExecutor | None = None
+    coverage_executor: CoverageExecutor | None = None
+    database_concurrency: DatabaseConcurrencyResolution | None = None
+    database_watchdog: DatabaseSaturationWatchdog | None = None
     span_storage: Any | None = None  # SpanStorage
 
     # Backup manager
@@ -138,7 +143,7 @@ class ServiceContainer:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self.db_executor.run(func, *args, **kwargs)
 
-    def db_executor_stats(self) -> dict[str, int | bool] | None:
+    def db_executor_stats(self) -> dict[str, int | float | bool] | None:
         """Return DB executor diagnostics when configured."""
         if self.db_executor is None:
             return None

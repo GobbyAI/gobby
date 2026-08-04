@@ -6,10 +6,13 @@ import asyncio
 import contextvars
 import functools
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
+
+from gobby.telemetry.instruments import observe_histogram
 
 T = TypeVar("T")
 
@@ -23,10 +26,12 @@ class DatabaseExecutorStats:
     queued: int
     submitted: int
     completed: int
+    cancelled: int
     threads: int
+    oldest_queue_seconds: float
     shutdown: bool
 
-    def as_dict(self) -> dict[str, int | bool]:
+    def as_dict(self) -> dict[str, int | float | bool]:
         """Return JSON-safe diagnostics."""
         return {
             "max_workers": self.max_workers,
@@ -34,7 +39,9 @@ class DatabaseExecutorStats:
             "queued": self.queued,
             "submitted": self.submitted,
             "completed": self.completed,
+            "cancelled": self.cancelled,
             "threads": self.threads,
+            "oldest_queue_seconds": self.oldest_queue_seconds,
             "shutdown": self.shutdown,
         }
 
@@ -42,7 +49,7 @@ class DatabaseExecutorStats:
 class DatabaseExecutor:
     """Bounded async bridge for blocking database storage calls."""
 
-    def __init__(self, *, max_workers: int = 4, thread_name_prefix: str = "gobby-db") -> None:
+    def __init__(self, *, max_workers: int, thread_name_prefix: str = "gobby-db") -> None:
         if max_workers < 1:
             raise ValueError("max_workers must be at least 1")
         self.max_workers = max_workers
@@ -54,7 +61,10 @@ class DatabaseExecutor:
         self._lock = threading.Lock()
         self._submitted = 0
         self._completed = 0
+        self._cancelled = 0
         self._active = 0
+        self._pending: dict[int, float] = {}
+        self._next_submission = 0
         self._shutdown = False
         self._join_started = False
 
@@ -65,23 +75,48 @@ class DatabaseExecutor:
 
     def submit(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> Future[T]:
         """Submit blocking database work for synchronous callers."""
-        call = functools.partial(self._execute, func, *args, **kwargs)
         context = contextvars.copy_context()
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("DatabaseExecutor is shut down")
+            submission_id = self._next_submission
+            self._next_submission += 1
             self._submitted += 1
-            return self._executor.submit(context.run, call)
+            self._pending[submission_id] = time.monotonic()
+        call = functools.partial(self._execute, submission_id, func, *args, **kwargs)
+        try:
+            future = self._executor.submit(context.run, call)
+        except BaseException:
+            with self._lock:
+                self._submitted -= 1
+                self._pending.pop(submission_id, None)
+            raise
+        future.add_done_callback(lambda done: self._settle(submission_id, done))
+        return future
 
-    def _execute(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    def _execute(
+        self,
+        submission_id: int,
+        func: Callable[..., T],
+        *args: Any,
+        **kwargs: Any,
+    ) -> T:
         with self._lock:
+            queued_at = self._pending.pop(submission_id)
             self._active += 1
+        observe_histogram("database_executor_queue_wait_seconds", time.monotonic() - queued_at)
         try:
             return func(*args, **kwargs)
         finally:
             with self._lock:
                 self._active -= 1
-                self._completed += 1
+
+    def _settle(self, submission_id: int, future: Future[Any]) -> None:
+        with self._lock:
+            self._pending.pop(submission_id, None)
+            if future.cancelled():
+                self._cancelled += 1
+            self._completed += 1
 
     def stats(self) -> DatabaseExecutorStats:
         """Return a best-effort diagnostic snapshot."""
@@ -89,9 +124,15 @@ class DatabaseExecutor:
             active = self._active
             submitted = self._submitted
             completed = self._completed
+            cancelled = self._cancelled
+            queued = len(self._pending)
+            now = time.monotonic()
+            oldest_queue_seconds = max(
+                (now - queued_at for queued_at in self._pending.values()),
+                default=0.0,
+            )
             shutdown = self._shutdown
 
-        queued = max(0, submitted - completed - active)
         thread_prefix = f"{self._thread_name_prefix}_"
         threads = sum(
             1 for thread in threading.enumerate() if thread.name.startswith(thread_prefix)
@@ -102,7 +143,9 @@ class DatabaseExecutor:
             queued=queued,
             submitted=submitted,
             completed=completed,
+            cancelled=cancelled,
             threads=threads,
+            oldest_queue_seconds=oldest_queue_seconds,
             shutdown=shutdown,
         )
 
@@ -112,7 +155,7 @@ class DatabaseExecutor:
             if self._shutdown:
                 return
             self._shutdown = True
-            self._executor.shutdown(wait=False, cancel_futures=cancel_futures)
+        self._executor.shutdown(wait=False, cancel_futures=cancel_futures)
 
     def join(self) -> None:
         """Wait for running work after shutdown; callers must keep this off-loop."""

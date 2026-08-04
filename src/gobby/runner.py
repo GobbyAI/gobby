@@ -49,6 +49,8 @@ if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
     from gobby.storage.attention import AttentionStateManager
     from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.concurrency import CoverageExecutor, DatabaseConcurrencyResolution
+    from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.executor import DatabaseExecutor
@@ -139,6 +141,9 @@ class GobbyRunner:
     database: HubDatabase
     managed_credential_manager: ManagedCredentialManager
     db_executor: DatabaseExecutor
+    coverage_executor: CoverageExecutor
+    database_concurrency: DatabaseConcurrencyResolution
+    database_watchdog: DatabaseSaturationWatchdog
     secret_store: SecretStore
     config_store: ConfigStore
     session_manager: SessionManager

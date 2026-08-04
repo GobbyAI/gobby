@@ -8,7 +8,7 @@ import os
 import shutil
 from concurrent.futures import CancelledError, Future
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from gobby.config.app import load_config
@@ -20,6 +20,8 @@ from gobby.runner_init.helpers import (
 )
 from gobby.shutdown_intent import ShutdownIntent
 from gobby.storage.auth import ensure_local_api_token
+from gobby.storage.concurrency import CoverageExecutor, resolve_database_concurrency
+from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
@@ -100,14 +102,8 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         "managed_credential_manager",
         runner.managed_credential_manager,
     )
-    try:
-        db_max_workers = int(os.environ.get("RUNNER_MAX_WORKERS", "4"))
-    except ValueError:
-        db_max_workers = 4
-    db_max_workers = db_max_workers if db_max_workers > 0 else 4
-    runner.db_executor = DatabaseExecutor(max_workers=db_max_workers)
-
     from gobby.storage.config_store import ConfigStore
+    from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.secrets import SecretStore
 
     runner.secret_store = SecretStore(runner.database)
@@ -120,7 +116,32 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_store=runner.config_store,
         resolve_database_url=True,
     )
+    postgres_database = cast(PostgresHubDatabase, runner.database)
+    database_capacity = postgres_database.server_capacity()
+    runner.database_concurrency = resolve_database_concurrency(
+        runner.config.database_concurrency,
+        database_capacity,
+        cpu_count=os.process_cpu_count() or 1,
+    )
+    postgres_database.resize_pool(runner.database_concurrency.pool_max_size)
+    runner.db_executor = DatabaseExecutor(
+        max_workers=runner.database_concurrency.executor_max_workers
+    )
+    runner.coverage_executor = CoverageExecutor(
+        max_concurrency=runner.database_concurrency.coverage_max_concurrency
+    )
+    if runner.database_concurrency.hardware_warning is not None:
+        logger.warning(runner.database_concurrency.hardware_warning)
+    logger.info("Database concurrency: %s", runner.database_concurrency.as_dict())
+
     init_telemetry(runner.config.telemetry, runner.config.logging, verbose=verbose)
+    runner.database_watchdog = DatabaseSaturationWatchdog(
+        postgres_database,
+        runner.db_executor,
+        runner.coverage_executor,
+        runner.database_concurrency,
+    )
+    runner.database_watchdog.start()
 
     from gobby.storage.model_metadata import ModelMetadataStore
 
