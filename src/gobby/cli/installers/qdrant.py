@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,15 @@ def install_qdrant(
         Dict with 'success' and details
     """
     home = gobby_home or Path("~/.gobby").expanduser()
+    try:
+        with managed_services_lock(home, operation="qdrant installer refresh"):
+            return _install_qdrant_locked(gobby_home=home, port=port)
+    except ManagedServicesLockError as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def _install_qdrant_locked(*, gobby_home: Path, port: int) -> dict[str, Any]:
+    home = gobby_home
 
     if not shutil.which("docker"):
         return {"success": False, "error": "Docker not found. Install Docker to use Qdrant."}
@@ -62,9 +72,8 @@ def install_qdrant(
     services_dir = home / "services"
     compose_file = _ensure_unified_compose(services_dir)
 
-    configured_url = f"http://localhost:{port}"
     try:
-        _update_config(qdrant_url=configured_url, qdrant_port=port, gobby_home=home)
+        _update_config(qdrant_port=port, gobby_home=home)
         runtime = resolve_compose_runtime(home, profiles=("qdrant",))
     except (ComposeEnvironmentError, ImportError, OSError, RuntimeError, ValueError) as exc:
         return {"success": False, "error": f"Failed to resolve Qdrant config: {exc}"}
@@ -137,7 +146,6 @@ async def _wait_for_health_async(url: str, retries: int = 30, interval: float = 
 
 
 def _update_config(
-    qdrant_url: str | None = None,
     qdrant_port: int | None = None,
     *,
     gobby_home: Path,
@@ -151,10 +159,16 @@ def _update_config(
         apply_migrations=False,
     ) as db:
         store = ConfigStore(db)
-        if qdrant_url:
+        if qdrant_port:
+            configured_host = store.get("databases.published_host")
+            host = (
+                configured_host.strip()
+                if isinstance(configured_host, str) and configured_host.strip()
+                else "localhost"
+            )
+            qdrant_url = f"http://{host}:{qdrant_port}"
             store.set("databases.qdrant.url", qdrant_url, source="install")
-            if qdrant_port:
-                store.set("databases.qdrant.port", qdrant_port, source="install")
+            store.set("databases.qdrant.port", qdrant_port, source="install")
         else:
             store.delete("databases.qdrant.url")
             store.delete("databases.qdrant.port")

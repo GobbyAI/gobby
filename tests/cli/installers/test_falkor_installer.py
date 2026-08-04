@@ -41,7 +41,9 @@ class TestDockerComposeFalkorDB:
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
         ports = data["services"]["falkordb"]["ports"]
-        assert "127.0.0.1:${GOBBY_FALKORDB_PORT:-16379}:6379" in ports
+        assert (
+            "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_FALKORDB_PORT:-16379}:6379"
+        ) in ports
         assert "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000" in ports
 
     def test_compose_has_data_volume(self) -> None:
@@ -179,7 +181,6 @@ class TestInstallFalkorDB:
         assert result["password_source"] == "provided"
         assert mock_subprocess.run.return_value.returncode == 0
         mock_update.assert_called_once_with(
-            host="127.0.0.1",
             port=16379,
             password="password123",
             gobby_home=tmp_path,
@@ -209,7 +210,6 @@ class TestInstallFalkorDB:
 
         with patch("gobby.cli.installers.falkor._config_db", side_effect=open_db):
             _update_config(
-                host="127.0.0.1",
                 port=16379,
                 password="password123",
                 gobby_home=tmp_path,

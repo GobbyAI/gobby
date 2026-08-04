@@ -41,6 +41,10 @@ from .installers.compose_env import (
     ComposeRuntime,
     resolve_compose_runtime,
 )
+from .installers.managed_services_lock import (
+    ManagedServicesLockError,
+    managed_services_lock,
+)
 from .installers.service import (
     get_service_status,
     service_start,
@@ -87,6 +91,14 @@ def _start_dependency_errors() -> list[str]:
 
 def _services_start(gobby_home: Path) -> ServiceStartResult:
     """Start the required managed Docker stack and wait for container health."""
+    try:
+        with managed_services_lock(gobby_home, operation="services start"):
+            return _services_start_locked(gobby_home)
+    except ManagedServicesLockError as exc:
+        return ServiceStartResult("failed", str(exc))
+
+
+def _services_start_locked(gobby_home: Path) -> ServiceStartResult:
     import shutil
 
     try:
@@ -196,6 +208,15 @@ def _validate_managed_compose_profiles(compose_file: Path) -> str | None:
 
 def _services_stop(gobby_home: Path) -> bool:
     """Stop all Docker services via unified compose file."""
+    try:
+        with managed_services_lock(gobby_home, operation="services stop"):
+            return _services_stop_locked(gobby_home)
+    except ManagedServicesLockError as exc:
+        logger.warning("Could not acquire managed-services lock: %s", exc)
+        return False
+
+
+def _services_stop_locked(gobby_home: Path) -> bool:
     import shutil
 
     if not shutil.which("docker"):
@@ -444,6 +465,17 @@ def start(ctx: click.Context, verbose: bool) -> None:
             _step(error, error=True)
         sys.exit(1)
 
+    # Revive managed dependencies before launchd/systemd starts the runner.
+    services_result = _services_start(gobby_dir)
+    if services_result.outcome == "failed":
+        _step(services_result.detail, error=True)
+        sys.exit(1)
+    if services_result.outcome == "skipped":
+        _step(services_result.detail)
+    else:
+        _step("Docker services started")
+
+    # DB-backed configuration becomes available only after local PostgreSQL is healthy.
     config = get_cli_runtime(ctx).config
     sandbox = config.agent_sandbox
     if sandbox.enabled and sandbox.backend == "srt":
@@ -458,16 +490,6 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 "provider sandbox until SRT is available.",
                 fg="yellow",
             )
-
-    # Revive managed dependencies before launchd/systemd starts the runner.
-    services_result = _services_start(gobby_dir)
-    if services_result.outcome == "failed":
-        _step(services_result.detail, error=True)
-        sys.exit(1)
-    if services_result.outcome == "skipped":
-        _step(services_result.detail)
-    else:
-        _step("Docker services started")
 
     # If OS service is installed, delegate to it
     svc = get_service_status()

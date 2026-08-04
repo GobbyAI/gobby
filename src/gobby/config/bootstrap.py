@@ -1,7 +1,8 @@
 """Bootstrap configuration for pre-database settings.
 
 These settings are needed before the PostgreSQL hub is available: daemon_port,
-bind_host, websocket_port, ui_port, database_url, and PostgreSQL client pool settings.
+bind_host, websocket_port, ui_port, database_url, managed-service bind address,
+and PostgreSQL client pool settings.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -34,6 +35,7 @@ DEFAULT_DAEMON_BIND_HOST = "localhost"
 DEFAULT_DAEMON_PORT = 60887
 DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
+DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 
 AuthMode = Literal["required", "disabled"]
 DatastoreMode = Literal["local", "remote"]
@@ -63,6 +65,7 @@ class BootstrapConfig:
     ui_port: int = DEFAULT_UI_PORT
     auth_mode: AuthMode = "required"
     datastore_mode: DatastoreMode = "local"
+    services_bind_address: str = DEFAULT_SERVICES_BIND_ADDRESS
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
@@ -158,6 +161,13 @@ def load_bootstrap(
             ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
             auth_mode=auth_mode,
             datastore_mode=datastore_mode,
+            services_bind_address=_parse_str(
+                data.get(
+                    "services_bind_address",
+                    BootstrapConfig.services_bind_address,
+                ),
+                "services_bind_address",
+            ),
             database_url=database_url,
             postgres_pool=postgres_pool,
             daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),

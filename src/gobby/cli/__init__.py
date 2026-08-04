@@ -4,6 +4,7 @@ Gobby CLI entry point.
 
 import click
 
+from gobby.config.bootstrap import load_bootstrap
 from gobby.utils.version import get_version
 
 from .agents import agents
@@ -13,6 +14,7 @@ from .clones import clones
 from .communications import comms
 from .cron import cron
 from .daemon import health, restart, start, status, stop
+from .datastores import datastores as datastores_cli
 from .embeddings import embeddings
 from .extensions import hooks, webhooks
 from .github import github
@@ -48,7 +50,7 @@ from .test_quality import test_quality
 from .test_types import test_types
 from .tokens import tokens
 from .ui import ui
-from .utils import load_full_config_from_db
+from .utils import get_gobby_home, load_full_config_from_db
 from .workflows import workflows
 from .worktrees import worktrees
 
@@ -77,6 +79,8 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
     """Gobby - Local-first daemon for AI coding assistants."""
+    if ctx.invoked_subcommand == "start":
+        load_bootstrap(str(get_gobby_home() / "bootstrap.yaml"))
     runtime = CliRuntime(
         config_file=config,
         config_loader=lambda config_file, database: load_full_config_from_db(
@@ -94,6 +98,7 @@ cli.add_command(stop)
 cli.add_command(restart)
 cli.add_command(status)
 cli.add_command(health)
+cli.add_command(datastores_cli)
 cli.add_command(embeddings)
 cli.add_command(mcp_server)
 cli.add_command(init)

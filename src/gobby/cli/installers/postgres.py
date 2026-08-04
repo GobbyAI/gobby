@@ -29,6 +29,7 @@ from gobby.paths import get_gobby_home
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
 from .compose_env import ComposeEnvironmentError, ComposeRuntime, resolve_compose_runtime
+from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,12 @@ def install_postgres(
     port: int = DEFAULT_POSTGRES_PORT,
 ) -> dict[str, Any]:
     """Install or configure PostgreSQL for the Gobby hub."""
-    return _install_docker(gobby_home=gobby_home, port=port)
+    home = gobby_home or get_gobby_home()
+    try:
+        with managed_services_lock(home, operation="postgres installer refresh"):
+            return _install_docker(gobby_home=home, port=port)
+    except ManagedServicesLockError as exc:
+        return {"success": False, "error": str(exc)}
 
 
 def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:

@@ -6,7 +6,7 @@ services:
   falkordb:
     image: falkordb/falkordb:latest
     ports:
-      - "127.0.0.1:${GOBBY_FALKORDB_PORT:-16379}:6379"
+      - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_FALKORDB_PORT:-16379}:6379"
       - "127.0.0.1:${GOBBY_FALKORDB_BROWSER_PORT:-13000}:3000"
     environment:
       # Redis AUTH - REDIS_ARGS is the documented entry point for redis-server flags.
@@ -31,8 +31,8 @@ services:
   qdrant:
     image: qdrant/qdrant:latest
     ports:
-      - "127.0.0.1:${GOBBY_QDRANT_HTTP_PORT:-6333}:6333"
-      - "127.0.0.1:${GOBBY_QDRANT_GRPC_PORT:-6334}:6334"
+      - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_QDRANT_HTTP_PORT:-6333}:6333"
+      - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_QDRANT_GRPC_PORT:-6334}:6334"
     environment:
       # Auth disabled for local-only access (no TLS = no point in API key)
       # To enable: set QDRANT__SERVICE__API_KEY and configure TLS
@@ -87,7 +87,7 @@ services:
       POSTGRES_PASSWORD: ${GOBBY_POSTGRES_PASSWORD:?GOBBY_POSTGRES_PASSWORD must be set}
       GOBBY_PGAUDIT_LOG: ${GOBBY_PGAUDIT_LOG:-ddl}
     ports:
-      - "127.0.0.1:${GOBBY_POSTGRES_PORT:-60891}:5432"
+      - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_POSTGRES_PORT:-60891}:5432"
     volumes:
       - gobby_postgres_data:/var/lib/postgresql
       - gobby_pgaudit_log:/var/log/pgaudit

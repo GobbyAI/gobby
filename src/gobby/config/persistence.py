@@ -153,6 +153,10 @@ class DatabasesConfig(BaseModel):
 
     model_config = {"extra": "ignore"}
 
+    published_host: str | None = Field(
+        default=None,
+        description="DNS host clients use to reach shared datastores",
+    )
     qdrant: QdrantConfig = Field(
         default_factory=QdrantConfig,
         description="Qdrant vector database connection",

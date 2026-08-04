@@ -16,6 +16,7 @@ from typing import Any
 from gobby.config.persistence import validate_falkordb_password
 
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,19 @@ def install_falkordb(
 ) -> dict[str, Any]:
     """Install FalkorDB via Docker Compose."""
     home = _normalize_home(gobby_home)
+    try:
+        with managed_services_lock(home, operation="falkordb installer refresh"):
+            return _install_falkordb_locked(gobby_home=home, password=password)
+    except ManagedServicesLockError as exc:
+        return {"success": False, "error": str(exc)}
+
+
+def _install_falkordb_locked(
+    *,
+    gobby_home: Path,
+    password: str | None,
+) -> dict[str, Any]:
+    home = gobby_home
     if password is not None:
         validate_falkordb_password(password)
     if not shutil.which("docker"):
@@ -156,7 +170,6 @@ def install_falkordb(
 
     try:
         _update_config(
-            host=DEFAULT_FALKORDB_HOST,
             port=DEFAULT_FALKORDB_PORT,
             password=resolved.value,
             gobby_home=home,
@@ -321,7 +334,7 @@ async def _wait_for_health_async(
     return False
 
 
-def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> None:
+def _update_config(*, port: int, password: str, gobby_home: Path) -> None:
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(gobby_home))
     try:
@@ -330,6 +343,12 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
 
         store = ConfigStore(db)
         secret_store = SecretStore(db, gobby_home=gobby_home)
+        configured_host = store.get("databases.published_host")
+        host = (
+            configured_host.strip()
+            if isinstance(configured_host, str) and configured_host.strip()
+            else DEFAULT_FALKORDB_HOST
+        )
         with db.transaction():
             store.set("databases.falkordb.host", host, source="install")
             store.set("databases.falkordb.port", port, source="install")
