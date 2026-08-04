@@ -27,6 +27,7 @@ use crate::ai::{
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TokenUsage};
 use crate::config::{AiCapability, FeatureCandidate};
+use crate::local_token::AGENT_API_TOKEN_ENV;
 
 use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
@@ -211,7 +212,6 @@ pub fn daemon_agentic_chat(
         &request_id,
         profile,
         candidates,
-        context.project_id.as_deref(),
         project_path,
         tool_policy,
         messages,
@@ -228,7 +228,10 @@ pub fn daemon_agentic_chat(
     let value = retry_with_backoff_until(
         deadline,
         |remaining| {
-            let http = with_local_token(client.post(&url).timeout(remaining).json(&body), &token);
+            let http = with_managed_identity_headers(with_local_token(
+                client.post(&url).timeout(remaining).json(&body),
+                &token,
+            ))?;
             parse_json_response(http.send().map_err(reqwest_error)?)
         },
         std::thread::sleep,
@@ -256,8 +259,8 @@ pub fn daemon_agentic_chat(
 
 /// Build the daemon agentic-chat body: the system+user `messages`, the feature
 /// `profile` (or an explicit `candidates` chain that supersedes it, mirroring
-/// the one-shot `/api/llm/generate` precedence), the active `project_id`, the
-/// absolute `project_path` the daemon investigates, the caller's `tool_policy`
+/// the one-shot `/api/llm/generate` precedence), the absolute `project_path`
+/// the daemon investigates, the caller's `tool_policy`
 /// (the daemon builds the executable tools from it and enforces its own
 /// whitelist), and optional `max_turns`/`reasoning_effort`. No
 /// `tools`/`tool_choice`/`model` — the daemon owns its provider/model selection
@@ -268,7 +271,6 @@ pub(crate) fn build_daemon_agentic_body(
     request_id: &str,
     profile: &str,
     candidates: Option<&[FeatureCandidate]>,
-    project_id: Option<&str>,
     project_path: &str,
     tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
@@ -295,7 +297,6 @@ pub(crate) fn build_daemon_agentic_body(
         }
         None => insert_trimmed(&mut body, "profile", Some(profile)),
     }
-    insert_trimmed(&mut body, "project_id", project_id);
     insert_trimmed(&mut body, "project_path", Some(project_path));
     body.insert("tool_policy".to_string(), tool_policy_to_json(tool_policy));
     body.insert(
@@ -304,6 +305,51 @@ pub(crate) fn build_daemon_agentic_body(
     );
     insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
     Value::Object(body)
+}
+
+fn with_managed_identity_headers(
+    request: reqwest::blocking::RequestBuilder,
+) -> Result<reqwest::blocking::RequestBuilder, AiError> {
+    fn env_value(name: &str) -> Option<String> {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    if env_value(AGENT_API_TOKEN_ENV).is_none() {
+        return Ok(request);
+    }
+    let (owner_header, execution_id) = match (
+        env_value("GOBBY_AGENT_RUN_ID"),
+        env_value("GOBBY_MANAGED_EXECUTION_ID"),
+    ) {
+        (Some(execution_id), None) => ("X-Gobby-Agent-Run-Id", execution_id),
+        (None, Some(execution_id)) => ("X-Gobby-Managed-Execution-Id", execution_id),
+        _ => {
+            return Err(AiError::not_configured(
+                Some(AiCapability::ToolChat.as_str().to_string()),
+                "managed daemon capability owner is incomplete or ambiguous",
+            ));
+        }
+    };
+    let project_id = env_value("GOBBY_PROJECT_ID").ok_or_else(|| {
+        AiError::not_configured(
+            Some(AiCapability::ToolChat.as_str().to_string()),
+            "managed daemon capability project identity is missing",
+        )
+    })?;
+    let session_id = env_value("GOBBY_SESSION_ID").ok_or_else(|| {
+        AiError::not_configured(
+            Some(AiCapability::ToolChat.as_str().to_string()),
+            "managed daemon capability session identity is missing",
+        )
+    })?;
+
+    Ok(request
+        .header(owner_header, execution_id)
+        .header("X-Gobby-Caller-Project-Id", project_id)
+        .header("X-Gobby-Session-Id", session_id))
 }
 
 /// Serialize a [`ToolPolicy`] into the daemon's `{cli, tools, allow_mutation}`

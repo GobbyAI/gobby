@@ -88,10 +88,18 @@ struct ServiceCapabilityBundle {
     services: ManagedServices,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum ManagedExecutionOwnerKind {
+    AgentRun,
+    ToolChat,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ManagedExecutionBinding {
-    agent_run_id: String,
+    owner_kind: ManagedExecutionOwnerKind,
+    execution_id: String,
     project_id: String,
     session_id: String,
     expires_at: u64,
@@ -145,7 +153,8 @@ enum ManagedBrokerMethod {
 
 #[derive(Debug)]
 struct ManagedExecutionIdentity {
-    agent_run_id: String,
+    owner_kind: ManagedExecutionOwnerKind,
+    execution_id: String,
     project_id: String,
     session_id: String,
 }
@@ -204,8 +213,29 @@ fn managed_execution_identity() -> Result<ManagedExecutionIdentity, EffectiveCon
             })
     }
 
+    fn optional(name: &str) -> Option<String> {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+    }
+
+    let (owner_kind, execution_id) = match (
+        optional("GOBBY_AGENT_RUN_ID"),
+        optional("GOBBY_MANAGED_EXECUTION_ID"),
+    ) {
+        (Some(execution_id), None) => (ManagedExecutionOwnerKind::AgentRun, execution_id),
+        (None, Some(execution_id)) => (ManagedExecutionOwnerKind::ToolChat, execution_id),
+        _ => {
+            return Err(EffectiveConfigError::LocalConfiguration {
+                reason: "managed execution owner is incomplete or ambiguous",
+            });
+        }
+    };
+
     Ok(ManagedExecutionIdentity {
-        agent_run_id: required("GOBBY_AGENT_RUN_ID")?,
+        owner_kind,
+        execution_id,
         project_id: required("GOBBY_PROJECT_ID")?,
         session_id: required("GOBBY_SESSION_ID")?,
     })
@@ -266,8 +296,12 @@ fn fetch_config_body(
     let mut request =
         crate::local_token::apply_bearer_header_with_token(ureq::get(&url).timeout(timeout), token);
     if let Some(identity) = identity {
+        let owner_header = match identity.owner_kind {
+            ManagedExecutionOwnerKind::AgentRun => "X-Gobby-Agent-Run-Id",
+            ManagedExecutionOwnerKind::ToolChat => "X-Gobby-Managed-Execution-Id",
+        };
         request = request
-            .set("X-Gobby-Agent-Run-Id", &identity.agent_run_id)
+            .set(owner_header, &identity.execution_id)
             .set("X-Gobby-Caller-Project-Id", &identity.project_id)
             .set("X-Gobby-Session-Id", &identity.session_id);
     }
@@ -305,7 +339,8 @@ fn validate_managed_bundle(
             reason: "unsupported service capability version",
         });
     }
-    if bundle.execution.agent_run_id != identity.agent_run_id
+    if bundle.execution.owner_kind != identity.owner_kind
+        || bundle.execution.execution_id != identity.execution_id
         || bundle.execution.project_id != identity.project_id
         || bundle.execution.session_id != identity.session_id
     {

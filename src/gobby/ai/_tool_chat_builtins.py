@@ -8,6 +8,7 @@ import secrets
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from typing import Any, NotRequired, TypedDict
+from uuid import UUID
 
 _TOOL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 _EVIDENCE_REF_BYTES = 16
@@ -22,6 +23,7 @@ class BuiltinExecutionContext:
     max_payload_bytes: int
     evidence_ref: str
     subprocess_deadline: float
+    managed_execution_id: UUID | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -61,6 +63,7 @@ class BuiltinToolSpec:
     description: str
     input_schema: dict[str, Any]
     handler: BuiltinToolHandler
+    path_arguments: tuple[str, ...] = ()
 
 
 class InvocationRecord(TypedDict):
@@ -180,6 +183,13 @@ def validate_builtin_spec(spec: BuiltinToolSpec) -> None:
         raise ValueError(
             f"Builtin tool {spec.name!r} input_schema must be JSON serializable."
         ) from exc
+    properties = spec.input_schema.get("properties")
+    for argument in spec.path_arguments:
+        argument_schema = properties.get(argument) if isinstance(properties, dict) else None
+        if not isinstance(argument_schema, dict) or argument_schema.get("type") != "string":
+            raise ValueError(
+                f"Builtin tool {spec.name!r} path argument {argument!r} must be a string property."
+            )
 
 
 def validate_builtin_arguments(arguments: object, schema: Mapping[str, Any]) -> list[str]:

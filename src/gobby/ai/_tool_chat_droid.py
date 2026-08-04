@@ -381,6 +381,7 @@ class DroidSpawnToolChatAdapter:
             limits=limits,
             builtins=request.builtins,
             subprocess_env=request.managed_subprocess_env,
+            managed_execution_id=request.managed_execution_id,
         )
         controller = ToolLoopController(limits)
         model = request.model or next(iter(binding.models), None)

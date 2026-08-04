@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -32,7 +33,7 @@ from gobby.storage.auth import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.utils.local_token import issue_agent_api_token
+from gobby.utils.local_token import issue_agent_api_token, issue_tool_api_token
 
 pytestmark = pytest.mark.unit
 
@@ -399,6 +400,9 @@ def test_agent_capability_matrix(
     assert service.is_request_authenticated(
         _request(identity, method="GET", path="/api/config/service-capabilities")
     )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/llm/chat/completions")
+    )
     assert not service.is_request_authenticated(
         _request(bearer_only, method="GET", path="/api/config/service-capabilities")
     )
@@ -414,6 +418,63 @@ def test_agent_capability_matrix(
         ("POST", "/api/memories/graph/rebuild"),
     ):
         assert not service.is_request_authenticated(_request(identity, method=method, path=path))
+
+
+def test_tool_capability_is_bound_to_live_managed_execution(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    token_file = tmp_path / "local_cli_token"
+    token_file.write_text("operator-token")
+    _set_api_token(temp_db, "operator-token")
+    live = [True]
+    original_fetchone = temp_db.fetchone
+
+    def fetchone(
+        query: str,
+        params: Sequence[Any] | Mapping[str, Any] = (),
+    ) -> Any:
+        if "managed_execution_is_login_capable" in query:
+            return {"login_capable": live[0]}
+        return original_fetchone(query, params)
+
+    monkeypatch.setattr(temp_db, "fetchone", fetchone)
+    service = AuthService(lambda: temp_db, mode="required", token_file=token_file)
+    execution_id = "11111111-2222-4333-8444-555555555555"
+    session_id = "22222222-3333-4444-8555-666666666666"
+    token = issue_tool_api_token(
+        "operator-token",
+        managed_execution_id=execution_id,
+        session_id=session_id,
+        project_id="project-123",
+        timeout_seconds=30,
+    )
+    identity = {
+        "Authorization": f"Bearer {token}",
+        "X-Gobby-Managed-Execution-Id": execution_id,
+        "X-Gobby-Session-Id": session_id,
+        "X-Gobby-Caller-Project-Id": "project-123",
+    }
+
+    assert service.is_request_authenticated(
+        _request(identity, method="GET", path="/api/config/service-capabilities")
+    )
+    assert service.is_request_authenticated(
+        _request(identity, method="POST", path="/api/llm/chat/completions")
+    )
+    assert not service.is_request_authenticated(
+        _request(
+            identity | {"X-Gobby-Managed-Execution-Id": "other-execution"},
+            method="GET",
+            path="/api/config/service-capabilities",
+        )
+    )
+
+    live[0] = False
+    assert not service.is_request_authenticated(
+        _request(identity, method="GET", path="/api/config/service-capabilities")
+    )
 
 
 def _agent_service_and_headers(

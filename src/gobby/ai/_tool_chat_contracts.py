@@ -25,6 +25,7 @@ from gobby._generated_tool_loop_limits import (
 )
 from gobby.config.feature_base import FeatureCandidateInput
 from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
+from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV, GOBBY_MANAGED_EXECUTION_ID_ENV
 
 MAX_TURNS_STOP_REASON = "max_turns"
 MAX_TOOL_CALLS_STOP_REASON = "max_tool_calls"
@@ -120,8 +121,10 @@ class ToolChatRequest:
     tool_policy: ToolPolicy
     project_path: str
     session_id: UUID | None = None
+    project_id: UUID | None = None
     managed_execution_id: UUID | None = None
     credential_bootstrap_path: str | None = None
+    daemon_api_token: str | None = field(default=None, repr=False)
     system_prompt: str | None = None
     provider: str | None = None
     profile: str | None = None
@@ -143,7 +146,20 @@ class ToolChatRequest:
     def managed_subprocess_env(self) -> dict[str, str]:
         if self.credential_bootstrap_path is None:
             return {}
-        return {MANAGED_EXECUTION_BOOTSTRAP_ENV: self.credential_bootstrap_path}
+        if (
+            self.managed_execution_id is None
+            or self.session_id is None
+            or self.project_id is None
+            or self.daemon_api_token is None
+        ):
+            raise ValueError("managed tool request is missing verified daemon identity")
+        return {
+            MANAGED_EXECUTION_BOOTSTRAP_ENV: self.credential_bootstrap_path,
+            GOBBY_MANAGED_EXECUTION_ID_ENV: str(self.managed_execution_id),
+            "GOBBY_SESSION_ID": str(self.session_id),
+            "GOBBY_PROJECT_ID": str(self.project_id),
+            GOBBY_AGENT_API_TOKEN_ENV: self.daemon_api_token,
+        }
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import os
 import time
 from dataclasses import dataclass
@@ -14,24 +15,26 @@ from gobby.paths import get_gobby_home
 # This is a filename, not a credential value.
 LOCAL_API_TOKEN_FILENAME = "local_cli_token"  # nosec B105
 GOBBY_AGENT_API_TOKEN_ENV = "GOBBY_AGENT_API_TOKEN"
+GOBBY_MANAGED_EXECUTION_ID_ENV = "GOBBY_MANAGED_EXECUTION_ID"
 _AGENT_TOKEN_VERSION = "gobby-agent-v1"
 
-# Expiry is defense-in-depth: the daemon's per-request run-liveness check is
-# the real revocation, so the untimed ceiling never strands a legitimate long
-# run mid-flight, and resume re-mints a fresh capability.
+# Expiry is defense-in-depth: the daemon's per-request owner-liveness check is
+# authoritative, while the untimed ceiling avoids stranding legitimate long
+# agent runs and resume re-mints a fresh capability.
 AGENT_TOKEN_MAX_TTL_SECONDS = 86400
 _AGENT_TOKEN_TIMEOUT_GRACE_SECONDS = 60
 
 
 @dataclass(frozen=True)
 class AgentApiTokenClaims:
-    """Identity bound into a spawned agent's daemon capability."""
+    """Identity bound into a managed execution's daemon capability."""
 
-    agent_run_id: str
     session_id: str
     project_id: str
     iat: int
     exp: int
+    agent_run_id: str | None = None
+    managed_execution_id: str | None = None
 
 
 def local_token_path() -> Path:
@@ -61,16 +64,55 @@ def issue_agent_api_token(
     A run-declared timeout bounds the token to that timeout plus a fixed
     grace; untimed runs get the fixed ``AGENT_TOKEN_MAX_TTL_SECONDS`` ceiling.
     """
-    iat = int(time.time())
     if timeout_seconds is not None:
-        exp = iat + int(timeout_seconds) + _AGENT_TOKEN_TIMEOUT_GRACE_SECONDS
+        ttl_seconds = math.ceil(timeout_seconds) + _AGENT_TOKEN_TIMEOUT_GRACE_SECONDS
     else:
-        exp = iat + AGENT_TOKEN_MAX_TTL_SECONDS
+        ttl_seconds = AGENT_TOKEN_MAX_TTL_SECONDS
+    return _issue_managed_api_token(
+        operator_token,
+        owner_claim="agent_run_id",
+        owner_id=agent_run_id,
+        session_id=session_id,
+        project_id=project_id,
+        ttl_seconds=ttl_seconds,
+    )
+
+
+def issue_tool_api_token(
+    operator_token: str,
+    *,
+    managed_execution_id: str,
+    session_id: str,
+    project_id: str,
+    timeout_seconds: float,
+) -> str:
+    """Mint a daemon capability bounded to one managed tool request."""
+    return _issue_managed_api_token(
+        operator_token,
+        owner_claim="managed_execution_id",
+        owner_id=managed_execution_id,
+        session_id=session_id,
+        project_id=project_id,
+        ttl_seconds=max(1, math.ceil(timeout_seconds)),
+    )
+
+
+def _issue_managed_api_token(
+    operator_token: str,
+    *,
+    owner_claim: str,
+    owner_id: str,
+    session_id: str,
+    project_id: str,
+    ttl_seconds: int,
+) -> str:
+    iat = int(time.time())
+    exp = iat + ttl_seconds
     payload = json.dumps(
         {
-            "agent_run_id": agent_run_id,
             "exp": exp,
             "iat": iat,
+            owner_claim: owner_id,
             "project_id": project_id,
             "session_id": session_id,
         },
@@ -87,7 +129,7 @@ def verify_agent_api_token(
     token: str,
     operator_token: str,
 ) -> AgentApiTokenClaims | None:
-    """Verify and decode a run-bound agent capability.
+    """Verify and decode a single-owner managed execution capability.
 
     Tokens without integer ``iat``/``exp`` claims and tokens at or past
     their expiry are rejected outright.
@@ -107,17 +149,20 @@ def verify_agent_api_token(
     if not isinstance(raw, dict):
         return None
     agent_run_id = raw.get("agent_run_id")
+    managed_execution_id = raw.get("managed_execution_id")
     session_id = raw.get("session_id")
     project_id = raw.get("project_id")
-    if not all(
-        isinstance(value, str) and value for value in (agent_run_id, session_id, project_id)
-    ):
+    owner_claims = [raw[name] for name in ("agent_run_id", "managed_execution_id") if name in raw]
+    if len(owner_claims) != 1:
+        return None
+    if not isinstance(owner_claims[0], str) or not owner_claims[0]:
+        return None
+    if not all(isinstance(value, str) and value for value in (session_id, project_id)):
         return None
     iat = raw.get("iat")
     exp = raw.get("exp")
     if not all(isinstance(value, int) and not isinstance(value, bool) for value in (iat, exp)):
         return None
-    assert isinstance(agent_run_id, str)
     assert isinstance(session_id, str)
     assert isinstance(project_id, str)
     assert isinstance(iat, int)
@@ -126,6 +171,7 @@ def verify_agent_api_token(
         return None
     return AgentApiTokenClaims(
         agent_run_id=agent_run_id,
+        managed_execution_id=managed_execution_id,
         session_id=session_id,
         project_id=project_id,
         iat=iat,
@@ -148,6 +194,7 @@ _AGENT_IDENTITY_ENV_HEADERS = (
     ("GOBBY_SESSION_ID", "X-Gobby-Session-Id"),
     ("GOBBY_PROJECT_ID", "X-Gobby-Caller-Project-Id"),
     ("GOBBY_AGENT_RUN_ID", "X-Gobby-Agent-Run-Id"),
+    (GOBBY_MANAGED_EXECUTION_ID_ENV, "X-Gobby-Managed-Execution-Id"),
 )
 
 

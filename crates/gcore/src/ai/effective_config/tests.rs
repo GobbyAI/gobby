@@ -100,12 +100,13 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
 
 #[test]
 #[serial_test::serial]
-fn managed_fetch_uses_typed_bundle_and_bound_identity_headers() {
+fn managed_tool_fetch_uses_typed_bundle_and_bound_identity_headers() {
     let home = temp_home();
     let body = r#"{
         "version": 1,
         "execution": {
-            "agent_run_id": "run-123",
+            "owner_kind": "tool_chat",
+            "execution_id": "tool-123",
             "project_id": "project-123",
             "session_id": "session-123",
             "expires_at": 4102444800
@@ -154,7 +155,7 @@ fn managed_fetch_uses_typed_bundle_and_bound_identity_headers() {
                 Some("/tmp/managed-bootstrap.yaml"),
             ),
             ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
-            ("GOBBY_AGENT_RUN_ID", Some("run-123")),
+            ("GOBBY_MANAGED_EXECUTION_ID", Some("tool-123")),
             ("GOBBY_PROJECT_ID", Some("project-123")),
             ("GOBBY_SESSION_ID", Some("session-123")),
         ],
@@ -174,7 +175,11 @@ fn managed_fetch_uses_typed_bundle_and_bound_identity_headers() {
         AUTHORIZATION_HEADER,
         "Bearer agent-token"
     ));
-    assert!(has_header(&request, "X-Gobby-Agent-Run-Id", "run-123"));
+    assert!(has_header(
+        &request,
+        "X-Gobby-Managed-Execution-Id",
+        "tool-123"
+    ));
     assert!(has_header(
         &request,
         "X-Gobby-Caller-Project-Id",
@@ -190,7 +195,8 @@ fn managed_bundle_rejects_unapproved_config_keys() {
     let body = r#"{
         "version": 1,
         "execution": {
-            "agent_run_id": "run-123",
+            "owner_kind": "agent_run",
+            "execution_id": "run-123",
             "project_id": "project-123",
             "session_id": "session-123",
             "expires_at": 4102444800

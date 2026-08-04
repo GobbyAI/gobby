@@ -15,6 +15,7 @@ from gobby.storage.managed_credentials import (
     CredentialAuthorizationError,
     ManagedCredentialManager,
 )
+from gobby.utils.local_token import issue_tool_api_token, read_local_api_token
 
 _MAX_TOOL_ROLE_LIFETIME_SECONDS = 3540.0
 
@@ -65,13 +66,25 @@ def build_managed_tool_chat_lease_factory(
             )
             raise
         execution_id = tool_credential.credential.managed_execution_id
-        scoped_request = replace(
-            request,
-            project_path=tool_credential.project_path,
-            managed_execution_id=execution_id,
-            credential_bootstrap_path=str(tool_credential.credential.bootstrap_path),
-        )
         try:
+            operator_token = read_local_api_token()
+            if operator_token is None:
+                raise CredentialAuthorizationError("daemon operator capability is unavailable")
+            daemon_api_token = issue_tool_api_token(
+                operator_token,
+                managed_execution_id=str(execution_id),
+                session_id=str(request.session_id),
+                project_id=str(tool_credential.project_id),
+                timeout_seconds=lifetime_seconds,
+            )
+            scoped_request = replace(
+                request,
+                project_path=tool_credential.project_path,
+                project_id=tool_credential.project_id,
+                managed_execution_id=execution_id,
+                credential_bootstrap_path=str(tool_credential.credential.bootstrap_path),
+                daemon_api_token=daemon_api_token,
+            )
             yield scoped_request
         finally:
             await _revoke_shielded(manager, execution_id)

@@ -28,7 +28,9 @@ import shutil
 import time
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
+from gobby.agents.sandbox_policy import canonical_path, sensitive_roots
 from gobby.ai._tool_chat_builtins import (
     BuiltinExecutionContext,
     BuiltinToolResult,
@@ -322,12 +324,14 @@ class ToolRuntime:
         limits: ToolLoopLimits | None = None,
         builtins: tuple[BuiltinToolSpec, ...] = (),
         subprocess_env: dict[str, str] | None = None,
+        managed_execution_id: UUID | None = None,
     ) -> None:
         validate_policy(policy, allow_empty=bool(builtins))
         self._policy = policy
         self._project_path = project_path
         self._limits = limits or ToolLoopLimits()
         self._subprocess_env = subprocess_env
+        self._managed_execution_id = managed_execution_id
         self._subcommand_by_tool_name: dict[str, str] = {
             tool_name_for(policy.cli, sub): sub for sub in policy.tools
         }
@@ -499,6 +503,15 @@ class ToolRuntime:
             self._record(spec.name, arguments, text, result=fitted)
             return text
 
+        if self._managed_execution_id is not None and self._has_sensitive_path(spec, arguments):
+            result = BuiltinToolResult(
+                error_code="sensitive_path_denied",
+                error="managed builtin path is sensitive",
+            )
+            text, fitted, _ = self._fit_result(result)
+            self._record(spec.name, arguments, text, result=fitted)
+            return text
+
         evidence_ref = new_evidence_ref()
         max_payload_bytes = success_payload_capacity(
             self._limits.max_bytes_per_tool_result,
@@ -516,6 +529,7 @@ class ToolRuntime:
             max_payload_bytes=max_payload_bytes,
             evidence_ref=evidence_ref,
             subprocess_deadline=time.monotonic() + timeout - cleanup_grace,
+            managed_execution_id=self._managed_execution_id,
         )
         result = await self._await_builtin(spec, arguments, context, timeout=timeout)
         result_ref = evidence_ref if result.ok else None
@@ -528,6 +542,21 @@ class ToolRuntime:
             evidence_ref=result_ref,
         )
         return text
+
+    def _has_sensitive_path(self, spec: BuiltinToolSpec, arguments: dict[str, Any]) -> bool:
+        project_root = Path(self._project_path)
+        protected = tuple(Path(path) for path in sensitive_roots())
+        for argument in spec.path_arguments:
+            value = arguments.get(argument)
+            if not isinstance(value, str):
+                continue
+            candidate = Path(canonical_path(value, base=project_root))
+            if any(
+                candidate == root or root in candidate.parents or candidate in root.parents
+                for root in protected
+            ):
+                return True
+        return False
 
     async def _await_builtin(
         self,

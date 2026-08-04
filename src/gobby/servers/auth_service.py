@@ -42,6 +42,7 @@ _CALLER_PROJECT_HEADER = "X-Gobby-Caller-Project-Id"
 _TARGET_PROJECT_HEADER = "X-Gobby-Project-Id"
 _SESSION_HEADER = "X-Gobby-Session-Id"
 _AGENT_RUN_HEADER = "X-Gobby-Agent-Run-Id"
+_MANAGED_EXECUTION_HEADER = "X-Gobby-Managed-Execution-Id"
 _HOOKS_EXECUTE_PATH = "/api/hooks/execute"
 
 
@@ -84,6 +85,7 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("GET", "/api/embeddings/status", False),
     _AgentRoute("GET", "/api/embeddings/doctor", False),
     _AgentRoute("GET", "/api/llm/status", False),
+    _AgentRoute("POST", "/api/llm/chat/completions", True),
     _AgentRoute("GET", "/api/llm/vision/status", False),
     _AgentRoute("GET", "/api/voice/status", False),
     _AgentRoute("GET", "/api/providers/models", False),
@@ -131,6 +133,7 @@ def _agent_identity_matches(
     caller_project = headers.get(_CALLER_PROJECT_HEADER) or headers.get(_TARGET_PROJECT_HEADER)
     session_ref = headers.get(_SESSION_HEADER)
     run_id = headers.get(_AGENT_RUN_HEADER)
+    managed_execution_id = headers.get(_MANAGED_EXECUTION_HEADER)
     if bind_identity and (caller_project is None or session_ref is None):
         return False
     if caller_project is not None and caller_project != claims.project_id:
@@ -140,8 +143,14 @@ def _agent_identity_matches(
         # claimed session; compare canonical UUIDs, never raw refs.
         if resolve_session(session_ref) != claims.session_id:
             return False
-    if run_id is not None:
-        return run_id == claims.agent_run_id
+    expected_owner = claims.agent_run_id or claims.managed_execution_id
+    supplied_owner = run_id or managed_execution_id
+    if run_id is not None and claims.agent_run_id is None:
+        return False
+    if managed_execution_id is not None and claims.managed_execution_id is None:
+        return False
+    if supplied_owner is not None:
+        return supplied_owner == expected_owner
     return not bind_identity
 
 
@@ -247,7 +256,7 @@ class AuthService:
         entry = _agent_capability_allows(request)
         if entry is None:
             return None
-        if not self._agent_run_is_live(claims.agent_run_id):
+        if not self._managed_capability_is_live(claims):
             return None
         if not _agent_identity_matches(
             request,
@@ -257,6 +266,20 @@ class AuthService:
         ):
             return None
         return claims
+
+    def _managed_capability_is_live(self, claims: AgentApiTokenClaims) -> bool:
+        if claims.agent_run_id is not None:
+            return self._agent_run_is_live(claims.agent_run_id)
+        if claims.managed_execution_id is None:
+            return False
+        try:
+            row = self._database_getter().fetchone(
+                "SELECT gobby_agent_auth.managed_execution_is_login_capable(%s) AS login_capable",
+                (claims.managed_execution_id,),
+            )
+        except Exception:
+            return False
+        return row is not None and row["login_capable"] is True
 
     def _agent_run_is_live(self, run_id: str) -> bool:
         """A capability dies with its run: only pending/running runs pass.

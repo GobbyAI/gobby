@@ -17,7 +17,7 @@ from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
-from gobby.utils.local_token import issue_agent_api_token
+from gobby.utils.local_token import AgentApiTokenClaims, issue_agent_api_token
 from tests.servers.conftest import create_http_server
 
 if TYPE_CHECKING:
@@ -146,7 +146,8 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
     payload = response.json()
     assert payload["version"] == 1
     assert payload["execution"] == {
-        "agent_run_id": run.id,
+        "owner_kind": "agent_run",
+        "execution_id": run.id,
         "project_id": sample_project["id"],
         "session_id": headers["X-Gobby-Session-Id"],
         "expires_at": payload["execution"]["expires_at"],
@@ -198,6 +199,39 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
         "gwiki.enabled",
     ):
         assert forbidden not in response.text
+
+
+def test_service_capabilities_bind_managed_tool_execution(
+    server: Any,
+    client: TestClient,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution_id = "11111111-2222-4333-8444-555555555555"
+    session_id = "22222222-3333-4444-8555-666666666666"
+    claims = AgentApiTokenClaims(
+        session_id=session_id,
+        project_id=sample_project["id"],
+        iat=1,
+        exp=4_102_444_800,
+        managed_execution_id=execution_id,
+    )
+    monkeypatch.setattr(
+        server.auth_service,
+        "verified_agent_claims",
+        lambda _request: claims,
+    )
+
+    response = client.get("/api/config/service-capabilities")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["execution"] == {
+        "owner_kind": "tool_chat",
+        "execution_id": execution_id,
+        "project_id": sample_project["id"],
+        "session_id": session_id,
+        "expires_at": 4_102_444_800,
+    }
 
 
 @pytest.mark.integration

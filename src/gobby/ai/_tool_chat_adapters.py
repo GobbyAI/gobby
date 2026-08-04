@@ -56,6 +56,7 @@ class OpenAICompatibleToolChatAdapter:
             limits=limits,
             builtins=request.builtins,
             subprocess_env=request.managed_subprocess_env,
+            managed_execution_id=request.managed_execution_id,
         )
         model = request.model or next(iter(binding.models), None)
         if model is None:
@@ -277,6 +278,7 @@ class ClaudeToolChatAdapter:
             limits=limits,
             builtins=request.builtins,
             subprocess_env=request.managed_subprocess_env,
+            managed_execution_id=request.managed_execution_id,
         )
         server, allowed_tools = build_repo_mcp_server(runtime)
         provider = self._provider_factory(binding)

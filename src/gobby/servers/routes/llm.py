@@ -122,9 +122,9 @@ class ChatMessage(BaseModel):
 class ToolPolicyPayload(BaseModel):
     """Caller-declared tool policy for a tool_chat request."""
 
-    cli: str = Field(min_length=1)
+    cli: Literal["gcode"]
     tools: tuple[str, ...] = Field(min_length=1)
-    allow_mutation: bool = False
+    allow_mutation: Literal[False] = False
 
 
 class ToolLoopLimitsPayload(BaseModel):
@@ -281,7 +281,10 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         no provider names and performs no fallback — an unsatisfiable capability
         is reported as a 400.
         """
-        session_header = request.headers.get("X-Gobby-Session-Id")
+        claims = server.auth_service.verified_agent_claims(request)
+        session_header = (
+            claims.session_id if claims is not None else request.headers.get("X-Gobby-Session-Id")
+        )
         try:
             authenticated_session_id = UUID(session_header) if session_header else None
         except ValueError:

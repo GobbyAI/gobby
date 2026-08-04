@@ -9,7 +9,9 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
+from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -282,6 +284,50 @@ async def test_typed_handler_failure_never_raises_through_runtime() -> None:
         "error_code": "git_timeout",
         "success": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_managed_builtin_rejects_sensitive_path_before_handler(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sensitive_root = tmp_path / "gobby" / "bootstrap.yaml"
+    sensitive_root.parent.mkdir()
+    sensitive_root.write_text("operator-secret")
+    called = False
+
+    async def handler(
+        arguments: dict[str, Any], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
+        nonlocal called
+        called = True
+        return BuiltinToolResult(payload={"content": Path(arguments["path"]).read_text()})
+
+    spec = BuiltinToolSpec(
+        name="read_file",
+        description="Read one file.",
+        input_schema={
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        handler=handler,
+        path_arguments=("path",),
+    )
+    monkeypatch.setattr(tools, "sensitive_roots", lambda: [str(sensitive_root)], raising=False)
+    runtime = ToolRuntime(
+        _policy(),
+        project_path=str(tmp_path),
+        builtins=(spec,),
+        managed_execution_id=uuid4(),
+    )
+
+    result = json.loads(await runtime.execute("read_file", {"path": str(sensitive_root)}))
+
+    assert result["error_code"] == "sensitive_path_denied"
+    assert "operator-secret" not in json.dumps(result)
+    assert called is False
 
 
 @pytest.mark.asyncio

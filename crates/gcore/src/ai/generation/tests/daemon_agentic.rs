@@ -39,7 +39,7 @@ fn spawn_agentic_response(response: impl Into<String>) -> std::io::Result<(Strin
 }
 
 /// Points the daemon dial URL at a stub server and stages a local CLI token
-/// under a temp `GOBBY_HOME`, restoring all four env vars on drop. Mirrors the
+/// under a temp `GOBBY_HOME`, restoring all scoped env vars on drop. Mirrors the
 /// daemon test harness so `daemon_agentic_chat` is exercised end to end over the
 /// shared stub HTTP server.
 struct DaemonEnvGuard {
@@ -48,6 +48,11 @@ struct DaemonEnvGuard {
     gobby_home: Option<OsString>,
     daemon_url: Option<OsString>,
     port: Option<OsString>,
+    agent_api_token: Option<OsString>,
+    agent_run_id: Option<OsString>,
+    managed_execution_id: Option<OsString>,
+    project_id: Option<OsString>,
+    session_id: Option<OsString>,
 }
 
 impl DaemonEnvGuard {
@@ -60,6 +65,11 @@ impl DaemonEnvGuard {
             gobby_home: std::env::var_os("GOBBY_HOME"),
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             port: std::env::var_os("GOBBY_PORT"),
+            agent_api_token: std::env::var_os("GOBBY_AGENT_API_TOKEN"),
+            agent_run_id: std::env::var_os("GOBBY_AGENT_RUN_ID"),
+            managed_execution_id: std::env::var_os("GOBBY_MANAGED_EXECUTION_ID"),
+            project_id: std::env::var_os("GOBBY_PROJECT_ID"),
+            session_id: std::env::var_os("GOBBY_SESSION_ID"),
         };
         fs::write(home.join("local_cli_token"), format!("{token}\n")).unwrap();
         // SAFETY: env mutation is serialized through TEST_ENV_LOCK, held for the
@@ -69,6 +79,11 @@ impl DaemonEnvGuard {
             std::env::set_var("HOME", home);
             std::env::set_var("GOBBY_HOME", home);
             std::env::set_var("GOBBY_DAEMON_URL", daemon_url);
+            std::env::set_var("GOBBY_AGENT_API_TOKEN", token);
+            std::env::remove_var("GOBBY_AGENT_RUN_ID");
+            std::env::set_var("GOBBY_MANAGED_EXECUTION_ID", "tool-execution-7");
+            std::env::set_var("GOBBY_PROJECT_ID", "project-7");
+            std::env::set_var("GOBBY_SESSION_ID", "session-7");
             std::env::remove_var("GOBBY_PORT");
         }
         guard
@@ -84,6 +99,11 @@ impl Drop for DaemonEnvGuard {
                 ("GOBBY_HOME", &self.gobby_home),
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
+                ("GOBBY_AGENT_API_TOKEN", &self.agent_api_token),
+                ("GOBBY_AGENT_RUN_ID", &self.agent_run_id),
+                ("GOBBY_MANAGED_EXECUTION_ID", &self.managed_execution_id),
+                ("GOBBY_PROJECT_ID", &self.project_id),
+                ("GOBBY_SESSION_ID", &self.session_id),
             ] {
                 match value {
                     Some(value) => std::env::set_var(name, value),
@@ -134,13 +154,24 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
         line.to_ascii_lowercase().starts_with("authorization:")
             && line.contains("Bearer agentic-token")
     }));
+    assert!(raw.lines().any(|line| {
+        line.eq_ignore_ascii_case("X-Gobby-Managed-Execution-Id: tool-execution-7")
+    }));
+    assert!(
+        raw.lines()
+            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Caller-Project-Id: project-7"))
+    );
+    assert!(
+        raw.lines()
+            .any(|line| line.eq_ignore_ascii_case("X-Gobby-Session-Id: session-7"))
+    );
     let body = request_body_json(&raw);
     assert_eq!(body["caller"], "test.agentic");
     let request_id = body["request_id"].as_str().expect("request UUID string");
     let request_uuid = uuid::Uuid::parse_str(request_id).expect("request UUID parses");
     assert_eq!(request_uuid.get_version_num(), 4);
     assert_eq!(body["profile"], "feature_high");
-    assert_eq!(body["project_id"], "project-7");
+    assert!(body.get("project_id").is_none());
     assert_eq!(body["project_path"], "/abs/repo");
     assert_eq!(body["limits"]["max_turns"], 60);
     assert_eq!(body["limits"]["max_tool_calls"], 30);

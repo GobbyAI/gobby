@@ -77,7 +77,8 @@ class ServiceCapabilities(BaseModel):
 class ExecutionBinding(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    agent_run_id: str
+    owner_kind: Literal["agent_run", "tool_chat"]
+    execution_id: str
     project_id: str
     session_id: str
     expires_at: int
@@ -342,10 +343,19 @@ def register_effective_routes(
         config = context.server.services.config
         if config is None:
             raise HTTPException(status_code=503, detail="Config not available")
+        if claims.agent_run_id is not None and claims.managed_execution_id is None:
+            owner_kind: Literal["agent_run", "tool_chat"] = "agent_run"
+            execution_id = claims.agent_run_id
+        elif claims.managed_execution_id is not None and claims.agent_run_id is None:
+            owner_kind = "tool_chat"
+            execution_id = claims.managed_execution_id
+        else:
+            raise HTTPException(status_code=401, detail="Invalid managed capability owner")
         response.headers["Cache-Control"] = "no-store"
         return ServiceCapabilityBundle(
             execution=ExecutionBinding(
-                agent_run_id=claims.agent_run_id,
+                owner_kind=owner_kind,
+                execution_id=execution_id,
                 project_id=claims.project_id,
                 session_id=claims.session_id,
                 expires_at=claims.exp,

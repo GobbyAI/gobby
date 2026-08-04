@@ -99,6 +99,7 @@ def server_with_llm() -> MagicMock:
         )
     )
     server.services = SimpleNamespace(text_generation_service=None)
+    server.auth_service.verified_agent_claims.return_value = None
     return server
 
 
@@ -1498,6 +1499,45 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert request.caller == _TOOL_CHAT_CALLER
     assert request.request_id == _TOOL_CHAT_REQUEST_ID
     assert request.session_id == UUID("019fc08a-1d63-4b23-bbc8-659d56bc4168")
+
+
+def test_chat_completions_uses_verified_agent_session_claim(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    claimed_session_id = UUID("129fc08a-1d63-4b23-bbc8-659d56bc4168")
+    server_with_llm.auth_service.verified_agent_claims.return_value = SimpleNamespace(
+        session_id=str(claimed_session_id),
+        project_id="project-claimed",
+    )
+    service = _FakeToolChatService(_chat_result())
+    server_with_llm.services.tool_chat_service = service
+
+    response = client.post("/api/llm/chat/completions", json=_valid_tool_chat_payload())
+
+    assert response.status_code == 200, response.text
+    assert service.requests[0].session_id == claimed_session_id
+
+
+@pytest.mark.parametrize(
+    "tool_policy",
+    [
+        {"cli": "gwiki", "tools": ["search"]},
+        {"cli": "gcode", "tools": ["index"], "allow_mutation": True},
+    ],
+)
+def test_chat_completions_rejects_unmanaged_tool_policy(
+    client: TestClient,
+    server_with_llm: MagicMock,
+    tool_policy: dict[str, object],
+) -> None:
+    server_with_llm.services.tool_chat_service = _FakeToolChatService(_chat_result())
+    payload = _valid_tool_chat_payload()
+    payload["tool_policy"] = tool_policy
+
+    response = client.post("/api/llm/chat/completions", json=payload)
+
+    assert response.status_code == 422
 
 
 def test_chat_completions_requires_authenticated_session_header(client: TestClient) -> None:
