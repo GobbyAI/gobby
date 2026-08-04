@@ -181,24 +181,62 @@ Response:
 
 ### D4 Provider And Model Discovery
 
-`GET /api/providers/models` is unchanged. It enumerates providers and models only:
+`GET /api/providers/models` exposes provider readiness plus the durable
+provider-model capability matrix:
 
 ```json
 {
   "providers": [
     {
-      "provider": "local:lm-studio",
-      "available": true,
-      "models": [
-        { "value": "qwen/qwen3.6-35b-a3b", "label": "qwen/qwen3.6-35b-a3b" }
-      ],
-      "source": "config"
+"provider": "codex",
+"available": true,
+"models": [
+  {
+    "canonical_model": "example-model",
+    "reasoning": {
+      "status": "unknown",
+      "supported_efforts": null,
+      "default_effort": null
+    },
+    "context_length": { "value": null, "source": "unknown" },
+    "max_output_tokens": { "value": null, "source": "unknown" },
+    "routes": {
+      "standard": {
+        "selector": "example-model",
+        "available": true,
+        "usage_multiplier": null,
+        "throughput_multiplier": null,
+        "latency_class": null,
+        "activations": []
+      }
+    },
+    "provenance": {}
+  }
+],
+"refresh": {
+  "generation": 1,
+  "sources": [
+    {
+      "source_key": "app-server-model-list",
+      "state": "ok",
+      "attempts": 1,
+      "last_error": null
     }
   ]
 }
+}
+]
+}
 ```
 
-The CLI may use this response to populate choices. It must still probe the per-capability status route before routing any AI request to the daemon.
+Each canonical model carries reasoning facts, typed context/output facts,
+`standard`/`fast` routes, optional decimal multipliers and latency class,
+ordered activations, and field provenance. Refresh source states are `pending`,
+`ok`, `stale`, or `error`; collection failure preserves the prior generation's
+models. Collectors refresh at daemon startup and every 24 hours. Bundled Claude
+and Droid rows seed an empty store with stale health until a live refresh
+succeeds. The CLI may use this response to populate choices. It must still probe
+the per-capability status route before routing any AI request to the daemon.
 
 ## Per-Request Resolution
 
@@ -210,6 +248,16 @@ Each request resolves capability, provider, and model in this order:
 4. Off, with a capability-unavailable degradation.
 
 When `routing=daemon`, the CLI forwards the requested capability where the route requires it, any resolved provider/model values, and `project_id` when available. The daemon owns final provider selection for daemon-routed work.
+
+Provider-model execution requests may set
+`speed_mode: "standard" | "fast"`; omission means `standard`. This field is
+request-scoped. It is accepted by agent spawn, WebSocket chat,
+chat-completions, and tool-chat, and it is not stored in launch defaults,
+resume metadata, or chat session state. Result metadata includes
+`speed: { requested, effective, status, reason }`. The status is `standard`,
+`fast_configured`, `fast_applied`, `fast_unavailable`, or `fast_degraded`.
+Provider-confirmed fallback preserves output and returns `fast_degraded`;
+`fast_unavailable` fails before dispatch.
 
 ## Capability Error Semantics
 

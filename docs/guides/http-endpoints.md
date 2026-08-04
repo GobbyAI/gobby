@@ -570,13 +570,40 @@ in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 | `GET` | `/api/cron/jobs/{job_id}/runs` | List cron job runs. |
 | `GET` | `/api/cron/runs/{run_id}` | Get a cron run. |
 | `GET` | `/api/providers` | List CLI providers and availability. |
-| `GET` | `/api/providers/models` | List provider model catalogs. |
+| `GET` | `/api/providers/models` | Read the provider-model capability matrix. |
 | `GET` | `/api/chat/{conversation_id}/messages` | Read chat messages. |
 | `DELETE` | `/api/chat/{conversation_id}/messages` | Delete chat messages. |
 | `GET` | `/api/traces` | List traces. |
 | `GET` | `/api/traces/{trace_id}` | Get a trace. |
 | `GET` | `/api/voice/status` | Voice subsystem status. |
 | `POST` | `/api/voice/transcribe` | Transcribe audio. |
+
+### `GET /api/providers/models`
+
+The top-level response is `{ "providers": [...] }`. A matrix-backed provider
+entry combines provider availability metadata with:
+
+- `models`: canonical model rows containing aliases, availability, reasoning,
+  typed context/output facts, modalities, tool support, `standard`/`fast`
+  routes, activation descriptors, multipliers, and field provenance.
+- `refresh.generation`: the atomic durable snapshot generation.
+- `refresh.sources`: per-source `pending`, `ok`, `stale`, or `error` health,
+  attempt counts, timestamps, and the last error.
+
+Refresh errors preserve the last-good model rows. Hidden model rows are omitted.
+Bundled Claude and Droid rows seed an empty store; provider collectors replace
+their snapshots atomically at startup and every 24 hours.
+Configured local generation endpoints may return transport-specific model rows;
+their availability does not create canonical matrix facts.
+
+Requests that execute provider models use `speed_mode: "standard" | "fast"`.
+Agent spawn accepts it in the REST and MCP request; WebSocket `chat_message`,
+chat-completions, and tool-chat accept it per send. Omission selects `standard`,
+and the value is not persisted to launch defaults, resume metadata, or chat
+session state. Successful execution metadata contains
+`speed: { requested, effective, status, reason }`, where status is `standard`,
+`fast_configured`, `fast_applied`, `fast_unavailable`, or `fast_degraded`.
+`fast_unavailable` fails before provider dispatch.
 
 ## Communications
 
