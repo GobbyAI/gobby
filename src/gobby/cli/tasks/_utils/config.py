@@ -31,10 +31,10 @@ def check_tasks_enabled() -> None:
         logger.warning("Error checking tasks config: %s", e)
 
 
-def get_task_manager() -> LocalTaskManager:
+def get_task_manager(*, apply_migrations: bool = True) -> LocalTaskManager:
     """Get initialized task manager."""
     try:
-        db = require_cli_database()
+        db = require_cli_database(apply_migrations=apply_migrations)
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     return LocalTaskManager(db)

@@ -93,9 +93,13 @@ def get_cli_runtime(ctx: click.Context | None = None) -> CliRuntime:
     return runtime
 
 
-def require_cli_database(ctx: click.Context | None = None) -> HubDatabase:
+def require_cli_database(
+    ctx: click.Context | None = None,
+    *,
+    apply_migrations: bool = True,
+) -> HubDatabase:
     """Borrow the shared database for the current CLI invocation."""
-    return get_cli_runtime(ctx).require_database()
+    return get_cli_runtime(ctx).require_database(apply_migrations=apply_migrations)
 
 
 def resolve_cli_project(

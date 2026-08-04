@@ -163,9 +163,15 @@ def test_tasks_list_reuses_one_runtime_database(monkeypatch: pytest.MonkeyPatch)
     task = object()
     manager.list_tasks.return_value = [task]
     seen: list[object] = []
+    migration_policies: list[bool] = []
 
     @contextmanager
-    def open_database(*args: object, **kwargs: object) -> Iterator[MagicMock]:
+    def open_database(
+        *args: object,
+        apply_migrations: bool = True,
+        **kwargs: object,
+    ) -> Iterator[MagicMock]:
+        migration_policies.append(apply_migrations)
         try:
             yield database
         finally:
@@ -197,4 +203,5 @@ def test_tasks_list_reuses_one_runtime_database(monkeypatch: pytest.MonkeyPatch)
 
     assert result.exit_code == 0, result.output
     assert seen == [database, database, database]
+    assert migration_policies == [False]
     database.close.assert_called_once_with()

@@ -144,7 +144,7 @@ def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert manager is manager_cls.return_value
     assert manager.db is db
-    require_database.assert_called_once_with()
+    require_database.assert_called_once_with(apply_migrations=True)
     manager_cls.assert_called_once_with(db)
 
 

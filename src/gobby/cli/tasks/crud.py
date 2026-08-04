@@ -1,5 +1,7 @@
 """CRUD command registrations for task management."""
 
+from functools import partial
+
 import click
 
 from gobby.cli.tasks._crud_common import (
@@ -41,9 +43,9 @@ from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.utils.project_context import get_project_context
 
 
-def _services() -> CrudServices:
+def _services(*, apply_migrations: bool = True) -> CrudServices:
     return CrudServices(
-        get_task_manager=get_task_manager,
+        get_task_manager=partial(get_task_manager, apply_migrations=apply_migrations),
         resolve_project_ref=resolve_project_ref,
         filter_tasks_by_stage=filter_tasks_by_stage,
         collect_ancestors=collect_ancestors,
@@ -106,7 +108,7 @@ def list_tasks(
 ) -> None:
     """List tasks."""
     list_tasks_impl(
-        _services(),
+        _services(apply_migrations=False),
         active,
         project_ref,
         stage_name,
@@ -139,7 +141,15 @@ def ready_tasks(
     flat: bool,
 ) -> None:
     """List tasks with no unresolved blocking dependencies."""
-    ready_tasks_impl(_services(), limit, project_ref, priority, task_type, json_format, flat)
+    ready_tasks_impl(
+        _services(apply_migrations=False),
+        limit,
+        project_ref,
+        priority,
+        task_type,
+        json_format,
+        flat,
+    )
 
 
 @click.command("blocked")
@@ -148,7 +158,7 @@ def ready_tasks(
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def blocked_tasks(limit: int, project_ref: str | None, json_format: bool) -> None:
     """List blocked tasks with what blocks them."""
-    blocked_tasks_impl(_services(), limit, project_ref, json_format)
+    blocked_tasks_impl(_services(apply_migrations=False), limit, project_ref, json_format)
 
 
 @click.command("stats")
@@ -156,7 +166,7 @@ def blocked_tasks(limit: int, project_ref: str | None, json_format: bool) -> Non
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def task_stats(project_ref: str | None, json_format: bool) -> None:
     """Show task statistics."""
-    task_stats_impl(_services(), project_ref, json_format)
+    task_stats_impl(_services(apply_migrations=False), project_ref, json_format)
 
 
 @click.command("create")
@@ -206,7 +216,7 @@ def show_task(task_id: str) -> None:
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
     """
-    show_task_impl(_services(), task_id)
+    show_task_impl(_services(apply_migrations=False), task_id)
 
 
 @click.command("update")
