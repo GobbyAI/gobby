@@ -104,12 +104,24 @@ class TestDeriveTranscriptPath:
     def test_qwen_source(self) -> None:
         handler = _TestHandler()
         with patch.object(handler, "_find_qwen_transcript", return_value="/tmp/q.json"):
-            result = handler._derive_transcript_path("qwen", {}, "ext-1")
+            result = handler._derive_transcript_path(
+                "qwen",
+                {},
+                "ext-1",
+                owner_machine_id="local-machine",
+                local_machine_id="local-machine",
+            )
         assert result == "/tmp/q.json"
 
     def test_unknown_source(self) -> None:
         handler = _TestHandler()
-        result = handler._derive_transcript_path("codex", {}, "ext-1")
+        result = handler._derive_transcript_path(
+            "codex",
+            {},
+            "ext-1",
+            owner_machine_id="local-machine",
+            local_machine_id="local-machine",
+        )
         assert result is None
 
 

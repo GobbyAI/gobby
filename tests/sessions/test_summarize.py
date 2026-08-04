@@ -42,6 +42,14 @@ Continue from the captured session state and complete the active task.
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.sessions.summarize.require_local_session_ownership",
+        lambda _session: "local-machine",
+    )
+
+
 def _make_session(
     session_id: str = "sess-1",
     transcript_path: str | None = None,

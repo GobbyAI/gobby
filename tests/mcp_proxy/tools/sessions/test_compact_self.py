@@ -1687,3 +1687,11 @@ class TestCompactSelfUnsupportedSessionType:
 
         assert result["compacted"] is False
         assert "unsupported session_type" in result["reason"]
+
+
+@pytest.fixture(autouse=True)
+def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._summary_metadata.require_local_session_ownership",
+        lambda _session: "local-machine",
+    )

@@ -1439,6 +1439,13 @@ class TestRenameSession:
 class TestGenerateSummary:
     """Test POST /sessions/{session_id}/generate-summary endpoint."""
 
+    @pytest.fixture(autouse=True)
+    def _local_session_ownership(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "gobby.servers.routes.sessions.analytics.require_local_session_ownership",
+            lambda _session: "local-machine",
+        )
+
     def test_generate_summary_success(self, client, mock_server) -> None:
         """Generates AI summary successfully."""
         session = _make_session()

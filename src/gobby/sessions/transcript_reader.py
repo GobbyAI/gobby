@@ -25,6 +25,7 @@ from gobby.sessions.gzip_seek_index import (
     ensure_gzip_block_index,
     iter_gzip_block_raw_lines,
 )
+from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_index import (
@@ -128,6 +129,8 @@ class TranscriptReader:
         session = self._session_manager.get(session_id)
         if not session:
             return []
+
+        require_local_session_ownership(session)
 
         limit = min(max(0, int(limit)), FLAT_ROW_LIMIT_MAX)
         offset = max(0, int(offset))
@@ -331,6 +334,7 @@ class TranscriptReader:
         line-oriented transcripts build a byte-seek index; the archive fallback
         decompresses once and builds a line-seek index.
         """
+        require_local_session_ownership(session)
         path = await self._get_live_transcript_path(session_id, session)
         if path and os.path.isfile(path):
             st = await asyncio.to_thread(os.stat, path)
@@ -395,6 +399,7 @@ class TranscriptReader:
 
     async def _get_live_transcript_path(self, session_id: str, session: Session) -> str | None:
         """Resolve a usable live transcript path for a session."""
+        require_local_session_ownership(session)
         transcript_path = getattr(session, "transcript_path", None)
         source = session.source or "claude"
         return await self._ensure_transcript_path(session_id, session, source, transcript_path)
@@ -407,6 +412,7 @@ class TranscriptReader:
         transcript_path: str | None,
     ) -> str | None:
         """Return a valid transcript path, re-deriving and persisting it when needed."""
+        local_machine_id = require_local_session_ownership(session)
         if (
             transcript_path
             and transcript_path != MISSING_TRANSCRIPT_PATH
@@ -415,7 +421,13 @@ class TranscriptReader:
             return transcript_path
 
         external_id = getattr(session, "external_id", None)
-        derived = await asyncio.to_thread(find_transcript_on_disk, source, external_id or "")
+        derived = await asyncio.to_thread(
+            find_transcript_on_disk,
+            source,
+            external_id or "",
+            owner_machine_id=session.machine_id,
+            local_machine_id=local_machine_id,
+        )
         if not derived:
             return None
 

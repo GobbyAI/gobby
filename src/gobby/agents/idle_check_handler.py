@@ -13,7 +13,9 @@ from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
 from gobby.agents.watchdog.recovery import WatchdogRecoveryCoordinator
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.sessions.activity import last_session_activity
+from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
@@ -258,7 +260,12 @@ class IdleCheckHandler:
 
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
         transcript_path: str | None = None
-        if reader is not None and session is not None and (session_stale or capacity_candidate):
+        if (
+            reader is not None
+            and session is not None
+            and is_local_machine_owner(session.machine_id, get_machine_id())
+            and (session_stale or capacity_candidate)
+        ):
             transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
         if reader is not None and transcript_path is not None:
             try:

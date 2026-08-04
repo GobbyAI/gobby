@@ -23,13 +23,22 @@ from gobby.tasks.transcript_evidence import (
 )
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.sessions.machine_scope.get_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+    )
 
 
 def _session(source: str, transcript_path: Path | None, *, suffix: str = "1") -> Session:
     return Session(
         id=f"00000000-0000-0000-0000-00000000000{suffix}",
         external_id=f"transcript-evidence-{source}-{suffix}",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id=LOCAL_MACHINE_ID,
         source=source,
         project_id="project",
         title=None,

@@ -4,8 +4,10 @@ import asyncio
 import os
 from typing import TYPE_CHECKING
 
+from gobby.sessions.machine_scope import is_local_machine_owner
 from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -18,6 +20,10 @@ class WatchdogTranscriptResolver:
         self._path_cache: dict[tuple[str, str, str], str] = {}
 
     async def resolve(self, session: Session, *, run_id: str) -> str | None:
+        local_machine_id = get_machine_id()
+        if not is_local_machine_owner(session.machine_id, local_machine_id):
+            return None
+
         source = session.source or ""
         external_id = session.external_id or ""
         cache_key = (run_id, source, external_id)
@@ -59,6 +65,8 @@ class WatchdogTranscriptResolver:
             find_transcript_on_disk,
             source,
             external_id,
+            owner_machine_id=session.machine_id,
+            local_machine_id=local_machine_id,
         )
         if not discovered_path:
             return None

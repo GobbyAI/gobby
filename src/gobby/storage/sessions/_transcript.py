@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import get_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -30,16 +31,18 @@ class _TranscriptMixin:
         Returns:
             List of sessions needing processing
         """
+        machine_id = get_machine_id()
         rows = self.db.fetchall(
             """
             SELECT * FROM sessions
             WHERE status = 'expired'
             AND transcript_processed = FALSE
             AND transcript_path IS NOT NULL
+            AND machine_id = %s
             ORDER BY updated_at ASC
             LIMIT %s
             """,
-            (limit,),
+            (machine_id, limit),
         )
         return [Session.from_row(row) for row in rows]
 

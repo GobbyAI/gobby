@@ -15,6 +15,7 @@ from gobby.config.validation_detection import (
     ValidationDetectionConfig,
     classify_validation_command,
 )
+from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_io import _iter_archive_lines, _iter_jsonl_lines
 from gobby.sessions.transcript_paths import find_transcript_on_disk
@@ -263,13 +264,19 @@ def _resolve_transcript_path(
     session: Session,
     archive_dir: str | None,
 ) -> tuple[str | None, list[str]]:
+    local_machine_id = require_local_session_ownership(session)
     attempted: list[str] = []
     if session.transcript_path:
         attempted.append(session.transcript_path)
         if Path(session.transcript_path).is_file():
             return session.transcript_path, attempted
 
-    discovered = find_transcript_on_disk(session.source, session.external_id)
+    discovered = find_transcript_on_disk(
+        session.source,
+        session.external_id,
+        owner_machine_id=session.machine_id,
+        local_machine_id=local_machine_id,
+    )
     if discovered:
         attempted.append(discovered)
         if Path(discovered).is_file():

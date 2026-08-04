@@ -880,6 +880,7 @@ class TestSessionManagerPruning:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test get_pending_transcript_sessions respects limit."""
         # Create multiple expired sessions with transcript_path
@@ -893,6 +894,10 @@ class TestSessionManagerPruning:
             )
             session_manager.update_status(session.id, "expired")
 
+        monkeypatch.setattr(
+            "gobby.storage.sessions._transcript.get_machine_id",
+            lambda: "20000000-0000-4000-8000-000000000001",
+        )
         pending = session_manager.get_pending_transcript_sessions(limit=3)
         assert len(pending) == 3
 
@@ -900,6 +905,7 @@ class TestSessionManagerPruning:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test that get_pending_transcript_sessions excludes processed sessions."""
         session = session_manager.register(
@@ -912,6 +918,10 @@ class TestSessionManagerPruning:
         session_manager.update_status(session.id, "expired")
         session_manager.mark_transcript_processed(session.id)
 
+        monkeypatch.setattr(
+            "gobby.storage.sessions._transcript.get_machine_id",
+            lambda: "20000000-0000-4000-8000-000000000001",
+        )
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0
 
@@ -919,6 +929,7 @@ class TestSessionManagerPruning:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Test that get_pending_transcript_sessions excludes sessions without transcript_path."""
         session = session_manager.register(
@@ -930,5 +941,9 @@ class TestSessionManagerPruning:
         )
         session_manager.update_status(session.id, "expired")
 
+        monkeypatch.setattr(
+            "gobby.storage.sessions._transcript.get_machine_id",
+            lambda: "20000000-0000-4000-8000-000000000001",
+        )
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0

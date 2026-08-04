@@ -14,6 +14,20 @@ from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
 from gobby.storage.session_models import Session
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.agents.watchdog.transcript_resolver.get_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+    )
+    monkeypatch.setattr(
+        "gobby.agents.idle_check_handler.get_machine_id",
+        lambda: LOCAL_MACHINE_ID,
+    )
+
 
 def _handler(
     *,
@@ -50,6 +64,8 @@ def _session(
     return cast(
         Session,
         SimpleNamespace(
+            id="session-1",
+            machine_id=LOCAL_MACHINE_ID,
             transcript_path=transcript_path,
             source=source,
             external_id=external_id,
@@ -96,7 +112,12 @@ async def test_resolve_transcript_path_rediscovers_after_stat_race(tmp_path: Pat
         resolved = await resolver.resolve(session, run_id="run-1")
 
     assert resolved == str(discovered)
-    mock_discover.assert_called_once_with("codex", "external-1")
+    mock_discover.assert_called_once_with(
+        "codex",
+        "external-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
 
 
 @pytest.mark.asyncio
@@ -127,7 +148,12 @@ async def test_resolve_transcript_path_discovers_for_invalid_stored_path(
     assert resolved == str(discovered)
     assert session.transcript_path == stored_paths[stored_kind]
     assert session.updated_at == updated_at
-    mock_discover.assert_called_once_with("codex", "external-1")
+    mock_discover.assert_called_once_with(
+        "codex",
+        "external-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
 
 
 @pytest.mark.asyncio
@@ -169,7 +195,12 @@ async def test_resolve_transcript_path_rediscovers_when_cache_predates_session_u
         session.updated_at = datetime(2100, 1, 1, tzinfo=UTC)
         assert await resolver.resolve(session, run_id="run-1") == str(second)
 
-    mock_discover.assert_called_once_with("codex", "external-1")
+    mock_discover.assert_called_once_with(
+        "codex",
+        "external-1",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
 
 
 @pytest.mark.asyncio

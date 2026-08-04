@@ -12,6 +12,10 @@ from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    require_local_session_ownership,
+)
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
@@ -90,6 +94,11 @@ def register_commits_tools(
 
         if not session:
             return {"success": False, "error": f"Session {session_id} not found"}
+
+        try:
+            require_local_session_ownership(session)
+        except RemoteSessionOwnershipError as exc:
+            return {"success": False, "error": str(exc)}
 
         cwd = _session_repo_cwd(session)
 

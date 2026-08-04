@@ -12,6 +12,10 @@ import aiofiles
 
 from gobby.hooks.tool_error_tracker import load_open_tool_errors
 from gobby.llm.claude_runtime import ClaudeSDKShutdownCancellation
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    require_local_session_ownership,
+)
 from gobby.sessions.summary_context import load_summary_prompt_template
 from gobby.sessions.summary_formatting import (
     _format_structured_context,
@@ -368,6 +372,11 @@ async def generate_summary(
     current_session = await asyncio.to_thread(session_manager.get, session_id)
     if not current_session:
         return {"error": "Session not found"}
+
+    try:
+        require_local_session_ownership(current_session)
+    except RemoteSessionOwnershipError as exc:
+        return {"error": str(exc)}
 
     transcript_path = getattr(current_session, "transcript_path", None)
     if not transcript_path:

@@ -6,6 +6,12 @@ import hashlib
 from typing import Any, cast
 from urllib.parse import quote
 
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    is_local_machine_owner,
+    require_local_session_ownership,
+)
+
 
 def _compat_module() -> Any:
     import gobby.hooks.event_handlers._session_start as session_start
@@ -18,8 +24,13 @@ def derive_transcript_path(
     cli_source: str,
     input_data: dict[str, Any],
     external_id: str,
+    *,
+    owner_machine_id: str | None,
+    local_machine_id: str | None,
 ) -> str | None:
     """Derive transcript path for CLIs that do not provide one natively."""
+    if not is_local_machine_owner(owner_machine_id, local_machine_id):
+        return None
     if cli_source == "qwen":
         return cast(str | None, handler._find_qwen_transcript(input_data, external_id))
     if cli_source == "grok":
@@ -51,6 +62,12 @@ def ensure_qwen_transcript_tracking(
     session = (
         handler._session_manager.get(platform_session_id) if handler._session_manager else None
     )
+    if session is None:
+        return None
+    try:
+        require_local_session_ownership(session)
+    except RemoteSessionOwnershipError:
+        return None
     transcript_path = getattr(session, "transcript_path", None)
     if not isinstance(transcript_path, str) or not transcript_path:
         transcript_path = find_qwen_transcript(

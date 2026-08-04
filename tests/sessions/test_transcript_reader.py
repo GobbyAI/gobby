@@ -6,6 +6,7 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 from time import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,6 +20,8 @@ from gobby.sessions.transcript_reader import (
     clear_archive_cache,
 )
 from gobby.sessions.transcript_renderer import RenderedMessage
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 # Helper to write a plain JSONL file (not gzipped)
@@ -48,8 +51,17 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture(autouse=True)
-def _clear_cache():
+def _clear_cache(monkeypatch: pytest.MonkeyPatch):
     """Clear LRU caches before/after each test."""
+
+    def require_local_ownership(session: Any) -> str:
+        session.machine_id = LOCAL_MACHINE_ID
+        return LOCAL_MACHINE_ID
+
+    monkeypatch.setattr(
+        "gobby.sessions.transcript_reader.require_local_session_ownership",
+        require_local_ownership,
+    )
     clear_archive_cache()
     clear_index_cache()
     yield
@@ -84,8 +96,23 @@ def test_codex_transcript_scan_respects_exact_max_days(
     target = sessions / "2026" / "05" / "01" / "rollout-ext-abc.jsonl"
     target.write_text("{}\n", encoding="utf-8")
 
-    assert find_transcript_on_disk("codex", "ext-abc", max_days=2) is None
-    assert find_transcript_on_disk("codex", "ext-abc", max_days=3) == str(target)
+    assert (
+        find_transcript_on_disk(
+            "codex",
+            "ext-abc",
+            max_days=2,
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
+        is None
+    )
+    assert find_transcript_on_disk(
+        "codex",
+        "ext-abc",
+        max_days=3,
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    ) == str(target)
 
 
 def test_transcript_scan_respects_file_age_for_claude(
@@ -99,8 +126,23 @@ def test_transcript_scan_respects_file_age_for_claude(
     old_mtime = time() - (3 * 24 * 60 * 60)
     os.utime(target, (old_mtime, old_mtime))
 
-    assert find_transcript_on_disk("claude", "ext-old", max_days=2) is None
-    assert find_transcript_on_disk("claude", "ext-old", max_days=4) == str(target)
+    assert (
+        find_transcript_on_disk(
+            "claude",
+            "ext-old",
+            max_days=2,
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
+        is None
+    )
+    assert find_transcript_on_disk(
+        "claude",
+        "ext-old",
+        max_days=4,
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    ) == str(target)
 
 
 def test_transcript_scan_ignores_os_errors_during_traversal(
@@ -111,7 +153,16 @@ def test_transcript_scan_ignores_os_errors_during_traversal(
     (tmp_path / ".claude" / "projects").mkdir(parents=True)
 
     with patch.object(Path, "iterdir", side_effect=OSError("permission denied")):
-        assert find_transcript_on_disk("claude", "ext-any", max_days=7) is None
+        assert (
+            find_transcript_on_disk(
+                "claude",
+                "ext-any",
+                max_days=7,
+                owner_machine_id=LOCAL_MACHINE_ID,
+                local_machine_id=LOCAL_MACHINE_ID,
+            )
+            is None
+        )
 
 
 def test_codex_transcript_scan_treats_external_id_as_literal(
@@ -126,7 +177,13 @@ def test_codex_transcript_scan_treats_external_id_as_literal(
     literal.write_text("{}\n", encoding="utf-8")
     wildcard_match.write_text("{}\n", encoding="utf-8")
 
-    assert find_transcript_on_disk("codex", "ext[abc]", max_days=1) == str(literal)
+    assert find_transcript_on_disk(
+        "codex",
+        "ext[abc]",
+        max_days=1,
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    ) == str(literal)
 
 
 def test_is_recent_file_rejects_non_positive_max_days(tmp_path: Path) -> None:
@@ -765,7 +822,12 @@ class TestTranscriptReaderRendered:
             )
 
         assert result == "/tmp/derived.jsonl"
-        find_transcript.assert_called_once_with("qwen", "ext-thread")
+        find_transcript.assert_called_once_with(
+            "qwen",
+            "ext-thread",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
         assert to_thread.await_args_list[0].args == (
             find_transcript,
             "qwen",

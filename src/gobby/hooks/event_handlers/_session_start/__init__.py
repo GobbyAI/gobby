@@ -35,11 +35,21 @@ class SessionStartMixin(EventHandlersBase):
         cli_source: str,
         input_data: dict[str, Any],
         external_id: str,
+        *,
+        owner_machine_id: str | None,
+        local_machine_id: str | None,
     ) -> str | None:
         """Derive transcript path for CLIs that do not provide one natively."""
         from .transcripts import derive_transcript_path
 
-        return derive_transcript_path(self, cli_source, input_data, external_id)
+        return derive_transcript_path(
+            self,
+            cli_source,
+            input_data,
+            external_id,
+            owner_machine_id=owner_machine_id,
+            local_machine_id=local_machine_id,
+        )
 
     def _find_qwen_transcript(
         self,

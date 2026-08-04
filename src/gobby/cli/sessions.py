@@ -13,6 +13,10 @@ import click
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    require_local_session_ownership,
+)
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -479,6 +483,12 @@ def create_handoff(
             if not session:
                 click.echo(f"Session not found: {session_id}", err=True)
                 raise SystemExit(1)
+
+    try:
+        require_local_session_ownership(session)
+    except RemoteSessionOwnershipError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
 
     # Check for transcript
     if not session.transcript_path:

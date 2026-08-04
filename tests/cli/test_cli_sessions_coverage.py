@@ -741,3 +741,15 @@ def test_backfill_context_windows_override() -> None:
         dry_run=True,
         overrides={"future-model": 444_000},
     )
+
+
+@pytest.fixture(autouse=True)
+def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib
+
+    sessions_module = importlib.import_module("gobby.cli.sessions")
+    monkeypatch.setattr(
+        sessions_module,
+        "require_local_session_ownership",
+        lambda _session: "local-machine",
+    )

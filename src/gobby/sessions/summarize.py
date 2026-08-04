@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.config.feature_base import FeatureCandidateInput
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    require_local_session_ownership,
+)
 from gobby.sessions.summary_context import (
     _build_summary_prompt_context,
     _get_claimed_tasks,
@@ -231,6 +235,14 @@ async def _generate_session_summary_core(
     if not session:
         return _SummaryCoreResult(
             result={"success": False, "error": "No session found", "session_id": session_id},
+            full_markdown="",
+        )
+
+    try:
+        require_local_session_ownership(session)
+    except RemoteSessionOwnershipError as exc:
+        return _SummaryCoreResult(
+            result={"success": False, "error": str(exc), "session_id": session_id},
             full_markdown="",
         )
 

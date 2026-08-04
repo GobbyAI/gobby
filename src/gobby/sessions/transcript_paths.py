@@ -6,6 +6,8 @@ from glob import escape as glob_escape
 from pathlib import Path
 from time import time
 
+from gobby.sessions.machine_scope import is_local_machine_owner
+
 _SECONDS_PER_DAY = 24 * 60 * 60
 MISSING_TRANSCRIPT_PATH = "missing_transcript"
 
@@ -15,12 +17,16 @@ def find_transcript_on_disk(
     external_id: str,
     source_max_days: int = 90,
     *,
+    owner_machine_id: str | None,
+    local_machine_id: str | None,
     max_days: int | None = None,
 ) -> str | None:
     """Try to find a transcript file on disk by CLI source and external_id.
 
     This performs blocking filesystem traversal; async callers must run it in a thread.
     """
+    if not is_local_machine_owner(owner_machine_id, local_machine_id):
+        return None
     if not external_id:
         return None
     if "/" in external_id or "\\" in external_id:

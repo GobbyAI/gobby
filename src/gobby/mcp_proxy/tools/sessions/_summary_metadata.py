@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 
+from gobby.sessions.machine_scope import require_local_session_ownership
 from gobby.sessions.summarize import SessionManagerProtocol, SessionSummaryConfigProtocol
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
@@ -27,6 +28,8 @@ async def compact_summary_metadata_matches(
     session_summary_config: SessionSummaryConfigProtocol | None,
 ) -> bool:
     """Return whether cached summary metadata matches current compact source context."""
+    require_local_session_ownership(session)
+
     from gobby.sessions.analyzer import TranscriptAnalyzer
     from gobby.sessions.summarize import (
         _build_summary_prompt_context,

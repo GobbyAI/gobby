@@ -13,20 +13,34 @@ from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
 
 class TestTranscriptPathDerivation:
     """Test _derive_transcript_path and helpers for non-Claude CLIs."""
 
     def test_derive_transcript_path_unknown_cli(self, event_handlers: EventHandlers) -> None:
         """Unknown CLI should return None."""
-        result = event_handlers._derive_transcript_path("unknown-cli", {}, "ext-123")
+        result = event_handlers._derive_transcript_path(
+            "unknown-cli",
+            {},
+            "ext-123",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
         assert result is None
 
     def test_derive_transcript_path_claude_returns_none(
         self, event_handlers: EventHandlers
     ) -> None:
         """Claude provides transcript_path natively, so derivation returns None."""
-        result = event_handlers._derive_transcript_path("claude", {}, "ext-123")
+        result = event_handlers._derive_transcript_path(
+            "claude",
+            {},
+            "ext-123",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
         assert result is None
 
     def test_find_qwen_transcript_no_cwd(self, event_handlers: EventHandlers) -> None:
@@ -138,7 +152,15 @@ class TestTranscriptPathDerivation:
         handlers = EventHandlers(**mock_dependencies)
         monkeypatch.setattr(handlers, "_inject_agent_instructions_if_needed", lambda *_args: None)
         session_manager = mock_dependencies["session_manager"]
-        session_manager.get.return_value = SimpleNamespace(transcript_path=None)
+        session_manager.get.return_value = SimpleNamespace(
+            id="platform-session",
+            machine_id=LOCAL_MACHINE_ID,
+            transcript_path=None,
+        )
+        monkeypatch.setattr(
+            "gobby.sessions.machine_scope.get_machine_id",
+            lambda: LOCAL_MACHINE_ID,
+        )
         input_data = {
             "cwd": cwd,
             "session_id": "abcd1234-full-uuid",
@@ -173,7 +195,13 @@ class TestTranscriptPathDerivation:
     def test_derive_qwen_dispatches(self, event_handlers: EventHandlers) -> None:
         """_derive_transcript_path should dispatch to _find_qwen_transcript for qwen."""
         # Without cwd, qwen derivation returns None
-        result = event_handlers._derive_transcript_path("qwen", {}, "ext-123")
+        result = event_handlers._derive_transcript_path(
+            "qwen",
+            {},
+            "ext-123",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
+        )
         assert result is None
 
     def test_derive_grok_transcript_path_uses_encoded_cwd(
@@ -188,6 +216,8 @@ class TestTranscriptPathDerivation:
             "grok",
             {"cwd": "/repo/my project", "sessionId": "grok-session"},
             "external-id",
+            owner_machine_id=LOCAL_MACHINE_ID,
+            local_machine_id=LOCAL_MACHINE_ID,
         )
 
         assert result == str(

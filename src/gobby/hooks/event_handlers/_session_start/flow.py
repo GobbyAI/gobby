@@ -337,8 +337,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     transcript_path = input_data.get("transcript_path")
     cwd = hook_cwd(input_data, event.cwd)
 
-    if not transcript_path:
-        transcript_path = handler._derive_transcript_path(cli_source, input_data, external_id)
     session_source = input_data.get("source", "startup")
     _t_pre_check = time.monotonic()
 
@@ -542,6 +540,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             cli_source,
             input_data,
             external_id,
+            owner_machine_id=canonical_session.machine_id,
+            local_machine_id=machine_id,
         )
         input_data["transcript_path"] = transcript_path
         session_id = canonical_session.id
@@ -561,6 +561,14 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 project_id=canonical_session.project_id,
             )
     elif handler._session_manager:
+        if not transcript_path:
+            transcript_path = handler._derive_transcript_path(
+                cli_source,
+                input_data,
+                external_id,
+                owner_machine_id=machine_id,
+                local_machine_id=machine_id,
+            )
         session_id = handler._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,
@@ -778,7 +786,14 @@ def handle_pre_created_session(
 
     if not transcript_path:
         input_data = event.data if event else {}
-        transcript_path = handler._derive_transcript_path(cli_source, input_data, external_id)
+        local_machine_id = event.machine_id or handler._get_machine_id()
+        transcript_path = handler._derive_transcript_path(
+            cli_source,
+            input_data,
+            external_id,
+            owner_machine_id=existing_session.machine_id,
+            local_machine_id=local_machine_id,
+        )
 
     session_obj = existing_session
     if handler._session_manager:

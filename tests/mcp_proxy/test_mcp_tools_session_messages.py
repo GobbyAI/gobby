@@ -927,3 +927,11 @@ async def test_get_session_commits_git_error(mock_session_manager, full_sessions
     assert result["session_id"] == "sess-abc"
     assert "error" in result
     assert "Git command failed" in result["error"]
+
+
+@pytest.fixture(autouse=True)
+def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.sessions._commits.require_local_session_ownership",
+        lambda _session: "local-machine",
+    )

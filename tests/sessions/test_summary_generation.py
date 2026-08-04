@@ -28,6 +28,14 @@ from gobby.sessions.summary_transcripts import (
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _local_session_ownership(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.sessions.summary_generation.require_local_session_ownership",
+        lambda _session: "local-machine",
+    )
+
+
 VALID_SUMMARY_CONTENT = """# Session Summary
 
 ## Current State

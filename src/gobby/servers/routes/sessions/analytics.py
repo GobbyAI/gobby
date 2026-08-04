@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException, Request
 
+from gobby.sessions.machine_scope import (
+    RemoteSessionOwnershipError,
+    require_local_session_ownership,
+)
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
@@ -81,6 +86,11 @@ def register_analytics_routes(
             session = server.session_manager.get(session_id)
             if session is None:
                 raise HTTPException(status_code=404, detail="Session not found")
+
+            try:
+                require_local_session_ownership(session)
+            except RemoteSessionOwnershipError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
 
             from gobby.sessions.summary_generation import generate_summary
             from gobby.sessions.transcripts import get_parser
