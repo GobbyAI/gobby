@@ -6,7 +6,7 @@ import logging
 from typing import Literal
 
 AgentRunStatus = Literal["pending", "running", "success", "error", "timeout", "cancelled"]
-AgentRunTerminalReason = Literal["user_cancelled", "daemon_stop"]
+AgentRunTerminalReason = Literal["user_cancelled", "daemon_stop", "spawn_rollback"]
 
 STATUS_PENDING: AgentRunStatus = "pending"
 STATUS_RUNNING: AgentRunStatus = "running"

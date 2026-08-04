@@ -22,6 +22,7 @@ pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE = ROOT / "src/gobby/storage/postgres_baseline_schema.sql"
 MIGRATION = ROOT / "src/gobby/storage/migrations/369_scoped_agent_authorization.sql"
+LIFECYCLE_MIGRATION = ROOT / "src/gobby/storage/migrations/371_managed_credential_lifecycle.sql"
 AUTH_SCHEMA = "gobby_agent_auth"
 CAPABILITY_ROLE = "gobby_gcode_capability"
 ISSUER_ROLE = "gobby_agent_issuer"
@@ -70,6 +71,8 @@ def _bootstrap_and_migrate(conn: psycopg.Connection[Any]) -> None:
         )
     assert MIGRATION.exists(), "migration slot 369 must implement the authorization substrate"
     conn.execute(MIGRATION.read_text(), prepare=False)
+    assert LIFECYCLE_MIGRATION.exists(), "migration slot 371 must implement credential lifecycle"
+    conn.execute(LIFECYCLE_MIGRATION.read_text(), prepare=False)
 
 
 def _as_runtime(
@@ -565,3 +568,46 @@ def test_crafted_missing_expired_and_duplicate_issue_inputs_are_rejected(
                     admin.execute(statement, params)
         finally:
             admin.execute("RESET ROLE")
+
+
+def test_daemon_registry_and_one_hour_principal_lifetime_are_enforced(
+    authorization_fixture: AuthorizationFixture,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        registered = _as_runtime(
+            admin,
+            f"SELECT {AUTH_SCHEMA}.heartbeat_daemon(%s, INTERVAL '2 minutes')",
+            (fixture.machine_id,),
+        )
+        assert registered == fixture.machine_id
+
+        registry = admin.execute(
+            f"SELECT lease_expires_at > heartbeat_at FROM {AUTH_SCHEMA}.daemon_registry "
+            "WHERE machine_id = %s",
+            (fixture.machine_id,),
+        ).fetchone()
+        assert registry == (True,)
+
+        with pytest.raises(psycopg.errors.InvalidParameterValue):
+            _as_runtime(
+                admin,
+                f"""SELECT * FROM {AUTH_SCHEMA}.issue_principal(
+                    %s, 'agent_run', %s, %s, %s,
+                    NOW() + INTERVAL '1 hour 1 second', %s
+                )""",
+                (
+                    execution_id,
+                    fixture.session_id,
+                    fixture.agent_run_id,
+                    fixture.machine_id,
+                    f"too-long-{uuid4()}",
+                ),
+            )
+
+        binding = admin.execute(
+            f"SELECT 1 FROM {AUTH_SCHEMA}.principal_bindings WHERE managed_execution_id = %s",
+            (execution_id,),
+        ).fetchone()
+        assert binding is None

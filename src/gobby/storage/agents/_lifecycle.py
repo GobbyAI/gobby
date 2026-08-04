@@ -53,12 +53,33 @@ def _execute_terminal_transition(
         if updated_run is None:
             return None
         host._transition_sessions_for_terminal_run(updated_run)
-        return updated_run
+
+    credential_manager = host.credential_manager
+    if credential_manager is not None:
+        try:
+            credential_manager.revoke(
+                uuid.UUID(run_id),
+                reason=f"agent-run-{updated_run.status}",
+            )
+        except Exception:
+            logger.error("Managed credential revocation failed for terminal run %s", run_id)
+    return updated_run
+
+
+class _ManagedCredentialRevoker(Protocol):
+    def revoke(
+        self,
+        managed_execution_id: uuid.UUID,
+        *,
+        generation: int | None = None,
+        reason: str,
+    ) -> object: ...
 
 
 class _AgentRunLifecycleHost(Protocol):
     db: HubDatabase
     _status_notifier: SessionStatusTransitionCallback | None
+    credential_manager: _ManagedCredentialRevoker | None
 
     def get(self, run_id: str) -> AgentRun | None: ...
 

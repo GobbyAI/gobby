@@ -9,8 +9,10 @@ import shutil
 from concurrent.futures import CancelledError, Future
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from gobby.config.app import load_config
+from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
     ensure_machine_identity,
@@ -86,6 +88,18 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if runner.machine_id is None:
         raise RuntimeError("local machine identity is unavailable")
     runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
+    from gobby.storage.managed_credentials import ManagedCredentialManager
+
+    runner.managed_credential_manager = ManagedCredentialManager(
+        database=runner.database,
+        machine_id=UUID(runner.machine_id),
+        runtime_root=get_gobby_home() / "runtime" / "managed-executions",
+    )
+    setattr(  # noqa: B010 - runtime attachment avoids a hub protocol dependency cycle
+        runner.database,
+        "managed_credential_manager",
+        runner.managed_credential_manager,
+    )
     try:
         db_max_workers = int(os.environ.get("RUNNER_MAX_WORKERS", "4"))
     except ValueError:

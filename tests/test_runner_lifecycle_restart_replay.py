@@ -362,7 +362,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id="machine-1",
+            machine_id="00000000-0000-4000-8000-000000000001",
             source="test",
             project_id=sample_project["id"],
         )
@@ -412,7 +412,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id="machine-1",
+            machine_id="00000000-0000-4000-8000-000000000002",
             source="test",
             project_id=sample_project["id"],
         )

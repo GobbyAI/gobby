@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.managed_credentials import ManagedCredentialManager
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.storage.prompts import LocalPromptManager
@@ -136,6 +137,7 @@ class GobbyRunner:
     _wiki_watcher_task: asyncio.Task[None] | None
     _wiki_watcher: WikiWatcher | None
     database: HubDatabase
+    managed_credential_manager: ManagedCredentialManager
     db_executor: DatabaseExecutor
     secret_store: SecretStore
     config_store: ConfigStore

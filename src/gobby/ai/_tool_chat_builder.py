@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gobby.ai._managed_tool_chat_lease import build_managed_tool_chat_lease_factory
 from gobby.ai._tool_chat_adapters import (
     ClaudeProviderFactory,
     ClaudeToolChatAdapter,
@@ -34,12 +35,14 @@ from gobby.ai.registry import (
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude import ClaudeLLMProvider
 from gobby.llm.local_provider_adapters import create_local_provider_adapter
+from gobby.storage.managed_credentials import ManagedCredentialManager
 
 
 def build_daemon_tool_chat_service(
     config: DaemonConfig,
     *,
     registry: AICapabilityRegistry | None = None,
+    credential_manager: ManagedCredentialManager | None = None,
 ) -> ToolChatService:
     """Build the daemon tool_chat service from configured capability bindings."""
     limits = ToolLoopLimits(**config.ai.generation.tool_loop.model_dump())
@@ -48,6 +51,11 @@ def build_daemon_tool_chat_service(
         adapter_factories=_daemon_tool_chat_adapter_factories(config),
         profile_defaults=config.ai.generation.profile_defaults,
         default_limits=limits,
+        lease_factory=(
+            build_managed_tool_chat_lease_factory(credential_manager)
+            if credential_manager is not None
+            else None
+        ),
     )
 
 

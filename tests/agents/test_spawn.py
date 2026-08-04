@@ -8,7 +8,7 @@ update_terminal_pickup_metadata.
 import os
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -115,6 +115,36 @@ class TestPrepareTerminalSpawnMetadata:
         )
 
         assert str(uuid.UUID(result.agent_run_id)) == result.agent_run_id
+
+    def test_issues_managed_credential_before_returning_provider_environment(self) -> None:
+        session_id = str(uuid.uuid4())
+        project_id = str(uuid.uuid4())
+        run_id = str(uuid.uuid4())
+        sm = _make_session_manager(child_session_id=session_id)
+        credential_manager = MagicMock()
+        credential_manager.issue.return_value.bootstrap_path = Path(
+            "/private/runtime/bootstrap.json"
+        )
+        sm._storage.db.managed_credential_manager = credential_manager
+
+        result = prepare_terminal_spawn(
+            session_manager=sm,
+            parent_session_id=str(uuid.uuid4()),
+            project_id=project_id,
+            machine_id=str(uuid.uuid4()),
+            agent_run_id=run_id,
+        )
+
+        credential_manager.issue.assert_called_once_with(
+            managed_execution_id=uuid.UUID(run_id),
+            owner_kind="agent_run",
+            session_id=uuid.UUID(session_id),
+            agent_run_id=uuid.UUID(run_id),
+            expires_at=ANY,
+        )
+        assert result.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] == (
+            "/private/runtime/bootstrap.json"
+        )
 
     def test_env_includes_spawned_agent_uv_cache_dir(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

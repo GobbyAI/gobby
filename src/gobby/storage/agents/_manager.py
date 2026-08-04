@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from gobby.sessions.status_events import SessionStatusTransitionCallback
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.managed_credentials import ManagedCredentialManager
 
 from ._cleanup import _AgentRunCleanupMixin
 from ._lifecycle import _AgentRunLifecycleMixin
@@ -30,7 +31,11 @@ class LocalAgentRunManager(
         db: HubDatabase,
         *,
         status_notifier: SessionStatusTransitionCallback | None = None,
+        credential_manager: ManagedCredentialManager | None = None,
     ):
         """Initialize with database connection."""
         self.db = db
         self._status_notifier = status_notifier
+        self.credential_manager = credential_manager or getattr(
+            db, "managed_credential_manager", None
+        )

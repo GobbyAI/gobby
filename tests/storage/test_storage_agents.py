@@ -28,6 +28,42 @@ pytestmark = pytest.mark.unit
         ("cancel", {}, "cancelled"),
     ],
 )
+def test_terminal_transitions_revoke_managed_credentials_once(
+    temp_db: HubDatabase,
+    sample_session: dict[str, Any],
+    method_name: str,
+    kwargs: dict[str, str],
+    terminal_status: str,
+) -> None:
+    credential_manager = MagicMock()
+    manager = LocalAgentRunManager(temp_db, credential_manager=credential_manager)
+    run = manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt="credential lifecycle",
+    )
+    manager.start(run.id)
+
+    transitioned = getattr(manager, method_name)(run.id, **kwargs)
+    repeated = getattr(manager, method_name)(run.id, **kwargs)
+
+    assert transitioned.status == terminal_status
+    assert repeated is None
+    credential_manager.revoke.assert_called_once_with(
+        uuid.UUID(run.id),
+        reason=f"agent-run-{terminal_status}",
+    )
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "terminal_status"),
+    [
+        ("complete", {"result": "done"}, "success"),
+        ("fail", {"error": "failed"}, "error"),
+        ("timeout", {}, "timeout"),
+        ("cancel", {}, "cancelled"),
+    ],
+)
 def test_terminal_transition_rolls_back_when_post_update_step_fails(
     agent_manager: LocalAgentRunManager,
     sample_session: dict,
@@ -1636,7 +1672,12 @@ class TestLocalAgentRunManager:
         session_manager: SessionManager,
         sample_session: dict[str, Any],
     ) -> None:
-        """Test cleaning up stale running agent runs."""
+        """A watchdog-recovered hard-killed run revokes its managed credential."""
+        credential_manager = MagicMock()
+        cleanup_manager = LocalAgentRunManager(
+            agent_manager.db,
+            credential_manager=credential_manager,
+        )
         child_session = session_manager.register(
             external_id="stale-run-child",
             machine_id="21000000-0000-4000-8000-000000000001",
@@ -1662,7 +1703,7 @@ class TestLocalAgentRunManager:
             (run1.id,),
         )
 
-        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = cleanup_manager.cleanup_stale_runs(default_timeout_minutes=30)
         assert run_ids == [run1.id]
 
         cleaned = agent_manager.get(run1.id)
@@ -1671,6 +1712,10 @@ class TestLocalAgentRunManager:
         assert cleaned.tool_calls_count == 9
         assert cleaned.turns_used == 4
         assert cleaned.completed_at is not None
+        credential_manager.revoke.assert_called_once_with(
+            uuid.UUID(run1.id),
+            reason="agent-run-timeout",
+        )
 
     def test_cleanup_stale_runs_reclaims_old_reconciliation_pending_run(
         self,
