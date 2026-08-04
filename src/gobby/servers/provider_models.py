@@ -28,6 +28,10 @@ from gobby.llm.context_windows import (
 )
 from gobby.paths import get_gobby_home
 from gobby.providers import provider_metadata
+from gobby.servers.provider_model_capabilities import (
+    ProviderModelCapability,
+    build_capability_matrix,
+)
 from gobby.servers.provider_model_defaults import AGY_MODELS as _AGY_MODELS
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 from gobby.servers.provider_model_discovery import (
@@ -62,6 +66,7 @@ from gobby.servers.provider_model_discovery import (
 )
 from gobby.servers.provider_models_grok import models_from_cache as grok_models_from_cache
 from gobby.servers.provider_models_grok import static_models as grok_static_models
+from gobby.storage.model_metadata import ModelMetadata
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -377,6 +382,39 @@ class ProviderModelCatalog:
             "models": with_context_lengths(provider, models),
             "generated_at": entry.get("generated_at") or self._generated_at,
         }
+
+    def capability_for(
+        self,
+        provider: str,
+        model_id: str,
+    ) -> ProviderModelCapability | None:
+        """Return capabilities for a normalized provider/model pair."""
+        normalized_provider = provider.strip().lower()
+        normalized_model = normalize_model_lookup_id(model_id)
+        if not normalized_provider or not normalized_model:
+            return None
+        return self.all_capabilities().get((normalized_provider, normalized_model))
+
+    def all_capabilities(self) -> dict[tuple[str, str], ProviderModelCapability]:
+        """Assemble capabilities from the current last-good provider snapshots."""
+        provider_catalogs: dict[str, list[dict[str, Any]]] = {}
+        model_metadata: dict[str, ModelMetadata] = {}
+
+        for provider in _PROVIDERS:
+            models = self.get_provider_snapshot(provider)["models"]
+            provider_catalogs[provider] = models
+            for model in models:
+                context = extract_context_length_candidate(model)
+                if context is None:
+                    continue
+                metadata = ModelMetadata(context_length=context.value)
+                for identifier in _model_identifiers(model):
+                    model_metadata.setdefault(normalize_model_lookup_id(identifier), metadata)
+
+        return build_capability_matrix(
+            model_metadata=model_metadata,
+            provider_catalogs=provider_catalogs,
+        )
 
     def get_context_window(self, provider: str | None, model: str | None) -> int | None:
         """Resolve context length from provider catalog metadata."""

@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.servers.provider_model_defaults import AGY_MODELS
+from gobby.servers.provider_model_defaults import AGY_MODELS, DROID_MODEL_CATALOG
 from gobby.servers.provider_model_discovery import CLAUDE_ALIASES
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
@@ -41,6 +41,79 @@ class TestProviderModelCatalog:
 
         assert isinstance(catalog, ProviderModelCatalog)
         assert catalog.cache_path == temp_dir / "provider-model-catalog.json"
+
+    def test_all_capabilities_uses_cache_loaded_by_factory(self, temp_dir: Path) -> None:
+        """Capability assembly uses the factory's last-good provider cache."""
+        cache_path = temp_dir / "provider-model-catalog.json"
+        cache_path.write_text(
+            json.dumps(
+                {
+                    "version": 5,
+                    "providers": {
+                        "codex": {
+                            "source": "cache",
+                            "models": [
+                                {
+                                    "value": "gpt-5.4",
+                                    "context_length": 258_400,
+                                    "reasoning": {"supported_efforts": ["low", "high"]},
+                                }
+                            ],
+                        },
+                        "droid": {
+                            "source": "cache",
+                            "models": [
+                                {
+                                    "value": "gpt-5.5-fast",
+                                    "context_length": 400_000,
+                                    "speed_multiplier": 5.0,
+                                }
+                            ],
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch.dict("os.environ", {"GOBBY_HOME": str(temp_dir)}, clear=False):
+            catalog = create_provider_model_catalog()
+
+        capabilities = catalog.all_capabilities()
+
+        assert list(capabilities) == [
+            ("codex", "gpt-5.4"),
+            ("droid", "gpt-5.5-fast"),
+        ]
+        assert capabilities[("codex", "gpt-5.4")].context_limit == 258_400
+        assert capabilities[("codex", "gpt-5.4")].supported_reasoning_efforts == (
+            "low",
+            "high",
+        )
+        assert capabilities[("droid", "gpt-5.5-fast")].speed_multiplier == 5.0
+
+    def test_capability_for_normalizes_lookup_and_returns_none_for_unknown(
+        self, temp_dir: Path
+    ) -> None:
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        catalog._providers = {
+            "droid": {
+                "models": [
+                    {
+                        "value": "gpt-5.5-fast",
+                        "context_length": 400_000,
+                        "speed_multiplier": 5.0,
+                    }
+                ]
+            }
+        }
+
+        capability = catalog.capability_for(" DROID ", "GPT-5.5-FAST")
+
+        assert capability is not None
+        assert capability.provider == "droid"
+        assert capability.model_id == "gpt-5.5-fast"
+        assert catalog.capability_for("droid", "unknown-model") is None
 
     @pytest.mark.parametrize("contents", [None, "not-json"])
     def test_grok_cache_read_failures_return_empty(
@@ -442,7 +515,7 @@ class TestProviderModelCatalog:
         assert status["claude"]["source"] == "failed"
         assert set(status) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert status["droid"]["source"] == "static"
-        assert status["droid"]["model_count"] == 29
+        assert status["droid"]["model_count"] == len(DROID_MODEL_CATALOG)
         assert status["droid"]["error"] == "provider CLI not found in PATH"
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
