@@ -619,13 +619,30 @@ async def _run_agent_hook_replay_barrier(
         return False
 
     run_storage = agent_runner.run_storage
+    active_run_ids: set[str] = set()
+    terminal_run_ids: set[str] = set()
+    missing_run_ids: set[str] = set()
+    unclassified_run_ids: set[str] = set()
     for run_id in unresolved_run_ids:
         try:
             run = await _run_db(runner, run_storage.get, run_id)
         except Exception:
             logger.warning("Failed to load unresolved agent run %s", run_id, exc_info=True)
+            unclassified_run_ids.add(run_id)
             continue
-        if run is None or run.status not in {"pending", "running"}:
+        if run is None:
+            missing_run_ids.add(run_id)
+            continue
+        if run.status in TERMINAL_AGENT_RUN_STATUSES:
+            terminal_run_ids.add(run_id)
+            continue
+        if run.status not in {"pending", "running"}:
+            logger.warning(
+                "Unclassified unresolved agent run %s with status %r",
+                run_id,
+                run.status,
+            )
+            unclassified_run_ids.add(run_id)
             continue
         await _run_db(
             runner,
@@ -633,12 +650,23 @@ async def _run_agent_hook_replay_barrier(
             run_id,
             {"reconciliation_pending": True},
         )
+        active_run_ids.add(run_id)
 
-    logger.warning(
-        "Agent hook replay barrier timed out with %d unresolved run(s)",
-        len(unresolved_run_ids),
-    )
-    return False
+    if terminal_run_ids or missing_run_ids:
+        logger.info(
+            "Agent hook replay barrier settled %d terminal and %d missing run reference(s)",
+            len(terminal_run_ids),
+            len(missing_run_ids),
+        )
+    if active_run_ids or unclassified_run_ids:
+        logger.warning(
+            "Agent hook replay barrier timed out with %d active fenced run(s) and "
+            "%d unclassified run lookup(s)",
+            len(active_run_ids),
+            len(unclassified_run_ids),
+        )
+        return False
+    return True
 
 
 _RECLASSIFY_SETTLE_TIMEOUT_SECONDS = 5.0

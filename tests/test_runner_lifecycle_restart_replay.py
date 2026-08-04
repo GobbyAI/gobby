@@ -34,6 +34,8 @@ pytestmark = pytest.mark.unit
 class TestAgentRestartReconciliation:
     """Recover preserved tmux-backed agents after daemon startup."""
 
+    _MACHINE_ID = "11111111-1111-4111-8111-111111111111"
+
     @pytest.mark.asyncio
     async def test_recover_agent_runs_after_restart_paginates_active_runs(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
@@ -344,7 +346,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id="machine-1",
+            machine_id=self._MACHINE_ID,
             source="test",
             project_id=sample_project["id"],
         )
@@ -394,7 +396,7 @@ class TestAgentRestartReconciliation:
         )
         parent = SessionManager(temp_db).register(
             external_id="parent-1",
-            machine_id="machine-1",
+            machine_id=self._MACHINE_ID,
             source="test",
             project_id=sample_project["id"],
         )
@@ -641,13 +643,63 @@ class TestReclassifyReconciliationPendingRuns:
         )
 
     @pytest.mark.asyncio
-    async def test_barrier_timeout_fences_live_runs_without_cancelling(
+    @pytest.mark.parametrize(
+        ("stored_run", "settled_counts"),
+        [
+            pytest.param(
+                SimpleNamespace(status="success"),
+                "1 terminal and 0 missing",
+                id="terminal-only",
+            ),
+            pytest.param(None, "0 terminal and 1 missing", id="missing-only"),
+        ],
+    )
+    async def test_barrier_timeout_settles_terminal_or_missing_run_references(
         self,
+        stored_run: Any,
+        settled_counts: str,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        running_run = SimpleNamespace(id=self._RUN_ID, status="running")
+        run_storage = SimpleNamespace(
+            get=MagicMock(return_value=stored_run),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        barrier_result = HookInboxBarrierResult(
+            replayed=0,
+            timed_out=True,
+            unresolved_run_ids=(self._RUN_ID,),
+            unresolved_session_ids=(),
+        )
+
+        with (
+            patch(
+                "gobby.hooks.inbox.drain_hook_inbox_barrier",
+                new=AsyncMock(return_value=barrier_result),
+            ),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
+        ):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is True
+        run_storage.get.assert_called_once_with(self._RUN_ID)
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert any(
+            record.levelno == logging.INFO and settled_counts in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("active_status", ["pending", "running"])
+    async def test_barrier_timeout_fences_active_runs_without_cancelling(
+        self,
+        active_status: str,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        active_run = SimpleNamespace(id=self._RUN_ID, status=active_status)
         cancelled_run = SimpleNamespace(id=self._OTHER_RUN_ID, status="cancelled")
-        runs = {run.id: run for run in (running_run, cancelled_run)}
+        runs = {run.id: run for run in (active_run, cancelled_run)}
         run_storage = SimpleNamespace(
             get=MagicMock(side_effect=lambda run_id: runs.get(run_id)),
             merge_resume_metadata=MagicMock(),
@@ -664,7 +716,7 @@ class TestReclassifyReconciliationPendingRuns:
 
         with (
             patch("gobby.hooks.inbox.drain_hook_inbox_barrier", new=drain),
-            caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
+            caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"),
         ):
             settled = await _run_agent_hook_replay_barrier(runner, timeout_seconds=1.0)
 
@@ -677,7 +729,54 @@ class TestReclassifyReconciliationPendingRuns:
         )
         run_storage.cancel.assert_not_called()
         assert any(
-            record.levelno == logging.WARNING and "2 unresolved run(s)" in record.getMessage()
+            record.levelno == logging.WARNING
+            and "1 active fenced run(s)" in record.getMessage()
+            and "0 unclassified run lookup(s)" in record.getMessage()
+            for record in caplog.records
+        )
+        assert any(
+            record.levelno == logging.INFO
+            and "1 terminal and 0 missing run reference(s)" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.asyncio
+    async def test_barrier_timeout_keeps_lookup_failures_unclassified(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        run_storage = SimpleNamespace(
+            get=MagicMock(side_effect=RuntimeError("storage unavailable")),
+            merge_resume_metadata=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        barrier_result = HookInboxBarrierResult(
+            replayed=0,
+            timed_out=True,
+            unresolved_run_ids=(self._RUN_ID,),
+            unresolved_session_ids=(),
+        )
+
+        with (
+            patch(
+                "gobby.hooks.inbox.drain_hook_inbox_barrier",
+                new=AsyncMock(return_value=barrier_result),
+            ),
+            caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"),
+        ):
+            settled = await _run_agent_hook_replay_barrier(runner)
+
+        assert settled is False
+        run_storage.merge_resume_metadata.assert_not_called()
+        assert any(
+            record.levelno == logging.WARNING
+            and f"Failed to load unresolved agent run {self._RUN_ID}" in record.getMessage()
+            for record in caplog.records
+        )
+        assert any(
+            record.levelno == logging.WARNING
+            and "0 active fenced run(s)" in record.getMessage()
+            and "1 unclassified run lookup(s)" in record.getMessage()
             for record in caplog.records
         )
 
