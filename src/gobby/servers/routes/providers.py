@@ -6,7 +6,7 @@ import asyncio
 import copy
 import shutil
 from collections import Counter
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
@@ -14,6 +14,7 @@ from fastapi import APIRouter
 from gobby.agents.codex_oss import CODEX_OSS_LOCAL_PROVIDERS
 from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoints import endpoint_provider
+from gobby.llm.context_windows import normalize_model_lookup_id
 from gobby.providers import provider_metadata
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
@@ -21,6 +22,7 @@ from gobby.servers.local_provider_models import (
     discover_local_endpoint_model_group,
     local_provider_display_label,
 )
+from gobby.servers.provider_model_capabilities import ProviderModelCapability
 from gobby.servers.provider_models import (
     AGY_MODEL_CATALOG,
     DROID_MODEL_CATALOG,
@@ -288,6 +290,33 @@ def _filter_models_for_web_chat(
     return [model for model in models if not bool(model.get("hidden", False))]
 
 
+def _with_model_capabilities(
+    provider: str,
+    models: list[dict[str, Any]],
+    capabilities: Mapping[tuple[str, str], ProviderModelCapability],
+) -> list[dict[str, Any]]:
+    """Add capability-matrix fields to matching provider models."""
+    result: list[dict[str, Any]] = []
+    for model in models:
+        raw_model_id = model.get("canonical_id") or model.get("value")
+        model_id = normalize_model_lookup_id(str(raw_model_id or ""))
+        capability = capabilities.get((provider, model_id))
+        if capability is None:
+            result.append(model)
+            continue
+        serialized = capability.to_dict()
+        result.append(
+            {
+                **model,
+                "supported_reasoning_efforts": serialized["supported_reasoning_efforts"],
+                "context_limit": serialized["context_limit"],
+                "speed_tier": serialized["speed_tier"],
+                "speed_multiplier": serialized["speed_multiplier"],
+            }
+        )
+    return result
+
+
 async def _probe_providers() -> list[tuple[str, str | None]]:
     """Probe provider binaries concurrently.
 
@@ -402,6 +431,12 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         """
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
+        provider_model_catalog = getattr(
+            getattr(server, "services", None), "provider_model_catalog", None
+        )
+        capabilities = (
+            provider_model_catalog.all_capabilities() if provider_model_catalog is not None else {}
+        )
         local_model_groups = await _local_generation_model_groups(server)
         fallback_entry: tuple[list[dict[str, Any]], str] = (
             [{"value": "default", "label": "Default"}],
@@ -429,6 +464,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                 codex_unavailable_reason = startup_error
                 entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
                 entry["execution_provider"] = "codex"
+            entry["models"] = _with_model_capabilities(name, entry["models"], capabilities)
             result.append(entry)
         result.extend(
             _local_generation_provider_entries(
