@@ -257,14 +257,22 @@ def _parse_target_line(
     line: str,
     section_id: str,
 ) -> tuple[list[SymbolTarget], list[SymbolValidationIssue]]:
-    matches = list(_BACKTICK_RE.finditer(line))
+    reason_match = _SCOPE_REASON_RE.search(line)
+    if reason_match is not None:
+        target_text = line[: reason_match.start()]
+        reason_suffix = line[reason_match.start() :].strip()
+    else:
+        target_text = line
+        reason_suffix = ""
+
+    matches = list(_BACKTICK_RE.finditer(target_text))
     if matches:
         tokens = [match.group(1).strip() for match in matches]
-        trailing = line[matches[-1].end() :].strip()
+        trailing = reason_suffix or target_text[matches[-1].end() :].strip()
     else:
-        stripped = _BULLET_RE.sub("", line, count=1).strip()
+        stripped = _BULLET_RE.sub("", target_text, count=1).strip()
         tokens = [token.strip() for token in stripped.split(",")]
-        trailing = ""
+        trailing = reason_suffix
 
     targets: list[SymbolTarget] = []
     issues: list[SymbolValidationIssue] = []

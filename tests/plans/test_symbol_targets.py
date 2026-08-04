@@ -206,6 +206,22 @@ def test_inline_wildcard_reason_applies_only_to_last_target(tmp_path: Path) -> N
         "src/example.py::Worker.run",
         "src/generated.py::*",
     ]
+    assert [target.scope_reason for target in targets] == [None, "regenerate the whole registry"]
+
+
+def test_scope_reason_code_spans_are_not_parsed_as_targets(tmp_path: Path) -> None:
+    reason = "align `_BASE_MODEL_CATALOG` with `/api/providers/models`"
+    plan_doc = _parse(
+        tmp_path,
+        f"`src/providers.py::*` — scope-reason: {reason}",
+    )
+
+    targets, issues = parse_symbol_targets(plan_doc)
+
+    assert issues == ()
+    assert len(targets) == 1
+    assert targets[0].reference == "src/providers.py::*"
+    assert targets[0].scope_reason == reason
 
 
 def test_validate_fresh_exact_multiple_new_and_zero_symbol_files(tmp_path: Path) -> None:
