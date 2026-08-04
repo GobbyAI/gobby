@@ -278,7 +278,7 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
     assert calls["constructor_open"] is False
     assert calls["constructor_min_size"] == 2
-    assert calls["constructor_max_size"] == 20
+    assert calls["constructor_max_size"] == 2
     assert calls["constructor_timeout"] == 5.0
     pool_kwargs = calls["pool_kwargs"]
     assert isinstance(pool_kwargs, dict)

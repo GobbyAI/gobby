@@ -26,6 +26,9 @@ MAINTENANCE_FENCE_MIGRATION = (
     SRC_ROOT / "storage" / "migrations" / "362_harden_maintenance_login_fence.sql"
 )
 DREAM_CHECK_TIGHTEN_MIGRATION = SRC_ROOT / "storage" / "migrations" / "367_dream_check_tighten.sql"
+PROVIDER_CAPABILITY_MIGRATION = (
+    SRC_ROOT / "storage" / "migrations" / "374_provider_capability_matrix.sql"
+)
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUSES = (
     "started",
@@ -399,6 +402,20 @@ def test_postgres_migrations_preserve_known_post_baseline_sequence() -> None:
     assert versions[: len(known_versions)] == known_versions
     future_versions = versions[len(known_versions) :]
     assert future_versions == list(range(354, 354 + len(future_versions)))
+
+
+def test_provider_capability_tables_match_baseline() -> None:
+    migration = PROVIDER_CAPABILITY_MIGRATION.read_text(encoding="utf-8")
+    baseline = _baseline_text()
+
+    for table_name in (
+        "provider_capability_refresh_state",
+        "provider_model_capabilities",
+        "provider_model_routes",
+    ):
+        assert _normalize_sql_whitespace(
+            _table_definition(migration, table_name)
+        ) == _normalize_sql_whitespace(_table_definition(baseline, table_name))
 
 
 def test_plan_review_experiment_purge_migration_and_baseline_contract() -> None:
