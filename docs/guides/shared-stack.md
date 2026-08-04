@@ -1,109 +1,45 @@
-# Shared Daemon On Tailscale
+# Shared Datastores Across Machines
 
-Gobby supports a daemon shared over a trusted Tailscale network. The daemon
-host owns the required local Docker Compose stack—PostgreSQL, Qdrant, and
-FalkorDB—and remote machines access Gobby through its authenticated HTTP and
-WebSocket interfaces.
-
-External PostgreSQL hosts and direct remote hub connections are not supported.
-Instrumented coding, transcript capture, worktrees, clones, and spawned agent
-execution also remain on the daemon host.
-
-## Topology
+Gobby supports a `datastore_mode: remote` topology in which one hub machine owns
+PostgreSQL, Qdrant, and FalkorDB while every client machine runs its own Gobby daemon.
+The datastores are shared over a private Tailscale network; execution stays local to
+each client.
 
 ```text
-client laptop --+
-workstation ----+-- Tailscale ACL -- gobby-box
-phone/browser --+                   |-- Gobby daemon: http://<box>.ts.net:60887
-                                    |-- WebSocket:     <box>.ts.net:60888
-                                    |-- Web UI:        http://<box>.ts.net:60889
-                                    `-- local Docker-managed datastores
+workstation daemon --+
+laptop daemon -------+-- Tailscale ACL -- datastore hub
+                                         |-- PostgreSQL: 60891
+                                         |-- Qdrant:     6333
+                                         `-- FalkorDB:   16379
 ```
 
-Do not expose the daemon, WebSocket, or UI on a public interface without an
-equivalent trusted network boundary. The datastore ports should remain local
-to the daemon host.
+Treat the three datastore ports as private infrastructure. Allow them only from the
+specific users, devices, or tags that run Gobby clients to the hub device or tag. Deny
+all other tailnet sources and all public ingress. Qdrant API-key support is deferred,
+so the Tailscale ACL is mandatory for Qdrant in M0.
 
-## Daemon Host
+## Hub setup
 
-Install Gobby with Docker Compose v2 available, then run the full installer.
-The installer provisions every managed datastore profile regardless of the
-embedding-provider selection:
+Install the same Gobby version that the clients will run. The hub uses the default
+local datastore mode:
 
 ```bash
-uv run gobby install
-uv run gobby start
+gobby install
+gobby datastores expose --bind <tailscale-ipv4> --host <hub-dns-name>
+gobby start
 ```
 
-Bind the daemon to its Tailscale address in `~/.gobby/bootstrap.yaml`. Keep the
-PostgreSQL connection local through the sole selector, `database_url`:
+`--bind` must be the hub's Tailscale IPv4 address. `--host` is the DNS name or IP that
+clients use to reach the hub. The expose command stages the bind, starts and checks all
+three services, publishes the Qdrant and FalkorDB client endpoints, and rolls back the
+previous bind if readiness or endpoint publication fails.
 
-```yaml
-database_url: "postgresql://gobby:<password>@127.0.0.1:60891/gobby"
-daemon_port: 60887
-bind_host: "100.x.y.z"
-websocket_port: 60888
-ui_port: 60889
-auth_mode: required
-```
+Configure Tailscale ACLs to allow TCP 60891, 6333, and 16379 only from approved Gobby
+clients to the hub. Leave every other datastore port denied. Keep the host firewall
+closed to public interfaces as a second boundary.
 
-`bind_host` is a listen address, not a client URL. Use the host's Tailscale IP
-to listen only on Tailscale, or `0.0.0.0` only when host firewall rules and
-Tailscale ACLs already restrict access.
-
-Add the trusted tailnet origin to runtime CORS configuration for browser use:
-
-```yaml
-cors_origins:
-  - http://localhost:*
-  - https://localhost:*
-  - http://gobby-box.tailnet.ts.net:*
-```
-
-Restart Gobby after changing bootstrap or CORS settings. Startup will fail
-before the daemon launches unless all three managed services are configured and
-healthy.
-
-## Remote Clients
-
-Point remote clients at the daemon API:
-
-```bash
-export GOBBY_DAEMON_URL="http://gobby-box.tailnet.ts.net:60887"
-```
-
-For Rust clients such as gcode and gwiki, a non-empty `GOBBY_DAEMON_URL`
-selects daemon runtime mode without requiring a local service installation.
-The selection is cached for one process invocation. Restart long-lived client
-processes after changing the URL or installing/removing a service.
-
-`GOBBY_RUNTIME_MODE=standalone` has higher precedence and is intended for an
-explicit local standalone stack. Leave it unset or set it to `auto` on remote
-clients. Unknown values are configuration errors.
-
-Daemon mode remains daemon mode when the remote daemon is stopped, returns
-401, or returns a 5xx response. Those conditions are hard client errors; they
-do not expose local full-`gcore.yaml` fallback values. Remote DSN resolution is
-environment, daemon-served DSN, then local `bootstrap.yaml`. Normally the
-daemon-served DSN is authoritative for Rust client operations.
-
-Do not put the daemon host's PostgreSQL URL in a remote client bootstrap. The
-runtime bootstrap contract accepts only local Docker-managed PostgreSQL hosts.
-
-Daemon HTTP and WebSocket authentication is required by default. Copy the
-daemon host's install-scoped token to each trusted client at
-`$GOBBY_HOME/local_cli_token` (normally `~/.gobby/local_cli_token`) and preserve
-owner-only permissions. Rotate it on the daemon host with:
-
-```bash
-gobby auth token --rotate
-```
-
-Then redistribute the new token and restart affected clients.
-
-## Operational Checks
-
-On the daemon host:
+The installed Compose services use `restart: unless-stopped`. Preserve that policy so
+the datastore stack returns after a hub reboot, then verify readiness:
 
 ```bash
 gobby status
@@ -111,13 +47,100 @@ gobby health
 docker compose -f ~/.gobby/services/docker-compose.yml ps
 ```
 
-`gobby start` brings up the `postgres`, `qdrant`, and `falkordb` profiles with
-Compose health waiting. Failure to start any profile prevents daemon launch.
-After readiness, a later Qdrant or FalkorDB outage degrades health/status but
-does not terminate the daemon; PostgreSQL remains the core datastore.
+Keep secure copies of `~/.gobby/.secret_kek` and `~/.gobby/local_cli_token`. Each
+client needs the same two files. Never copy the hub's `machine_id`; every machine must
+retain its own identity.
 
-If remote clients cannot connect, check the daemon bind address, Tailscale ACLs,
-host firewall rules, CORS origins, and the shared API token. Datastore
-troubleshooting should be performed locally on the daemon host.
+## Client setup
 
-_Last verified: 2026-07-24_
+Install the exact Gobby version used by the hub. Before running the installer, create
+`~/.gobby/bootstrap.yaml` with remote mode and the hub PostgreSQL DSN:
+
+```yaml
+auth_mode: "required"
+datastore_mode: "remote"
+database_url: "postgresql://gobby:<password>@<hub-dns-name>:60891/gobby"
+postgres_pool:
+  acquire_timeout_seconds: 5.0
+  open_timeout_seconds: 30.0
+daemon_port: 60887
+bind_host: "localhost"
+websocket_port: 60888
+ui_port: 60889
+```
+
+Copy the hub's shared secret material into the client Gobby home and restrict it to the
+owner:
+
+```bash
+scp <hub>:~/.gobby/.secret_kek ~/.gobby/.secret_kek
+scp <hub>:~/.gobby/local_cli_token ~/.gobby/local_cli_token
+chmod 600 ~/.gobby/.secret_kek ~/.gobby/local_cli_token
+```
+
+Run the remote installer and start the client daemon:
+
+```bash
+gobby install
+gobby start
+gobby status
+gobby health
+```
+
+In remote mode, `gobby install` skips Docker checks and local datastore provisioning.
+Its preflight checks the copied key and token, runs a PostgreSQL query, reads shared
+configuration and secrets, checks Qdrant health, and authenticates a FalkorDB `PING`.
+Any failed check aborts installation with endpoint-specific diagnostics.
+
+## M0 operating boundary
+
+PostgreSQL task/session metadata, memories, vector data, graph data, and shared
+configuration follow the user between machines. Each machine still owns its daemon,
+processes, tmux sessions, worktrees, clones, and transcript files. A client must never
+process another machine's filesystem paths or transcripts.
+
+Before packing up on one machine:
+
+1. Commit and push work that the next machine needs. Identical checkout paths across
+   machines are strongly recommended.
+2. Release or explicitly hand off active task claims. Claims are session-bound and
+   survive a daemon stop.
+3. Stop the first daemon before moving an unreleased claim. On the second machine,
+   force-reclaim only through the explicit task-claim contract after verifying the
+   first machine is stopped, then verify that the new local session owns the claim.
+
+Cross-machine transcript continuity is deferred to #17435. Until that work lands,
+pushing source and handing off claims provides task continuity; transcript files remain
+on their originating machine.
+
+## Upgrades: stop every daemon
+
+All machines sharing the hub must run the same Gobby version. Mixed-version operation
+is unsupported. Use this stop-the-world protocol for every upgrade:
+
+1. Stop every Gobby daemon connected to the hub.
+2. Update Gobby to the same version on every machine.
+3. Start one designated migrator and wait for migration and health checks to succeed.
+4. Start the remaining daemons.
+
+Never start an older daemon after a newer schema migration has been applied. The
+migration lockstep guard treats a hub schema newer than the local binary as a fatal
+startup error.
+
+The machine-scoping migration can abort when a legacy worktree, clone, agent run, or
+cron run has no authoritative machine owner. Use the emitted table and row diagnostics
+to investigate each unresolved row. In an operator-controlled SQL transaction, assign
+a verified real machine owner or remove a confirmed stale row, then rerun the migration.
+Do not invent a sentinel machine or guess ownership.
+
+## Capacity and deferred hardening
+
+- Qdrant API-key configuration is deferred. Restrictive Tailscale ACLs remain mandatory
+  for port 6333 in M0.
+- Hook-side `machine_id` fallback and full transcript continuity belong to #17435.
+- Size PostgreSQL `max_connections` for all daemon pools plus concurrent CLI activity
+  across every client. For two daemons, observe `pg_stat_activity` under realistic CLI
+  churn and retain headroom for migrations and operator access. Validate the PostgreSQL
+  default limit of 100 against the measured workload.
+
+_Last verified: 2026-08-04_

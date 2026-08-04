@@ -11,7 +11,7 @@ links to the guide that owns that topic.
 | [configuration.md](configuration.md) | Daemon, project, and environment configuration reference |
 | [ai-configuration.md](ai-configuration.md) | AI capability routing, mixed backends, `--no-ai`, and local model budget |
 | [llm-features.md](llm-features.md) | Provider and model candidate routing for text-generation features |
-| [shared-stack.md](shared-stack.md) | Tailscale shared daemon/PostgreSQL setup, trust boundary, and current remote limitations |
+| [shared-stack.md](shared-stack.md) | Shared PostgreSQL/Qdrant/FalkorDB setup over Tailscale, client bootstrap, and M0 boundaries |
 
 ## Core Workflows
 
@@ -124,7 +124,7 @@ links to the guide that owns that topic.
 1. Read [system-requirements.md](system-requirements.md) to check prerequisites.
 2. Read [configuration.md](configuration.md) to understand daemon and project settings.
 3. Read [ai-configuration.md](ai-configuration.md) before choosing AI backends.
-4. Read [shared-stack.md](shared-stack.md) before pointing other machines at a shared daemon.
+4. Read [shared-stack.md](shared-stack.md) before connecting other daemons to shared datastores.
 5. Read [web-ui.md](web-ui.md) for the browser surfaces and route/API flow.
 6. Read [tasks.md](tasks.md) to learn task lifecycle basics.
 7. Read [cli-commands.md](cli-commands.md) for day-to-day commands.

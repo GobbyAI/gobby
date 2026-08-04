@@ -105,10 +105,10 @@ with the install-scoped local token or a browser session. Persist an explicit
 choice with `gobby install --auth-mode required|disabled`. Use `disabled` only
 inside an explicitly trusted isolated environment.
 
-For a daemon shared across Tailscale, keep `bind_host` as the daemon listen
-address and configure remote clients with the daemon endpoint (`daemon_url` or
-`GOBBY_DAEMON_URL`). The managed PostgreSQL container stays local to the daemon
-host; see [shared-stack.md](shared-stack.md).
+For multiple daemons sharing datastores across Tailscale, set each client to
+`datastore_mode: remote`, keep its `bind_host` local, and point `database_url` at
+the datastore hub. See [shared-stack.md](shared-stack.md) for exposure, secrets,
+and upgrade requirements.
 
 ### Runtime Overrides
 
