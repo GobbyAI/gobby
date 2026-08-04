@@ -1,0 +1,241 @@
+"""Typed resolution of provider model capabilities."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Protocol
+
+from gobby.llm.context_window_values import positive_context_window
+from gobby.providers.capabilities.models import (
+    ActivationDescriptor,
+    ModelCapability,
+    ModelRoute,
+    ProviderSnapshot,
+    ReasoningSupport,
+    SpeedMode,
+)
+
+
+class ContextSource(StrEnum):
+    """Source selected for a resolved context limit."""
+
+    CALLER_OVERRIDE = "caller_override"
+    ROUTE_OVERRIDE = "route_override"
+    PROVIDER_MATRIX = "provider_matrix"
+    OPENROUTER = "openrouter"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class ContextResolution:
+    """Resolved context limit with its winning source."""
+
+    value: int | None
+    source: ContextSource
+
+
+class ReasoningStatus(StrEnum):
+    """Verification state for a requested reasoning effort."""
+
+    VERIFIED = "verified"
+    UNVERIFIED = "unverified"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True)
+class ReasoningResolution:
+    """Typed pre-dispatch result for reasoning effort resolution."""
+
+    requested_effort: str | None
+    effective_effort: str | None
+    status: ReasoningStatus
+    reason: str | None
+
+
+class SpeedStatus(StrEnum):
+    """Resolution and provider-confirmation state for a speed request."""
+
+    STANDARD = "standard"
+    FAST_CONFIGURED = "fast_configured"
+    FAST_APPLIED = "fast_applied"
+    FAST_UNAVAILABLE = "fast_unavailable"
+    FAST_DEGRADED = "fast_degraded"
+
+
+@dataclass(frozen=True)
+class SpeedResolution:
+    """Typed pre-dispatch result for a provider model route."""
+
+    requested: SpeedMode
+    effective: SpeedMode
+    status: SpeedStatus
+    selector: str
+    activations: tuple[ActivationDescriptor, ...]
+    reason: str | None
+
+
+class _CapabilityStore(Protocol):
+    def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None: ...
+
+
+class _ModelMetadataStore(Protocol):
+    def get_context_window(self, model: str) -> int | None: ...
+
+
+class CapabilityResolver:
+    """Resolve context, reasoning, and route facts from durable capability data."""
+
+    def __init__(self, store: _CapabilityStore, model_metadata_store: _ModelMetadataStore) -> None:
+        self._store = store
+        self._model_metadata_store = model_metadata_store
+
+    def resolve_context(
+        self,
+        provider: str,
+        model: str,
+        *,
+        caller_override: int | None = None,
+        route_override: int | None = None,
+    ) -> ContextResolution:
+        """Resolve a context limit using the matrix's fixed precedence order."""
+        caller_value = positive_context_window(caller_override)
+        if caller_value is not None:
+            return ContextResolution(caller_value, ContextSource.CALLER_OVERRIDE)
+
+        route_value = positive_context_window(route_override)
+        if route_value is not None:
+            return ContextResolution(route_value, ContextSource.ROUTE_OVERRIDE)
+
+        capability = self._find_model(provider, model)
+        matrix_value = positive_context_window(
+            capability.context_length if capability is not None else None
+        )
+        if matrix_value is not None:
+            return ContextResolution(matrix_value, ContextSource.PROVIDER_MATRIX)
+
+        metadata_value = positive_context_window(
+            self._model_metadata_store.get_context_window(model)
+        )
+        if metadata_value is not None:
+            return ContextResolution(metadata_value, ContextSource.OPENROUTER)
+        return ContextResolution(None, ContextSource.UNKNOWN)
+
+    def resolve_reasoning(
+        self,
+        provider: str,
+        model: str,
+        effort: str | None,
+        *,
+        transport_supports_effort: bool,
+    ) -> ReasoningResolution:
+        """Validate a requested effort without rejecting unknown model capabilities."""
+        if effort is None:
+            return ReasoningResolution(None, None, ReasoningStatus.VERIFIED, None)
+        if not transport_supports_effort:
+            return self._reject_reasoning(effort, "transport does not support reasoning effort")
+
+        capability = self._find_model(provider, model)
+        if capability is None or capability.reasoning is ReasoningSupport.UNKNOWN:
+            return ReasoningResolution(effort, effort, ReasoningStatus.UNVERIFIED, None)
+        if capability.reasoning is ReasoningSupport.UNSUPPORTED:
+            return self._reject_reasoning(effort, "model does not support reasoning effort")
+
+        supported_efforts = capability.supported_efforts
+        if supported_efforts is None:
+            return ReasoningResolution(effort, effort, ReasoningStatus.UNVERIFIED, None)
+        if effort not in supported_efforts:
+            return self._reject_reasoning(effort, f"unsupported reasoning effort: {effort}")
+        return ReasoningResolution(effort, effort, ReasoningStatus.VERIFIED, None)
+
+    def resolve_route(
+        self,
+        provider: str,
+        model: str,
+        speed_mode: SpeedMode = SpeedMode.STANDARD,
+        surface: str = "spawn-cli",
+    ) -> SpeedResolution:
+        """Resolve an exact route for one model and execution surface."""
+        capability = self._find_model(provider, model)
+        standard_route = self._find_route(capability, SpeedMode.STANDARD)
+        standard_selector = standard_route.selector if standard_route is not None else model
+
+        if speed_mode is SpeedMode.STANDARD:
+            return SpeedResolution(
+                requested=SpeedMode.STANDARD,
+                effective=SpeedMode.STANDARD,
+                status=SpeedStatus.STANDARD,
+                selector=standard_selector,
+                activations=self._surface_activations(standard_route, surface),
+                reason=None,
+            )
+
+        fast_route = self._find_route(capability, SpeedMode.FAST)
+        if fast_route is None:
+            return SpeedResolution(
+                requested=SpeedMode.FAST,
+                effective=SpeedMode.STANDARD,
+                status=SpeedStatus.FAST_UNAVAILABLE,
+                selector=standard_selector,
+                activations=(),
+                reason="model has no available fast route",
+            )
+
+        activations = self._surface_activations(fast_route, surface)
+        if not activations:
+            return SpeedResolution(
+                requested=SpeedMode.FAST,
+                effective=SpeedMode.STANDARD,
+                status=SpeedStatus.FAST_UNAVAILABLE,
+                selector=standard_selector,
+                activations=(),
+                reason=f"fast route is unavailable on surface: {surface}",
+            )
+        return SpeedResolution(
+            requested=SpeedMode.FAST,
+            effective=SpeedMode.FAST,
+            status=SpeedStatus.FAST_CONFIGURED,
+            selector=fast_route.selector,
+            activations=activations,
+            reason=None,
+        )
+
+    def _find_model(self, provider: str, model: str) -> ModelCapability | None:
+        snapshot = self._store.get_provider_snapshot(provider)
+        if snapshot is None:
+            return None
+        return next(
+            (
+                capability
+                for capability in snapshot.models
+                if model == capability.canonical_model or model in capability.aliases
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _find_route(capability: ModelCapability | None, speed_mode: SpeedMode) -> ModelRoute | None:
+        if capability is None or not capability.available:
+            return None
+        return next(
+            (
+                route
+                for route in capability.routes
+                if route.speed_mode is speed_mode and route.available
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _surface_activations(
+        route: ModelRoute | None, surface: str
+    ) -> tuple[ActivationDescriptor, ...]:
+        if route is None:
+            return ()
+        return tuple(
+            activation for activation in route.activations if activation.surface == surface
+        )
+
+    @staticmethod
+    def _reject_reasoning(effort: str, reason: str) -> ReasoningResolution:
+        return ReasoningResolution(effort, None, ReasoningStatus.REJECTED, reason)
