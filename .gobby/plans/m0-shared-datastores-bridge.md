@@ -221,7 +221,7 @@ state or lifecycle.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations/371_machine_scope.sql`
+- `src/gobby/storage/migrations/372_machine_scope.sql`
 - `src/gobby/storage/postgres_baseline_schema.sql`
 - `src/gobby/storage/worktrees.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped uniqueness surfaces together
 - `src/gobby/storage/clones.py::*` — scope-reason: update the model, writer, row mapping, and machine-scoped path surfaces together
@@ -233,15 +233,13 @@ Targets:
 - `src/gobby/agents/isolation_worktree.py::*` — scope-reason: propagate local machine ownership through worktree isolation setup
 - `src/gobby/agents/isolation_clone.py::*` — scope-reason: propagate local machine ownership through clone isolation setup
 
-The migration file is new. Slot allocation (re-verified 2026-08-03): slots
-354-370 are occupied on disk (369_scoped_agent_authorization.sql,
-370_runtime_function_execute.sql landed under the credential-isolation and
-runtime-role work); the plan provisionally uses slot **371**. Slots >=371 are
-contested by concurrent allocators (credential-isolation WP2+), so the
-coordinator re-verifies disk and live `MAX(version)` at merge and assigns the
-final number then — renaming the file and updating chain-test expectations is
-part of landing this leaf, not a plan change. Independent "next free number"
-probing is prohibited. Sequencing: this leaf gates #19422 → #19423
+The migration file is new. Slot allocation (serialized revalidation 2026-08-03):
+slots 354-371 are occupied on disk (369_scoped_agent_authorization.sql,
+370_runtime_function_execute.sql, and 371_managed_credential_lifecycle.sql);
+this M0 leaf reserves slot **372**. This plan revision is the serialized
+reservation; the provider-capability migration remains unassigned until the
+next serialized slot decision. Independent "next free number" probing is
+prohibited. Sequencing: this leaf gates #19422 → #19423
 (filename-aware bookkeeping) → #19424 (flatten migrations into the regenerated
 baseline), so it lands as a numbered pre-flatten migration by construction;
 after #19424 the rule is NO new numbered migrations until 0.5.0 ships — were
@@ -303,7 +301,7 @@ clone and agent-run models) gain the field.
 
 **Acceptance:**
 
-- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through the per-table conversion matrix, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/371_machine_scope.sql`.
+- 2.1.1 - Migration adds `UUID NOT NULL REFERENCES machines(id)` columns, swaps unique indexes, backfills only through the per-table conversion matrix, and aborts with row diagnostics rather than assigning a guessed or sentinel machine when ownership cannot be resolved. file: `src/gobby/storage/migrations/372_machine_scope.sql`.
 - 2.1.2 - Baseline schema matches the migrated shape. file: `src/gobby/storage/postgres_baseline_schema.sql`.
 - 2.1.3 - Same (project, branch) worktree can exist for two machine_ids; same path string can exist for two machine_ids. test: `tests/storage/test_worktrees.py::test_worktree_uniqueness_is_machine_scoped`.
 - 2.1.4 - Worktree/clone/agent-run/cron-run creation stamps the local machine_id, and the models round-trip it through from_row and serialization. test: `tests/storage/test_machine_scope_writers.py::test_creation_paths_stamp_machine_id`.
