@@ -220,6 +220,13 @@ async def _reconcile_agent_runs_after_restart(
     resolved_run_ids: set[str] | None = None,
 ) -> int:
     """Reconnect active tmux-backed agent runs after daemon restart."""
+    credential_manager = getattr(runner, "managed_credential_manager", None)
+    if credential_manager is not None:
+        try:
+            await _run_db(runner, credential_manager.reconcile)
+            await _run_db(runner, credential_manager.rotate_due)
+        except Exception:
+            logger.error("Managed credential startup reconciliation failed")
     if runner.agent_runner is None:
         return 0
 
