@@ -64,7 +64,7 @@ class SpawnReasoningResolution:
         }
 
 
-def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
+def _get_provider_model_catalog() -> ProviderModelCatalog:
     from gobby.app_context import get_app_context
 
     global _fallback_catalog
@@ -76,6 +76,11 @@ def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> l
             if _fallback_catalog is None:
                 _fallback_catalog = _new_fallback_catalog()
             catalog = _fallback_catalog
+    return catalog
+
+
+def _get_provider_models(provider: str, daemon_config: DaemonConfig | None) -> list[dict[str, Any]]:
+    catalog = _get_provider_model_catalog()
     snapshot = catalog.get_provider_snapshot(provider)
     models = snapshot.get("models")
     return list(models) if isinstance(models, list) else []
@@ -162,28 +167,38 @@ def resolve_spawn_reasoning(
         )
 
     required = bool(reasoning_required)
-    models = (
-        []
-        if _is_codex_responses_endpoint(provider, model, daemon_config)
-        else _get_provider_models(provider, daemon_config)
-    )
-    matched_models = _select_model_entries(models, model)
-
-    if model and models and not matched_models:
-        return SpawnReasoningResolution(
-            requested_effort=normalized_request,
-            effective_effort=None,
-            reasoning_required=required,
-            status="unsupported_model",
-            message=(
-                f"Requested reasoning '{normalized_request}' was not applied because "
-                f"model '{model}' is not in the {provider} startup catalog."
-            ),
+    capability = _get_provider_model_catalog().capability_for(provider, model) if model else None
+    if capability is not None:
+        supported_efforts = {
+            normalized
+            for effort in capability.supported_reasoning_efforts
+            if (normalized := normalize_reasoning_effort(effort)) is not None
+        }
+    else:
+        models = (
+            []
+            if _is_codex_responses_endpoint(provider, model, daemon_config)
+            else _get_provider_models(provider, daemon_config)
         )
+        matched_models = _select_model_entries(models, model)
 
-    supported_efforts = _supported_efforts(matched_models or models, provider)
+        if model and models and not matched_models:
+            return SpawnReasoningResolution(
+                requested_effort=normalized_request,
+                effective_effort=None,
+                reasoning_required=required,
+                status="unsupported_model",
+                message=(
+                    f"Requested reasoning '{normalized_request}' was not applied because "
+                    f"model '{model}' is not in the {provider} startup catalog."
+                ),
+            )
+
+        supported_efforts = _supported_efforts(matched_models or models, provider)
+
     if normalized_request not in supported_efforts:
         model_label = f" model '{model}'" if model else ""
+        supported_label = ", ".join(sorted(supported_efforts)) or "none"
         return SpawnReasoningResolution(
             requested_effort=normalized_request,
             effective_effort=None,
@@ -191,7 +206,7 @@ def resolve_spawn_reasoning(
             status="unsupported_model",
             message=(
                 f"Requested reasoning '{normalized_request}' is not supported for "
-                f"{provider}{model_label}."
+                f"{provider}{model_label}. Supported efforts: {supported_label}."
             ),
         )
 

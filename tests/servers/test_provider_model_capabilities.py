@@ -1,15 +1,19 @@
 """Tests for provider/model capability records."""
 
 from dataclasses import FrozenInstanceError
+from unittest.mock import Mock
 
 import pytest
 
+import gobby.agents.reasoning as reasoning
+from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.servers.provider_model_capabilities import (
     ProviderModelCapability,
     SpeedTier,
     build_capability_matrix,
 )
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
+from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.storage.model_metadata import ModelMetadata
 
 
@@ -181,3 +185,101 @@ def test_build_capability_matrix_uses_explicit_fast_declarations() -> None:
     undeclared = matrix[("codex", "gpt-5.5-fast")]
     assert undeclared.speed_tier is SpeedTier.STANDARD
     assert undeclared.speed_multiplier is None
+
+
+def test_spawn_reasoning_accepts_effort_supported_by_capability_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = Mock(spec=ProviderModelCatalog)
+    catalog.capability_for.return_value = ProviderModelCapability(
+        provider="claude",
+        model_id="matrix-only",
+        supported_reasoning_efforts=("xhigh",),
+    )
+    monkeypatch.setattr(reasoning, "_get_provider_model_catalog", lambda: catalog, raising=False)
+    monkeypatch.setattr(
+        reasoning,
+        "_get_provider_models",
+        lambda provider, daemon_config: [
+            {
+                "value": "matrix-only",
+                "reasoning": {"supported_efforts": ["low"]},
+            }
+        ],
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="matrix-only",
+        requested_effort="xhigh",
+        reasoning_required=True,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort == "xhigh"
+    catalog.capability_for.assert_called_once_with("claude", "matrix-only")
+
+
+def test_spawn_reasoning_rejects_effort_with_capability_supported_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = Mock(spec=ProviderModelCatalog)
+    catalog.capability_for.return_value = ProviderModelCapability(
+        provider="claude",
+        model_id="matrix-only",
+        supported_reasoning_efforts=("low", "medium"),
+    )
+    monkeypatch.setattr(reasoning, "_get_provider_model_catalog", lambda: catalog, raising=False)
+    monkeypatch.setattr(
+        reasoning,
+        "_get_provider_models",
+        lambda provider, daemon_config: [
+            {
+                "value": "matrix-only",
+                "reasoning": {"supported_efforts": ["xhigh"]},
+            }
+        ],
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="matrix-only",
+        requested_effort="xhigh",
+        reasoning_required=True,
+    )
+
+    assert result.status == "unsupported_model"
+    assert result.effective_effort is None
+    assert result.message == (
+        "Requested reasoning 'xhigh' is not supported for claude model 'matrix-only'. "
+        "Supported efforts: low, medium."
+    )
+
+
+def test_spawn_reasoning_keeps_provider_fallback_for_unknown_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    catalog = Mock(spec=ProviderModelCatalog)
+    catalog.capability_for.return_value = None
+    monkeypatch.setattr(reasoning, "_get_provider_model_catalog", lambda: catalog, raising=False)
+    monkeypatch.setattr(
+        reasoning,
+        "_get_provider_models",
+        lambda provider, daemon_config: [
+            {
+                "value": "uncatalogued-model",
+                "reasoning": {"supported_efforts": ["high"]},
+            }
+        ],
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="claude",
+        model="uncatalogued-model",
+        requested_effort="high",
+        reasoning_required=True,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort == "high"
+    catalog.capability_for.assert_called_once_with("claude", "uncatalogued-model")
