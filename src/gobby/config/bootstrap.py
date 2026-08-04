@@ -36,6 +36,7 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 
 AuthMode = Literal["required", "disabled"]
+DatastoreMode = Literal["local", "remote"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
     "Only the PostgreSQL hub backend is supported. "
@@ -61,6 +62,7 @@ class BootstrapConfig:
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
     auth_mode: AuthMode = "required"
+    datastore_mode: DatastoreMode = "local"
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
@@ -76,6 +78,7 @@ class BootstrapConfig:
             "websocket": {"port": self.websocket_port},
             "ui": {"port": self.ui_port},
             "auth_mode": self.auth_mode,
+            "datastore_mode": self.datastore_mode,
             "database_url": self.database_url,
             "postgres_pool": self.postgres_pool.to_dict(),
         }
@@ -136,10 +139,13 @@ def load_bootstrap(
             )
         postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
         auth_mode = _parse_auth_mode(data.get("auth_mode", BootstrapConfig.auth_mode))
+        datastore_mode = _parse_datastore_mode(
+            data.get("datastore_mode", BootstrapConfig.datastore_mode)
+        )
         if resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
         if resolve_database_url and database_url:
-            _validate_managed_database_url(database_url)
+            _validate_managed_database_url(database_url, datastore_mode)
 
         return BootstrapConfig(
             daemon_port=_parse_int(
@@ -151,6 +157,7 @@ def load_bootstrap(
             ),
             ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
             auth_mode=auth_mode,
+            datastore_mode=datastore_mode,
             database_url=database_url,
             postgres_pool=postgres_pool,
             daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
@@ -172,17 +179,40 @@ def _parse_auth_mode(value: object) -> AuthMode:
     raise BootstrapConfigError("auth_mode must be one of: required, disabled")
 
 
-def _validate_managed_database_url(database_url: str) -> None:
+def _parse_datastore_mode(value: object) -> DatastoreMode:
+    if value in ("local", "remote"):
+        return cast(DatastoreMode, value)
+    raise BootstrapConfigError("datastore_mode must be one of: local, remote")
+
+
+def _validate_managed_database_url(
+    database_url: str,
+    datastore_mode: DatastoreMode,
+) -> None:
     parsed = urlparse(database_url)
     if parsed.scheme not in {"postgres", "postgresql"}:
         raise BootstrapConfigError("database_url must use postgresql://")
     hostname = parsed.hostname
-    if hostname == "localhost":
+    if datastore_mode == "remote" and (
+        not hostname or not parsed.username or parsed.password is None
+    ):
+        raise BootstrapConfigError(
+            "remote database_url must include a hostname, username, and password"
+        )
+    if hostname and hostname.lower() == "localhost":
+        is_loopback = True
+    else:
+        try:
+            is_loopback = bool(hostname and ipaddress.ip_address(hostname).is_loopback)
+        except ValueError:
+            is_loopback = False
+    if datastore_mode == "remote":
+        if is_loopback:
+            raise BootstrapConfigError(
+                "remote database_url must target the hub; use datastore_mode: local "
+                "for localhost or loopback PostgreSQL"
+            )
         return
-    try:
-        is_loopback = bool(hostname and ipaddress.ip_address(hostname).is_loopback)
-    except ValueError:
-        is_loopback = False
     if not is_loopback:
         raise BootstrapConfigError(
             "database_url must target local Docker-managed PostgreSQL "

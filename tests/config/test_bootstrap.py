@@ -45,6 +45,82 @@ def test_auth_mode_flows_to_daemon_config(tmp_path: Path) -> None:
     assert config.auth_mode == "disabled"
 
 
+def test_datastore_mode_parsing(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+
+    _write_bootstrap(bootstrap_path, "daemon_port: 60887\n")
+    assert load_bootstrap(str(bootstrap_path)).datastore_mode == "local"
+
+    for datastore_mode in ("local", "remote"):
+        _write_bootstrap(bootstrap_path, f"datastore_mode: {datastore_mode}\n")
+        assert load_bootstrap(str(bootstrap_path)).datastore_mode == datastore_mode
+
+    _write_bootstrap(bootstrap_path, "datastore_mode: clustered\n")
+    with pytest.raises(BootstrapConfigError, match="datastore_mode"):
+        load_bootstrap(str(bootstrap_path))
+
+
+def test_remote_mode_allows_nonloopback_database_url(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    remote_dsn = "postgresql://gobby:secret@100.64.0.10:5432/gobby"
+
+    _write_bootstrap(
+        bootstrap_path,
+        f"datastore_mode: remote\ndatabase_url: {remote_dsn}\n",
+    )
+    assert load_bootstrap(str(bootstrap_path), resolve_database_url=True).database_url == remote_dsn
+
+    _write_bootstrap(
+        bootstrap_path,
+        f"datastore_mode: local\ndatabase_url: {remote_dsn}\n",
+    )
+    with pytest.raises(BootstrapConfigError, match="local Docker-managed PostgreSQL"):
+        load_bootstrap(str(bootstrap_path), resolve_database_url=True)
+
+
+def test_remote_mode_rejects_loopback_database_url(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_path,
+        "datastore_mode: remote\ndatabase_url: postgresql://gobby:secret@127.0.0.1:5432/gobby\n",
+    )
+
+    with pytest.raises(BootstrapConfigError, match="datastore_mode: local"):
+        load_bootstrap(str(bootstrap_path), resolve_database_url=True)
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "mysql://gobby:secret@100.64.0.10:5432/gobby",
+        "postgresql://100.64.0.10:5432/gobby",
+        "postgresql://gobby@100.64.0.10:5432/gobby",
+        "postgresql://gobby:secret@:5432/gobby",
+    ],
+)
+def test_remote_mode_requires_full_postgresql_dsn(
+    tmp_path: Path,
+    database_url: str,
+) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_path,
+        f"datastore_mode: remote\ndatabase_url: {database_url}\n",
+    )
+
+    with pytest.raises(BootstrapConfigError, match="database_url"):
+        load_bootstrap(str(bootstrap_path), resolve_database_url=True)
+
+
+def test_datastore_mode_flows_to_daemon_config(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_path, "datastore_mode: remote\n")
+
+    config = load_config(config_file=str(bootstrap_path))
+
+    assert config.datastore_mode == "remote"
+
+
 @pytest.mark.parametrize(
     ("field_name", "value"),
     [

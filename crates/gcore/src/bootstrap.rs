@@ -237,6 +237,22 @@ mod tests {
     }
 
     #[test]
+    fn reads_bootstrap_with_datastore_mode() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "datastore_mode: remote\ndaemon_port: 61234\nbind_host: 127.0.0.1\n",
+        )
+        .unwrap();
+
+        let ep = read_daemon_endpoint_at(&path);
+
+        assert_eq!(ep.port, 61234);
+        assert_eq!(ep.host, "127.0.0.1");
+    }
+
+    #[test]
     fn reads_custom_host_and_port() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");

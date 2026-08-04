@@ -42,6 +42,7 @@ def resolve_compose_runtime(
     values, while explicit caller overrides take final precedence.
     """
     home = gobby_home.expanduser()
+    _require_local_datastore_mode(home)
     canonical = _postgres_environment(home, database_url=database_url)
     canonical.update(_pgsearch_environment())
 
@@ -59,6 +60,20 @@ def resolve_compose_runtime(
         environment.update(overrides)
     _validate_effective_environment(environment, profiles)
     return ComposeRuntime(environment=environment, profiles=profiles)
+
+
+def _require_local_datastore_mode(gobby_home: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_path = gobby_home / "bootstrap.yaml"
+    try:
+        config = load_bootstrap(str(bootstrap_path))
+    except BootstrapConfigError as exc:
+        raise ComposeEnvironmentError(f"Invalid {bootstrap_path}: {exc}") from exc
+    if config.datastore_mode == "remote":
+        raise ComposeEnvironmentError(
+            "this machine is in datastore_mode: remote; compose management runs on the hub"
+        )
 
 
 def _postgres_environment(gobby_home: Path, *, database_url: str | None) -> dict[str, str]:

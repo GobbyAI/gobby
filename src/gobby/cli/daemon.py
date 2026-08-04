@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 import click
 import httpx
@@ -20,6 +21,7 @@ import psutil
 import yaml
 
 from gobby.agents.spawners.auth_env import has_auth_env
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import (
     RUNTIME_LOG_FILENAME,
     resolved_log_path,
@@ -74,7 +76,11 @@ def _start_dependency_errors() -> list[str]:
     if platform_error := unsupported_platform_error():
         return [platform_error]
     gobby_home = get_gobby_home()
-    managed_services = (gobby_home / "services" / "docker-compose.yml").is_file()
+    bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+    managed_services = (
+        bootstrap.datastore_mode == "local"
+        and (gobby_home / "services" / "docker-compose.yml").is_file()
+    )
     report = collect_dependency_report(managed_services=managed_services, include_srt=True)
     return required_dependency_errors(report)
 
@@ -82,6 +88,17 @@ def _start_dependency_errors() -> list[str]:
 def _services_start(gobby_home: Path) -> ServiceStartResult:
     """Start the required managed Docker stack and wait for container health."""
     import shutil
+
+    try:
+        bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+    except BootstrapConfigError as exc:
+        return ServiceStartResult("failed", f"Invalid bootstrap.yaml: {exc}")
+    if bootstrap.datastore_mode == "remote":
+        target_host = urlparse(bootstrap.database_url or "").hostname or "configured hub"
+        return ServiceStartResult(
+            "skipped",
+            f"Remote datastore mode: using shared services at {target_host}",
+        )
 
     if not shutil.which("docker"):
         return ServiceStartResult(
@@ -444,10 +461,13 @@ def start(ctx: click.Context, verbose: bool) -> None:
 
     # Revive managed dependencies before launchd/systemd starts the runner.
     services_result = _services_start(gobby_dir)
-    if services_result.outcome != "success":
+    if services_result.outcome == "failed":
         _step(services_result.detail, error=True)
         sys.exit(1)
-    _step("Docker services started")
+    if services_result.outcome == "skipped":
+        _step(services_result.detail)
+    else:
+        _step("Docker services started")
 
     # If OS service is installed, delegate to it
     svc = get_service_status()
@@ -645,7 +665,7 @@ def _do_stop(
             click.echo("Falling back to direct stop...")
 
         # Stop Docker containers if requested
-        if docker_flag:
+        if docker_flag and config.datastore_mode != "remote":
             click.echo("Stopping Docker containers...")
             docker_stop_succeeded = _services_stop(get_gobby_home())
             docker_stopped = True
@@ -660,7 +680,7 @@ def _do_stop(
     )
 
     # Stop Docker containers if requested (only if not already stopped above)
-    if docker_flag and not docker_stopped:
+    if docker_flag and not docker_stopped and config.datastore_mode != "remote":
         click.echo("Stopping Docker containers...")
         docker_stop_succeeded = _services_stop(get_gobby_home())
 

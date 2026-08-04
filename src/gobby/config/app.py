@@ -201,6 +201,10 @@ class DaemonConfig(BaseModel):
         default="required",
         description="Daemon API authentication mode selected by bootstrap.yaml.",
     )
+    datastore_mode: Literal["local", "remote"] = Field(
+        default="local",
+        description="Whether this machine owns the datastore stack or connects to a remote hub.",
+    )
     daemon_health_check_interval: float = Field(
         default=10.0,
         description="Daemon health check interval in seconds",
