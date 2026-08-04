@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +11,65 @@ import pytest
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
+    events: list[str] = []
+    terminalize_arguments: dict[str, Any] = {}
+
+    class RunStorage:
+        db = object()
+
+        def get(self, _run_id: str) -> None:
+            return None
+
+    async def terminalize(**kwargs: Any) -> bool:
+        events.append("terminalize")
+        terminalize_arguments.update(kwargs)
+        return True
+
+    async def cleanup_isolation(*_args: Any, **_kwargs: Any) -> None:
+        events.append("cleanup-isolation")
+
+    def delete_child(*_args: Any, **_kwargs: Any) -> None:
+        events.append("delete-child")
+
+    run_storage = RunStorage()
+    runner = SimpleNamespace(run_storage=run_storage)
+    handler = SimpleNamespace(
+        agent_lifecycle_monitor=None,
+        task_manager=object(),
+    )
+    completion_registry = object()
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            terminalize,
+        ),
+        patch.object(_failure_cleanup, "cleanup_created_isolation", cleanup_isolation),
+        patch.object(_failure_cleanup, "_delete_child_session", delete_child),
+    ):
+        await _failure_cleanup.cleanup_failed_spawn(
+            runner,
+            "run-1",
+            "spawn failed",
+            handler,
+            SimpleNamespace(),
+            completion_registry=completion_registry,
+            cleanup_isolation=False,
+        )
+
+    assert events == ["terminalize", "cleanup-isolation", "delete-child"]
+    assert terminalize_arguments == {
+        "runner": runner,
+        "run_id": "run-1",
+        "terminal_reason": "spawn_rollback",
+        "lifecycle_monitor": None,
+        "completion_registry": completion_registry,
+        "task_manager": handler.task_manager,
+        "message": "spawn failed",
+    }
 
 
 def _runner(

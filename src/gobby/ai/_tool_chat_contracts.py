@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
+from uuid import UUID
 
 from gobby._generated_tool_loop_limits import (
     DEFAULT_LOOP_TIMEOUT_SECONDS,
@@ -117,6 +118,9 @@ class ToolChatRequest:
     prompt: str
     tool_policy: ToolPolicy
     project_path: str
+    session_id: UUID | None = None
+    managed_execution_id: UUID | None = None
+    credential_bootstrap_path: str | None = None
     system_prompt: str | None = None
     provider: str | None = None
     profile: str | None = None

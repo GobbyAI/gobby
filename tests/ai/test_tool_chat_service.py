@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any
 
@@ -38,6 +40,48 @@ from gobby.config.app import DaemonConfig
 pytestmark = pytest.mark.unit
 
 _POLICY = ToolPolicy(cli="gcode", tools=("search", "outline"))
+
+
+@pytest.mark.asyncio
+async def test_tool_request_cancellation_waits_for_outer_lease_revocation() -> None:
+    lease_entered = asyncio.Event()
+    cleanup_started = asyncio.Event()
+    allow_cleanup = asyncio.Event()
+    revoked = asyncio.Event()
+
+    @asynccontextmanager
+    async def lease(
+        request: ToolChatRequest,
+        _timeout_seconds: float,
+    ) -> AsyncIterator[ToolChatRequest]:
+        try:
+            lease_entered.set()
+            yield replace(request, project_path="/authoritative/repo")
+        finally:
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            revoked.set()
+
+    slow = _SlowAdapter("lease-cancellation", delay=30.0)
+    service = ToolChatService(
+        _registry(),
+        adapters={
+            AIAdapterStyle.LLM_PROVIDER: slow,
+            AIAdapterStyle.OPENAI_COMPATIBLE: slow,
+        },
+        lease_factory=lease,
+    )
+    task = asyncio.create_task(service.chat_result(_request()))
+    await lease_entered.wait()
+
+    task.cancel()
+    await cleanup_started.wait()
+    assert not task.done()
+    allow_cleanup.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert revoked.is_set()
 
 
 class _RecordingAdapter:

@@ -37,6 +37,24 @@ class TestAgentRestartReconciliation:
     _MACHINE_ID = "11111111-1111-4111-8111-111111111111"
 
     @pytest.mark.asyncio
+    async def test_restart_reconciles_and_rotates_managed_credentials_without_agent_runner(
+        self,
+    ) -> None:
+        credential_manager = MagicMock()
+        credential_manager.reconcile.return_value = 2
+        credential_manager.rotate_due.return_value = [object()]
+        runner = SimpleNamespace(
+            agent_runner=None,
+            managed_credential_manager=credential_manager,
+        )
+
+        reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert reconciled == 0
+        credential_manager.reconcile.assert_called_once_with()
+        credential_manager.rotate_due.assert_called_once_with()
+
+    @pytest.mark.asyncio
     async def test_recover_agent_runs_after_restart_paginates_active_runs(self) -> None:
         page_size = _RUN_REPLAY_PAGE_SIZE
         runs = [

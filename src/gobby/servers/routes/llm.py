@@ -11,8 +11,9 @@ import time
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
+from uuid import UUID
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import UUID4, AliasChoices, BaseModel, ConfigDict, Field, field_validator
 
 from gobby.ai import (
@@ -270,7 +271,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=500, detail="Text generation failed") from e
 
     @router.post("/chat/completions")
-    async def chat_completions(payload: ChatCompletionsPayload) -> Any:
+    async def chat_completions(payload: ChatCompletionsPayload, request: Request) -> Any:
         """Run daemon-side provider-agnostic agentic ``tool_chat`` generation.
 
         Resolves a ``tool_chat`` binding from the requested profile/candidates,
@@ -280,6 +281,17 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         no provider names and performs no fallback — an unsatisfiable capability
         is reported as a 400.
         """
+        session_header = request.headers.get("X-Gobby-Session-Id")
+        try:
+            authenticated_session_id = UUID(session_header) if session_header else None
+        except ValueError:
+            authenticated_session_id = None
+        if authenticated_session_id is None:
+            raise HTTPException(
+                status_code=401,
+                detail="Authenticated session header is required",
+            )
+
         config = server.config
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
@@ -298,6 +310,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                         allow_mutation=payload.tool_policy.allow_mutation,
                     ),
                     project_path=payload.project_path,
+                    session_id=authenticated_session_id,
                     profile=payload.effective_profile,
                     provider=payload.provider,
                     candidates=payload.candidates,

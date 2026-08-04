@@ -15,6 +15,7 @@ import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.agents.constants import get_terminal_env_vars
@@ -181,7 +182,7 @@ def prepare_terminal_spawn(
             workflow_name=workflow_name,
         )
 
-    return _prepare_run_for_session(
+    prepared = _prepare_run_for_session(
         session_manager=session_manager,
         session_id=child_session.id,
         session_depth=child_session.agent_depth,
@@ -208,6 +209,11 @@ def prepare_terminal_spawn(
         reasoning_message=reasoning_message,
         resume_metadata_json=resume_metadata_json,
         bind_run=bind_fresh_run,
+    )
+    return _issue_prelaunch_credential(
+        session_manager,
+        prepared,
+        timeout_seconds=timeout_seconds,
     )
 
 
@@ -278,7 +284,7 @@ def prepare_terminal_resume(
                 child_session.id,
                 initial_variables,
             )
-        return _prepare_run_for_session(
+        prepared = _prepare_run_for_session(
             session_manager=session_manager,
             session_id=child_session.id,
             session_depth=child_session.agent_depth,
@@ -306,6 +312,35 @@ def prepare_terminal_resume(
             resume_metadata_json=resume_metadata_json,
             bind_run=bind_successor_run,
         )
+    return _issue_prelaunch_credential(
+        session_manager,
+        prepared,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+def _issue_prelaunch_credential(
+    session_manager: ChildSessionManager,
+    prepared: PreparedSpawn,
+    *,
+    timeout_seconds: float | None,
+) -> PreparedSpawn:
+    """Issue a scoped role after run commit and before provider launch."""
+    database = session_manager._storage.db
+    credential_manager = vars(database).get("managed_credential_manager")
+    if credential_manager is None:
+        return prepared
+    lifetime_seconds = min(timeout_seconds or 3540.0, 3540.0)
+    lifetime_seconds = max(lifetime_seconds, 1.0)
+    credential = credential_manager.issue(
+        managed_execution_id=uuid.UUID(prepared.agent_run_id),
+        owner_kind="agent_run",
+        session_id=uuid.UUID(prepared.session_id),
+        agent_run_id=uuid.UUID(prepared.agent_run_id),
+        expires_at=datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
+    )
+    prepared.env_vars["GOBBY_MANAGED_EXECUTION_BOOTSTRAP"] = str(credential.bootstrap_path)
+    return prepared
 
 
 def _prepare_run_for_session(

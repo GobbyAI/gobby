@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
@@ -105,7 +106,10 @@ def server_with_llm() -> MagicMock:
 def client(server_with_llm: MagicMock) -> TestClient:
     app = FastAPI()
     app.include_router(create_llm_router(server_with_llm))
-    return TestClient(app)
+    return TestClient(
+        app,
+        headers={"X-Gobby-Session-Id": "019fc08a-1d63-4b23-bbc8-659d56bc4168"},
+    )
 
 
 def test_finish_reason_returns_unmapped_stop_reason() -> None:
@@ -1493,6 +1497,16 @@ def test_chat_completions_returns_openai_shape_with_investigation(
     assert request.provider is None
     assert request.caller == _TOOL_CHAT_CALLER
     assert request.request_id == _TOOL_CHAT_REQUEST_ID
+    assert request.session_id == UUID("019fc08a-1d63-4b23-bbc8-659d56bc4168")
+
+
+def test_chat_completions_requires_authenticated_session_header(client: TestClient) -> None:
+    client.headers.pop("X-Gobby-Session-Id")
+
+    response = client.post("/api/llm/chat/completions", json=_valid_tool_chat_payload())
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authenticated session header is required"}
 
 
 def test_chat_completions_requires_a_tool_policy(client: TestClient) -> None:

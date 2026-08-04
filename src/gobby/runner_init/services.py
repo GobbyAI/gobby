@@ -66,7 +66,10 @@ def _init_llm_service(runner: GobbyRunner) -> None:
             runner.config,
             text_generation=runner.text_generation_service,
         )
-        runner.tool_chat_service = build_daemon_tool_chat_service(runner.config)
+        runner.tool_chat_service = build_daemon_tool_chat_service(
+            runner.config,
+            credential_manager=runner.managed_credential_manager,
+        )
         logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
     except Exception:
         mark_service_degraded(runner, "llm_service")

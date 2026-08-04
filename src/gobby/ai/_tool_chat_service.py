@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
 
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
@@ -43,6 +44,10 @@ from gobby.config.feature_base import (
 logger = logging.getLogger(__name__)
 
 ToolChatAdapterFactory = Callable[[], ToolChatAdapter]
+ToolChatLeaseFactory = Callable[
+    [ToolChatRequest, float],
+    AbstractAsyncContextManager[ToolChatRequest],
+]
 _RUNTIME_ADAPTER_STYLES = frozenset(
     {
         AIAdapterStyle.LLM_PROVIDER,
@@ -71,11 +76,13 @@ class ToolChatService:
             Mapping[FeatureProfile, Sequence[str | FeatureCandidateConfig]] | None
         ) = None,
         default_limits: ToolLoopLimits | None = None,
+        lease_factory: ToolChatLeaseFactory | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
         self._default_limits = default_limits or ToolLoopLimits()
+        self._lease_factory = lease_factory
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -89,6 +96,22 @@ class ToolChatService:
         """Run the first available tool_chat candidate; never fall back elsewhere."""
         limits = request.limits or self._default_limits
         request = replace(request, limits=limits)
+        if self._lease_factory is None:
+            return await self._chat_result_scoped(request, limits)
+        async with self._lease_factory(
+            request,
+            limits.loop_timeout_seconds,
+        ) as scoped_request:
+            return await self._chat_result_scoped(
+                replace(scoped_request, limits=limits),
+                limits,
+            )
+
+    async def _chat_result_scoped(
+        self,
+        request: ToolChatRequest,
+        limits: ToolLoopLimits,
+    ) -> ToolChatResult:
         log_fields = _request_log_fields(request, limits)
         logger.debug("tool_chat request started", extra=log_fields)
         deadline = asyncio.get_running_loop().time() + limits.loop_timeout_seconds
