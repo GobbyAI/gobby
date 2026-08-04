@@ -74,6 +74,18 @@ def _coalesce_number(mapping: dict[str, Any], key: str, fallback: float | None) 
     return fallback
 
 
+def _coalesce_speed_mode(
+    mapping: dict[str, Any],
+    fallback: Literal["standard", "fast"],
+) -> Literal["standard", "fast"]:
+    value = _coalesce_string(mapping, "speed_mode", fallback)
+    if value == "standard":
+        return "standard"
+    if value == "fast":
+        return "fast"
+    raise ValueError(f"Invalid speed_mode: {value}")
+
+
 def _suggestion_task_description(
     task_manager: LocalTaskManager | None,
     task_id: str | None,
@@ -320,6 +332,7 @@ def create_spawn_agent_registry(
         workflow: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        speed_mode: Literal["standard", "fast"] = "standard",
         reasoning_effort: str | None = None,
         reasoning_required: bool | None = None,
         # Limits
@@ -346,6 +359,7 @@ def create_spawn_agent_registry(
                     workflow: Workflow/pipeline to use
         provider: AI provider (claude/grok/qwen/codex/droid/agy)
                     model: Model to use
+                    speed_mode: Request standard or fast provider execution
                     reasoning_effort: Optional reasoning override for supported providers/models
                     reasoning_required: Fail instead of warning when requested reasoning is unsupported
                     timeout: Timeout in seconds
@@ -544,6 +558,7 @@ def create_spawn_agent_registry(
             workflow=effective_workflow,
             provider=provider,
             model=model,
+            speed_mode=speed_mode,
             reasoning_effort=reasoning_effort,
             reasoning_required=reasoning_required,
             timeout=timeout,
@@ -601,6 +616,7 @@ def create_spawn_agent_registry(
         base_branch: str | None = None,
         provider: str | None = None,
         model: str | None = None,
+        speed_mode: Literal["standard", "fast"] = "standard",
         reasoning_effort: str | None = None,
         reasoning_required: bool | None = None,
         parent_session_id: str | None = None,
@@ -619,6 +635,7 @@ def create_spawn_agent_registry(
             base_branch: Base branch for worktree/clone
             provider: AI provider override
             model: Model override
+            speed_mode: Default speed request for each suggestion
             parent_session_id: Parent session reference
             timeout: Timeout in seconds for each agent
             notify_parent_on_completion: Whether to notify parent sessions on completion
@@ -697,6 +714,7 @@ def create_spawn_agent_registry(
                     base_branch=_coalesce_string(suggestion, "base_branch", base_branch),
                     provider=_coalesce_string(suggestion, "provider", provider),
                     model=_coalesce_string(suggestion, "model", model),
+                    speed_mode=_coalesce_speed_mode(suggestion, speed_mode),
                     reasoning_effort=_coalesce_string(
                         suggestion, "reasoning_effort", reasoning_effort
                     ),

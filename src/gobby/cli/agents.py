@@ -183,6 +183,7 @@ def agents() -> None:
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
+@click.option("--fast", is_flag=True, help="Request the provider's fast route")
 @click.option(
     "--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)"
 )
@@ -208,6 +209,7 @@ def spawn_agent_cmd(
     terminal: str,
     provider: str,
     model: str | None,
+    fast: bool,
     reasoning_effort: str | None,
     reasoning_required: bool,
     timeout: float,
@@ -244,6 +246,7 @@ def spawn_agent_cmd(
         "parent_session_id": parent_session_id,
         "terminal": terminal,
         "provider": provider,
+        "speed_mode": "fast" if fast else "standard",
         "timeout": timeout,
         "session_context": session_context,
     }

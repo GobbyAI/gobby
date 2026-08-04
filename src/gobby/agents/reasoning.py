@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.provider_capabilities import provider_supports_terminal_reasoning
+from gobby.providers.capabilities.models import SpeedMode
 from gobby.providers.capabilities.resolve import (
     CapabilityResolver,
+    SpeedResolution,
 )
 from gobby.providers.capabilities.resolve import (
     ReasoningStatus as CapabilityReasoningStatus,
@@ -78,6 +80,21 @@ def _get_capability_resolver() -> CapabilityResolver:
     ctx = get_app_context()
     resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
     return cast(CapabilityResolver, resolver) if resolver is not None else _fallback_resolver
+
+
+def resolve_spawn_speed(
+    *,
+    provider: str,
+    model: str | None,
+    speed_mode: Literal["standard", "fast"],
+) -> SpeedResolution:
+    """Resolve a request-scoped speed route for spawned-terminal execution."""
+    return _get_capability_resolver().resolve_route(
+        provider,
+        model or "",
+        SpeedMode(speed_mode),
+        surface="spawn-cli",
+    )
 
 
 def resolve_spawn_reasoning(

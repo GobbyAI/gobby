@@ -7,6 +7,7 @@ and clones.py into a single executor. All agents spawn via tmux.
 
 import logging
 import shutil
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -35,6 +36,7 @@ from gobby.agents.srt_runtime import (
 )
 from gobby.agents.trust import pre_approve_directory
 from gobby.providers import AGY_UNAVAILABLE_REASON
+from gobby.providers.capabilities.apply import speed_result
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -193,42 +195,46 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     Returns:
         SpawnResult with spawn outcome and metadata
     """
-    if unsupported_sandbox := _unsupported_sandbox_request_error(request):
-        return unsupported_sandbox
+    result = _unsupported_sandbox_request_error(request)
+    if result is None:
+        if request.provider == "claude" and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS:
+            logger.warning(
+                "Agent %s requests provider-native internal subagents, but the managed "
+                "Claude runtime strips the native Task facility; internal research lanes "
+                "will be unavailable",
+                request.agent_name,
+            )
 
-    if request.provider == "claude" and request.agent_name in _NATIVE_SUBAGENT_RESEARCH_AGENTS:
-        logger.warning(
-            "Agent %s requests provider-native internal subagents, but the managed "
-            "Claude runtime strips the native Task facility; internal research lanes "
-            "will be unavailable",
-            request.agent_name,
-        )
+        if request.provider == "grok":
+            result = await _spawn_grok_terminal(request)
+        elif request.provider == "qwen":
+            result = await _spawn_qwen_terminal(request)
+        elif request.provider == "codex":
+            result = await _spawn_codex_terminal(request)
+        elif request.provider == "droid":
+            result = await _spawn_droid_terminal(request)
+        elif request.provider == "agy":
+            result = SpawnResult(
+                success=False,
+                run_id=request.run_id,
+                child_session_id=None,
+                status="failed",
+                error=AGY_UNAVAILABLE_REASON,
+            )
+        elif request.provider == "claude":
+            result = await _spawn_claude_terminal(request)
+        else:
+            result = SpawnResult(
+                success=False,
+                run_id=request.run_id,
+                child_session_id=None,
+                status="failed",
+                error=f"Unsupported spawn provider: {request.provider}",
+            )
 
-    if request.provider == "grok":
-        return await _spawn_grok_terminal(request)
-    elif request.provider == "qwen":
-        return await _spawn_qwen_terminal(request)
-    elif request.provider == "codex":
-        return await _spawn_codex_terminal(request)
-    elif request.provider == "droid":
-        return await _spawn_droid_terminal(request)
-    elif request.provider == "agy":
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error=AGY_UNAVAILABLE_REASON,
-        )
-    elif request.provider == "claude":
-        return await _spawn_claude_terminal(request)
-    return SpawnResult(
-        success=False,
-        run_id=request.run_id,
-        child_session_id=None,
-        status="failed",
-        error=f"Unsupported spawn provider: {request.provider}",
-    )
+    if request.speed_resolution is not None:
+        result = replace(result, speed=speed_result(request.speed_resolution))
+    return result
 
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
