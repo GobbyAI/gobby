@@ -10,7 +10,7 @@ import yaml
 
 from gobby.plans.coverage_manifest import coverage_manifest_path
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
+from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
 
@@ -73,7 +73,7 @@ def test_create_plan_rejects_missing_root_task(temp_db: HubDatabase, tmp_path: P
         )
 
 
-def test_create_plan_rolls_back_when_manifest_generation_fails(
+def test_create_plan_persists_row_without_partial_manifest_when_evaluation_fails(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     project_id = _project(temp_db, tmp_path)
@@ -83,7 +83,7 @@ def test_create_plan_rolls_back_when_manifest_generation_fails(
     def fail_manifest(_record: object) -> None:
         raise OSError("manifest write failed")
 
-    monkeypatch.setattr(manager, "_generate_coverage_manifest", fail_manifest)
+    monkeypatch.setattr(manager, "generate_coverage_manifest", fail_manifest)
 
     with pytest.raises(OSError, match="manifest write failed"):
         manager.create_plan(
@@ -93,8 +93,15 @@ def test_create_plan_rolls_back_when_manifest_generation_fails(
             root_task_ref="#100",
         )
 
-    with pytest.raises(PlanNotFoundError, match="plan not found"):
-        manager.get_plan("manifest-failure", project_id=project_id)
+    record = manager.get_plan("manifest-failure", project_id=project_id)
+    manifest = coverage_manifest_path(
+        tmp_path,
+        project_id=project_id,
+        root_task_ref="#100",
+        plan_id="manifest-failure",
+    )
+    assert record.state == "active"
+    assert not manifest.exists()
 
 
 def test_create_plan_emits_initial_manifest(temp_db: HubDatabase, tmp_path: Path) -> None:
