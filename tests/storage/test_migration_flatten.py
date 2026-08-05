@@ -138,6 +138,46 @@ def test_cutover_holds_migration_lock_and_replaces_rows_atomically(
     assert rows == [(375, "baseline@375", "f" * 64)]
 
 
+def test_cutover_accepts_extra_legacy_unreceipted_rows(
+    flatten_database: tuple[str, uuid.UUID],
+) -> None:
+    database_url, epoch_id = flatten_database
+    _seed_receipts(database_url)
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO schema_migrations(version, filename, checksum)
+            VALUES (260, NULL, NULL), (345, NULL, NULL)
+            """
+        )
+
+    cutover_migration_bookkeeping(database_url, epoch_id, _evidence())
+
+    with psycopg.connect(database_url) as connection:
+        rows = connection.execute(
+            "SELECT version, filename, checksum FROM schema_migrations"
+        ).fetchall()
+    assert rows == [(375, "baseline@375", "f" * 64)]
+
+
+def test_cutover_rejects_receipt_data_on_extra_legacy_row(
+    flatten_database: tuple[str, uuid.UUID],
+) -> None:
+    database_url, epoch_id = flatten_database
+    _seed_receipts(database_url)
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute(
+            """
+            INSERT INTO schema_migrations(version, filename, checksum)
+            VALUES (260, '260_legacy.sql', %s)
+            """,
+            ("c" * 64,),
+        )
+
+    with pytest.raises(RuntimeError, match="historical migration v260 unexpectedly has receipt"):
+        cutover_migration_bookkeeping(database_url, epoch_id, _evidence())
+
+
 def test_cutover_crash_after_delete_rolls_back_all_receipts(
     flatten_database: tuple[str, uuid.UUID],
 ) -> None:

@@ -181,8 +181,8 @@ def _verify_pre_flatten_rows(
     rows: Sequence[Mapping[str, object]],
     evidence: FlattenEvidence,
 ) -> None:
-    actual_versions = tuple(_migration_version(row) for row in rows)
-    if actual_versions != evidence.applied_versions:
+    actual_versions = {_migration_version(row) for row in rows}
+    if not set(evidence.applied_versions).issubset(actual_versions):
         raise MigrationFlattenError(
             "pre-flatten applied migration versions differ from pinned evidence"
         )
@@ -195,7 +195,11 @@ def _verify_pre_flatten_rows(
                     f"historical migration v{version} unexpectedly has receipt data"
                 )
             continue
-        expected = expected_receipts[version]
+        expected = expected_receipts.get(version)
+        if expected is None:
+            raise MigrationFlattenError(
+                "pre-flatten applied migration versions differ from pinned evidence"
+            )
         if row["filename"] != expected.filename or row["checksum"] != expected.checksum:
             raise MigrationFlattenError(f"receipt mismatch for migration v{version}")
 
