@@ -1,3 +1,5 @@
+use postgres::Client;
+
 fn test_schema_created_epoch(schema_name: &str) -> Option<i64> {
     let mut parts = schema_name.split('_');
     if parts.next()? != "gobby" || parts.next()? != "test" {
@@ -105,4 +107,3 @@ mod tests {
         ));
     }
 }
-use postgres::Client;

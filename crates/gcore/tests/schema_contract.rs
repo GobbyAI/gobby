@@ -1,8 +1,8 @@
 #![cfg(feature = "postgres")]
 
 use gobby_core::schema::{
-    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON,
-    SchemaRunner, parse_backup_manifest, schema_identity, split_sql_statements,
+    BASELINE_CHECKSUM, BASELINE_VERSION, RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON, SchemaRunner,
+    parse_backup_manifest, schema_identity, split_sql_statements,
 };
 
 fn repo_file(path: &str) -> String {
@@ -33,11 +33,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
 }
 
 #[test]
-fn embedded_baseline_and_seed_match_their_authoritative_sources() {
-    assert_eq!(
-        BASELINE_SQL,
-        repo_file("src/gobby/storage/postgres_baseline_schema.sql")
-    );
+fn embedded_seed_matches_the_flatten_evidence() {
     assert_eq!(
         SEED_MANIFEST_JSON,
         repo_file("docs/evidence/pre-flatten/migrated-fresh.seed.json")

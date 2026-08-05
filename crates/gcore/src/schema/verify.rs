@@ -42,20 +42,28 @@ struct SeedRecord {
 
 pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogManifest, SchemaError> {
     validate_identifier(schema)?;
+    // Column ordinals differ when an additive migration reaches an existing database versus when
+    // that same final definition is emitted by a flattened baseline. Runtime schema authority is
+    // name-based, so catalog identity deliberately covers column semantics rather than position.
+    // The independently managed gwiki_* projection can share this schema but is outside this
+    // manifest's authority boundary.
     let columns = query_entries(
         client,
         r#"
         SELECT table_name || '.' || column_name AS name,
-               concat_ws('|', ordinal_position::text, data_type, udt_name,
-                         is_nullable, COALESCE(column_default, ''), is_generated)
+               concat_ws('|', data_type, udt_name, is_nullable,
+                         COALESCE(column_default, ''), is_generated)
                    AS definition
         FROM information_schema.columns
         WHERE table_schema = $1
-        ORDER BY table_name, ordinal_position
+          AND substring(table_name from 1 for 6) <> 'gwiki_'
+        ORDER BY table_name, column_name
         "#,
         schema,
         SchemaQualification::Omit,
     )?;
+    // PostgreSQL 18 represents newly created NOT NULL declarations in pg_constraint while
+    // upgraded databases can retain the equivalent column flag without those redundant rows.
     let constraints = query_entries(
         client,
         r#"
@@ -65,6 +73,8 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         JOIN pg_class AS relation ON relation.oid = constraint_record.conrelid
         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = $1
+          AND constraint_record.contype <> 'n'
+          AND substring(relation.relname from 1 for 6) <> 'gwiki_'
         ORDER BY relation.relname, constraint_record.conname
         "#,
         schema,
@@ -76,12 +86,15 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         SELECT indexname AS name, indexdef AS definition
         FROM pg_indexes
         WHERE schemaname = $1
+          AND substring(tablename from 1 for 6) <> 'gwiki_'
         ORDER BY indexname
         "#,
         schema,
         SchemaQualification::Placeholder,
     )?;
-    let functions = query_entries(
+    // Extension-owned routines follow the installed extension version and remain outside Gobby's
+    // schema authority even when the extension places them in the application schema.
+    let mut functions = query_entries(
         client,
         r#"
         SELECT routine.proname || '(' || pg_get_function_identity_arguments(routine.oid) || ')'
@@ -90,11 +103,22 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         FROM pg_proc AS routine
         JOIN pg_namespace AS namespace ON namespace.oid = routine.pronamespace
         WHERE namespace.nspname = $1
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_depend AS dependency
+              JOIN pg_extension AS extension ON extension.oid = dependency.refobjid
+              WHERE dependency.classid = 'pg_proc'::regclass
+                AND dependency.objid = routine.oid
+                AND dependency.deptype = 'e'
+          )
         ORDER BY name
         "#,
         schema,
         SchemaQualification::Placeholder,
     )?;
+    for function in &mut functions {
+        function.definition = strip_full_line_sql_comments(&function.definition);
+    }
     let triggers = query_entries(
         client,
         r#"
@@ -104,6 +128,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         JOIN pg_class AS relation ON relation.oid = trigger_record.tgrelid
         JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
         WHERE namespace.nspname = $1 AND NOT trigger_record.tgisinternal
+          AND substring(relation.relname from 1 for 6) <> 'gwiki_'
         ORDER BY relation.relname, trigger_record.tgname
         "#,
         schema,
@@ -182,6 +207,14 @@ fn normalize_schema(mut value: String, schema: &str, qualification: SchemaQualif
     value.replace(&format!("IN SCHEMA {schema}"), "IN SCHEMA $schema")
 }
 
+fn strip_full_line_sql_comments(value: &str) -> String {
+    value
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn verify_receipts(client: &mut Client, schema: &str) -> Result<usize, SchemaError> {
     let qualified = qualified_name(schema, "schema_migrations")?;
     let rows = client.query(
@@ -239,7 +272,7 @@ fn verify_seed_rows(client: &mut Client, schema: &str) -> Result<usize, SchemaEr
             checked += 1;
             if !actual
                 .iter()
-                .any(|actual_row| contains_expected_json(actual_row, &record.values))
+                .any(|actual_row| contains_expected_seed_json(actual_row, &record.values, &table))
             {
                 return Err(SchemaError::Verification(format!(
                     "canonical seed drift in {table}: missing {}",
@@ -249,6 +282,114 @@ fn verify_seed_rows(client: &mut Client, schema: &str) -> Result<usize, SchemaEr
         }
     }
     Ok(checked)
+}
+
+fn contains_expected_seed_json(
+    actual: &serde_json::Value,
+    expected: &serde_json::Value,
+    table: &str,
+) -> bool {
+    match (actual, expected) {
+        (serde_json::Value::Object(actual), serde_json::Value::Object(expected)) => expected
+            .iter()
+            .filter(|(field, _value)| !is_live_mutable_seed_field(table, field))
+            .all(|(field, value)| {
+                actual
+                    .get(field)
+                    .is_some_and(|actual| contains_expected_json(actual, value))
+            }),
+        _ => contains_expected_json(actual, expected),
+    }
+}
+
+// Keep this projection aligned with scripts/schema_diff.py's live_mutable_columns contract. The
+// baseline hash pins initial values; runtime verification protects only seed identity and fields
+// that installed synchronization is not explicitly allowed to change.
+fn is_live_mutable_seed_field(table: &str, field: &str) -> bool {
+    match table {
+        "projects" => matches!(
+            field,
+            "deleted_at"
+                | "github_repo"
+                | "github_url"
+                | "linear_project_id"
+                | "linear_sync_enabled"
+                | "linear_synced_at"
+                | "linear_team_id"
+                | "repo_path"
+        ),
+        "sessions" => matches!(
+            field,
+            "approved_tools_json"
+                | "chat_mode"
+                | "context_injected"
+                | "context_usage_confidence"
+                | "context_usage_ratio"
+                | "context_usage_source"
+                | "context_usage_updated_at"
+                | "context_used_tokens"
+                | "context_window"
+                | "digest_markdown"
+                | "git_branch"
+                | "had_edits"
+                | "last_assistant_content"
+                | "last_completion_output_tokens"
+                | "last_digest_input_hash"
+                | "last_digested_pair_index"
+                | "last_prompt_cache_creation_tokens"
+                | "last_prompt_cache_read_tokens"
+                | "last_prompt_input_tokens"
+                | "last_prompt_uncached_input_tokens"
+                | "last_turn_markdown"
+                | "message_count"
+                | "model"
+                | "original_prompt"
+                | "parent_session_id"
+                | "sandbox_enabled"
+                | "sandbox_policy_hash"
+                | "seq_num"
+                | "status"
+                | "summary_digest_turn_count"
+                | "summary_generated_at"
+                | "summary_generation_mode"
+                | "summary_markdown"
+                | "summary_path"
+                | "summary_revision_id"
+                | "summary_source_context_hash"
+                | "terminal_context"
+                | "title_source"
+                | "tool_call_count"
+                | "transcript_path"
+                | "transcript_processed"
+                | "turn_count"
+                | "usage_cache_creation_tokens"
+                | "usage_cache_read_tokens"
+                | "usage_input_tokens"
+                | "usage_output_tokens"
+                | "workflow_name"
+        ),
+        "task_stages_registry" => matches!(
+            field,
+            "bundled_hash"
+                | "category"
+                | "default_agent"
+                | "default_max_review_rounds"
+                | "default_max_work_attempts"
+                | "description"
+                | "dispatch_inputs_json"
+                | "dispatch_target"
+                | "dispatch_type"
+                | "display_label"
+                | "is_terminal"
+                | "position_hint"
+                | "requires_human"
+                | "review_policy"
+                | "reviewer_agent"
+                | "reviewer_agent_selector_json"
+        ),
+        "task_type_default_stages" => field == "position",
+        _ => false,
+    }
 }
 
 fn contains_expected_json(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {

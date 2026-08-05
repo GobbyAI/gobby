@@ -94,6 +94,66 @@ fn named_schema_apply_and_verify_are_isolated() -> anyhow::Result<()> {
 }
 
 #[test]
+fn catalog_identity_ignores_column_ordinals() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    client.batch_execute(
+        "CREATE SCHEMA first_order;
+         CREATE TABLE first_order.sample (id uuid NOT NULL, detail text);
+         CREATE TABLE first_order.gwiki_external_projection (id uuid PRIMARY KEY);
+         CREATE FUNCTION first_order.stable_label() RETURNS text
+             LANGUAGE sql IMMUTABLE AS $$
+             -- Function-body comments are not executable schema semantics.
+             SELECT 'stable'::text;
+             $$;
+         CREATE SCHEMA last_order;
+         CREATE TABLE last_order.sample (detail text, id uuid NOT NULL);
+         CREATE FUNCTION last_order.stable_label() RETURNS text
+             LANGUAGE sql IMMUTABLE AS $$
+             SELECT 'stable'::text;
+             $$;
+         CREATE EXTENSION pgcrypto WITH SCHEMA first_order;",
+    )?;
+
+    let first = catalog_manifest(&mut client, "first_order")?;
+    let last = catalog_manifest(&mut client, "last_order")?;
+    assert_eq!(first, last);
+    assert!(
+        first
+            .constraints
+            .iter()
+            .all(|entry| !entry.name.ends_with("_not_null"))
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_accepts_runtime_mutation_of_seed_fields() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    client.batch_execute(
+        "UPDATE projects
+            SET repo_path = '/installed/personal'
+          WHERE id = '00000000-0000-0000-0000-000000060887';
+         UPDATE sessions
+            SET status = 'ended', message_count = 9
+          WHERE id = '00000000-0000-0000-0000-000000000001';",
+    )?;
+
+    SchemaRunner::new(&mut client, "public")?.verify()?;
+    Ok(())
+}
+
+#[test]
 fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
