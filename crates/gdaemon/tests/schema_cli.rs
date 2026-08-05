@@ -61,6 +61,49 @@ fn apply_builds_verified_baseline_in_named_schema() -> Result<()> {
 }
 
 #[test]
+fn apply_uses_connection_current_schema_by_default() -> Result<()> {
+    let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
+        eprintln!("skipped: {DATABASE_URL_ENV} is not set");
+        return Ok(());
+    };
+    let scratch = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("gdaemon_current_schema_{}", std::process::id()),
+    };
+    let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
+    admin.batch_execute(&format!(
+        "DROP SCHEMA IF EXISTS \"{}\" CASCADE; CREATE SCHEMA \"{}\"",
+        scratch.name, scratch.name
+    ))?;
+    let separator = if database_url.contains('?') { '&' } else { '?' };
+    let scoped_url = format!(
+        "{database_url}{separator}options=-csearch_path%3D{}",
+        scratch.name
+    );
+
+    let identity = Command::cargo_bin("gdaemon")?
+        .args(["schema", "version", "--json"])
+        .output()?;
+    assert!(identity.status.success());
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "apply"])
+        .env(EXPECTED_IDENTITY_ENV, String::from_utf8(identity.stdout)?)
+        .env("GOBBY_DATABASE_URL", scoped_url)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "gdaemon apply failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let report = SchemaRunner::new(&mut admin, &scratch.name)?.verify()?;
+    assert!(report.checked_receipts > 0);
+    assert!(report.checked_seed_rows > 0);
+    assert!(report.checked_catalog_objects > 0);
+    Ok(())
+}
+
+#[test]
 fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
     let Ok(database_url) = env::var(DATABASE_URL_ENV) else {
         eprintln!("skipped: {DATABASE_URL_ENV} is not set");

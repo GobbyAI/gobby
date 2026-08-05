@@ -38,8 +38,8 @@ enum Command {
 #[derive(Debug, Subcommand)]
 enum SchemaCommand {
     Apply {
-        #[arg(long, default_value = "public")]
-        schema: String,
+        #[arg(long)]
+        schema: Option<String>,
         #[arg(long)]
         destructive: bool,
     },
@@ -91,7 +91,7 @@ fn main() -> Result<()> {
                     schema,
                     destructive,
                 },
-        } => apply_schema(&schema, destructive),
+        } => apply_schema(schema.as_deref(), destructive),
         Command::Schema {
             command: SchemaCommand::Verify,
         } => verify_schema(),
@@ -121,8 +121,10 @@ fn sweep_test_schemas(age_hours: u64) -> Result<()> {
     Ok(())
 }
 
-fn apply_schema(schema: &str, destructive: bool) -> Result<()> {
-    validate_schema_name(schema)?;
+fn apply_schema(schema: Option<&str>, destructive: bool) -> Result<()> {
+    if let Some(schema) = schema {
+        validate_schema_name(schema)?;
+    }
     enforce_expected_identity()?;
     let backup = destructive.then(load_newest_backup_manifest).transpose()?;
     let database_url = resolve_database_url()?;
@@ -132,6 +134,14 @@ fn apply_schema(schema: &str, destructive: bool) -> Result<()> {
             redact_database_url(&database_url)
         )
     })?;
+    let schema = match schema {
+        Some(schema) => schema.to_owned(),
+        None => client
+            .query_one("SELECT current_schema()", &[])?
+            .get::<_, Option<String>>(0)
+            .context("PostgreSQL connection has no current schema")?,
+    };
+    validate_schema_name(&schema)?;
     let report = if let Some((backup_root, manifest)) = backup {
         let row = client
             .query_one(
@@ -177,9 +187,9 @@ fn apply_schema(schema: &str, destructive: bool) -> Result<()> {
         );
         let verified = VerifiedBackupManifest::verify(manifest, &context)
             .context("hub backup manifest failed the destructive migration gate")?;
-        SchemaRunner::new(&mut client, schema)?.apply_with_backup(&verified)?
+        SchemaRunner::new(&mut client, &schema)?.apply_with_backup(&verified)?
     } else {
-        SchemaRunner::new(&mut client, schema)?.apply()?
+        SchemaRunner::new(&mut client, &schema)?.apply()?
     };
     println!(
         "schema {schema} ready (baseline_applied={}, migrations_applied={})",
@@ -267,6 +277,7 @@ fn refuse_symlink_traversal(path: &Path) -> Result<()> {
 }
 
 fn verify_schema() -> Result<()> {
+    enforce_expected_identity()?;
     let database_url = resolve_database_url()?;
     let mut client = connect_readwrite(&database_url).map_err(|_| {
         anyhow::anyhow!(
@@ -274,7 +285,11 @@ fn verify_schema() -> Result<()> {
             redact_database_url(&database_url)
         )
     })?;
-    let report = SchemaRunner::new(&mut client, "public")?.verify()?;
+    let schema = client
+        .query_one("SELECT current_schema()", &[])?
+        .get::<_, Option<String>>(0)
+        .context("PostgreSQL connection has no current schema")?;
+    let report = SchemaRunner::new(&mut client, &schema)?.verify()?;
     println!(
         "schema verified (receipts={}, seed_rows={}, catalog_objects={})",
         report.checked_receipts, report.checked_seed_rows, report.checked_catalog_objects

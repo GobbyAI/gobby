@@ -11,6 +11,7 @@ from fastapi import APIRouter
 
 from gobby.servers.routes.admin._config import register_config_routes
 from gobby.servers.routes.admin._health import register_health_routes
+from gobby.servers.routes.admin._lease import register_lease_routes
 from gobby.servers.routes.admin._lifecycle import register_lifecycle_routes
 from gobby.servers.routes.admin._stats import register_stats_routes
 from gobby.servers.routes.admin._testing import register_testing_routes
@@ -40,6 +41,7 @@ def create_admin_router(server: "HTTPServer") -> APIRouter:
     register_health_routes(router, server)
     register_config_routes(router, server)
     register_lifecycle_routes(router, server)
+    register_lease_routes(router, server)
     register_testing_routes(router, server)
     register_stats_routes(router, server)
     register_usage_routes(router, server)

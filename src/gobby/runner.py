@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.code_index.nightly_reindex import CodeIndexNightlyFullReindexer
     from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
+    from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.llm import LLMService
@@ -130,6 +131,7 @@ class GobbyRunner:
     _model_metadata_refresh_task: asyncio.Task[None] | None
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
+    daemon_lease: ActiveDaemonLease
 
     _memory_reconcile_task: asyncio.Task[None] | None
     _recall_drift_task: asyncio.Task[None] | None
@@ -245,11 +247,21 @@ async def run_gobby(
     ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
     from gobby.cli.utils import get_gobby_home
+    from gobby.config.bootstrap import load_bootstrap
+    from gobby.daemon_lease import ActiveDaemonLease
+    from gobby.daemon_lease_control import (
+        StandbyLeaseControl,
+        monitor_active_lease,
+        serve_standby_until_promotion,
+    )
     from gobby.runner_pid_file import (
         FailOpenPidOwnership,
         claim_pid_file,
         probe_daemon_lock,
     )
+    from gobby.storage.schema_contract import verify_schema
+    from gobby.utils.local_token import read_local_api_token
+    from gobby.utils.machine_id import require_machine_id
 
     if ownership_resolution is None:
         pid_file = get_gobby_home() / "gobby.pid"
@@ -267,8 +279,53 @@ async def run_gobby(
             )
             return
 
-    runner = GobbyRunner(config_path=config_path, verbose=verbose)
-    await runner.run(ownership_resolution=ownership_resolution)
+    bootstrap = load_bootstrap(
+        str(config_path) if config_path is not None else None,
+        resolve_database_url=True,
+    )
+    database_url = bootstrap.database_url
+    if database_url is None:
+        raise RuntimeError("bootstrap database_url is required for active-daemon ownership")
+
+    lease = ActiveDaemonLease(database_url, machine_id=require_machine_id())
+    try:
+        await asyncio.to_thread(verify_schema, database_url)
+        if not await asyncio.to_thread(lease.try_acquire):
+            promotion_requested = asyncio.Event()
+            control = StandbyLeaseControl(
+                lease=lease,
+                database_url=database_url,
+                local_token=read_local_api_token(),
+                promotion_requested=promotion_requested,
+                schema_verifier=verify_schema,
+            )
+            promoted = await serve_standby_until_promotion(
+                control,
+                host=bootstrap.bind_host,
+                port=bootstrap.daemon_port,
+            )
+            if not promoted:
+                return
+
+        runner = GobbyRunner(config_path=config_path, verbose=verbose)
+        runner.daemon_lease = lease
+        lease_monitor_stop = asyncio.Event()
+        async with asyncio.TaskGroup() as tasks:
+            tasks.create_task(
+                monitor_active_lease(
+                    lease,
+                    stop=lease_monitor_stop,
+                    on_loss=runner.request_shutdown,
+                ),
+                name="active-daemon-lease-monitor",
+            )
+            try:
+                await runner.run(ownership_resolution=ownership_resolution)
+            finally:
+                lease_monitor_stop.set()
+    finally:
+        lease.release()
+        ownership_resolution.release()
 
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:

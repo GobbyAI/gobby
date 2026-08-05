@@ -123,6 +123,36 @@ def test_apply_pins_database_and_expected_identity_in_child_environment(
     assert "gdaemon schema apply completed for schema worker_schema" in caplog.text
 
 
+def test_apply_uses_connection_current_schema_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="ready\n", stderr=""))
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(subprocess, "run", run)
+
+    schema_contract.apply_schema("postgresql://gobby:secret@database.example/gobby")
+
+    assert run.call_args.args[0] == ["/managed/gdaemon", "schema", "apply"]
+
+
+def test_verify_pins_database_and_expected_identity_in_child_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="verified\n", stderr=""))
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(subprocess, "run", run)
+
+    schema_contract.verify_schema("postgresql://gobby:secret@database.example/gobby")
+
+    assert run.call_args.args[0] == ["/managed/gdaemon", "schema", "verify"]
+    assert run.call_args.kwargs["env"]["GOBBY_DATABASE_URL"] == (
+        "postgresql://gobby:secret@database.example/gobby"
+    )
+    assert json.loads(run.call_args.kwargs["env"]["GOBBY_EXPECTED_SCHEMA_IDENTITY"]) == (
+        schema_contract.expected_schema_identity()
+    )
+
+
 def test_apply_reports_actionable_missing_binary(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: None)
 

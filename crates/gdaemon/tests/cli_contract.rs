@@ -82,6 +82,26 @@ fn apply_rejects_mismatched_identity_before_connecting() -> anyhow::Result<()> {
 }
 
 #[test]
+fn verify_rejects_mismatched_identity_before_connecting() -> anyhow::Result<()> {
+    let mut expected: serde_json::Value = serde_json::from_str(&embedded_identity_json()?)?;
+    expected["latest_version"] = serde_json::json!(999);
+
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "verify"])
+        .env(EXPECTED_IDENTITY_ENV, serde_json::to_string(&expected)?)
+        .env(DATABASE_URL_ENV, SECRET_DSN)
+        .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
+
+    assert!(!output.status.success());
+    assert!(stderr.contains("expected schema identity does not match embedded identity"));
+    assert!(!stderr.contains("failed to connect"));
+    assert!(!stderr.contains("schema_user"));
+    assert!(!stderr.contains("do-not-leak"));
+    Ok(())
+}
+
+#[test]
 fn apply_rejects_malicious_schema_before_connecting() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--schema", "bad\";drop schema public;--"])

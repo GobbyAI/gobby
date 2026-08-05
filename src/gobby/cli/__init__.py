@@ -14,6 +14,7 @@ from .clones import clones
 from .communications import comms
 from .cron import cron
 from .daemon import health, restart, start, status, stop
+from .daemon_lease import lease
 from .datastores import datastores as datastores_cli
 from .embeddings import embeddings
 from .extensions import hooks, webhooks
@@ -98,6 +99,7 @@ cli.add_command(stop)
 cli.add_command(restart)
 cli.add_command(status)
 cli.add_command(health)
+cli.add_command(lease)
 cli.add_command(datastores_cli)
 cli.add_command(embeddings)
 cli.add_command(mcp_server)
