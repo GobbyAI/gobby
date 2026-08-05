@@ -7,8 +7,9 @@ import copy
 import json
 import logging
 import os
+import tomllib
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
@@ -275,13 +276,76 @@ def qwen_local_model_values(settings: dict[str, Any]) -> frozenset[str]:
             base_url = configured_model.get("baseUrl")
             if not model_id or not isinstance(base_url, str):
                 continue
-            try:
-                hostname = urlsplit(base_url).hostname
-            except ValueError:
-                continue
-            if hostname is not None and hostname.casefold() in _LOCAL_ENDPOINT_HOSTS:
+            if is_loopback_model_endpoint(base_url):
                 models.add(format_qwen_model_value(model_id, auth_type))
     return frozenset(models)
+
+
+def codex_uses_loopback_model_endpoint(config: Mapping[str, Any]) -> bool:
+    """Return whether Codex's active model provider uses a loopback endpoint."""
+    provider_id = config.get("model_provider")
+    providers = config.get("model_providers")
+    if not isinstance(provider_id, str) or not isinstance(providers, Mapping):
+        return False
+    provider = providers.get(provider_id)
+    return isinstance(provider, Mapping) and is_loopback_model_endpoint(provider.get("base_url"))
+
+
+def claude_uses_loopback_model_endpoint(
+    settings: Mapping[str, Any],
+    *,
+    environment: Mapping[str, str] | None = None,
+) -> bool:
+    """Return whether Claude's effective Anthropic endpoint is loopback-backed."""
+    effective_environment = os.environ if environment is None else environment
+    base_url = effective_environment.get("ANTHROPIC_BASE_URL")
+    if base_url is None:
+        configured_environment = settings.get("env")
+        if isinstance(configured_environment, Mapping):
+            base_url = configured_environment.get("ANTHROPIC_BASE_URL")
+    return is_loopback_model_endpoint(base_url)
+
+
+def is_loopback_model_endpoint(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        hostname = urlsplit(value).hostname
+    except ValueError:
+        return False
+    return hostname is not None and hostname.casefold() in _LOCAL_ENDPOINT_HOSTS
+
+
+def load_codex_config(*, logger: logging.Logger) -> dict[str, Any]:
+    configured_home = os.environ.get("CODEX_HOME")
+    config_dir = Path(configured_home).expanduser() if configured_home else Path.home() / ".codex"
+    config_path = config_dir / "config.toml"
+    if not config_path.exists():
+        return {}
+    try:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        logger.warning("Failed to read Codex config from %s: %s", config_path, exc)
+        return {}
+
+
+def load_claude_settings(
+    *,
+    deep_merge: DeepMerge,
+    logger: logging.Logger,
+) -> dict[str, Any]:
+    configured_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    config_dir = Path(configured_dir).expanduser() if configured_dir else Path.home() / ".claude"
+    return _load_merged_json_settings(
+        (
+            config_dir / "settings.json",
+            Path.cwd() / ".claude" / "settings.json",
+            Path.cwd() / ".claude" / "settings.local.json",
+        ),
+        provider="Claude",
+        deep_merge=deep_merge,
+        logger=logger,
+    )
 
 
 def load_qwen_settings(
@@ -289,12 +353,26 @@ def load_qwen_settings(
     deep_merge: DeepMerge,
     logger: logging.Logger,
 ) -> dict[str, Any]:
+    return _load_merged_json_settings(
+        (
+            Path.home() / ".qwen" / "settings.json",
+            Path.cwd() / ".qwen" / "settings.json",
+        ),
+        provider="Qwen",
+        deep_merge=deep_merge,
+        logger=logger,
+    )
+
+
+def _load_merged_json_settings(
+    settings_paths: Sequence[Path],
+    *,
+    provider: str,
+    deep_merge: DeepMerge,
+    logger: logging.Logger,
+) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     seen_paths: set[Path] = set()
-    settings_paths = [
-        Path.home() / ".qwen" / "settings.json",
-        Path.cwd() / ".qwen" / "settings.json",
-    ]
 
     for settings_path in settings_paths:
         if settings_path in seen_paths or not settings_path.exists():
@@ -303,7 +381,7 @@ def load_qwen_settings(
         try:
             payload = json.loads(settings_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("Failed to read Qwen settings from %s: %s", settings_path, exc)
+            logger.warning("Failed to read %s settings from %s: %s", provider, settings_path, exc)
             continue
         if not isinstance(payload, dict):
             continue

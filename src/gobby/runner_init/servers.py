@@ -15,6 +15,10 @@ from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.servers.http import HTTPServer
 from gobby.servers.provider_model_discovery import (
+    claude_uses_loopback_model_endpoint,
+    codex_uses_loopback_model_endpoint,
+    load_claude_settings,
+    load_codex_config,
     load_qwen_settings,
     qwen_local_model_values,
 )
@@ -35,6 +39,16 @@ def _local_model_metadata_exclusions() -> frozenset[tuple[str, str]]:
     return frozenset(("qwen", model) for model in qwen_local_model_values(settings))
 
 
+def _local_provider_metadata_exclusions() -> frozenset[str]:
+    providers: set[str] = set()
+    if codex_uses_loopback_model_endpoint(load_codex_config(logger=logger)):
+        providers.add("codex")
+    claude_settings = load_claude_settings(deep_merge=deep_merge, logger=logger)
+    if claude_uses_loopback_model_endpoint(claude_settings):
+        providers.add("claude")
+    return frozenset(providers)
+
+
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
     web_chat_session_registry = WebChatSessionRegistry()
@@ -48,6 +62,7 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.config_store,
         run_db=getattr(runner.db_executor, "run", None),
         excluded_models=_local_model_metadata_exclusions,
+        excluded_providers=_local_provider_metadata_exclusions,
     )
     provider_capability_service = CapabilityRefreshCoordinator(
         provider_capability_store,

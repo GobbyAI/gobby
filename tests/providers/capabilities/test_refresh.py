@@ -23,7 +23,11 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
-from gobby.servers.provider_model_discovery import qwen_local_model_values
+from gobby.servers.provider_model_discovery import (
+    claude_uses_loopback_model_endpoint,
+    codex_uses_loopback_model_endpoint,
+    qwen_local_model_values,
+)
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -331,6 +335,23 @@ def test_coverage_audit_skips_configured_local_models(
     assert local_model not in messages[0]
 
 
+def test_coverage_audit_skips_provider_using_local_endpoint(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _MemoryStore(_snapshot("synthetic", "local-model", context_length=None))
+    auditor = ModelMetadataCoverageAuditor(
+        store,
+        _MetadataStore(),
+        _ConfigStore(),
+        excluded_providers=lambda: frozenset({"synthetic"}),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.providers.capabilities.coverage"):
+        auditor.audit()
+
+    assert not caplog.records
+
+
 def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
     settings = {
         "modelProviders": {
@@ -355,6 +376,34 @@ def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
 
     assert qwen_local_model_values(settings) == frozenset(
         {"lm-studio-model(openai)", "ollama-model(anthropic)"}
+    )
+
+
+def test_codex_detects_active_loopback_model_provider() -> None:
+    config = {
+        "model_provider": "local-endpoint",
+        "model_providers": {
+            "local-endpoint": {"base_url": "http://localhost:1234/v1"},
+            "remote-endpoint": {"base_url": "https://models.example.test/v1"},
+        },
+    }
+
+    assert codex_uses_loopback_model_endpoint(config) is True
+    assert (
+        codex_uses_loopback_model_endpoint({**config, "model_provider": "remote-endpoint"}) is False
+    )
+
+
+def test_claude_detects_effective_loopback_model_endpoint() -> None:
+    settings = {"env": {"ANTHROPIC_BASE_URL": "http://[::1]:1234/v1"}}
+
+    assert claude_uses_loopback_model_endpoint(settings, environment={}) is True
+    assert (
+        claude_uses_loopback_model_endpoint(
+            settings,
+            environment={"ANTHROPIC_BASE_URL": "https://models.example.test/v1"},
+        )
+        is False
     )
 
 

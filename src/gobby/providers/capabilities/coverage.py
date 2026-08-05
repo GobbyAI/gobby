@@ -21,9 +21,14 @@ logger = logging.getLogger(__name__)
 _WARNING_MODEL_LIMIT = 10
 RunDatabase = Callable[..., Awaitable[object]]
 ExcludedModels = Callable[[], frozenset[tuple[str, str]]]
+ExcludedProviders = Callable[[], frozenset[str]]
 
 
 def _no_excluded_models() -> frozenset[tuple[str, str]]:
+    return frozenset()
+
+
+def _no_excluded_providers() -> frozenset[str]:
     return frozenset()
 
 
@@ -52,12 +57,14 @@ class ModelMetadataCoverageAuditor:
         *,
         run_db: RunDatabase | None = None,
         excluded_models: ExcludedModels | None = None,
+        excluded_providers: ExcludedProviders | None = None,
     ) -> None:
         self._capability_store = capability_store
         self._model_metadata_store = model_metadata_store
         self._config_store = config_store
         self._run_db = run_db
         self._excluded_models = excluded_models or _no_excluded_models
+        self._excluded_providers = excluded_providers or _no_excluded_providers
         self._lock = Lock()
         self._unresolved: dict[str, frozenset[str]] = {}
         self._missing_targets: dict[str, frozenset[str]] = {}
@@ -73,9 +80,14 @@ class ModelMetadataCoverageAuditor:
                 model_metadata_alias_source_key(provider, model)
                 for provider, model in self._excluded_models()
             }
+            excluded_providers = {
+                provider.strip().lower() for provider in self._excluded_providers()
+            }
             unresolved: dict[str, frozenset[str]] = {}
             missing_targets: dict[str, frozenset[str]] = {}
             for snapshot in self._capability_store.get_all_snapshots():
+                if snapshot.provider.strip().lower() in excluded_providers:
+                    continue
                 provider_unresolved: set[str] = set()
                 provider_missing_targets: set[str] = set()
                 for model in snapshot.models:
