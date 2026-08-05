@@ -39,6 +39,7 @@
 | [HTTP Endpoints](../guides/http-endpoints.md) | REST API documentation |
 | [MCP Tools](../guides/mcp-tools.md) | MCP tool documentation |
 | [Hook Schemas](../guides/hook-schemas.md) | Provider hook payload schemas |
+| [Repository History Scrub](./repository-history-scrub.md) | Decision and coordinated rewrite runbook for machine-local state history |
 
 ## Quick Start
 
