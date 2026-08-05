@@ -39,6 +39,15 @@ def _lines(count: int, *, first: str = "line 0") -> str:
     return "\n".join([first, *(f"line {index}" for index in range(1, count))])
 
 
+def _rust_with_inline_tests(count: int) -> str:
+    prefix = ["pub fn value() -> usize { 1 }", "", "#[cfg(test)]", "mod tests {"]
+    suffix = ["}"]
+    body_count = count - len(prefix) - len(suffix)
+    return "\n".join(
+        [*prefix, *(f"    // inline test line {index}" for index in range(body_count)), *suffix]
+    )
+
+
 def _write_lines(root: Path, relative_path: str, count: int) -> Path:
     path = root / relative_path
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +95,25 @@ def test_new_thousand_line_file_triggers_for_every_supported_extension(
     )
 
     assert result == [path]
+
+
+@pytest.mark.parametrize(
+    ("line_count", "expected"),
+    [(999, []), (1_000, ["crates/example/src/lib.rs"])],
+)
+def test_rust_inline_tests_count_toward_file_ceiling(
+    tmp_path: Path,
+    line_count: int,
+    expected: list[str],
+) -> None:
+    path = "crates/example/src/lib.rs"
+
+    result = projected_monolith_paths(
+        {"file_path": path, "content": _rust_with_inline_tests(line_count)},
+        tmp_path,
+    )
+
+    assert result == expected
 
 
 def test_targeted_edit_allows_999_lines_without_growth(tmp_path: Path) -> None:
@@ -181,6 +209,7 @@ def test_apply_patch_creation_and_deletion_are_projected(tmp_path: Path) -> None
         "docs/example.js",
         "generated/client.py",
         "vendor/library.rs",
+        "crates/example/src/module/tests.rs",
         "baselines/output.css",
         "fixtures/sample.sh",
         "src/schema.generated.ts",

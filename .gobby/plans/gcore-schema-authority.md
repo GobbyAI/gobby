@@ -2924,11 +2924,12 @@ entry below.
 | 4.6.5 indexing.extra_excludes | #19658 | Open; configuration and indexing behavior |
 | 4.6.6 machine attribution | #19659 | Open; artifact attribution and machine-scoped pruning |
 | 4.6.7 git-history scrub | #19660 | Open; pre-publication decision and runbook |
-| 4.6.8 Rust inline-test linter | #19661 | Open; file-size enforcement and close-out evidence |
-| 4.6.8 disabled `*-steps` keep-records | No task | Confirmed: all 29 intentionally disabled rows remain task-free |
+| 4.6.8 Rust inline-test linter | #19661 | Implemented: full-file Rust counts include inline tests; 999/1,000-line boundary and out-of-line exemption tests added |
+| 4.6.8 disabled `*-steps` keep-records | No task | Confirmed 2026-08-05: DB lists exactly 29 agent-sourced step workflows, all disabled; no tasks generated |
+| Repository-wide Rust inline-test extraction | #19673 | Follow-up outside #19379; parser-backed extraction and enforcement across all crates |
 | #17435 | Existing open epic | Linked by #19659 for remote-session content/path contracts |
 | #17437 | Existing open epic | Linked by #19659 for machine-scoped worktree/clone contracts |
-| #19365 | Existing open/escalated task | Recorded; no duplicate filed |
+| #19365 | Existing open/escalated/blocked task | Recorded; no duplicate filed |
 | #19366 | Existing closed task | Recorded; no duplicate filed |
 | #19367 | Existing closed task | Recorded; no duplicate filed |
 | M0 shared-datastore implementation | #19585 | Existing open implementation linked to #17488 |

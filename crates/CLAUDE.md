@@ -21,8 +21,9 @@ cargo test -p gobby-code
 cargo test <name> -p gobby-code
 ```
 
-Keep large unit-test modules out of production Rust files. Place the tests at
-`<module>/tests.rs` and declare them from `<module>.rs` with:
+Inline `#[cfg(test)]` modules count toward the owning production file's
+1,000-line ceiling. Keep large unit-test modules out of production Rust files.
+Place the tests at `<module>/tests.rs` and declare them from `<module>.rs` with:
 
 ```rust
 #[cfg(test)]

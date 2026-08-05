@@ -79,6 +79,7 @@ def is_monolith_guard_path(path: str) -> bool:
     stem = PurePosixPath(filename).stem
     test_markers = (
         stem == "conftest",
+        pure_path.suffix.lower() == ".rs" and stem == "tests",
         stem.startswith("test_"),
         stem.endswith("_test"),
         stem.endswith("-test"),
