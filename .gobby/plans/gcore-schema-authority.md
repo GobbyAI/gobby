@@ -108,10 +108,10 @@ other authorized deletion.
    retention plan's. Full backup — docker volumes + pg_dump + Qdrant
    snapshots + FalkorDB RDB — precedes all destructive work and re-runs
    immediately before the purge, so nothing is lost.
-12. Out-of-scope disposition (Josh, 2026-07-30): every deferred-work item in
-   Out of Scope becomes a leaf task in a follow-up epic filed at this plan's
-   close-out — tasks are NOT created during planning or execution. The epic
-   also carries plan-drafting tasks fleshing out the drafted #17488-adjacent
+12. Remaining-work disposition (Josh, 2026-07-30; corrected 2026-08-05):
+   every untracked obligation remains under #19379 in a child epic created by
+   4.6, and the open child blocks root closure. The child also carries
+   plan-drafting tasks fleshing out the drafted #17488-adjacent
    plans (future retention plan; hub-PC datastore move; shared daemon with
    machine-local execution / feature-crate build-out per the
    `two-daemon-hub.md` roadmap). Already-tracked items link their existing
@@ -220,7 +220,7 @@ check, unchanged).
 
 Targets:
 - `src/gobby/storage/migrations/355_reconcile_346_cron_display_name.sql`
-- `tests/storage/test_migration_contract.py::*` — scope-reason: migration-355 contract coverage added
+- `tests/storage/test_migration_contract.py`
 
 Slot 346 was consumed on the live hub by an abandoned tmux-input-arbiter WIP
 (never committed on any branch), so the repo's `346_cron_display_name.sql` is
@@ -384,9 +384,9 @@ max age (default 24h) and target-DB stable-identity match at apply time;
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations.py::*` — scope-reason: destructive-marker directive, halt-before-destructive gate, contiguity guard, and batch resume land across the runner
+- `src/gobby/storage/migrations.py`
 - `src/gobby/cli/schema.py::*` — scope-reason: destructive apply changes span the schema command surface
-- `tests/storage/test_migration_contract.py::*` — scope-reason: new destructive-gate, marker-audit, and batch-resume contract tests
+- `tests/storage/test_migration_contract.py`
 
 `MigrationRunner.apply_pending` (`storage/migrations.py:122-150`) applies
 every pending file unattended — from daemon boot
@@ -702,7 +702,7 @@ Dropped set: `savings_ledger`, `session_memories`, `rule_overrides`,
 Targets:
 - `src/gobby/storage/migrations/357_drop_dead_tables.sql`
 - `src/gobby/workflows/engine/core.py::*` — scope-reason: rule_overrides read steps removed from the engine
-- `tests/storage/test_migration_contract.py::*` — scope-reason: dropped-table fixtures updated
+- `tests/storage/test_migration_contract.py`
 
 Migration 357 (destructive-marked — 0.5's gated path) drops, each
 re-verified by row count + code refs before drop:
@@ -740,7 +740,7 @@ collection; all recall_* tables (exempt).
 
 Targets:
 - `src/gobby/storage/migrations/358_drop_dead_columns.sql`
-- `tests/storage/test_migration_contract.py::*` — scope-reason: dropped-column/index fixtures updated
+- `tests/storage/test_migration_contract.py`
 
 Migration 358 (destructive-marked — 0.5's gated path) drops the
 strict-pass dead columns: `tasks.assignee` (zero
@@ -1098,14 +1098,14 @@ transport's bound parameter. Delete the retired executor module; remove
 
 Targets:
 - `src/gobby/storage/migrations/367_dream_check_tighten.sql`
-- `src/gobby/memory/dream/duplicates.py::*` — scope-reason: whole file deleted
+- `src/gobby/memory/dream/duplicates.py`
 - `src/gobby/memory/dream/planner.py::*` — scope-reason: merge-arm symbols removed per the verified manifest
 - `src/gobby/memory/dream/models.py::*` — scope-reason: DuplicateGroup + merge/supersede action names removed
 - `src/gobby/memory/dream/orchestrator.py::*` — scope-reason: duplicate_groups plumbing removed
 - `src/gobby/memory/dream/apply.py::*` — scope-reason: merge/legacy arms removed; revert gains the fail-closed forfeiture check
 - `src/gobby/memory/dream/storage_journal.py::*` — scope-reason: merge-only journal helpers removed
 - `src/gobby/memory/dream/storage_runs.py::*` — scope-reason: revert_forfeited joins the run-status vocabulary and terminal-status set
-- `src/gobby/memory/dream/storage_schema.py::*` — scope-reason: CHECK mirror updated in lockstep with migration 367
+- `src/gobby/memory/dream/storage_schema.py`
 
 Feature is LIVE — removal exactly per the verified manifest, nothing more.
 Verification (call-graph + runtime, completed during planning): `plan.py:23`
@@ -1324,8 +1324,8 @@ reinstall gcode.
 Targets:
 - `src/gobby/storage/migrations/364_identity_cutover_journal.sql`
 - `src/gobby/storage/migrations/365_machines_uuid_identity.sql`
-- `src/gobby/storage/identity_cutover.py`
-- `src/gobby/utils/durable_file.py`
+- `src/gobby/storage/identity_cutover.py::*` — scope-reason: identity remap, verification, and retirement span the cutover module
+- `src/gobby/utils/durable_file.py::*` — scope-reason: locking and durable replacement span the abstraction
 - `src/gobby/runner_init/helpers.py::*` — scope-reason: boot keeps only non-epoch identity work — fresh-identity registration and tombstone re-key
 - `src/gobby/cli/hub_maintenance.py::*` — scope-reason: identity-cutover orchestration spans the maintenance command module
 - `src/gobby/utils/machine_id.py::*` — scope-reason: generator becomes uuid4-only; file read/write moves to durable_file
@@ -1503,10 +1503,10 @@ Targets:
 - `src/gobby/storage/machines.py::*` — scope-reason: FK-facing lookups follow machines.id
 - `src/gobby/servers/models.py::*` — scope-reason: machine_id leaves the web-chat/register request models
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::*` — scope-reason: pipeline session lookup re-keys onto source
-- `web/src/lib/browserMachineId.ts::*` — scope-reason: whole file deleted
+- `web/src/lib/browserMachineId.ts`
 - `web/src/hooks/useChat/sessionRecords.ts::*` — scope-reason: wire contract drops browser machine identity
 - `docs/contracts/identity-model.md`
-- `tests/storage/test_migration_contract.py::*` — scope-reason: UUID/TEXT column allowlists updated
+- `tests/storage/test_migration_contract.py`
 
 `sessions.machine_id` becomes `UUID NULL REFERENCES machines(id)`
 (migration 366, destructive-marked — 0.5's gated path). It is part
@@ -2220,8 +2220,8 @@ attestable live evidence, not prose).
 `kind: deliverable`
 
 Targets:
-- `src/gobby/storage/migrations.py::*` — scope-reason: mismatch-fatal verification + at-rest contiguity audit across the runner
-- `tests/storage/test_migration_contract.py::*` — scope-reason: hijack-scenario and contiguity contract tests
+- `src/gobby/storage/migrations.py`
+- `tests/storage/test_migration_contract.py`
 
 The bookkeeping columns landed in P0 — migration 354 (shipped by 0.7)
 adds nullable
@@ -2258,9 +2258,9 @@ Ships WITH the flatten (3.2 consumes it). This machinery ports to gcore in P4
 
 Targets:
 - `scripts/flatten_schema.py`
-- `src/gobby/storage/postgres_baseline_schema.sql::*` — scope-reason: baseline regenerated wholesale from the migrated-fresh schema
-- `src/gobby/storage/migrations.py::*` — scope-reason: BASELINE_VERSION reset + baseline-row bookkeeping semantics
-- `tests/storage/test_migration_contract.py::*` — scope-reason: pinned ranges updated; cutover crash/skew tests
+- `src/gobby/storage/postgres_baseline_schema.sql`
+- `src/gobby/storage/migrations.py`
+- `tests/storage/test_migration_contract.py`
 
 Reproducible flatten script: build fresh-from-migrations schema, emit the new
 baseline (preserving seed INSERTs and the gcode/gwiki standalone-DDL adoption
@@ -2331,17 +2331,17 @@ edge, which every later P4 deliverable inherits transitively.
 
 Targets:
 - `crates/gcore/assets/schema/baseline.sql`
-- `crates/gcore/assets/schema/catalog.manifest.json`
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: generated catalog oracle changes as one artifact
 - `crates/gcore/src/schema/mod.rs`
-- `crates/gcore/src/schema/runner.rs`
-- `crates/gcore/src/schema/assets.rs`
-- `crates/gcore/src/schema/identity.rs`
-- `crates/gcore/src/schema/verify.rs`
-- `crates/gcore/src/schema/gate.rs`
+- `crates/gcore/src/schema/runner.rs::*` — scope-reason: schema apply authority spans the runner module
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embedded schema assets and hashes change together
+- `crates/gcore/src/schema/identity.rs::*` — scope-reason: schema identity contract spans the module
+- `crates/gcore/src/schema/verify.rs::*` — scope-reason: verification contracts span the module
+- `crates/gcore/src/schema/gate.rs::*` — scope-reason: destructive-apply gating spans the module
 - `crates/gcore/Cargo.toml`
 - `crates/gcore/tests/public_boundary.rs::*` — scope-reason: manifest string-assertions follow the new schema module
-- `crates/gcore/tests/fixtures/hub_backup_manifest/v2_roundtrip.json`
-- `crates/gcore/tests/catalog_manifest_freshness.rs`
+- `crates/gcore/tests/fixtures/hub_backup_manifest/v2_roundtrip.json::*` — scope-reason: fixture validates the complete manifest payload
+- `crates/gcore/tests/catalog_manifest_freshness.rs::*` — scope-reason: freshness coverage spans the test module
 - `.github/workflows/rust-ci.yml::*` — scope-reason: catalog-manifest staleness gate wired into CI
 
 The runner is born as a module tree, never a monolith (Codex F14 — the
@@ -2421,7 +2421,7 @@ is gcore's; CRUD stays put.
 
 Targets:
 - `crates/gdaemon/Cargo.toml`
-- `crates/gdaemon/src/main.rs`
+- `crates/gdaemon/src/main.rs::*` — scope-reason: CLI schema commands span the binary entrypoint
 - `Cargo.toml`
 - `Cargo.lock`
 - `.github/workflows/release-gdaemon.yml`
@@ -2492,19 +2492,19 @@ port-60890 sidecar reservation is superseded by this naming; Josh:
 Targets:
 - `src/gobby/storage/hub/postgres.py::*` — scope-reason: apply_migrations becomes the gdaemon shell-out with DSN pinning
 - `src/gobby/storage/hub/runtime.py::*` — scope-reason: all runtime entry points inherit the shell-out
-- `src/gobby/storage/migrations.py::*` — scope-reason: whole file deleted
+- `src/gobby/storage/migrations.py`
 - `src/gobby/cli/schema.py::*` — scope-reason: Python schema command retirement spans the command module
 - `src/gobby/cli/install_setup.py::*` — scope-reason: gdaemon provisioning moves before DB init; failures become fatal
 - `src/gobby/utils/native_bin.py::*` — scope-reason: gdaemon joins the managed-binary resolution and floor set
-- `src/gobby/storage/postgres_baseline_schema.sql::*` — scope-reason: whole file deleted
+- `src/gobby/storage/postgres_baseline_schema.sql`
 - `scripts/generate_schema_expected_identity.py`
-- `src/gobby/storage/schema_expected_identity.json`
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: generated six-field identity mirror changes atomically
 - `pyproject.toml`
 - `.github/workflows/ci.yml::*` — scope-reason: gdaemon built before the pytest job; identity staleness gate added
 - `scripts/schema_diff.py`
 - `tests/fixtures/postgres.py::*` — scope-reason: fixtures build schemas through gdaemon
-- `tests/storage/test_migration_contract.py::*` — scope-reason: retired; successor contract tests land in test_schema_contract.py
-- `tests/storage/test_schema_contract.py`
+- `tests/storage/test_migration_contract.py`
+- `tests/storage/test_schema_contract.py::*` — scope-reason: gdaemon shell-out and failure contracts span the test module
 
 `PostgresHubDatabase.apply_migrations` becomes a shell-out to `gdaemon
 schema apply`, resolved via `resolve_native_bin("gdaemon")`
@@ -2597,18 +2597,18 @@ client-DSN seam; remote-API backend replaces it later.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/src/schema/sweep.rs`
-- `crates/gdaemon/src/main.rs`
+- `crates/gcore/src/schema/sweep.rs::*` — scope-reason: runtime-DDL sweep ownership spans the module
+- `crates/gdaemon/src/main.rs::*` — scope-reason: sweep CLI exposure spans the binary entrypoint
 - `src/gobby/runner_maintenance/storage_hygiene.py::*` — scope-reason: Python runtime-DDL sweep removal spans the storage-hygiene module
-- `src/gobby/memory/dream/storage_schema.py::*` — scope-reason: whole file deleted
+- `src/gobby/memory/dream/storage_schema.py`
 - `src/gobby/memory/dream/storage.py::*` — scope-reason: ensure_dream_schema call sites removed
 - `src/gobby/memory/dream/service.py::*` — scope-reason: memoized ensure calls removed
 - `src/gobby/storage/bin_update_state.py::*` — scope-reason: dead schema constant removed
 - `src/gobby/storage/tasks/_dispatch_mutex.py::*` — scope-reason: test-only ensure_table removed
-- `src/gobby/storage/tasks/_stage_state_schema.py::*` — scope-reason: whole file deleted
+- `src/gobby/storage/tasks/_stage_state_schema.py`
 - `src/gobby/storage/tasks/_validation_backoff.py::*` — scope-reason: test-only ensure_table removed
 - `src/gobby/storage/tasks/_stage_registry.py::*` — scope-reason: per-construction column probe removed
-- `tests/storage/test_schema_contract.py`
+- `tests/storage/test_schema_contract.py::*` — scope-reason: runtime-DDL absence assertions span the test module
 
 Codex Critical, verified 2026-07-31 with a full-tree sweep: six runtime-DDL
 sites exist; only two execute in production. `ensure_dream_schema`
@@ -2674,7 +2674,7 @@ Python migration runner's own bookkeeping DDL (deleted with 4.3).
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/src/schema/external.rs`
+- `crates/gcore/src/schema/external.rs::*` — scope-reason: shared gcode and gwiki DDL catalog spans the module
 - `crates/gcode/src/setup/ddl.rs::*` — scope-reason: independent DDL strings replaced by gcore-exported definitions
 - `crates/gwiki/src/setup.rs::*` — scope-reason: independent DDL strings replaced by gcore-exported definitions
 
@@ -2705,41 +2705,43 @@ gcore definitions the baseline embeds. Rebuild + reinstall gcode/gwiki.
 - 4.5.3 - Baseline adoption seam still classifies and adopts standalone
   tables. test: `tests/storage/hub/test_postgres_baseline_application.py`.
 
-### 4.6 Close-out: file the follow-up epic for every deferral [category: config] (depends: 4.4, 4.5, 5.2, 5.3, 2.7, 2.9, 2.11, 2.13, 2.14, 2.15, 2.17, 2.20, 2.22, 2.23, 2.24, 2.25)
+### 4.6 Close-out: parent remaining obligations under the root epic [category: config] (depends: 4.4, 4.5, 5.2, 5.3, 2.7, 2.9, 2.11, 2.13, 2.14, 2.15, 2.17, 2.20, 2.22, 2.23, 2.24, 2.25)
 `kind: deliverable`
 
 Targets:
 - `.gobby/plans/gcore-schema-authority.md`
 
-Decision 12 requires a follow-up epic materializing every Out of Scope
-deferral, but no deliverable owned its creation — nothing gated root
-closure on it (Codex F16, blocker). This final leaf owns it: create the
-follow-up epic via gobby-tasks, one leaf task per deferred obligation
+Decision 12 requires a child epic materializing every remaining obligation,
+but no deliverable owned its creation — nothing gated root closure on the
+work itself (Codex F16, blocker). This final leaf owns it: create the child
+epic under #19379 via gobby-tasks, one leaf task per untracked obligation
 below, link already-tracked items by their existing ids instead of
-duplicating, and record the epic + task ids in this plan's Task Mapping
-before the root epic closes. Because 4.6 is a leaf of this epic, the
-root cannot close without it — the gate is structural. Fleet management
+duplicating, and record the epic + task ids in this plan's Task Mapping.
+The child epic and its leaves remain inside #19379, so the root cannot close
+until the work completes. Fleet management
 (`machines.owner_user_id` real FK + enrollment, M3) is explicitly
 excluded per Decision 12.
 
 **Acceptance:**
 
-- 4.6.1 - Follow-up epic exists; retention-policy plan-drafting task
-  filed (TTL/cadence for metrics_events, token_events, loop_progress,
+- 4.6.1 - Remaining-work child epic exists under #19379 and owns the
+  retention-policy plan-drafting task (TTL/cadence for metrics_events,
+  token_events, loop_progress,
   step_executions, spans volume, recall_* growth). behavior: "task id in
   close-out ledger" in session transcript.
 - 4.6.2 - Hub-PC datastore-move plan-drafting task filed. behavior:
   "task id in close-out ledger" in session transcript.
-- 4.6.3 - Shared-daemon / feature-crate build-out plan-drafting task
-  filed (two-daemon-hub roadmap). behavior: "task id in close-out
-  ledger" in session transcript.
+- 4.6.3 - Existing shared-daemon / feature-crate build-out planning
+  (#17488/#19647, two-daemon-hub roadmap) is linked without duplication;
+  #19647 blocks the remaining-work child epic. behavior: "task id and blocking
+  edge in close-out ledger" in session transcript.
 - 4.6.4 - Hot-path perf task filed (projection-cleanup DELETEs +
   vector-branch enqueue bug, triage polling cadence,
   `gh_triage_build_dispatches.task_id` FK index). behavior: "task id in
   close-out ledger" in session transcript.
-- 4.6.5 - `indexing.extra_excludes` follow-up task filed. behavior:
+- 4.6.5 - `indexing.extra_excludes` child task filed. behavior:
   "task id in close-out ledger" in session transcript.
-- 4.6.6 - Machine-attribution deferral task filed (attachments blob
+- 4.6.6 - Machine-attribution task filed (attachments blob
   attribution, prune machine-scoping, `code_index_prune_dirty_projects`
   scoping) with #17435/#17437 linked, not duplicated. behavior: "task id
   in close-out ledger" in session transcript.
@@ -2777,18 +2779,17 @@ fresh-install and pytest paths green on the flattened baseline.
 P4: gdaemon
 apply/verify/version round-trip; two consumers proven (daemon boot + pytest);
 lockstep guard demonstrated; gcode/gwiki setup DDL sourced from gcore
-(4.5); close-out epic filed with per-deferral tasks (4.6). End-to-end:
+(4.5); remaining-work child epic parented under #19379 (4.6). End-to-end:
 `uv run gobby restart` + task CRUD,
 memory recall, gcode search, wiki search smoke pass on the migrated hub.
 
-## Out of Scope (recorded so nothing is lost)
+## Remaining obligations kept inside #19379
 `kind: framing`
 
-**Follow-up-epic requirement (Decision 12):** each deferred-work item below
-becomes a leaf task in a follow-up epic filed at this plan's close-out — not
-created now. Deliverable 4.6 owns the filing, with one acceptance item
-per deferred obligation, and gates root-epic closure structurally
-(Codex F16). That epic also carries plan-drafting tasks fleshing out the
+**Remaining-work child epic (Decision 12):** each untracked item below becomes
+a leaf task in a child epic under #19379. Deliverable 4.6 owns the filing,
+with one acceptance item per obligation, and the child epic gates root closure
+structurally (Codex F16). It also carries plan-drafting tasks fleshing out the
 drafted #17488-adjacent plans (future retention plan; hub-PC datastore move;
 shared daemon with machine-local execution / feature-crate build-out per the
 `two-daemon-hub.md` roadmap). Items already tracked link their existing ids
@@ -2821,7 +2822,7 @@ entry below.
   machine scoping; global `gcode prune`'s root_path-staleness heuristic
   must become machine-scoped before it is safe on a shared hub (Codex
   review — see 5.3's targeted-deletion workaround); `machines.owner_user_id` real FK + enrollment (M3 —
-  fleet management: excluded from the follow-up epic, stays put pre-0.5.0).
+  fleet management: excluded from #19379, stays put pre-0.5.0).
 - Git-history scrub of previously committed `tasks.jsonl`/`memories.jsonl`
   before the repo goes public (filter-repo decision).
 - File-size-ceiling linter for Rust inline tests (policy applied via 2.17;
@@ -2844,8 +2845,8 @@ entry below.
   handoff.
 - Task tracking: new root epic; every deliverable maps 1:1 to an expansion
   leaf via the adversary-written M1 manifest.
-- Close-out requirement: 4.6 files the follow-up epic materializing Out
-  of Scope per Decision 12 before this plan's root epic closes.
+- Close-out requirement: 4.6 creates the remaining-work child epic under
+  #19379; its open leaves and linked #19647 blocker prevent root closure.
 - Migration allocation manifest (review-driven; disk head 353 at drafting —
   re-verified against disk + live `MAX(version)` at expansion; the root
   epic owns the range under one serialized allocator; independent "next
@@ -2905,16 +2906,33 @@ entry below.
   moves to the new PC, all of P3 (flatten) after 0.3 + 3.0, P4 after P3
   (4.1's `depends: 3.2` edge), 4.4 after 2.4 (the sweep it re-homes must
   exist), 4.6 last — its `depends:` list names the terminal leaf of
-  every phase chain, so the follow-up epic files before root closure by
-  construction.
+  every phase chain, so the remaining-work child epic is created last and then
+  keeps root closure gated until its obligations complete.
 
 ## Task Mapping
 `kind: framing`
 
 <!-- Updated after task creation: root epic, phase sub-epics, leaves, and
-4.6's follow-up-epic ids land here at close-out. -->
+4.6's remaining-work child ids land here at close-out. -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+| 4.6 remaining-work child epic | #19379.19654 | Open under root #19379; owns the remaining leaves |
+| 4.6.1 retention policy | #19655 | Open; TTL and cleanup cadence plan |
+| 4.6.2 Hub-PC datastore move | #19656 | Open; migration, cutover, and rollback plan |
+| 4.6.3 shared-daemon topology | #17488 / #19647 | Existing open epic and research leaf; linked instead of duplicated |
+| 4.6.4 hot-path performance | #19657 | Open; cleanup DELETEs, vector enqueue, polling cadence, and FK index |
+| 4.6.5 indexing.extra_excludes | #19658 | Open; configuration and indexing behavior |
+| 4.6.6 machine attribution | #19659 | Open; artifact attribution and machine-scoped pruning |
+| 4.6.7 git-history scrub | #19660 | Open; pre-publication decision and runbook |
+| 4.6.8 Rust inline-test linter | #19661 | Open; file-size enforcement and close-out evidence |
+| 4.6.8 disabled `*-steps` keep-records | No task | Confirmed: all 29 intentionally disabled rows remain task-free |
+| #17435 | Existing open epic | Linked by #19659 for remote-session content/path contracts |
+| #17437 | Existing open epic | Linked by #19659 for machine-scoped worktree/clone contracts |
+| #19365 | Existing open/escalated task | Recorded; no duplicate filed |
+| #19366 | Existing closed task | Recorded; no duplicate filed |
+| #19367 | Existing closed task | Recorded; no duplicate filed |
+| M0 shared-datastore implementation | #19585 | Existing open implementation linked to #17488 |
+| Fleet management (`machines.owner_user_id`, enrollment, M3) | Excluded | Explicitly outside #19379 per Decision 12 |
 
 ## M1 Task Manifest
 `kind: manifest`
@@ -3959,7 +3977,7 @@ entry below.
   tdd: true
   source_section: '4.5'
   implementation_domain: backend
-- title: 'Close-out: file the follow-up epic for every deferral'
+- title: 'Close-out: parent remaining obligations under the root epic'
   category: config
   task_type: feature
   depends_on:
@@ -3979,25 +3997,27 @@ entry below.
   - '2.23'
   - '2.24'
   - '2.25'
-  validation_criteria: '4.6.1: Follow-up epic exists; retention-policy plan-drafting
-    task filed (TTL/cadence for metrics_events, token_events, loop_progress, step_executions,
+  validation_criteria: '4.6.1: Remaining-work child epic exists under #19379 and owns
+    the retention-policy plan-drafting task (TTL/cadence for metrics_events, token_events,
+    loop_progress, step_executions,
     spans volume, recall_* growth). behavior: "task id in close-out ledger" in session
     transcript.
 
     4.6.2: Hub-PC datastore-move plan-drafting task filed. behavior: "task id in close-out
     ledger" in session transcript.
 
-    4.6.3: Shared-daemon / feature-crate build-out plan-drafting task filed (two-daemon-hub
-    roadmap). behavior: "task id in close-out ledger" in session transcript.
+    4.6.3: Existing shared-daemon / feature-crate build-out planning #17488/#19647
+    is linked without duplication, and #19647 blocks the remaining-work child epic.
+    behavior: "task id and blocking edge in close-out ledger" in session transcript.
 
     4.6.4: Hot-path perf task filed (projection-cleanup DELETEs + vector-branch enqueue
     bug, triage polling cadence, `gh_triage_build_dispatches.task_id` FK index). behavior:
     "task id in close-out ledger" in session transcript.
 
-    4.6.5: `indexing.extra_excludes` follow-up task filed. behavior: "task id in close-out
+    4.6.5: `indexing.extra_excludes` child task filed. behavior: "task id in close-out
     ledger" in session transcript.
 
-    4.6.6: Machine-attribution deferral task filed (attachments blob attribution,
+    4.6.6: Machine-attribution task filed (attachments blob attribution,
     prune machine-scoping, `code_index_prune_dirty_projects` scoping) with #17435/#17437
     linked, not duplicated. behavior: "task id in close-out ledger" in session transcript.
 
