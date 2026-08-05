@@ -50,7 +50,9 @@ __all__ = [
     "Migration",
     "MigrationRunner",
     "MigrationUnsupportedError",
+    "MIGRATION_LOCK_SQL",
     "_split_statements_respecting_dollar_quotes",
+    "baseline_checksum",
     "latest_known_version",
 ]
 
@@ -59,7 +61,7 @@ class MigrationUnsupportedError(Exception):
     """Raised when database version is too old or bookkeeping is corrupt."""
 
 
-BASELINE_VERSION = 305
+BASELINE_VERSION = 375
 
 
 _MIGRATION_FILE_RE = re.compile(r"^(?P<version>\d+)_(?P<name>.+?)(?:\.postgres)?\.sql$")
@@ -98,9 +100,8 @@ class DestructiveMigrationContext:
 
 _NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
 _DESTRUCTIVE_DIRECTIVE = "-- gobby:destructive"
-_DESTRUCTIVE_VERSION_OVERRIDES = frozenset({361, 371, 373})
 _BOOKKEEPING_VERSION = 354
-_MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
+MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
 _SQL_IDENTIFIER_PATTERN = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
 _CONCURRENT_INDEX_RE = re.compile(
     rf"CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+"
@@ -208,11 +209,11 @@ class MigrationRunner:
                 "PostgreSQL migration orchestration requires an autocommit connection."
             )
         with closing(self._autocommit_connection()) as connection:
-            connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
+            connection.execute(f"SELECT pg_advisory_lock({MIGRATION_LOCK_SQL})")
             try:
                 yield
             finally:
-                connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+                connection.execute(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_SQL})")
 
     def _read_current_schema_head(self) -> int:
         with self._hub.transaction() as txn:
@@ -236,7 +237,7 @@ class MigrationRunner:
                 "Destructive migration apply requires a session advisory-lock connection."
             )
         with closing(self._autocommit_connection()) as lock_connection:
-            lock_connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
+            lock_connection.execute(f"SELECT pg_advisory_lock({MIGRATION_LOCK_SQL})")
             try:
                 self._audit_migration_state()
                 migrations = self._discover_migrations()
@@ -263,7 +264,7 @@ class MigrationRunner:
                         )
                     self._apply_transactional_locked(migration)
             finally:
-                lock_connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+                lock_connection.execute(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_SQL})")
 
     def _load_or_create_batch_plan(
         self,
@@ -560,7 +561,7 @@ class MigrationRunner:
 
             if version == BASELINE_VERSION:
                 expected_filename = f"baseline@{BASELINE_VERSION}"
-                expected_checksum = _baseline_checksum()
+                expected_checksum = baseline_checksum()
             else:
                 migration = local_by_version.get(version)
                 if migration is None:
@@ -615,9 +616,7 @@ class MigrationRunner:
 
     @staticmethod
     def _is_destructive(migration: Migration) -> bool:
-        return migration.version in _DESTRUCTIVE_VERSION_OVERRIDES or _has_directive(
-            migration, _DESTRUCTIVE_DIRECTIVE
-        )
+        return _has_directive(migration, _DESTRUCTIVE_DIRECTIVE)
 
     @staticmethod
     def _validate_contiguous_chain(
@@ -698,9 +697,13 @@ def _migration_checksum(migration: Migration) -> str:
     return hashlib.sha256(migration.path.read_bytes()).hexdigest()
 
 
-def _baseline_checksum() -> str:
-    baseline = importlib.resources.files("gobby.storage").joinpath("postgres_baseline_schema.sql")
-    return hashlib.sha256(baseline.read_bytes()).hexdigest()
+def baseline_checksum(sql: str | None = None) -> str:
+    if sql is None:
+        baseline = importlib.resources.files("gobby.storage").joinpath(
+            "postgres_baseline_schema.sql"
+        )
+        return hashlib.sha256(baseline.read_bytes()).hexdigest()
+    return hashlib.sha256(sql.encode()).hexdigest()
 
 
 def _migration_plan_item(migration: Migration) -> dict[str, str]:

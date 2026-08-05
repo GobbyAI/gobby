@@ -160,29 +160,14 @@ def test_default_apply_halts_before_destructive_migration_after_safe_prefix(
     assert hub.applied == [354]
 
 
-def test_retire_review_anchor_migration_is_classified_destructive() -> None:
+def test_post_baseline_directive_is_classified_destructive(tmp_path: Path) -> None:
     module = _migration_module()
     runner = module.MigrationRunner(_PostgresMigrationHub())
+    path = tmp_path / "376_drop_legacy.sql"
+    path.write_text("-- gobby:destructive\nDROP TABLE legacy;\n", encoding="utf-8")
+    migration = Migration(version=376, name="drop_legacy", path=path)
 
-    migration = next(
-        migration for migration in runner._discover_migrations() if migration.version == 361
-    )
-
-    assert migration.path.name == "361_retire_review_anchor.sql"
     assert runner._is_destructive(migration)
-
-
-@pytest.mark.parametrize("version", [361, 371, 373])
-def test_retroactive_destructive_classification_preserves_receipt_bytes(
-    tmp_path: Path,
-    version: int,
-) -> None:
-    module = _migration_module()
-    path = tmp_path / f"{version}_receipt_stable.sql"
-    path.write_text("SELECT 1;\n", encoding="utf-8")
-    migration = Migration(version=version, name="receipt_stable", path=path)
-
-    assert module.MigrationRunner(_PostgresMigrationHub())._is_destructive(migration)
 
 
 def test_fresh_schema_apply_may_cross_destructive_marker(tmp_path: Path) -> None:
@@ -272,8 +257,8 @@ def test_bookkeeping_records_filename_and_checksum_from_version_354(
 class _BatchState:
     def __init__(self) -> None:
         self.applied: dict[int, tuple[str | None, str | None]] = {
-            354: (
-                "354_migration_bookkeeping.sql",
+            375: (
+                "baseline@375",
                 "a" * 64,
             )
         }
@@ -424,7 +409,7 @@ def _destructive_runner_fixture(
     module = _migration_module()
     state = _BatchState()
     migrations: list[Migration] = []
-    for version, directive in ((355, "-- gobby:destructive\n"), (356, "")):
+    for version, directive in ((376, "-- gobby:destructive\n"), (377, "")):
         path = tmp_path / f"{version}_migration_{version}.sql"
         path.write_text(f"{directive}SELECT {version};\n", encoding="utf-8")
         migrations.append(Migration(version=version, name=f"migration_{version}", path=path))
@@ -432,7 +417,7 @@ def _destructive_runner_fixture(
         epoch_id=state.epoch_id,
         batch_id=state.batch_id,
         manifest_sha256=state.manifest_sha256,
-        backup_starting_head=354,
+        backup_starting_head=375,
     )
     return module, state, migrations, context
 
@@ -460,22 +445,22 @@ def test_destructive_batch_resumes_from_committed_database_receipt(
 
     def crash_after_first_commit(self: Any, migration: Migration) -> None:
         apply_locked(migration)
-        if migration.version == 355:
+        if migration.version == 376:
             raise RuntimeError("simulated process crash after database commit")
 
     first._apply_transactional_locked = MethodType(crash_after_first_commit, first)
     with pytest.raises(RuntimeError, match="after database commit"):
         first.apply_destructive(context)
 
-    assert sorted(state.applied) == [354, 355]
-    assert state.mutations == [355]
-    assert [item["version"] for item in state.migration_plan] == ["355", "356"]
+    assert sorted(state.applied) == [375, 376]
+    assert state.mutations == [376]
+    assert [item["version"] for item in state.migration_plan] == ["376", "377"]
 
     resumed = _new_destructive_runner(module, state, migrations)
     resumed.apply_destructive(context)
 
-    assert sorted(state.applied) == [354, 355, 356]
-    assert state.mutations == [355, 356]
+    assert sorted(state.applied) == [375, 376, 377]
+    assert state.mutations == [376, 377]
     assert state.lock_acquisitions == 2
     assert state.unlocks == 2
     assert state.closed == 2
@@ -491,8 +476,8 @@ def test_destructive_batch_rejects_nonprefix_database_receipts(tmp_path: Path) -
         }
         for migration in migrations
     ]
-    state.intent["backup_starting_head"] = 354
-    state.applied[356] = (
+    state.intent["backup_starting_head"] = 375
+    state.applied[377] = (
         migrations[1].path.name,
         hashlib.sha256(migrations[1].path.read_bytes()).hexdigest(),
     )
@@ -507,17 +492,17 @@ def test_destructive_batch_rejects_different_bytes_for_same_version(
     module, state, migrations, context = _destructive_runner_fixture(tmp_path)
     state.migration_plan = [
         {
-            "version": "355",
+            "version": "376",
             "filename": migrations[0].path.name,
             "checksum": "c" * 64,
         },
         {
-            "version": "356",
+            "version": "377",
             "filename": migrations[1].path.name,
             "checksum": hashlib.sha256(migrations[1].path.read_bytes()).hexdigest(),
         },
     ]
-    state.intent["backup_starting_head"] = 354
+    state.intent["backup_starting_head"] = 375
 
     with pytest.raises(MigrationUnsupportedError, match="different local migration bytes"):
         _new_destructive_runner(module, state, migrations).apply_destructive(context)
@@ -529,8 +514,8 @@ def test_destructive_batch_applies_under_identity_cutover_campaign(tmp_path: Pat
 
     _new_destructive_runner(module, state, migrations).apply_destructive(context)
 
-    assert sorted(state.applied) == [354, 355, 356]
-    assert state.mutations == [355, 356]
+    assert sorted(state.applied) == [375, 376, 377]
+    assert state.mutations == [376, 377]
 
 
 def test_destructive_batch_rejects_epoch_batch_campaign_mismatch(tmp_path: Path) -> None:
@@ -565,11 +550,11 @@ def test_destructive_batch_requires_exact_prebatch_head(tmp_path: Path) -> None:
         epoch_id=context.epoch_id,
         batch_id=context.batch_id,
         manifest_sha256=context.manifest_sha256,
-        backup_starting_head=353,
+        backup_starting_head=374,
     )
 
     with pytest.raises(
-        MigrationUnsupportedError, match="Backup starting head 353.*current head 354"
+        MigrationUnsupportedError, match="Backup starting head 374.*current head 375"
     ):
         _new_destructive_runner(module, state, migrations).apply_destructive(context)
 
@@ -691,7 +676,7 @@ def test_postgres_migration_discovery_rejects_invalid_filenames(
         module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
 
-@pytest.mark.parametrize("version", [295, 305])
+@pytest.mark.parametrize("version", [305, 375])
 def test_postgres_migration_discovery_rejects_reserved_versions(
     version: int,
     tmp_path: Path,
@@ -705,7 +690,7 @@ def test_postgres_migration_discovery_rejects_reserved_versions(
 
     with pytest.raises(
         RuntimeError,
-        match=rf"Migration v{version} reuses a version reserved by baseline v305",
+        match=rf"Migration v{version} reuses a version reserved by baseline v375",
     ):
         module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
@@ -717,64 +702,22 @@ def test_postgres_migration_discovery_rejects_duplicate_post_baseline_versions(
     module = _migration_module()
     migrations_dir = tmp_path / "migrations"
     migrations_dir.mkdir()
-    (migrations_dir / "321_first.sql").touch()
-    (migrations_dir / "321_second.postgres.sql").touch()
+    (migrations_dir / "376_first.sql").touch()
+    (migrations_dir / "376_second.postgres.sql").touch()
     monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
 
-    with pytest.raises(RuntimeError, match="Duplicate migration file for v321"):
+    with pytest.raises(RuntimeError, match="Duplicate migration file for v376"):
         module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
 
-def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> None:
+def test_postgres_migration_discovery_starts_empty_after_flatten() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
 
     discovered = runner._discover_migrations()
 
-    known_prefix = [
-        (306, "reconcile_live_hub_schema_drift"),
-        (307, "cron_run_scheduler_owner"),
-        (308, "recall_signal_hub"),
-        (309, "github_triage_delivery_leases"),
-        (310, "github_triage_build_dispatches"),
-        (311, "model_costs_provider_key"),
-        (312, "session_digest_pair_index"),
-        (313, "memory_source_session_set_null"),
-        (314, "memory_graph_retry_state"),
-        (315, "session_title_synthesis_digest_hash"),
-        (316, "memory_vector_reindex_state"),
-        (317, "sync_tombstones"),
-        (318, "chat_messages_sequence_unique"),
-        (319, "worktree_last_activity"),
-        (320, "projects_active_name_unique"),
-        (321, "session_variables_session_cascade"),
-        (322, "agent_run_capture_termination"),
-        (323, "recall_usefulness_digest_shadow"),
-        (324, "drop_sync_tombstones"),
-        (325, "recall_usefulness_shadow_index"),
-        (326, "validate_recall_usefulness_label_source"),
-        (327, "failure_category_taxonomy"),
-        (328, "memory_global_visibility"),
-        (329, "memory_type_enum"),
-        (330, "rename_epic_qa"),
-        (331, "external_issue_sync_coordinator"),
-        (332, "attention_states"),
-        (333, "detection_manifests"),
-        (334, "verification_receipts"),
-        (335, "memories_dream_due_version"),
-        (336, "model_metadata_rename"),
-        (337, "verification_receipts_default"),
-        (338, "plan_review_evidence"),
-        (339, "expired_plan_review_round_retry"),
-        (340, "tool_results"),
-        (341, "digest_owned_session_titles"),
-    ]
-    actual = [(migration.version, migration.name) for migration in discovered]
-
-    assert actual[: len(known_prefix)] == known_prefix
-    future_versions = [version for version, _ in actual if version >= 354]
-    assert future_versions == list(range(354, 354 + len(future_versions)))
+    assert discovered == []
 
 
 class _AutocommitMigrationState:
@@ -938,106 +881,37 @@ def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:
     assert row["capture_trigger_count"] == 0
 
 
-def test_memory_source_session_upgrade_preserves_memory(postgres_db: Any) -> None:
-    """Migration 313 replaces a legacy restrictive FK with SET NULL."""
-    schema = f"migration_313_{uuid.uuid4().hex}"
-    migration_path = (
-        Path(__file__).parents[2]
-        / "src"
-        / "gobby"
-        / "storage"
-        / "migrations"
-        / "313_memory_source_session_set_null.sql"
+def test_flattened_baseline_memory_source_session_fk_sets_null(postgres_db: Any) -> None:
+    row = postgres_db.fetchone(
+        """
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'memories'::regclass
+          AND conname = 'memories_source_session_id_fkey'
+        """
     )
-    session_id = str(uuid.uuid4())
-    memory_id = str(uuid.uuid4())
 
-    postgres_db.execute(f'CREATE SCHEMA "{schema}"')  # nosec B608 - generated UUID suffix
-    try:
-        with postgres_db.transaction() as conn:
-            conn.execute(f'SET LOCAL search_path TO "{schema}"')  # nosec B608
-            conn.execute("CREATE TABLE sessions (id UUID PRIMARY KEY)")
-            conn.execute(
-                """
-                CREATE TABLE memories (
-                    id UUID PRIMARY KEY,
-                    content TEXT NOT NULL,
-                    source_session_id UUID REFERENCES sessions(id)
-                )
-                """
-            )
-            conn.execute("INSERT INTO sessions (id) VALUES (%s)", (session_id,))
-            conn.execute(
-                "INSERT INTO memories (id, content, source_session_id) VALUES (%s, %s, %s)",
-                (memory_id, "Keep this memory", session_id),
-            )
-            for statement in _split(migration_path.read_text(encoding="utf-8")):
-                conn.execute(statement)
-
-            conn.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
-            row = conn.execute(
-                "SELECT content, source_session_id FROM memories WHERE id = %s",
-                (memory_id,),
-            ).fetchone()
-
-            assert row is not None
-            assert row["content"] == "Keep this memory"
-            assert row["source_session_id"] is None
-    finally:
-        postgres_db.execute(
-            f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'  # nosec B608 - generated UUID suffix
-        )
+    assert row is not None
+    assert "ON DELETE SET NULL" in row["definition"]
 
 
-def test_memory_graph_retry_state_upgrade_backfills_pending_and_completed(
-    postgres_db: Any,
-) -> None:
-    """Migration 314 backfills explicit graph queue state from the legacy boolean."""
-    schema = f"migration_314_{uuid.uuid4().hex}"
-    migration_path = (
-        Path(__file__).parents[2]
-        / "src"
-        / "gobby"
-        / "storage"
-        / "migrations"
-        / "314_memory_graph_retry_state.sql"
+def test_flattened_baseline_memory_graph_retry_defaults(postgres_db: Any) -> None:
+    rows = postgres_db.fetchall(
+        """
+        SELECT column_name, column_default, is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'memories'
+          AND column_name IN ('graph_attempts', 'graph_status')
+        ORDER BY column_name
+        """
     )
-    pending_id = str(uuid.uuid4())
-    completed_id = str(uuid.uuid4())
 
-    postgres_db.execute(f'CREATE SCHEMA "{schema}"')  # nosec B608 - generated UUID suffix
-    try:
-        with postgres_db.transaction() as conn:
-            conn.execute(f'SET LOCAL search_path TO "{schema}"')  # nosec B608
-            conn.execute(
-                """
-                CREATE TABLE memories (
-                    id UUID PRIMARY KEY,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    graph_processed BOOLEAN NOT NULL DEFAULT TRUE
-                )
-                """
-            )
-            conn.execute(
-                "INSERT INTO memories (id, graph_processed) VALUES (%s, FALSE), (%s, TRUE)",
-                (pending_id, completed_id),
-            )
-            for statement in _split(migration_path.read_text(encoding="utf-8")):
-                conn.execute(statement)
-
-            rows = conn.execute(
-                "SELECT id, graph_attempts, graph_status FROM memories ORDER BY id"
-            ).fetchall()
-            by_id = {str(row["id"]): row for row in rows}
-
-            assert by_id[pending_id]["graph_attempts"] == 0
-            assert by_id[pending_id]["graph_status"] == "pending"
-            assert by_id[completed_id]["graph_attempts"] == 0
-            assert by_id[completed_id]["graph_status"] == "completed"
-    finally:
-        postgres_db.execute(
-            f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'  # nosec B608 - generated UUID suffix
-        )
+    by_name = {row["column_name"]: row for row in rows}
+    assert by_name["graph_attempts"]["column_default"] == "0"
+    assert by_name["graph_attempts"]["is_nullable"] == "NO"
+    assert by_name["graph_status"]["column_default"] == "'completed'::text"
+    assert by_name["graph_status"]["is_nullable"] == "NO"
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib
 import logging
 from collections.abc import Callable, Iterable, Iterator
@@ -711,6 +712,11 @@ def test_apply_postgres_baseline_uses_transaction_scoped_advisory_lock(
     assert not any("pg_advisory_lock(" in statement for statement in locked.statements)
     assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
     assert any("INSERT INTO schema_migrations" in statement for statement in locked.statements)
+    baseline_insert = next(
+        statement for statement in locked.statements if "INSERT INTO schema_migrations" in statement
+    )
+    assert "baseline@375" in baseline_insert
+    assert hashlib.sha256(b"CREATE TABLE tasks(id INTEGER);").hexdigest() in baseline_insert
     assert resources.read_count == 1
 
 

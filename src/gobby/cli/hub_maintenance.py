@@ -399,4 +399,41 @@ class _IdentityCutoverExecutor:
             )
 
 
+class _FlattenExecutor:
+    """Atomically replace verified historical receipts with baseline@375."""
+
+    def apply(self, epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
+        from gobby.config.app import load_config
+        from gobby.storage.migration_flatten import (
+            cutover_migration_bookkeeping,
+            load_flatten_evidence,
+        )
+
+        config = load_config(resolve_database_url=True)
+        if config.database_url is None:
+            raise click.ClickException("Hub database URL is unavailable")
+        cutover_migration_bookkeeping(
+            config.database_url,
+            epoch.id,
+            load_flatten_evidence(),
+        )
+
+    def verify(self, epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
+        from gobby.config.app import load_config
+        from gobby.storage.migration_flatten import (
+            load_flatten_evidence,
+            verify_flattened_bookkeeping,
+        )
+
+        config = load_config(resolve_database_url=True)
+        if config.database_url is None:
+            raise click.ClickException("Hub database URL is unavailable")
+        verify_flattened_bookkeeping(
+            config.database_url,
+            epoch.id,
+            load_flatten_evidence(),
+        )
+
+
 register_campaign_executor("identity-cutover", _IdentityCutoverExecutor())
+register_campaign_executor("flatten", _FlattenExecutor())

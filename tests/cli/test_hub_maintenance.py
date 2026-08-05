@@ -430,3 +430,44 @@ def test_identity_cutover_campaign_runs_journal_before_destructive_batch(
         batch,
     )
     assert migration_kwargs["max_age_hours"] > 0
+
+
+def test_flatten_campaign_uses_pinned_evidence_for_apply_and_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    epoch = _epoch("flatten")
+    batch = _batch(epoch)
+    config_module = import_module("gobby.config.app")
+    flatten_module = import_module("gobby.storage.migration_flatten")
+    evidence = object()
+    calls: list[tuple[str, str, uuid.UUID, object]] = []
+
+    monkeypatch.setattr(
+        config_module,
+        "load_config",
+        lambda **_kwargs: SimpleNamespace(database_url="postgresql://example/gobby"),
+    )
+    monkeypatch.setattr(flatten_module, "load_flatten_evidence", lambda: evidence)
+    monkeypatch.setattr(
+        flatten_module,
+        "cutover_migration_bookkeeping",
+        lambda database_url, epoch_id, loaded: calls.append(
+            ("apply", database_url, epoch_id, loaded)
+        ),
+    )
+    monkeypatch.setattr(
+        flatten_module,
+        "verify_flattened_bookkeeping",
+        lambda database_url, epoch_id, loaded: calls.append(
+            ("verify", database_url, epoch_id, loaded)
+        ),
+    )
+
+    executor = command._load_campaign_executor("flatten")
+    executor.apply(epoch, batch)
+    executor.verify(epoch, batch)
+
+    assert len(calls) == 2
+    apply_call, verify_call = calls
+    assert apply_call == ("apply", "postgresql://example/gobby", epoch.id, evidence)
+    assert verify_call == ("verify", "postgresql://example/gobby", epoch.id, evidence)

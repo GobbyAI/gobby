@@ -1,2 +1,0 @@
-ALTER TABLE sessions
-ADD COLUMN IF NOT EXISTS last_digested_pair_index INTEGER NOT NULL DEFAULT 0;

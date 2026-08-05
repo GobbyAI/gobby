@@ -1,0 +1,200 @@
+{
+  "applied_versions": [
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    311,
+    312,
+    313,
+    314,
+    315,
+    316,
+    317,
+    318,
+    319,
+    320,
+    321,
+    322,
+    323,
+    324,
+    325,
+    326,
+    327,
+    328,
+    329,
+    330,
+    331,
+    332,
+    333,
+    334,
+    335,
+    336,
+    337,
+    338,
+    339,
+    340,
+    341,
+    342,
+    343,
+    344,
+    346,
+    348,
+    349,
+    352,
+    353,
+    354,
+    355,
+    356,
+    357,
+    358,
+    359,
+    360,
+    361,
+    362,
+    363,
+    364,
+    365,
+    366,
+    367,
+    368,
+    369,
+    370,
+    371,
+    372,
+    373,
+    374,
+    375
+  ],
+  "baseline_schema": {
+    "path": "src/gobby/storage/postgres_baseline_schema.sql",
+    "sha256": "eaf97c2662053cf0f3b112410d66b7bc123402f1100224873656bbe199bc7a80"
+  },
+  "baseline_version": 375,
+  "divergence_ledger": {
+    "path": "docs/evidence/pre-flatten/divergence-ledger.md",
+    "sha256": "6c26a2a9103183925c1d1a47c209a68948d94e09cc99b3040e3b3e7c53210385"
+  },
+  "normalized_ddl": {
+    "path": "migrated-fresh.normalized.sql",
+    "sha256": "1e3c46b5903911b7676b73581bcb265f12d2978852b87dc8a84637290cd97346"
+  },
+  "receipts": [
+    {
+      "checksum": "81a610f7085284b2f0acf55c53eeac761ebedd233569750ee09f65fd89b1f7e3",
+      "filename": "354_migration_bookkeeping.sql",
+      "version": 354
+    },
+    {
+      "checksum": "900f6df1523c3a959d803fe9c29bf8093773d26dbb0c2e369febd0f8055e3bc5",
+      "filename": "355_reconcile_346_cron_display_name.sql",
+      "version": 355
+    },
+    {
+      "checksum": "70650fa828b30deaa200ee37d275bcc70bf4f942436f923adacb52225d53bbd1",
+      "filename": "356_reconcile_live_hub_schema_drift_v2.sql",
+      "version": 356
+    },
+    {
+      "checksum": "93066445e23bf835f609ee37bd02ac96c7818e1cc02092e6c65d4c44610c428c",
+      "filename": "357_drop_dead_tables.sql",
+      "version": 357
+    },
+    {
+      "checksum": "1debfbf4027c0bc98a24c5257814020dfb87b3e7057711e9fcab5afacc2cd07f",
+      "filename": "358_drop_dead_columns.sql",
+      "version": 358
+    },
+    {
+      "checksum": "99248be252f26c09114f27391b0cf6bf121f804857634d56b3bc5355f3cf66b7",
+      "filename": "359_drop_pgaudit_probe.sql",
+      "version": 359
+    },
+    {
+      "checksum": "399adf98d4963c9d03fe4cee611ff1166f14551700c3c0e5736d5576d5dc02d9",
+      "filename": "360_model_metadata_drop_provider.sql",
+      "version": 360
+    },
+    {
+      "checksum": "aa43eb2387560d93aa128fe55b5321f2d7a6c8534dae48dc31b62a75eb8c5123",
+      "filename": "361_retire_review_anchor.sql",
+      "version": 361
+    },
+    {
+      "checksum": "c2fdd5c6bbf277d46b0534d675b72b335dc572b34dae22d209dd7ed4976abfb8",
+      "filename": "362_harden_maintenance_login_fence.sql",
+      "version": 362
+    },
+    {
+      "checksum": "cdd84794b762c3b2fc3057a06be46568faf1f3d9dd9b40e143d580a1792db01f",
+      "filename": "363_workflow_definition_enabled_user_modified.sql",
+      "version": 363
+    },
+    {
+      "checksum": "8384267a3882bdfcf2f50e7c476422552cfc2d3bbe46d161b197c321ed1d3be7",
+      "filename": "364_identity_cutover_journal.sql",
+      "version": 364
+    },
+    {
+      "checksum": "566328d8a85b56d4a2791893daba7fb39e258501d4b355701f0a6813312fdc99",
+      "filename": "365_machines_uuid_identity.sql",
+      "version": 365
+    },
+    {
+      "checksum": "0ec221ff2a7648c7b6f8f31d83f2bea1c8c9f0efe65cabe33fbd232396a65857",
+      "filename": "366_sessions_machine_uuid_fk.sql",
+      "version": 366
+    },
+    {
+      "checksum": "104ded47d989386b6a4464310d5c2d90aa7003564c15c9f4847a3c8adbc83d65",
+      "filename": "367_dream_check_tighten.sql",
+      "version": 367
+    },
+    {
+      "checksum": "a10073d84ad5d9ff1eea69b80b01ff80ee08bf956ce559a7f666acc158cd1021",
+      "filename": "368_bm25_disposition.sql",
+      "version": 368
+    },
+    {
+      "checksum": "ffd61e0ef29af9df738dfead39c522b802b0dc6bb704d3102d10f7254b3d6adf",
+      "filename": "369_scoped_agent_authorization.sql",
+      "version": 369
+    },
+    {
+      "checksum": "237bf5d4638094dc50815055fa6532e6187c8358479f850f1633bdcaa7a0b4b1",
+      "filename": "370_runtime_function_execute.sql",
+      "version": 370
+    },
+    {
+      "checksum": "1a92085ae1a6910a24b83c6ae6726dd391e28bcc94c2986e5df2eca171ec43aa",
+      "filename": "371_managed_credential_lifecycle.sql",
+      "version": 371
+    },
+    {
+      "checksum": "da7d50bf14b1229a1b9d686c33a91cfdc93f55c7933624f5a98d5c139e8ce15b",
+      "filename": "372_parallel_scoped_project_authorization.sql",
+      "version": 372
+    },
+    {
+      "checksum": "e44cff85205f8c4d1384f9ade76738156548962c95f5206556a34d4cb9f67a59",
+      "filename": "373_managed_credential_operations.sql",
+      "version": 373
+    },
+    {
+      "checksum": "d7c926e6b961984e31b50cf02b052f95422647ec5f0ff2f164d88f756a7cbf2b",
+      "filename": "374_provider_capability_matrix.sql",
+      "version": 374
+    },
+    {
+      "checksum": "ae45d346e502198452e59c5d74f90c8251a75a43b7334f8f5472c62a67b20c03",
+      "filename": "375_machine_scope.sql",
+      "version": 375
+    }
+  ],
+  "seed_manifest": {
+    "path": "migrated-fresh.seed.json",
+    "sha256": "4a0e3ce665b9b66faf6af90d8e62711f8f2e1afc8f1bd09d1b876f2bdd5e586b"
+  }
+}

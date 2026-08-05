@@ -1,2 +1,0 @@
-ALTER TABLE memories
-    ADD COLUMN IF NOT EXISTS dream_due_version BIGINT NOT NULL DEFAULT 0;

@@ -80,7 +80,8 @@ def test_postgres_baseline_uses_native_types() -> None:
     _assert_matches(sql, r"\bJSONB\b", "JSON text columns must become JSONB")
     _assert_matches(
         sql,
-        r"INTEGER\s+GENERATED\s+ALWAYS\s+AS\s+IDENTITY\s+PRIMARY\s+KEY",
+        r"ALTER\s+TABLE\s+\w+\s+ALTER\s+COLUMN\s+id\s+"
+        r"ADD\s+GENERATED\s+ALWAYS\s+AS\s+IDENTITY",
         "AUTOINCREMENT primary keys must become GENERATED ALWAYS AS IDENTITY",
     )
     _assert_matches(
@@ -117,9 +118,14 @@ def test_postgres_baseline_declares_schema_migrations_only() -> None:
     _assert_matches(
         sql,
         r"CREATE\s+TABLE\s+schema_migrations\s*\([^;]*"
-        r"version\s+INTEGER\s+PRIMARY\s+KEY[^;]*"
-        r"applied_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+NOW\(\)",
+        r"version\s+INTEGER\s+NOT\s+NULL[^;]*"
+        r"applied_at\s+TIMESTAMP\s+WITH\s+TIME\s+ZONE\s+DEFAULT\s+NOW\(\)\s+NOT\s+NULL",
         "Postgres baseline must use schema_migrations with TIMESTAMPTZ applied_at",
+    )
+    _assert_matches(
+        sql,
+        r"ADD\s+CONSTRAINT\s+schema_migrations_pkey\s+PRIMARY\s+KEY\s*\(version\)",
+        "schema_migrations.version must remain the primary key",
     )
     assert "gobby_migration_state" not in sql
 
@@ -129,8 +135,13 @@ def test_postgres_baseline_has_flattened_auth_session_token_hashes() -> None:
 
     _assert_matches(
         sql,
-        r"CREATE\s+TABLE\s+auth_sessions\s*\([^;]*token_hash\s+TEXT\s+PRIMARY\s+KEY",
+        r"CREATE\s+TABLE\s+auth_sessions\s*\([^;]*token_hash\s+TEXT\s+NOT\s+NULL",
         "auth_sessions must use token_hash as the primary key in the flattened baseline",
+    )
+    _assert_matches(
+        sql,
+        r"ADD\s+CONSTRAINT\s+auth_sessions_pkey\s+PRIMARY\s+KEY\s*\(token_hash\)",
+        "auth_sessions.token_hash must remain the primary key",
     )
     assert "DROP COLUMN token" not in sql
     assert re.search(r"CREATE\s+TABLE\s+auth_sessions", sql, flags=re.IGNORECASE)
@@ -156,20 +167,20 @@ def test_postgres_baseline_declares_foreign_keys_deferrable() -> None:
 
     _assert_matches(
         sql,
-        r"parent_session_id\s+UUID\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
-        r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
+        r"sessions_parent_session_id_fkey\s+FOREIGN\s+KEY\s*\(parent_session_id\)\s+"
+        r"REFERENCES\s+sessions\s*\(id\)\s+DEFERRABLE",
         "self-referential sessions.parent_session_id must be deferrable",
     )
     _assert_matches(
         sql,
-        r"agent_run_id\s+UUID\s+REFERENCES\s+agent_runs\s*\(\s*id\s*\)"
-        r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
+        r"sessions_agent_run_id_fkey\s+FOREIGN\s+KEY\s*\(agent_run_id\)\s+"
+        r"REFERENCES\s+agent_runs\s*\(id\)\s+ON\s+DELETE\s+SET\s+NULL\s+DEFERRABLE",
         "sessions.agent_run_id -> agent_runs.id must be deferrable",
     )
     _assert_matches(
         sql,
-        r"parent_session_id\s+UUID\s+NOT\s+NULL\s+REFERENCES\s+sessions\s*\(\s*id\s*\)"
-        r"[^,\n]*DEFERRABLE\s+INITIALLY\s+IMMEDIATE",
+        r"agent_runs_parent_session_id_fkey\s+FOREIGN\s+KEY\s*\(parent_session_id\)\s+"
+        r"REFERENCES\s+sessions\s*\(id\)\s+DEFERRABLE",
         "agent_runs.parent_session_id -> sessions.id must be deferrable",
     )
 
@@ -201,25 +212,29 @@ def test_postgres_baseline_replaces_fts5_with_pg_search_bm25_indexes() -> None:
             r"code_content(?:_chunks)?\s+USING\s+bm25"
         ),
         "skills": r"CREATE\s+INDEX\s+\w*skills\w*bm25\w*\s+ON\s+skills\s+USING\s+bm25",
+        "tool result chunks": (
+            r"CREATE\s+INDEX\s+\w*tool_result_chunks\w*bm25\w*\s+ON\s+"
+            r"tool_result_chunks\s+USING\s+bm25"
+        ),
     }
     for label, pattern in expected_bm25_indexes.items():
         _assert_matches(sql, pattern, f"{label} must have a pg_search BM25 index")
 
-    assert len(re.findall(r"\bUSING\s+bm25\b", sql, flags=re.IGNORECASE)) == 5
+    assert len(re.findall(r"\bUSING\s+bm25\b", sql, flags=re.IGNORECASE)) == 6
     _assert_matches(
         sql,
-        r"WITH\s*\(\s*key_field\s*=\s*'id'\s*\)",
+        r"WITH\s*\(\s*key_field\s*=\s*'?id'?\s*\)",
         "pg_search BM25 indexes must declare id as key_field",
     )
     _assert_matches(
         sql,
-        r"CREATE\s+OR\s+REPLACE\s+FUNCTION\s+memories_tags_to_text\s*\(\s*tags\s+jsonb\s*\)"
-        r".*IMMUTABLE.*PARALLEL\s+SAFE.*RETURNS\s+NULL\s+ON\s+NULL\s+INPUT",
+        r"CREATE(?:\s+OR\s+REPLACE)?\s+FUNCTION\s+memories_tags_to_text\s*"
+        r"\(\s*tags\s+jsonb\s*\).*IMMUTABLE\s+STRICT\s+PARALLEL\s+SAFE",
         "memories.tags JSONB must be flattened through an immutable generated-column helper",
     )
     _assert_matches(
         sql,
-        r"ADD\s+COLUMN\s+tags_text\s+TEXT\s+GENERATED\s+ALWAYS\s+AS\s*"
+        r"tags_text\s+TEXT\s+GENERATED\s+ALWAYS\s+AS\s*"
         r"\(\s*memories_tags_to_text\s*\(\s*tags\s*\)\s*\)\s+STORED",
         "memories BM25 index needs a stored text column for JSON tags",
     )

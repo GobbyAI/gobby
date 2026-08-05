@@ -37,6 +37,7 @@ from gobby.storage.migrations import (
     MigrationRunner,
     MigrationUnsupportedError,
     _split_statements_respecting_dollar_quotes,
+    baseline_checksum,
 )
 
 logger = logging.getLogger(__name__)
@@ -532,8 +533,15 @@ class PostgresHubDatabase:
                 if statement.strip():
                     conn.execute(statement)
             conn.execute(
-                "INSERT INTO schema_migrations (version, applied_at) VALUES (%s, NOW())",
-                (BASELINE_VERSION,),
+                """
+                INSERT INTO schema_migrations(version, filename, checksum, applied_at)
+                VALUES (%s, %s, %s, NOW())
+                """,
+                (
+                    BASELINE_VERSION,
+                    f"baseline@{BASELINE_VERSION}",
+                    baseline_checksum(sql),
+                ),
             )
 
     def close(self) -> None:
