@@ -412,6 +412,17 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
     {
         return Some(add_index_if_not_exists(statement));
     }
+    if state == BaselineState::GcoreCodeIndex
+        && let Some(table) = alter_table_name(body)
+        && GCORE_CODE_INDEX_TABLES.contains(&table)
+    {
+        let normalized = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        if normalized.contains(" ADD GENERATED ALWAYS AS IDENTITY ")
+            || normalized.contains(" ADD CONSTRAINT ")
+        {
+            return None;
+        }
+    }
     Some(statement.to_owned())
 }
 
@@ -443,6 +454,25 @@ fn create_table_name(statement: &str) -> Option<&str> {
         .is_some_and(|token| token.eq_ignore_ascii_case("IF"))
     {
         5
+    } else {
+        2
+    };
+    tokens.get(index).map(|token| trim_identifier(token))
+}
+
+fn alter_table_name(statement: &str) -> Option<&str> {
+    let tokens = statement.split_whitespace().collect::<Vec<_>>();
+    if tokens.len() < 3
+        || !tokens[0].eq_ignore_ascii_case("ALTER")
+        || !tokens[1].eq_ignore_ascii_case("TABLE")
+    {
+        return None;
+    }
+    let index = if tokens
+        .get(2)
+        .is_some_and(|token| token.eq_ignore_ascii_case("ONLY"))
+    {
+        3
     } else {
         2
     };

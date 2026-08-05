@@ -4,6 +4,7 @@
 //! verification. Consumer crates retain ownership of CRUD and domain behavior.
 
 mod assets;
+mod external;
 mod gate;
 mod identity;
 mod runner;
@@ -16,6 +17,10 @@ mod runner_tests;
 pub use assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, CATALOG_MANIFEST_JSON,
     RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON,
+};
+pub use external::{
+    ExternalPostgresObject, ExternalPostgresObjectKind, ExternalSchemaError,
+    gcode_postgres_objects, gwiki_postgres_objects,
 };
 pub use gate::{
     ArtifactRecord, BackupGateContext, BackupManifestError, HubBackupManifest, SourceIdentity,

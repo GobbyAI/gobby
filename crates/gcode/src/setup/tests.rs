@@ -6,6 +6,7 @@ use super::identifiers::quote_identifier;
 use super::postgres::postgres_overwrite_reset_sql;
 use super::*;
 use ::postgres::Client;
+use gobby_core::schema::gcode_postgres_objects;
 use gobby_core::setup::{SetupContext, StandaloneSetup, StoreKind};
 
 #[test]
@@ -125,6 +126,25 @@ fn standalone_setup_ddl_matches_catalog_contracts() {
             assert!(!sql.contains(" using "), "{}", definition.sql);
         }
     }
+}
+
+#[test]
+fn standalone_setup_ddl_is_exported_by_gcore() {
+    let local = GcodeStandaloneSetup::new("public")
+        .postgres_object_definitions()
+        .expect("local postgres object definitions");
+    let exported = gcode_postgres_objects("public").expect("gcore postgres object definitions");
+
+    let local = local
+        .iter()
+        .map(|definition| (definition.name.as_str(), definition.sql.as_str()))
+        .collect::<Vec<_>>();
+    let exported = exported
+        .iter()
+        .map(|definition| (definition.name, definition.sql.as_str()))
+        .collect::<Vec<_>>();
+
+    assert_eq!(local, exported);
 }
 
 fn table_columns(sql: &str) -> Vec<&str> {
