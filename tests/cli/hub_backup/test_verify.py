@@ -61,6 +61,11 @@ class _DockerFake:
         self.globals_stderr: bytes = b'ERROR:  role "postgres" already exists'
         self.pg_restore_returncode: int = 0
         self.pg_restore_stderr: bytes = b""
+        self.container_id = "c0ffee1234567890"
+        self.inspect_id: str | None = None
+        self.inspect_drop_labels: set[str] = set()
+        self.inspect_extra_labels: dict[str, str] = {}
+        self.run_labels: dict[str, str] = {}
         self.mount_source: Path | None = None
         self.mounted_rdb: bytes | None = None
         self._pg_ready_seen = 0
@@ -74,6 +79,8 @@ class _DockerFake:
         assert args[0] == "docker", f"unexpected program: {args}"
         if args[1] == "run":
             return self._handle_run(args)
+        if args[1:3] == ["container", "inspect"]:
+            return self._handle_inspect(args)
         if args[1:3] == ["rm", "-f"]:
             return self._done(args)
         if args[1] == "exec":
@@ -87,12 +94,32 @@ class _DockerFake:
         raise AssertionError(f"unexpected command: {args}")
 
     def _handle_run(self, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+        for index, arg in enumerate(args):
+            if arg == "--label":
+                key, value = args[index + 1].split("=", 1)
+                self.run_labels[key] = value
         if "-v" in args:
             source = Path(args[args.index("-v") + 1].split(":", 1)[0])
             self.mount_source = source
             rdb = source / "dump.rdb"
             self.mounted_rdb = rdb.read_bytes() if rdb.is_file() else None
-        return self._done(args, stdout=b"c0ffee\n")
+        return self._done(args, stdout=f"{self.container_id}\n".encode())
+
+    def _handle_inspect(self, args: list[str]) -> subprocess.CompletedProcess[bytes]:
+        labels = {
+            key: value
+            for key, value in self.run_labels.items()
+            if key not in self.inspect_drop_labels
+        }
+        labels.update(self.inspect_extra_labels)
+        payload = [
+            {
+                "Id": self.inspect_id or self.container_id,
+                "Name": f"/{self.container}",
+                "Config": {"Labels": labels},
+            }
+        ]
+        return self._done(args, stdout=json.dumps(payload).encode())
 
     def _handle_exec(
         self,
@@ -264,6 +291,9 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     assert any(arg.startswith("POSTGRES_PASSWORD=") and len(arg) > 20 for arg in run_argv)
     assert "POSTGRES_USER=postgres" in run_argv
     assert "POSTGRES_DB=postgres" in run_argv
+    labels = [run_argv[index + 1] for index, arg in enumerate(run_argv) if arg == "--label"]
+    assert "io.gobby.disposable=true" in labels
+    assert any(label.startswith("io.gobby.run-id=") for label in labels)
 
     assert fake.stdin_payloads["globals"] == globals_path.read_bytes()
     assert fake.stdin_payloads["dump"] == dump_path.read_bytes()
@@ -272,7 +302,43 @@ def test_verify_postgres_restore_happy_path_drives_prod_image_without_ports_or_v
     assert restore_argv[2:4] == ["-i", fake.container]
     assert restore_argv[4:] == ["pg_restore", "-U", "postgres", "-d", "gobby"]
     assert "--no-owner" not in restore_argv
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "container", "inspect", fake.container_id)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
+
+
+@pytest.mark.parametrize(
+    ("inspect_id", "drop_labels", "extra_labels"),
+    [
+        ("deadbeef", set(), {}),
+        (None, {"io.gobby.disposable"}, {}),
+        (None, set(), {"io.gobby.run-id": "wrong-run"}),
+        (None, set(), {"com.docker.compose.project": "outside-gobby"}),
+    ],
+)
+def test_verify_postgres_restore_refuses_cleanup_without_exact_disposal_capability(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    inspect_id: str | None,
+    drop_labels: set[str],
+    extra_labels: dict[str, str],
+) -> None:
+    fake = _DockerFake()
+    fake.inspect_id = inspect_id
+    fake.inspect_drop_labels = drop_labels
+    fake.inspect_extra_labels = extra_labels
+    _install(monkeypatch, fake)
+    dump_path, globals_path = _pg_fixture(tmp_path)
+
+    _verify.verify_postgres_restore(
+        dump_path,
+        globals_path,
+        expected_probes={},
+        expected_roles=[],
+    )
+
+    assert not fake.argv_starting("docker", "rm", "-f")
+    assert "refusing to remove scratch container" in capsys.readouterr().err
 
 
 def test_verify_postgres_restore_uses_repair_escape_for_restored_database_probes(
@@ -363,7 +429,7 @@ def test_verify_postgres_restore_raises_when_scratch_cluster_never_ready(
         )
 
     assert "ready" in str(excinfo.value).lower()
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
 
 
 def test_verify_postgres_restore_raises_on_role_attribute_mismatch(
@@ -386,7 +452,7 @@ def test_verify_postgres_restore_raises_on_role_attribute_mismatch(
     message = str(excinfo.value)
     assert "gobby" in message
     assert "rolsuper" in message
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
     assert not fake.exec_argv_containing("pg_restore")
 
 
@@ -408,7 +474,7 @@ def test_verify_postgres_restore_raises_on_missing_role(
         )
 
     assert "gobby_ro" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
 
 
 def test_verify_postgres_restore_skips_attribute_compare_for_bootstrap_postgres_role(
@@ -455,7 +521,7 @@ def test_verify_postgres_restore_raises_on_row_count_mismatch_naming_the_table(
     assert "5" in message
     assert "4" in message
     assert "tasks" not in message
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
 
 
 def test_verify_postgres_restore_rejects_schema_object_count_mismatch(
@@ -502,7 +568,7 @@ def test_verify_postgres_restore_raises_with_stderr_tail_when_pg_restore_fails(
         )
 
     assert "relation missing" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
 
 
 def test_verify_postgres_restore_raises_when_dump_missing(tmp_path: Path) -> None:
@@ -591,7 +657,7 @@ def test_verify_falkordb_restore_seeds_scratch_dir_and_verifies_graph_list(
 
     assert len(fake.exec_argv_containing("PING")) == 2
     assert fake.exec_argv_containing("GRAPH.LIST")
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
     assert fake.mount_source is not None
     assert not fake.mount_source.exists()
 
@@ -612,7 +678,7 @@ def test_verify_falkordb_restore_raises_on_graph_set_mismatch_and_cleans_up(
         )
 
     assert "code" in str(excinfo.value)
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
     assert fake.mount_source is not None
     assert not fake.mount_source.exists()
 
@@ -630,7 +696,7 @@ def test_verify_falkordb_restore_raises_when_container_never_answers_ping(
         _verify.verify_falkordb_restore(rdb_path, {"memory": {"nodes": 1, "edges": 0}})
 
     assert "ready" in str(excinfo.value).lower()
-    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container)
+    assert fake.argv_starting("docker", "rm", "-f", "-v", fake.container_id)
 
 
 def test_verify_falkordb_restore_raises_when_rdb_missing(tmp_path: Path) -> None:

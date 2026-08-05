@@ -11,6 +11,7 @@ refused. Archive readability alone never counts.
 
 from __future__ import annotations
 
+import json
 import secrets
 import shlex
 import shutil
@@ -58,6 +59,9 @@ _SCRATCH_REPAIR_PGOPTIONS = "PGOPTIONS=-c event_triggers=off"
 _SUPERUSER = "postgres"
 _FALKOR_DATA_DIR = "/var/lib/falkordb/data"
 _REDIS_CLI = 'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw'
+_DISPOSABLE_LABEL = "io.gobby.disposable"
+_DISPOSABLE_RUN_LABEL = "io.gobby.run-id"
+_COMPOSE_LABEL_PREFIX = "com.docker.compose."
 
 _DOCKER_TIMEOUT_SECONDS = 600
 _DOCKER_RM_TIMEOUT_SECONDS = 60
@@ -78,6 +82,15 @@ class RoleExpectation:
     rolcanlogin: bool
 
 
+@dataclass(frozen=True)
+class DisposableContainer:
+    """Immutable capability authorizing cleanup of one scratch container."""
+
+    name: str
+    container_id: str
+    run_id: str
+
+
 # ---------------------------------------------------------------------------
 # PostgreSQL
 # ---------------------------------------------------------------------------
@@ -96,8 +109,9 @@ def verify_postgres_restore(
     _require_file(globals_path, "PostgreSQL globals")
 
     container = f"gobby-hub-verify-pg-{uuid.uuid4().hex[:8]}"
+    disposable: DisposableContainer | None = None
     try:
-        _start_scratch_postgres(container)
+        disposable = _start_scratch_postgres(container)
         _wait_for_postgres(container)
         _replay_globals(container, globals_path)
         _check_roles(container, expected_roles)
@@ -106,7 +120,8 @@ def verify_postgres_restore(
         if expected_schema_objects is not None:
             _check_schema_object_counts(container, expected_schema_objects)
     finally:
-        _remove_container(container)
+        if disposable is not None:
+            _remove_container(disposable)
 
     details: dict[str, object] = {
         "tables_checked": len(expected_probes),
@@ -118,13 +133,18 @@ def verify_postgres_restore(
     return _verified(_PG_METHOD), details
 
 
-def _start_scratch_postgres(container: str) -> None:
+def _start_scratch_postgres(container: str) -> DisposableContainer:
     password = secrets.token_urlsafe(24)
+    run_id = uuid.uuid4().hex
     result = _docker(
         "run",
         "-d",
         "--name",
         container,
+        "--label",
+        f"{_DISPOSABLE_LABEL}=true",
+        "--label",
+        f"{_DISPOSABLE_RUN_LABEL}={run_id}",
         "-e",
         f"POSTGRES_PASSWORD={password}",
         "-e",
@@ -138,6 +158,10 @@ def _start_scratch_postgres(container: str) -> None:
         timeout=_DOCKER_TIMEOUT_SECONDS,
     )
     _raise_for_subprocess_error(result, "Scratch PostgreSQL container start")
+    container_id = _process_output(result.stdout)
+    if not container_id:
+        raise click.ClickException("Scratch PostgreSQL container start returned no container ID")
+    return DisposableContainer(name=container, container_id=container_id, run_id=run_id)
 
 
 def _wait_for_postgres(container: str) -> None:
@@ -453,6 +477,7 @@ def verify_falkordb_restore(
     _require_file(rdb_path, "FalkorDB RDB")
 
     container = f"gobby-hub-verify-falkor-{uuid.uuid4().hex[:8]}"
+    disposable: DisposableContainer | None = None
     scratch_dir = Path(tempfile.mkdtemp(prefix="gobby-hub-verify-falkor-")).resolve(strict=True)
     try:
         scratch_dir.chmod(0o700)
@@ -463,7 +488,7 @@ def verify_falkordb_restore(
             ) as destination:
                 while chunk := source.read(1024 * 1024):
                     destination.write(chunk)
-        _start_scratch_falkordb(container, scratch_dir)
+        disposable = _start_scratch_falkordb(container, scratch_dir)
         _wait_for_falkordb(container)
         actual = set(_list_graphs(container))
         expected = set(expected_inventory)
@@ -485,7 +510,8 @@ def verify_falkordb_restore(
                 "FalkorDB restore content verification failed: " + "; ".join(mismatches)
             )
     finally:
-        _remove_container(container)
+        if disposable is not None:
+            _remove_container(disposable)
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
     details: dict[str, object] = {
@@ -495,13 +521,21 @@ def verify_falkordb_restore(
     return _verified(_FALKOR_METHOD), details
 
 
-def _start_scratch_falkordb(container: str, scratch_dir: Path) -> None:
+def _start_scratch_falkordb(
+    container: str,
+    scratch_dir: Path,
+) -> DisposableContainer:
     password = secrets.token_urlsafe(24)
+    run_id = uuid.uuid4().hex
     result = _docker(
         "run",
         "-d",
         "--name",
         container,
+        "--label",
+        f"{_DISPOSABLE_LABEL}=true",
+        "--label",
+        f"{_DISPOSABLE_RUN_LABEL}={run_id}",
         "-e",
         f"REDIS_ARGS=--requirepass {password}",
         "-e",
@@ -512,6 +546,10 @@ def _start_scratch_falkordb(container: str, scratch_dir: Path) -> None:
         timeout=_DOCKER_TIMEOUT_SECONDS,
     )
     _raise_for_subprocess_error(result, "Scratch FalkorDB container start")
+    container_id = _process_output(result.stdout)
+    if not container_id:
+        raise click.ClickException("Scratch FalkorDB container start returned no container ID")
+    return DisposableContainer(name=container, container_id=container_id, run_id=run_id)
 
 
 def _wait_for_falkordb(container: str) -> None:
@@ -688,17 +726,74 @@ def _poll(
     return False
 
 
-def _remove_container(container: str) -> None:
+def _remove_container(container: DisposableContainer) -> None:
+    if not _has_disposal_capability(container):
+        return
     try:
-        result = _docker("rm", "-f", "-v", container, timeout=_DOCKER_RM_TIMEOUT_SECONDS)
+        result = _docker(
+            "rm",
+            "-f",
+            "-v",
+            container.container_id,
+            timeout=_DOCKER_RM_TIMEOUT_SECONDS,
+        )
     except click.ClickException as exc:
-        click.echo(f"Warning: failed to remove scratch container {container}: {exc}", err=True)
+        click.echo(f"Warning: failed to remove scratch container {container.name}: {exc}", err=True)
         return
     if result.returncode != 0:
         click.echo(
-            f"Warning: failed to remove scratch container {container}: {_stderr_tail(result)}",
+            f"Warning: failed to remove scratch container {container.name}: {_stderr_tail(result)}",
             err=True,
         )
+
+
+def _has_disposal_capability(container: DisposableContainer) -> bool:
+    try:
+        result = _docker(
+            "container",
+            "inspect",
+            container.container_id,
+            timeout=_DOCKER_RM_TIMEOUT_SECONDS,
+        )
+    except click.ClickException as exc:
+        _warn_cleanup_refusal(container, f"inspection failed: {exc}")
+        return False
+    if result.returncode != 0:
+        _warn_cleanup_refusal(container, f"inspection failed: {_stderr_tail(result)}")
+        return False
+    try:
+        payload: object = json.loads(_process_output(result.stdout))
+    except json.JSONDecodeError as exc:
+        _warn_cleanup_refusal(container, f"inspection returned invalid JSON: {exc}")
+        return False
+    if not isinstance(payload, list) or len(payload) != 1 or not isinstance(payload[0], dict):
+        _warn_cleanup_refusal(container, "inspection returned an unexpected record")
+        return False
+
+    record = payload[0]
+    config = record.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if not isinstance(labels, dict) or not all(isinstance(key, str) for key in labels):
+        _warn_cleanup_refusal(container, "inspection returned invalid labels")
+        return False
+    has_compose_labels = any(key.startswith(_COMPOSE_LABEL_PREFIX) for key in labels)
+    authorized = (
+        record.get("Id") == container.container_id
+        and record.get("Name") == f"/{container.name}"
+        and labels.get(_DISPOSABLE_LABEL) == "true"
+        and labels.get(_DISPOSABLE_RUN_LABEL) == container.run_id
+        and not has_compose_labels
+    )
+    if not authorized:
+        _warn_cleanup_refusal(container, "identity or disposal labels did not match")
+    return authorized
+
+
+def _warn_cleanup_refusal(container: DisposableContainer, reason: str) -> None:
+    click.echo(
+        f"Warning: refusing to remove scratch container {container.name}: {reason}",
+        err=True,
+    )
 
 
 def _require_file(path: Path, label: str) -> None:
