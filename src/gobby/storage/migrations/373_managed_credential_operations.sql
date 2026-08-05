@@ -1,3 +1,4 @@
+-- gobby:destructive
 -- Operator-safe managed-role inventory and maintenance drains.
 
 CREATE OR REPLACE FUNCTION gobby_agent_auth.list_active_principals()

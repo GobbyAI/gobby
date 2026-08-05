@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import importlib.resources
 import re
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
+
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -1482,3 +1489,145 @@ def test_chat_message_sequence_constraint_is_consistent_across_schema_and_migrat
         migration,
         ("duplicate_rank > 1", "replacement_seq", "DROP INDEX IF EXISTS"),
     )
+
+
+class _MigrationAuditResult:
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list[dict[str, Any]]:
+        return list(self._rows)
+
+
+class _MigrationAuditHub:
+    dialect = "postgres"
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        self._rows = rows
+        self.queries: list[str] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[_MigrationAuditHub]:
+        yield self
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _MigrationAuditResult:
+        del params
+        self.queries.append(sql)
+        if "pg_advisory_" in sql:
+            return _MigrationAuditResult([])
+        if "SELECT version, filename, checksum" in sql:
+            return _MigrationAuditResult(self._rows)
+        raise AssertionError(f"unexpected query: {sql}")
+
+    def close(self) -> None:
+        return None
+
+
+def _migration_audit_fixture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    receipt_overrides: dict[int, tuple[str | None, str | None]] | None = None,
+) -> tuple[Any, _MigrationAuditHub, list[Any], set[int]]:
+    import gobby.storage.migrations as module
+
+    migrations = []
+    rows: list[dict[str, Any]] = [
+        {
+            "version": module.BASELINE_VERSION,
+            "filename": f"baseline@{module.BASELINE_VERSION}",
+            "checksum": hashlib.sha256(POSTGRES_BASELINE_SCHEMA.read_bytes()).hexdigest(),
+        }
+    ]
+    for version in range(module.BASELINE_VERSION + 1, 355):
+        path = tmp_path / f"{version}_contract.sql"
+        path.write_text(f"SELECT {version};\n", encoding="utf-8")
+        migrations.append(module.Migration(version=version, name="contract", path=path))
+        filename = path.name if version >= 354 else None
+        checksum = hashlib.sha256(path.read_bytes()).hexdigest() if version >= 354 else None
+        if receipt_overrides and version in receipt_overrides:
+            filename, checksum = receipt_overrides[version]
+        rows.append({"version": version, "filename": filename, "checksum": checksum})
+
+    applied = set(range(module.BASELINE_VERSION + 1, 355))
+    hub = _MigrationAuditHub(rows)
+    runner = module.MigrationRunner(cast(HubDatabase, hub), autocommit_connection=lambda: hub)
+    monkeypatch.setattr(runner, "_ensure_schema_migrations_table", lambda: None)
+    monkeypatch.setattr(runner, "_read_applied_versions", lambda: applied)
+    monkeypatch.setattr(runner, "_discover_migrations", lambda: migrations)
+    return runner, hub, migrations, applied
+
+
+def test_apply_pending_rejects_recorded_migration_filename_hijack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.migrations import MigrationUnsupportedError
+
+    runner, _hub, _migrations, _applied = _migration_audit_fixture(
+        tmp_path,
+        monkeypatch,
+        receipt_overrides={354: ("354_original.sql", "irrelevant")},
+    )
+
+    with pytest.raises(MigrationUnsupportedError, match=r"filename mismatch.*v354"):
+        runner.apply_pending()
+
+
+def test_apply_pending_rejects_recorded_migration_checksum_hijack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.migrations import MigrationUnsupportedError
+
+    runner, _hub, migrations, _applied = _migration_audit_fixture(
+        tmp_path,
+        monkeypatch,
+        receipt_overrides={354: ("354_contract.sql", "0" * 64)},
+    )
+    assert migrations[-1].path.name == "354_contract.sql"
+
+    with pytest.raises(MigrationUnsupportedError, match=r"checksum mismatch.*v354"):
+        runner.apply_pending()
+
+
+def test_migration_discovery_rejects_typoed_filename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.storage.migrations as module
+
+    migrations_dir = tmp_path / "migrations"
+    migrations_dir.mkdir()
+    (migrations_dir / "354-bookkeeping.sql").touch()
+    monkeypatch.setattr(importlib.resources, "files", lambda _package: tmp_path)
+
+    with pytest.raises(module.MigrationUnsupportedError, match=r"354-bookkeeping\.sql"):
+        module.MigrationRunner(cast(HubDatabase, _MigrationAuditHub([])))._discover_migrations()
+
+
+def test_applied_migration_chain_is_contiguous_from_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.storage.migrations as module
+
+    _runner, _hub, migrations, applied = _migration_audit_fixture(tmp_path, monkeypatch)
+    applied.remove(346)
+
+    with pytest.raises(module.MigrationUnsupportedError, match=r"missing applied migration v346"):
+        module.MigrationRunner._validate_contiguous_chain(applied, migrations)
+
+
+def test_apply_pending_accepts_null_historical_receipts_and_attests_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, hub, _migrations, _applied = _migration_audit_fixture(tmp_path, monkeypatch)
+
+    runner.apply_pending()
+
+    audit_queries = [
+        query for query in hub.queries if "SELECT version, filename, checksum" in query
+    ]
+    assert len(audit_queries) == 1

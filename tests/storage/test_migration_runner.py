@@ -433,6 +433,7 @@ def _new_destructive_runner(
         _BatchHub(state),
         autocommit_connection=lambda: _BatchLockConnection(state),
     )
+    runner._audit_migration_state = MethodType(lambda self: None, runner)
     runner._discover_migrations = MethodType(lambda self: migrations, runner)
     return runner
 
@@ -661,10 +662,9 @@ def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() ->
     assert hub.applied == {321}
 
 
-def test_postgres_migration_discovery_reports_invalid_filenames(
+def test_postgres_migration_discovery_rejects_invalid_filenames(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     module = _migration_module()
     migrations_dir = tmp_path / "migrations"
@@ -674,17 +674,8 @@ def test_postgres_migration_discovery_reports_invalid_filenames(
     (migrations_dir / "invalid.sql").touch()
     monkeypatch.setattr(module.importlib.resources, "files", lambda _package: tmp_path)
 
-    with caplog.at_level("WARNING", logger="gobby.storage.migrations"):
-        discovered = module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
-
-    assert [(migration.version, migration.name) for migration in discovered] == [(321, "valid")]
-    record = next(
-        record
-        for record in caplog.records
-        if record.getMessage() == "Ignoring invalid migration filename"
-    )
-    assert record.__dict__["migration_filename"] == "invalid.sql"
-    assert ".gitkeep" not in caplog.text
+    with pytest.raises(MigrationUnsupportedError, match=r"invalid\.sql"):
+        module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
 
 @pytest.mark.parametrize("version", [295, 305])

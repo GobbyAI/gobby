@@ -149,6 +149,7 @@ class MigrationRunner:
             else:
                 apply_baseline()
 
+            self._audit_migration_state()
             self._apply_pending_locked(fresh_schema=not baseline_present)
             database_head = self._read_current_schema_head()
             self._raise_if_schema_is_newer(database_head, code_head)
@@ -159,6 +160,7 @@ class MigrationRunner:
 
     def apply_pending(self, *, fresh_schema: bool = False) -> None:
         with self._migration_lock():
+            self._audit_migration_state()
             self._apply_pending_locked(fresh_schema=fresh_schema)
 
     def _apply_pending_locked(self, *, fresh_schema: bool = False) -> None:
@@ -166,7 +168,7 @@ class MigrationRunner:
         applied = self._read_applied_versions()
         migrations = self._discover_migrations()
         pending = [migration for migration in migrations if migration.version not in applied]
-        self._validate_contiguous_chain(applied, pending)
+        self._validate_pending_chain(applied, pending)
         for migration in pending:
             if migration.version in applied:
                 continue
@@ -232,14 +234,15 @@ class MigrationRunner:
             raise MigrationUnsupportedError(
                 "Destructive migration apply requires a session advisory-lock connection."
             )
-        self._ensure_schema_migrations_table()
-        migrations = self._discover_migrations()
-        applied = self._read_applied_versions()
-        pending = [migration for migration in migrations if migration.version not in applied]
-
         with closing(self._autocommit_connection()) as lock_connection:
             lock_connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
             try:
+                self._audit_migration_state()
+                migrations = self._discover_migrations()
+                applied = self._read_applied_versions()
+                pending = [
+                    migration for migration in migrations if migration.version not in applied
+                ]
                 plan = self._load_or_create_batch_plan(
                     context,
                     migrations,
@@ -305,7 +308,7 @@ class MigrationRunner:
                 self._validate_local_batch_plan(stored_plan, migrations)
                 return stored_plan
 
-            self._validate_contiguous_chain(applied, pending)
+            self._validate_pending_chain(applied, pending)
             current_head = self._read_schema_head(txn)
             if current_head != context.backup_starting_head:
                 raise MigrationUnsupportedError(
@@ -523,6 +526,59 @@ class MigrationRunner:
             rows = txn.execute("SELECT version FROM schema_migrations").fetchall()
         return {int(_row_value(row, "version")) for row in rows}
 
+    def _audit_migration_state(self) -> None:
+        self._ensure_schema_migrations_table()
+        applied = self._read_applied_versions()
+        if max(applied, default=0) < _BOOKKEEPING_VERSION:
+            return
+        migrations = self._discover_migrations()
+        self._validate_contiguous_chain(applied, migrations)
+        self._verify_applied_migrations(migrations)
+
+    def _verify_applied_migrations(self, migrations: list[Migration]) -> None:
+        local_by_version = {migration.version: migration for migration in migrations}
+        with self._hub.transaction() as txn:
+            rows = txn.execute(
+                """
+                SELECT version, filename, checksum
+                FROM schema_migrations
+                ORDER BY version
+                """
+            ).fetchall()
+
+        for row in rows:
+            version = int(_row_value(row, "version", 0))
+            filename = _row_value(row, "filename", 1)
+            checksum = _row_value(row, "checksum", 2)
+            if filename is None and checksum is None and version < _BOOKKEEPING_VERSION:
+                continue
+            if not isinstance(filename, str) or not isinstance(checksum, str):
+                raise MigrationUnsupportedError(
+                    f"Migration v{version} has incomplete filename/checksum bookkeeping."
+                )
+
+            if version == BASELINE_VERSION:
+                expected_filename = f"baseline@{BASELINE_VERSION}"
+                expected_checksum = _baseline_checksum()
+            else:
+                migration = local_by_version.get(version)
+                if migration is None:
+                    raise MigrationUnsupportedError(
+                        f"Applied migration v{version} has no matching on-disk file."
+                    )
+                expected_filename = migration.path.name
+                expected_checksum = _migration_checksum(migration)
+
+            if filename != expected_filename:
+                raise MigrationUnsupportedError(
+                    f"Migration filename mismatch for v{version}: "
+                    f"recorded {filename!r}, found {expected_filename!r}."
+                )
+            if checksum != expected_checksum:
+                raise MigrationUnsupportedError(
+                    f"Migration checksum mismatch for v{version} ({expected_filename})."
+                )
+
     def _discover_migrations(self) -> list[Migration]:
         migrations_dir = importlib.resources.files("gobby.storage").joinpath("migrations")
         if not migrations_dir.is_dir():
@@ -534,12 +590,9 @@ class MigrationRunner:
                 continue
             match = _MIGRATION_FILE_RE.match(path.name)
             if match is None:
-                if not path.name.startswith("."):
-                    logger.warning(
-                        "Ignoring invalid migration filename",
-                        extra={"migration_filename": path.name},
-                    )
-                continue
+                if path.name.startswith("."):
+                    continue
+                raise MigrationUnsupportedError(f"Invalid migration filename: {path.name}")
 
             version = int(match.group("version"))
             name = match.group("name")
@@ -565,6 +618,34 @@ class MigrationRunner:
 
     @staticmethod
     def _validate_contiguous_chain(
+        applied: set[int],
+        migrations: list[Migration],
+    ) -> None:
+        local_by_version = {migration.version: migration for migration in migrations}
+        database_head = max(applied, default=BASELINE_VERSION)
+        for version in range(BASELINE_VERSION + 1, database_head + 1):
+            if version not in applied:
+                raise MigrationUnsupportedError(
+                    f"Migration chain is not contiguous: missing applied migration v{version}."
+                )
+            if version not in local_by_version:
+                raise MigrationUnsupportedError(
+                    f"Migration chain is not contiguous: missing on-disk migration v{version}."
+                )
+
+        expected = database_head + 1
+        for migration in migrations:
+            if migration.version <= database_head:
+                continue
+            if migration.version != expected:
+                raise MigrationUnsupportedError(
+                    f"Migration chain is not contiguous: missing migration v{expected} "
+                    f"before {migration.path.name}."
+                )
+            expected += 1
+
+    @staticmethod
+    def _validate_pending_chain(
         applied: set[int],
         pending: list[Migration],
     ) -> None:
@@ -617,6 +698,11 @@ def _has_directive(migration: Migration, directive: str) -> bool:
 
 def _migration_checksum(migration: Migration) -> str:
     return hashlib.sha256(migration.path.read_bytes()).hexdigest()
+
+
+def _baseline_checksum() -> str:
+    baseline = importlib.resources.files("gobby.storage").joinpath("postgres_baseline_schema.sql")
+    return hashlib.sha256(baseline.read_bytes()).hexdigest()
 
 
 def _migration_plan_item(migration: Migration) -> dict[str, str]:
