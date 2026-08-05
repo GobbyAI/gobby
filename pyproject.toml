@@ -3,7 +3,7 @@ name = "gobby"
 version = "0.5.0"
 description = "The bottleneck in AI coding isn't the model: It's the babysitting. Gobby is a local daemon that turns a task into a PR across Claude Code, Codex, Droid, Grok, Qwen, and AGY. Stage dispatch, hook-time rules, progressive MCP proxy, and more. Gobby built Gobby."
 readme = "README.md"
-license = { text = "FSL-1.1-ALv2" }
+license = "FSL-1.1-ALv2"
 authors = [
     { name = "Josh Wilhelmi", email = "josh@gobby.ai" }
 ]
@@ -154,8 +154,7 @@ gobby = [
     "install/bundled_content_manifest.json",
     "install/srt-package-lock.json",
     "install/shared/**/*",
-    "storage/*.sql",
-    "storage/migrations/*",
+    "storage/schema_expected_identity.json",
     "data/**/*",
     "ui/web/dist/**/*",
 ]

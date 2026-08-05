@@ -5,7 +5,6 @@ import contextlib
 import copy
 import json
 import logging
-import uuid
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -68,7 +67,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import DuplicateMemoryContentError
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
-from gobby.storage.migrations import _execute_sql_script
 from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 pytestmark = pytest.mark.unit
@@ -1417,86 +1415,12 @@ def test_dream_action_vocabulary_matches_live_pipeline() -> None:
     assert set(get_args(DreamActionName)) == {"keep", "delete", "refresh", "review", "promote"}
 
 
-def test_migration_367_forfeits_entire_runs_with_legacy_snapshots(temp_db: HubDatabase) -> None:
-    store = MemoryDreamStore(temp_db)
-    merge_run = store.create_run(project_id=None, dry_run=False, options={})
-    store.update_run(merge_run, status="completed")
-    supersede_run = store.create_run(project_id=None, dry_run=False, options={})
-    store.update_run(supersede_run, status="completed")
-    untouched_run = store.create_run(project_id=None, dry_run=False, options={})
-    store.update_run(untouched_run, status="completed")
-    temp_db.execute(
-        "ALTER TABLE memory_dream_snapshots DROP CONSTRAINT memory_dream_snapshots_action_check"
-    )
-    temp_db.execute(
-        "ALTER TABLE memory_dream_snapshots "
-        "ADD CONSTRAINT memory_dream_snapshots_action_check "
-        "CHECK (action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review', "
-        "'promote'))"
-    )
-
-    def add_snapshot(run_id: str, action: str) -> None:
-        memory_id = str(uuid.uuid4())
-        snapshot_id = store.insert_snapshot(
-            run_id=run_id,
-            memory_id=memory_id,
-            action=cast(DreamActionName, action),
-            before_data={"id": memory_id},
-        )
-        store.complete_snapshot(snapshot_id, after_data={"id": memory_id})
-
-    add_snapshot(merge_run, "merge")
-    add_snapshot(merge_run, "keep")
-    add_snapshot(supersede_run, "supersede")
-    add_snapshot(untouched_run, "refresh")
-
-    migration_path = (
-        Path(__file__).resolve().parents[2]
-        / "src/gobby/storage/migrations/367_dream_check_tighten.sql"
-    )
-    with temp_db.transaction() as txn:
-        _execute_sql_script(txn, migration_path.read_text(encoding="utf-8"))
-
-    merge_row = store.get_run(merge_run)
-    supersede_row = store.get_run(supersede_run)
-    untouched_row = store.get_run(untouched_run)
-    assert merge_row is not None
-    assert supersede_row is not None
-    assert untouched_row is not None
-    assert merge_row["status"] == "revert_forfeited"
-    assert supersede_row["status"] == "revert_forfeited"
-    assert untouched_row["status"] == "completed"
-    assert store.list_snapshots(merge_run) == []
-    assert store.list_snapshots(supersede_run) == []
-    assert len(store.list_snapshots(untouched_run)) == 1
-
-    action_check = temp_db.fetchone(
-        """
-        SELECT pg_get_constraintdef(oid) AS definition
-          FROM pg_constraint
-         WHERE conname = 'memory_dream_snapshots_action_check'
-           AND conrelid = 'memory_dream_snapshots'::regclass
-        """
-    )
-    assert action_check is not None
-    definition = str(action_check["definition"])
-    for action in ("keep", "delete", "refresh", "review", "promote"):
-        assert action in definition
-    assert "merge" not in definition
-    assert "supersede" not in definition
-
-
-def test_migration_baseline_and_ensure_schema_share_admission_contract() -> None:
+def test_baseline_and_ensure_schema_share_admission_contract() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    migration = (repo_root / "src/gobby/storage/migrations/367_dream_check_tighten.sql").read_text(
-        encoding="utf-8"
-    )
-    baseline = (repo_root / "src/gobby/storage/postgres_baseline_schema.sql").read_text(
-        encoding="utf-8"
-    )
+    baseline = (repo_root / "crates/gcore/assets/schema/baseline.sql").read_text(encoding="utf-8")
     runtime = (repo_root / "src/gobby/memory/dream/storage_schema.py").read_text(encoding="utf-8")
 
-    for label, content in (("migration", migration), ("baseline", baseline), ("runtime", runtime)):
+    for label, content in (("baseline", baseline), ("runtime", runtime)):
         for fragment in (
             "'partial'",
             "'revert_forfeited'",
@@ -1505,7 +1429,6 @@ def test_migration_baseline_and_ensure_schema_share_admission_contract() -> None
     # The status vocabulary must be identical everywhere.
     for status in sorted(RUN_TERMINAL_STATUSES | {"started", "running"}):
         for label, content in (
-            ("migration", migration),
             ("baseline", baseline),
             ("runtime", runtime),
         ):

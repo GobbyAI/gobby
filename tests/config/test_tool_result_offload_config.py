@@ -72,19 +72,7 @@ def test_tool_result_offload_rejects_reachable_invalid_values(
 
 
 @pytest.mark.integration
-def test_tool_results_migration_is_unique_and_applied(temp_db: HubDatabase) -> None:
-    migrations_dir = Path(__file__).resolve().parents[2] / "src/gobby/storage/migrations"
-    migration_paths = sorted(
-        migrations_dir.glob("*.sql"),
-        key=lambda path: int(path.name.split("_", 1)[0]),
-    )
-    versions = [int(path.name.split("_", 1)[0]) for path in migration_paths]
-
-    assert versions.count(340) == 1
-    assert next(path.name for path in migration_paths if path.name.startswith("340_")) == (
-        "340_tool_results.sql"
-    )
-
+def test_tool_results_schema_is_applied(temp_db: HubDatabase) -> None:
     tables = {
         row["table_name"]
         for row in temp_db.execute(

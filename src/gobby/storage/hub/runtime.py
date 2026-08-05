@@ -13,7 +13,6 @@ from gobby.config.bootstrap import (
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.maintenance_epoch import admitted_database_url
-from gobby.storage.migrations import DestructiveMigrationContext
 
 
 @contextmanager
@@ -47,7 +46,6 @@ def runtime_hub_database(
 def apply_destructive_batch(
     database_url: str,
     pool_config: PostgresPoolConfig,
-    context: DestructiveMigrationContext,
 ) -> None:
     """Apply one epoch-bound destructive batch on a dedicated hub pool.
 
@@ -59,6 +57,6 @@ def apply_destructive_batch(
 
     db = PostgresHubDatabase(database_url, pool_config=pool_config)
     try:
-        db.apply_destructive_migrations(context)
+        db.apply_destructive_migrations()
     finally:
         db.close()

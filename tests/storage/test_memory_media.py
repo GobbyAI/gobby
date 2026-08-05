@@ -84,7 +84,7 @@ class TestMediaColumnRemoved:
         assert "media" not in columns
 
     def test_postgres_baseline_omits_media_column(self) -> None:
-        baseline = (REPO_ROOT / "src/gobby/storage/postgres_baseline_schema.sql").read_text(
+        baseline = (REPO_ROOT / "crates/gcore/assets/schema/baseline.sql").read_text(
             encoding="utf-8"
         )
 

@@ -37,6 +37,7 @@ from gobby.install.distribution import (
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
 from . import install_setup_gwiki as _gwiki_impl
+from .install_setup_gdaemon import GdaemonInstallError, ensure_gdaemon
 from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,13 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     from .installers import install_default_mcp_servers
 
     try:
+        gdaemon_result = ensure_gdaemon()
+    except (GdaemonInstallError, OSError, ValueError) as exc:
+        raise click.ClickException(f"Failed to provision gdaemon: {exc}") from exc
+    action = "Installed" if gdaemon_result["installed"] else "Verified"
+    click.echo(f"{action} gdaemon {gdaemon_result['version']} via {gdaemon_result['method']}")
+
+    try:
         from gobby.cli.installers.shared import sync_bundled_content_to_db
         from gobby.storage.hub.runtime import runtime_hub_database
 
@@ -347,8 +355,10 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
             if sync_result["errors"]:
                 for err in sync_result["errors"]:
                     click.echo(f"  Warning: {err}")
-    except (OSError, PermissionError, RuntimeError, ValueError) as e:
-        click.echo(f"Warning: Database init failed ({type(e).__name__}): {e}")
+    except (OSError, PermissionError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(
+            f"Database initialization failed ({type(exc).__name__}): {exc}"
+        ) from exc
 
     mcp_result = install_default_mcp_servers()
     if mcp_result["success"]:

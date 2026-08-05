@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -92,39 +94,40 @@ def test_destructive_manifest_gate_accepts_all_bound_evidence(tmp_path: Path) ->
     epoch_id = uuid.uuid4()
     digest = "a" * 64
 
-    context = validate_destructive_manifest(
-        _manifest(epoch_id),
-        backup_root=tmp_path,
-        manifest_sha256=digest,
-        current_identity=IDENTITY,
-        epoch=_epoch(epoch_id),
-        batch=_batch(epoch_id, digest),
-        now=NOW,
-        max_age_hours=24,
+    validator = cast(Callable[..., object], validate_destructive_manifest)
+    assert (
+        validator(
+            _manifest(epoch_id),
+            backup_root=tmp_path,
+            manifest_sha256=digest,
+            current_identity=IDENTITY,
+            epoch=_epoch(epoch_id),
+            batch=_batch(epoch_id, digest),
+            now=NOW,
+            max_age_hours=24,
+        )
+        is None
     )
-
-    assert context.epoch_id == str(epoch_id)
-    assert context.manifest_sha256 == digest
-    assert context.backup_starting_head == 354
 
 
 def test_destructive_manifest_gate_accepts_identity_cutover_campaign(tmp_path: Path) -> None:
     epoch_id = uuid.uuid4()
     digest = "a" * 64
 
-    context = validate_destructive_manifest(
-        _manifest(epoch_id),
-        backup_root=tmp_path,
-        manifest_sha256=digest,
-        current_identity=IDENTITY,
-        epoch=_epoch(epoch_id, campaign="identity-cutover"),
-        batch=_batch(epoch_id, digest, campaign="identity-cutover"),
-        now=NOW,
-        max_age_hours=24,
+    validator = cast(Callable[..., object], validate_destructive_manifest)
+    assert (
+        validator(
+            _manifest(epoch_id),
+            backup_root=tmp_path,
+            manifest_sha256=digest,
+            current_identity=IDENTITY,
+            epoch=_epoch(epoch_id, campaign="identity-cutover"),
+            batch=_batch(epoch_id, digest, campaign="identity-cutover"),
+            now=NOW,
+            max_age_hours=24,
+        )
+        is None
     )
-
-    assert context.epoch_id == str(epoch_id)
-    assert context.manifest_sha256 == digest
 
 
 def test_destructive_manifest_gate_refuses_epoch_batch_campaign_mismatch(

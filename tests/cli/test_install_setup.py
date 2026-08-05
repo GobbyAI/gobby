@@ -50,6 +50,14 @@ GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
 GWIKI_PIN: str = MANAGED_BIN_VERSION_PINS["gwiki"]
 
 
+@pytest.fixture(autouse=True)
+def _verified_gdaemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "gobby.cli.install_setup.ensure_gdaemon",
+        lambda: {"installed": False, "version": "0.1.0", "method": "existing"},
+    )
+
+
 class TestEnsureDaemonConfig:
     @patch("gobby.cli.install_setup.Path.expanduser")
     def test_exists(self, mock_expand, tmp_path):
@@ -103,10 +111,9 @@ class TestEnsureDaemonConfig:
         )
         assert "daemon_port: 60887" in target.read_text()
         assert yaml.safe_load(target.read_text())["postgres_pool"] == {
-            "min_size": 2,
-            "max_size": 20,
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
+            "max_lifetime_seconds": 300.0,
         }
 
     def test_bundled_bootstrap_exposes_postgres_pool_defaults(self) -> None:
@@ -123,8 +130,6 @@ class TestEnsureDaemonConfig:
         content = yaml.safe_load(template.read_text())
 
         assert content["postgres_pool"] == {
-            "min_size": 2,
-            "max_size": 20,
             "acquire_timeout_seconds": 5.0,
             "open_timeout_seconds": 30.0,
         }

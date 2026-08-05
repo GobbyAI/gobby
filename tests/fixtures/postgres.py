@@ -33,10 +33,8 @@ from gobby.runner_maintenance.storage_hygiene import (
     _test_schema_created_epoch,
     sweep_orphaned_test_schemas,
 )
-from gobby.storage.hub.postgres import (
-    _BASELINE_BOOKKEEPING_TABLES,
-    PostgresHubDatabase,
-)
+from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.schema_contract import apply_schema
 from gobby.utils.machine_id import get_machine_id
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
@@ -53,6 +51,7 @@ _TEST_DSN_REQUIRED = (
     "`docker compose -f docker-compose.test.yml up -d postgres-test`."
 )
 _ISOLATED_SCHEMA_APPLICATION_PREFIX = "gobby-isolated-schema-"
+_SCHEMA_BOOKKEEPING_TABLES = frozenset({"schema_migrations"})
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -148,8 +147,8 @@ def postgres_database_url() -> str:
     return _require_test_database_url()
 
 
-def _cleanup_orphaned_schemas(url: str, age_hours: int = 0) -> None:
-    """Delegate fixture cleanup to the daemon-owned leased sweeper."""
+def _cleanup_orphaned_schemas(url: str, age_hours: int = 1) -> None:
+    """Sweep old schemas while preserving live runs whose lease backend was terminated."""
     sweep_orphaned_test_schemas(url, age_hours)
 
 
@@ -175,7 +174,7 @@ def _capture_canonical_seed(
         ).fetchall()
     ]
     for table in all_tables:
-        if table in _BASELINE_BOOKKEEPING_TABLES:
+        if table in _SCHEMA_BOOKKEEPING_TABLES:
             continue
         rows = conn.execute(sql.SQL("SELECT * FROM {}").format(sql.Identifier(table))).fetchall()
         if rows:
@@ -254,7 +253,7 @@ def _reset_schema(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
         }
-        reset_tables = _delete_order(conn, all_tables - _BASELINE_BOOKKEEPING_TABLES)
+        reset_tables = _delete_order(conn, all_tables - _SCHEMA_BOOKKEEPING_TABLES)
         sequences = [
             row[0]
             for row in conn.execute(
@@ -415,11 +414,7 @@ def postgres_canonical_seed(
     per-test reset.
     """
     url = postgres_database_url
-    db = PostgresHubDatabase(url + f"?options=-csearch_path%3D{postgres_schema}")
-    try:
-        db.apply_migrations()
-    finally:
-        db.close()
+    apply_schema(url, schema=postgres_schema)
     with psycopg.connect(url, autocommit=True) as conn:
         conn.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(postgres_schema)))
         conn.execute(
@@ -452,11 +447,8 @@ def postgres_db(
     """
     base_url = postgres_database_url
     scoped_url = base_url + f"?options=-csearch_path%3D{postgres_schema}"
-    # apply_migrations is idempotent; the session-scoped seed fixture ran it
-    # before this test was created, so this call is a no-op.
     db = PostgresHubDatabase(scoped_url)
     try:
-        db.apply_migrations()
         _reset_schema(base_url, postgres_schema, postgres_canonical_seed)
         yield db
     finally:

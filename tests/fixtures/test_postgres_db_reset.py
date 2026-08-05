@@ -1,10 +1,9 @@
 """Acceptance 2.2.3: `_reset_schema` restores each test to fresh-baseline state.
 
 Verifies that the per-test `postgres_db` fixture's reset semantics produce
-a worker schema byte-for-byte equivalent to what `apply_migrations()` writes
-on a fresh schema, even after mutations across seed-bearing tables, the
-    shared `_BASELINE_BOOKKEEPING_TABLES` set (owned by
-    `gobby.storage.hub.postgres`), and arbitrary application tables.
+a worker schema byte-for-byte equivalent to what gdaemon writes on a fresh
+schema, even after mutations across seed-bearing tables, schema bookkeeping,
+and arbitrary application tables.
 """
 
 from __future__ import annotations
@@ -75,8 +74,7 @@ def test_seed_rows_survive_reset(
     """
     psycopg = pytest.importorskip("psycopg")
 
-    from gobby.storage.hub.postgres import _BASELINE_BOOKKEEPING_TABLES
-    from tests.fixtures.postgres import _reset_schema
+    from tests.fixtures.postgres import _SCHEMA_BOOKKEEPING_TABLES, _reset_schema
 
     dsn = _require_database_url()
 
@@ -152,7 +150,7 @@ def test_seed_rows_survive_reset(
                 "SELECT tablename FROM pg_tables WHERE schemaname = current_schema()"
             ).fetchall()
         }
-        truncate_tables = all_tables - _BASELINE_BOOKKEEPING_TABLES
+        truncate_tables = all_tables - _SCHEMA_BOOKKEEPING_TABLES
         assert "schema_migrations" not in truncate_tables
         assert "schema_migrations" in all_tables
         # (6) Removed PostgreSQL import marker table is absent from the baseline.

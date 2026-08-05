@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -15,18 +14,10 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
 
-from gobby.storage.migrations import BASELINE_VERSION, _split_statements_respecting_dollar_quotes
+from gobby.storage.schema_contract import apply_schema
 
 pytestmark = pytest.mark.integration
 
-ROOT = Path(__file__).resolve().parents[2]
-BASELINE = ROOT / "src/gobby/storage/postgres_baseline_schema.sql"
-MIGRATION = ROOT / "src/gobby/storage/migrations/369_scoped_agent_authorization.sql"
-LIFECYCLE_MIGRATION = ROOT / "src/gobby/storage/migrations/371_managed_credential_lifecycle.sql"
-PARALLEL_AUTH_MIGRATION = (
-    ROOT / "src/gobby/storage/migrations/372_parallel_scoped_project_authorization.sql"
-)
-OPERATIONS_MIGRATION = ROOT / "src/gobby/storage/migrations/373_managed_credential_operations.sql"
 AUTH_SCHEMA = "gobby_agent_auth"
 CAPABILITY_ROLE = "gobby_gcode_capability"
 ISSUER_ROLE = "gobby_agent_issuer"
@@ -61,26 +52,6 @@ def _require_isolated_hub(database_url: str) -> None:
     assert parsed.get("host") == "127.0.0.1"
     assert parsed.get("port") == "60892"
     assert parsed.get("dbname") == "gobby_test"
-
-
-def _bootstrap_and_migrate(conn: psycopg.Connection[Any]) -> None:
-    projects_relation = conn.execute("SELECT to_regclass('public.projects')").fetchone()
-    assert projects_relation is not None
-    if projects_relation[0] is None:
-        for statement in _split_statements_respecting_dollar_quotes(BASELINE.read_text()):
-            conn.execute(statement)
-        conn.execute(
-            "INSERT INTO public.schema_migrations (version, applied_at) VALUES (%s, NOW())",
-            (BASELINE_VERSION,),
-        )
-    assert MIGRATION.exists(), "migration slot 369 must implement the authorization substrate"
-    conn.execute(MIGRATION.read_text(), prepare=False)
-    assert LIFECYCLE_MIGRATION.exists(), "migration slot 371 must implement credential lifecycle"
-    conn.execute(LIFECYCLE_MIGRATION.read_text(), prepare=False)
-    assert PARALLEL_AUTH_MIGRATION.exists(), "migration slot 372 must preserve scoped parallelism"
-    conn.execute(PARALLEL_AUTH_MIGRATION.read_text(), prepare=False)
-    assert OPERATIONS_MIGRATION.exists(), "migration slot 373 must add operator-safe role drains"
-    conn.execute(OPERATIONS_MIGRATION.read_text(), prepare=False)
 
 
 def _as_runtime(
@@ -150,10 +121,10 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
     )
     conn.execute(
         """
-        INSERT INTO public.agent_runs (id, parent_session_id, provider, prompt)
-        VALUES (%s, %s, 'codex', 'authorization fixture')
+        INSERT INTO public.agent_runs (id, parent_session_id, machine_id, provider, prompt)
+        VALUES (%s, %s, %s, 'codex', 'authorization fixture')
         """,
-        (fixture.agent_run_id, fixture.session_id),
+        (fixture.agent_run_id, fixture.session_id, fixture.machine_id),
     )
     conn.execute(
         "UPDATE public.sessions SET agent_run_id = %s WHERE id = %s",
@@ -246,28 +217,41 @@ def _cleanup(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> No
 @pytest.fixture(scope="module")
 def authorization_fixture(postgres_database_url: str) -> Iterator[AuthorizationFixture]:
     _require_isolated_hub(postgres_database_url)
-    fixture = AuthorizationFixture(
-        database_url=postgres_database_url,
-        project_id=uuid4(),
-        other_project_id=uuid4(),
-        session_id=uuid4(),
-        agent_run_id=uuid4(),
-        machine_id=uuid4(),
-        execution_id=uuid4(),
-        role_name="",
-        password=f"agent-test-{uuid4()}",
-    )
-    with psycopg.connect(postgres_database_url, autocommit=True) as conn:
-        with conn.transaction():
-            _bootstrap_and_migrate(conn)
-        try:
-            _seed(conn, fixture)
-            role_name, generation = _issue(conn, fixture, fixture.execution_id, fixture.password)
-            assert generation == 1
-            fixture = replace(fixture, role_name=role_name)
-            yield fixture
-        finally:
-            _cleanup(conn, fixture)
+    database_name = f"gobby_test_agent_auth_{uuid4().hex[:12]}"
+    parameters = conninfo_to_dict(postgres_database_url)
+    parameters["dbname"] = database_name
+    isolated_url = make_conninfo("", **parameters)
+    with psycopg.connect(postgres_database_url, autocommit=True) as admin:
+        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    try:
+        with psycopg.connect(isolated_url, autocommit=True) as connection:
+            connection.execute("CREATE EXTENSION pg_search")
+        apply_schema(isolated_url)
+        fixture = AuthorizationFixture(
+            database_url=isolated_url,
+            project_id=uuid4(),
+            other_project_id=uuid4(),
+            session_id=uuid4(),
+            agent_run_id=uuid4(),
+            machine_id=uuid4(),
+            execution_id=uuid4(),
+            role_name="",
+            password=f"agent-test-{uuid4()}",
+        )
+        with psycopg.connect(isolated_url, autocommit=True) as conn:
+            try:
+                _seed(conn, fixture)
+                role_name, generation = _issue(
+                    conn, fixture, fixture.execution_id, fixture.password
+                )
+                assert generation == 1
+                fixture = replace(fixture, role_name=role_name)
+                yield fixture
+            finally:
+                _cleanup(conn, fixture)
+    finally:
+        with psycopg.connect(postgres_database_url, autocommit=True) as admin:
+            admin.execute(sql.SQL("DROP DATABASE {}").format(sql.Identifier(database_name)))
 
 
 def _ids(conn: psycopg.Connection[Any], statement: str) -> set[UUID]:

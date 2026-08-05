@@ -112,19 +112,11 @@ def test_postgres_clients_keep_credentials_out_of_argv(
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
     monkeypatch.setattr(subprocess, "run", capture_run)
-    monkeypatch.setattr(schema_diff, "_apply_reconcile_migration", lambda *_: None)
     database_url = "postgresql://schema_diff_user:super-secret-password@127.0.0.1:5432/gobby_test"
 
     schema_diff._dump_schema(database_url, "public", pg_dump="pg_dump")
-    schema_diff._project_live_schema(
-        database_url,
-        "CREATE SCHEMA public;",
-        live_schema="public",
-        projection_schema="projected",
-        psql="psql",
-    )
 
-    assert len(calls) == 2
+    assert len(calls) == 1
     for argv, kwargs in calls:
         rendered_argv = " ".join(argv)
         assert database_url not in rendered_argv
@@ -134,6 +126,21 @@ def test_postgres_clients_keep_credentials_out_of_argv(
         assert isinstance(env, dict)
         assert env["PGUSER"] == "schema_diff_user"
         assert env["PGPASSWORD"] == "super-secret-password"
+
+
+def test_fresh_schema_build_uses_gdaemon_with_explicit_schema(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        schema_diff,
+        "apply_schema",
+        lambda database_url, *, schema: calls.append((database_url, schema)),
+    )
+
+    schema_diff._build_fresh_schema("postgresql://isolated.example/gobby_test", "scratch")
+
+    assert calls == [("postgresql://isolated.example/gobby_test", "scratch")]
 
 
 def test_main_reports_postgres_client_timeout_as_clean_nonzero_error(

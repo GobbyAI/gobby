@@ -15,7 +15,6 @@ on:
       - "crates/**"
       - "docs/evidence/pre-flatten/migrated-fresh.seed.json"
       - "rust-toolchain.toml"
-      - "src/gobby/storage/postgres_baseline_schema.sql"
   pull_request:
     branches: [main]
     paths:
@@ -30,7 +29,6 @@ on:
       - "crates/**"
       - "docs/evidence/pre-flatten/migrated-fresh.seed.json"
       - "rust-toolchain.toml"
-      - "src/gobby/storage/postgres_baseline_schema.sql"
   workflow_dispatch:
 
 env:

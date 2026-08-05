@@ -31,10 +31,7 @@ from gobby.storage.maintenance_epoch import (
     get_destructive_batch,
     require_orchestrator_epoch,
 )
-from gobby.storage.migrations import (
-    DestructiveMigrationContext,
-    latest_known_version,
-)
+from gobby.storage.schema_contract import latest_schema_version
 
 
 class SchemaGateError(RuntimeError):
@@ -51,7 +48,7 @@ def validate_destructive_manifest(
     batch: DestructiveBatch,
     now: datetime,
     max_age_hours: float,
-) -> DestructiveMigrationContext:
+) -> None:
     """Validate every external fact required before a destructive batch."""
     decision = check_manifest_gate(
         manifest,
@@ -75,12 +72,6 @@ def validate_destructive_manifest(
         reasons.append(f"maintenance epoch is not owned by hub-maintenance:{epoch.campaign}")
     if reasons:
         raise SchemaGateError("; ".join(reasons))
-    return DestructiveMigrationContext(
-        epoch_id=str(epoch.id),
-        batch_id=str(batch.id),
-        manifest_sha256=manifest_sha256,
-        backup_starting_head=manifest.backup_starting_head,
-    )
 
 
 @click.group("schema")
@@ -113,7 +104,7 @@ def apply_schema(
         from gobby.cli.runtime import get_cli_runtime
 
         get_cli_runtime(ctx).require_database()
-        click.echo(f"Schema is at version {latest_known_version()}")
+        click.echo(f"Schema is at version {latest_schema_version()}")
         return
 
     config_file = ctx.find_root().params.get("config")
@@ -170,7 +161,7 @@ def _apply_verified_batch(
     manifest_sha256 = _file_sha256(manifest_path)
     bound_url = bind_maintenance_epoch(database_url, epoch.id)
     current_identity, _current_head = collect_postgres_identity(bound_url)
-    context = validate_destructive_manifest(
+    validate_destructive_manifest(
         manifest,
         backup_root=manifest_path.parent,
         manifest_sha256=manifest_sha256,
@@ -180,7 +171,7 @@ def _apply_verified_batch(
         now=datetime.now(UTC),
         max_age_hours=max_age_hours,
     )
-    apply_destructive_batch(bound_url, pool_config, context)
+    apply_destructive_batch(bound_url, pool_config)
 
 
 def _newest_manifest_path(backup_root: Path) -> Path:
@@ -223,9 +214,10 @@ class _SchemaApplyExecutor(CampaignExecutor):
         _identity, current_head = collect_postgres_identity(
             bind_maintenance_epoch(config.database_url, epoch.id)
         )
-        if current_head != latest_known_version():
+        expected_version = latest_schema_version()
+        if current_head != expected_version:
             raise SchemaGateError(
-                f"Schema batch stopped at version {current_head}; expected {latest_known_version()}"
+                f"Schema batch stopped at version {current_head}; expected {expected_version}"
             )
 
 

@@ -10,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-POSTGRES_BASELINE_SCHEMA = REPO_ROOT / "src/gobby/storage/postgres_baseline_schema.sql"
+POSTGRES_BASELINE_SCHEMA = REPO_ROOT / "crates/gcore/assets/schema/baseline.sql"
 BAD_TIMESTAMP_DECLARATION_RE = re.compile(
     r"^\s*(?:ADD\s+COLUMN\s+)?(?P<column>[a-z_][a-z0-9_]*)\s+"
     r"TIMESTAMP(?:\s*\(\d+\))?(?:\s+WITHOUT\s+TIME\s+ZONE)?\b"
@@ -29,8 +29,7 @@ TIMESTAMP_LIKE_TEXT_COLUMN_RE = re.compile(
 
 def _schema_text() -> str:
     assert POSTGRES_BASELINE_SCHEMA.exists(), (
-        "Phase 4 requires a checked-in PostgreSQL baseline at "
-        "src/gobby/storage/postgres_baseline_schema.sql"
+        "gcore requires a checked-in PostgreSQL baseline at crates/gcore/assets/schema/baseline.sql"
     )
     return POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
 

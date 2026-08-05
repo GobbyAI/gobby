@@ -158,7 +158,7 @@ def test_adapt_seed_rows_wraps_json_values() -> None:
     assert adapted[0][1].obj == ["fast"]
 
 
-def test_orphan_cleanup_delegates_to_leased_sweeper(
+def test_orphan_cleanup_delegates_to_leased_sweeper_with_live_process_grace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import tests.fixtures.postgres as postgres_fixture
@@ -173,7 +173,7 @@ def test_orphan_cleanup_delegates_to_leased_sweeper(
 
     _cleanup_orphaned_schemas("postgresql://test")
 
-    assert calls == [("postgresql://test", 0)]
+    assert calls == [("postgresql://test", 1)]
 
 
 def test_isolated_test_schema_rejects_label_that_breaks_name_contract(

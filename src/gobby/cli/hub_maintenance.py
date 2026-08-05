@@ -384,7 +384,7 @@ class _IdentityCutoverExecutor:
         from gobby.config.app import load_config
         from gobby.storage.identity_cutover import verify_identity_cutover
         from gobby.storage.maintenance_epoch import bind_maintenance_epoch
-        from gobby.storage.migrations import latest_known_version
+        from gobby.storage.schema_contract import latest_schema_version
 
         config = load_config(resolve_database_url=True)
         if config.database_url is None:
@@ -392,48 +392,11 @@ class _IdentityCutoverExecutor:
         bound_url = bind_maintenance_epoch(config.database_url, epoch.id)
         verify_identity_cutover(bound_url, get_gobby_home() / "machine_id")
         _identity, current_head = collect_postgres_identity(bound_url)
-        if current_head != latest_known_version():
+        expected_version = latest_schema_version()
+        if current_head != expected_version:
             raise click.ClickException(
-                f"Identity cutover stopped at schema {current_head}; "
-                f"expected {latest_known_version()}"
+                f"Identity cutover stopped at schema {current_head}; expected {expected_version}"
             )
 
 
-class _FlattenExecutor:
-    """Atomically replace verified historical receipts with baseline@375."""
-
-    def apply(self, epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
-        from gobby.config.app import load_config
-        from gobby.storage.migration_flatten import (
-            cutover_migration_bookkeeping,
-            load_flatten_evidence,
-        )
-
-        config = load_config(resolve_database_url=True)
-        if config.database_url is None:
-            raise click.ClickException("Hub database URL is unavailable")
-        cutover_migration_bookkeeping(
-            config.database_url,
-            epoch.id,
-            load_flatten_evidence(),
-        )
-
-    def verify(self, epoch: MaintenanceEpoch, _batch: DestructiveBatch) -> None:
-        from gobby.config.app import load_config
-        from gobby.storage.migration_flatten import (
-            load_flatten_evidence,
-            verify_flattened_bookkeeping,
-        )
-
-        config = load_config(resolve_database_url=True)
-        if config.database_url is None:
-            raise click.ClickException("Hub database URL is unavailable")
-        verify_flattened_bookkeeping(
-            config.database_url,
-            epoch.id,
-            load_flatten_evidence(),
-        )
-
-
 register_campaign_executor("identity-cutover", _IdentityCutoverExecutor())
-register_campaign_executor("flatten", _FlattenExecutor())

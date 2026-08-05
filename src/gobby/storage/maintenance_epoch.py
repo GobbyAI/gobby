@@ -21,7 +21,6 @@ type Campaign = Literal[
     "purge",
     "reconcile",
     "identity-cutover",
-    "flatten",
 ]
 type BatchStatus = Literal["pending", "applied", "verified", "aborted"]
 type ReceiptState = Literal["pending", "applied", "verified"]
@@ -33,7 +32,6 @@ CAMPAIGNS: tuple[Campaign, ...] = (
     "purge",
     "reconcile",
     "identity-cutover",
-    "flatten",
 )
 MAINTENANCE_EPOCH_ENV = "GOBBY_MAINTENANCE_EPOCH"
 _QUIESCENCE_DEADLINE_SECONDS = 15.0

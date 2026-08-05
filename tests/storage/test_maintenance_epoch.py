@@ -286,7 +286,7 @@ def test_python_admission_probe_surfaces_actionable_epoch_error(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection, campaign="flatten")
+    epoch_id = _insert_epoch(connection, campaign="identity-cutover")
 
     with pytest.raises(MaintenanceEpochActiveError) as exc_info:
         probe_maintenance_admission(scoped_dsn)

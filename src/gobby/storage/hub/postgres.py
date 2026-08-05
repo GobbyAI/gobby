@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import atexit
-import importlib.resources
 import logging
-import re
 import threading
 import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
@@ -19,6 +17,7 @@ from psycopg_pool import ConnectionPool
 
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
 from gobby.deployment import deployment_token
+from gobby.storage import schema_contract
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE, PostgresCapacity
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
@@ -30,14 +29,6 @@ from gobby.storage.hub.protocol import (
     LockTarget,
     Row,
     Transaction,
-)
-from gobby.storage.migrations import (
-    BASELINE_VERSION,
-    DestructiveMigrationContext,
-    MigrationRunner,
-    MigrationUnsupportedError,
-    _split_statements_respecting_dollar_quotes,
-    baseline_checksum,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,116 +54,6 @@ def _close_open_databases_at_exit() -> None:
 
 
 atexit.register(_close_open_databases_at_exit)
-
-_PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
-    {
-        "gobby_install_ownership",
-    }
-)
-_BASELINE_BOOKKEEPING_TABLES: frozenset[str] = frozenset(
-    {
-        "schema_migrations",
-    }
-)
-_GCORE_CODE_INDEX_COLUMNS: Mapping[str, frozenset[str]] = {
-    "code_indexed_projects": frozenset(
-        {
-            "id",
-            "root_path",
-            "total_files",
-            "total_symbols",
-            "last_indexed_at",
-            "index_duration_ms",
-            "created_at",
-            "updated_at",
-        }
-    ),
-    "code_indexed_files": frozenset(
-        {
-            "id",
-            "project_id",
-            "file_path",
-            "language",
-            "content_hash",
-            "symbol_count",
-            "byte_size",
-            "graph_synced",
-            "vectors_synced",
-            "graph_sync_attempted_at",
-            "vector_sync_attempted_at",
-            "indexed_at",
-        }
-    ),
-    "code_symbols": frozenset(
-        {
-            "id",
-            "project_id",
-            "file_path",
-            "name",
-            "qualified_name",
-            "kind",
-            "language",
-            "byte_start",
-            "byte_end",
-            "line_start",
-            "line_end",
-            "signature",
-            "docstring",
-            "parent_symbol_id",
-            "content_hash",
-            "summary",
-            "summary_attempted_at",
-            "created_at",
-            "updated_at",
-        }
-    ),
-    "code_imports": frozenset({"id", "project_id", "source_file", "target_module"}),
-    "code_calls": frozenset(
-        {
-            "id",
-            "project_id",
-            "caller_symbol_id",
-            "callee_symbol_id",
-            "callee_name",
-            "callee_target_kind",
-            "callee_external_module",
-            "file_path",
-            "line",
-        }
-    ),
-    "code_content_chunks": frozenset(
-        {
-            "id",
-            "project_id",
-            "file_path",
-            "chunk_index",
-            "line_start",
-            "line_end",
-            "content",
-            "language",
-            "created_at",
-        }
-    ),
-}
-_GWIKI_COLUMNS: Mapping[str, frozenset[str]] = {
-    "gwiki_documents": frozenset({"id"}),
-    "gwiki_chunks": frozenset({"id", "document_id"}),
-    "gwiki_sources": frozenset({"id"}),
-}
-_GCORE_CODE_INDEX_TABLES = frozenset(_GCORE_CODE_INDEX_COLUMNS)
-_GWIKI_TABLES = frozenset(_GWIKI_COLUMNS)
-_PG_SEARCH_MISSING_MESSAGE = (
-    "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
-    "image with `gobby postgres install`."
-)
-_BaselineState = Literal[
-    "fresh",
-    "fresh_with_install_infra",
-    "gcore_code_index",
-    "gwiki_standalone",
-    "already_baselined",
-    "corrupt_partial",
-]
 
 
 class PostgresHubDatabase:
@@ -479,70 +360,11 @@ class PostgresHubDatabase:
         return self.execute(sql, params)
 
     def apply_migrations(self) -> None:
-        runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
-        runner.apply_startup(
-            baseline_already_applied=self._postgres_baseline_already_applied,
-            apply_baseline=self._apply_postgres_baseline,
-        )
+        schema_contract.apply_schema(self._conninfo)
 
-    def apply_destructive_migrations(self, context: DestructiveMigrationContext) -> None:
+    def apply_destructive_migrations(self) -> None:
         """Apply or resume one verified destructive migration batch."""
-        runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
-        runner.apply_destructive(context)
-
-    def _postgres_baseline_already_applied(self) -> bool:
-        self.open()
-        with self._pool.connection() as conn:
-            return _classify_baseline_state(conn) == "already_baselined"
-
-    def _apply_postgres_baseline(self) -> None:
-        self.open()
-        with self._pool.connection() as fast_conn:
-            if _classify_baseline_state(fast_conn) == "already_baselined":
-                return
-
-        with self._pool.connection() as conn, conn.transaction():
-            conn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_baseline_apply'))")
-            state = _classify_baseline_state(conn)
-            if state == "already_baselined":
-                return
-            if state == "corrupt_partial":
-                tables = _schema_tables(conn)
-                if "schema_migrations" in tables:  # Flattened baseline has no upgrade path.
-                    row = conn.execute(
-                        "SELECT MAX(version) AS version FROM schema_migrations"
-                    ).fetchone()
-                    version = None if row is None else _row_value(row, "version")
-                    observed_tables = sorted(tables - _BASELINE_BOOKKEEPING_TABLES)
-                    raise MigrationUnsupportedError(
-                        f"Unsupported pre-{BASELINE_VERSION} PostgreSQL baseline lineage: "
-                        f"observed max schema version {version!r} with tables {observed_tables!r}. "
-                        "Post-baseline repair migrations do not run for this lineage; "
-                        "back up/export the database and recreate it."
-                    )
-                raise MigrationUnsupportedError("Unrecognized PostgreSQL schema.")
-            _require_baseline_extensions(conn)
-            _verify_adopted_table_columns(conn, state)
-
-            sql = (
-                importlib.resources.files("gobby.storage")
-                .joinpath("postgres_baseline_schema.sql")
-                .read_text()
-            )
-            for statement in _baseline_statements_for_state(sql, state):
-                if statement.strip():
-                    conn.execute(statement)
-            conn.execute(
-                """
-                INSERT INTO schema_migrations(version, filename, checksum, applied_at)
-                VALUES (%s, %s, %s, NOW())
-                """,
-                (
-                    BASELINE_VERSION,
-                    f"baseline@{BASELINE_VERSION}",
-                    baseline_checksum(sql),
-                ),
-            )
+        schema_contract.apply_schema(self._conninfo, destructive=True)
 
     def close(self) -> None:
         if getattr(self, "_pool_closed", False):
@@ -554,167 +376,6 @@ class PostgresHubDatabase:
         self._pool_opened = False
         self._pool_closed = True
         _OPEN_DATABASES.discard(self)
-
-
-def _classify_baseline_state(conn: Any) -> _BaselineState:
-    tables = _schema_tables(conn)
-    has_bookkeeping = "schema_migrations" in tables
-    application_tables = tables - _PRE_BASELINE_INFRA_TABLES - _BASELINE_BOOKKEEPING_TABLES
-
-    if has_bookkeeping and _has_baseline_version(conn, BASELINE_VERSION):
-        return "already_baselined"
-    if has_bookkeeping and not application_tables:
-        return "fresh"
-    if not has_bookkeeping and not application_tables:
-        if tables & _PRE_BASELINE_INFRA_TABLES:
-            return "fresh_with_install_infra"
-        return "fresh"
-    if not has_bookkeeping and _GCORE_CODE_INDEX_TABLES.issubset(application_tables):
-        return "gcore_code_index"
-    if (
-        not has_bookkeeping
-        and _GWIKI_TABLES.issubset(application_tables)
-        and all(_is_gwiki_table(table) for table in application_tables)
-    ):
-        return "gwiki_standalone"
-    return "corrupt_partial"
-
-
-def _baseline_statements_for_state(sql: str, state: _BaselineState) -> Iterator[str]:
-    statements = _split_statements_respecting_dollar_quotes(sql)
-    if state not in ("gcore_code_index", "gwiki_standalone"):
-        yield from statements
-        return
-
-    for statement in statements:
-        if state == "gcore_code_index" and _is_code_index_table_statement(statement):
-            continue
-        if _is_gwiki_table_statement(statement):
-            continue
-        if _is_adopted_index_statement(statement, state):
-            statement = _add_index_if_not_exists(statement)
-        yield statement
-
-
-def _verify_adopted_table_columns(conn: Any, state: _BaselineState) -> None:
-    contract: Mapping[str, frozenset[str]]
-    if state == "gcore_code_index":
-        contract = {**_GCORE_CODE_INDEX_COLUMNS, **_GWIKI_COLUMNS}
-        required_tables = _GCORE_CODE_INDEX_TABLES
-    elif state == "gwiki_standalone":
-        contract = _GWIKI_COLUMNS
-        required_tables = _GWIKI_TABLES
-    else:
-        return
-
-    rows = conn.execute(
-        """SELECT table_name, column_name
-        FROM information_schema.columns
-        WHERE table_schema = current_schema() AND table_name = ANY(%s)""",
-        (list(contract),),
-    ).fetchall()
-    actual: dict[str, set[str]] = {table: set() for table in contract}
-    for row in rows:
-        table = str(_row_value(row, "table_name"))
-        actual[table].add(str(_row_value(row, "column_name", 1)))
-
-    missing = {
-        table: sorted(expected - actual[table])
-        for table, expected in contract.items()
-        if (table in required_tables or actual[table]) and expected - actual[table]
-    }
-    if missing:
-        details = "; ".join(
-            f"{table}: {', '.join(columns)}" for table, columns in sorted(missing.items())
-        )
-        raise MigrationUnsupportedError(
-            f"Cannot adopt external PostgreSQL schema; missing required columns: {details}"
-        )
-
-
-def _is_code_index_table_statement(statement: str) -> bool:
-    return _is_create_table_statement_for(
-        statement, lambda table: table in _GCORE_CODE_INDEX_TABLES
-    )
-
-
-def _is_gwiki_table_statement(statement: str) -> bool:
-    return _is_create_table_statement_for(statement, _is_gwiki_table)
-
-
-def _is_create_table_statement_for(
-    statement: str,
-    table_matches: Callable[[str], bool],
-) -> bool:
-    text = statement.strip()
-    table_match = re.match(
-        r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
-        text,
-        re.IGNORECASE,
-    )
-    if table_match:
-        return table_matches(table_match.group(1))
-
-    return False
-
-
-def _is_adopted_index_statement(statement: str, state: _BaselineState) -> bool:
-    text = statement.strip()
-    index_match = re.match(
-        r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
-        r"\"?[A-Za-z_][A-Za-z0-9_]*\"?"
-        r"\s+ON\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?",
-        text,
-        re.IGNORECASE,
-    )
-    if index_match:
-        table = index_match.group(1)
-        return _is_gwiki_table(table) or (
-            state == "gcore_code_index" and table in _GCORE_CODE_INDEX_TABLES
-        )
-
-    return False
-
-
-def _add_index_if_not_exists(statement: str) -> str:
-    return re.sub(
-        r"^(\s*CREATE\s+(?:UNIQUE\s+)?INDEX\s+)",
-        r"\1IF NOT EXISTS ",
-        statement,
-        count=1,
-        flags=re.IGNORECASE,
-    )
-
-
-def _is_gwiki_table(table: str) -> bool:
-    return table.startswith("gwiki_")
-
-
-def _schema_tables(conn: Any) -> set[str]:
-    rows = conn.execute(
-        "SELECT tablename FROM pg_tables WHERE schemaname=CURRENT_SCHEMA"
-    ).fetchall()
-    return {str(_row_value(row, "tablename")) for row in rows}
-
-
-def _has_baseline_version(conn: Any, version: int) -> bool:
-    row = conn.execute(
-        "SELECT MAX(version) AS version FROM schema_migrations",
-    ).fetchone()
-    if row is None:
-        return False
-    max_version = _row_value(row, "version")
-    return max_version is not None and int(max_version) >= version
-
-
-def _require_extension(conn: Any, extension: str, message: str) -> None:
-    row = conn.execute("SELECT 1 FROM pg_extension WHERE extname = %s", (extension,)).fetchone()
-    if row is None:
-        raise MigrationUnsupportedError(message)
-
-
-def _require_baseline_extensions(conn: Any) -> None:
-    _require_extension(conn, "pg_search", _PG_SEARCH_MISSING_MESSAGE)
 
 
 def _row_value(row: Any, key: str, index: int = 0) -> Any:

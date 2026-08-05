@@ -71,9 +71,5 @@ def test_expansion_service_facade_does_not_export_skipped_stages() -> None:
     assert "_skipped_stages" not in getattr(expansion_service, "__all__", ())
 
 
-def test_migration_runner_no_longer_carries_historical_stage_skip_helpers() -> None:
-    source = (ROOT / "src/gobby/storage/migrations.py").read_text(encoding="utf-8")
-
-    assert "def _stage_skip_labels" not in source
-    assert "stage-:" not in source
-    assert "def _backfill_task_stage_states_from_legacy" not in source
+def test_python_migration_runner_is_deleted() -> None:
+    assert not (ROOT / "src/gobby/storage/migrations.py").exists()

@@ -7,7 +7,6 @@ import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.hub.runtime import apply_destructive_batch, runtime_hub_database
-from gobby.storage.migrations import DestructiveMigrationContext
 
 pytestmark = pytest.mark.unit
 
@@ -44,28 +43,18 @@ def test_runtime_database_receives_resolved_pool_config() -> None:
     assert database_class.return_value.close.call_args_list == [call()]
 
 
-def _destructive_context() -> DestructiveMigrationContext:
-    return DestructiveMigrationContext(
-        epoch_id="4a8f0a1c-6d1b-4b3e-9d0f-2c7a6b5e1d34",
-        batch_id="9b1d7c22-3e44-4f10-8a55-1c2d3e4f5a6b",
-        manifest_sha256="a" * 64,
-        backup_starting_head=354,
-    )
-
-
 def test_destructive_batch_runs_on_a_dedicated_pool_and_closes_it() -> None:
     pool_config = PostgresPoolConfig(min_size=1, max_size=2)
-    context = _destructive_context()
 
     with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as database_class:
         database_class.return_value = MagicMock()
-        apply_destructive_batch("postgresql://gobby@localhost/gobby", pool_config, context)
+        apply_destructive_batch("postgresql://gobby@localhost/gobby", pool_config)
 
     assert database_class.call_args_list == [
         call("postgresql://gobby@localhost/gobby", pool_config=pool_config),
     ]
     database = database_class.return_value
-    assert database.apply_destructive_migrations.call_args_list == [call(context)]
+    assert database.apply_destructive_migrations.call_args_list == [call()]
     assert database.close.call_args_list == [call()]
 
 
@@ -81,7 +70,6 @@ def test_destructive_batch_closes_the_pool_when_the_batch_raises() -> None:
             apply_destructive_batch(
                 "postgresql://gobby@localhost/gobby",
                 pool_config,
-                _destructive_context(),
             )
 
     assert database_class.return_value.close.call_args_list == [call()]
