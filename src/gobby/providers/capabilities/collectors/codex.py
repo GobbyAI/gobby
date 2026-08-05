@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.providers.capabilities.collectors.base import SourceSpec
@@ -21,6 +25,7 @@ from gobby.providers.capabilities.models import (
 )
 
 _SOURCE_KEY = "app-server-model-list"
+_MODELS_CACHE_SOURCE_KEY = "models-cache"
 _MODEL_BASE_FACTS = frozenset(
     {
         "canonical_model",
@@ -36,6 +41,7 @@ _ROUTE_FACTS = frozenset({"speed_mode", "selector", "available", "activations"})
 
 RawModel = Mapping[str, object]
 FetchModels = Callable[[], Awaitable[Sequence[RawModel]]]
+FetchModelsCache = Callable[[], Awaitable[Mapping[str, int]]]
 Clock = Callable[[], datetime]
 
 
@@ -52,15 +58,73 @@ async def _fetch_app_server_models() -> Sequence[RawModel]:
         return await client.list_models(include_hidden=True)
 
 
+async def _fetch_models_cache() -> Mapping[str, int]:
+    codex_home = os.environ.get("CODEX_HOME")
+    cache_dir = Path(codex_home).expanduser() if codex_home else Path.home() / ".codex"
+    cache_path = cache_dir / "models_cache.json"
+    try:
+        contents = await asyncio.to_thread(cache_path.read_text, encoding="utf-8")
+    except OSError as error:
+        raise CodexSourceError(
+            _MODELS_CACHE_SOURCE_KEY,
+            f"could not read {cache_path}: {error}",
+        ) from error
+
+    try:
+        payload: object = json.loads(contents)
+    except json.JSONDecodeError as error:
+        raise CodexSourceError(
+            _MODELS_CACHE_SOURCE_KEY,
+            f"could not parse {cache_path}: {error}",
+        ) from error
+
+    try:
+        return _parse_models_cache(payload)
+    except ValueError as error:
+        raise CodexSourceError(
+            _MODELS_CACHE_SOURCE_KEY,
+            f"invalid {cache_path}: {error}",
+        ) from error
+
+
+def _parse_models_cache(payload: object) -> dict[str, int]:
+    if not isinstance(payload, Mapping):
+        raise ValueError("top-level value must be an object")
+    raw_models = payload.get("models")
+    if not isinstance(raw_models, list):
+        raise ValueError("models must be an array")
+
+    context_lengths: dict[str, int] = {}
+    for raw_model in raw_models:
+        if not isinstance(raw_model, Mapping):
+            continue
+        slug = raw_model.get("slug")
+        context_window = raw_model.get("context_window")
+        if not isinstance(slug, str) or not slug.strip():
+            continue
+        if (
+            isinstance(context_window, bool)
+            or not isinstance(context_window, int)
+            or context_window <= 0
+        ):
+            continue
+        context_lengths[slug.strip()] = context_window
+    return context_lengths
+
+
 @dataclass(frozen=True)
 class CodexCollector:
     """Build a complete Codex capability snapshot from local app-server metadata."""
 
     fetch_models: FetchModels = _fetch_app_server_models
+    fetch_models_cache: FetchModelsCache = _fetch_models_cache
     clock: Clock = lambda: datetime.now(UTC)
 
     provider = "codex"
-    sources = (SourceSpec(_SOURCE_KEY, None, required=True),)
+    sources = (
+        SourceSpec(_SOURCE_KEY, None, required=True),
+        SourceSpec(_MODELS_CACHE_SOURCE_KEY, None, required=False),
+    )
 
     async def collect(self) -> ProviderSnapshot:
         observed_at = self.clock()
@@ -73,9 +137,16 @@ class CodexCollector:
         if not raw_models:
             raise CodexSourceError(_SOURCE_KEY, "model/list returned no models")
 
+        cache_error: str | None = None
+        try:
+            cache_context_lengths = await self.fetch_models_cache()
+        except Exception as error:
+            cache_context_lengths = {}
+            cache_error = str(error)
+
         try:
             models = tuple(
-                _build_model(raw_model, observed_at, index)
+                _build_model(raw_model, cache_context_lengths, observed_at, index)
                 for index, raw_model in enumerate(raw_models)
             )
         except CodexSourceError:
@@ -98,11 +169,26 @@ class CodexCollector:
                     last_success_at=observed_at,
                     last_error=None,
                 ),
+                SourceHealth(
+                    source_key=_MODELS_CACHE_SOURCE_KEY,
+                    source_url=None,
+                    required=False,
+                    state=SourceState.ERROR if cache_error is not None else SourceState.OK,
+                    attempts=1,
+                    last_attempt_at=observed_at,
+                    last_success_at=None if cache_error is not None else observed_at,
+                    last_error=cache_error,
+                ),
             ),
         )
 
 
-def _build_model(raw: RawModel, observed_at: datetime, index: int) -> ModelCapability:
+def _build_model(
+    raw: RawModel,
+    cache_context_lengths: Mapping[str, int],
+    observed_at: datetime,
+    index: int,
+) -> ModelCapability:
     canonical_model = _required_string(
         _first(raw, "model", "id", "slug"),
         f"model entry {index} id",
@@ -112,7 +198,11 @@ def _build_model(raw: RawModel, observed_at: datetime, index: int) -> ModelCapab
         f"model {canonical_model!r} display name",
     )
     aliases = _aliases(raw, canonical_model)
-    context_length = _context_length(raw, canonical_model)
+    context_length, context_source = _context_length(
+        raw,
+        canonical_model,
+        cache_context_lengths,
+    )
     supported_efforts = _reasoning_efforts(raw, canonical_model)
     default_effort = _optional_string(
         _first(
@@ -149,6 +239,14 @@ def _build_model(raw: RawModel, observed_at: datetime, index: int) -> ModelCapab
     if input_modalities is not None:
         model_facts.add("input_modalities")
 
+    provenance = _provenance(model_facts, observed_at)
+    if context_source == _MODELS_CACHE_SOURCE_KEY:
+        provenance["context_length"] = FactProvenance(
+            source_key=_MODELS_CACHE_SOURCE_KEY,
+            source_url=None,
+            observed_at=observed_at,
+        )
+
     return ModelCapability(
         canonical_model=canonical_model,
         display_name=display_name,
@@ -168,7 +266,7 @@ def _build_model(raw: RawModel, observed_at: datetime, index: int) -> ModelCapab
         input_modalities=input_modalities,
         supports_tools=None,
         routes=tuple(routes),
-        provenance=_provenance(model_facts, observed_at),
+        provenance=provenance,
     )
 
 
@@ -208,21 +306,28 @@ def _aliases(raw: RawModel, canonical_model: str) -> tuple[str, ...]:
     return tuple(aliases)
 
 
-def _context_length(raw: RawModel, canonical_model: str) -> int | None:
+def _context_length(
+    raw: RawModel,
+    canonical_model: str,
+    cache_context_lengths: Mapping[str, int],
+) -> tuple[int | None, str | None]:
     value = _first(
         raw,
-        "maxContextWindow",
-        "max_context_window",
         "contextWindow",
         "context_window",
         "contextLength",
         "context_length",
     )
     if value is None:
-        return None
+        value = _first(raw, "maxContextWindow", "max_context_window")
+    if value is None:
+        cached_value = cache_context_lengths.get(canonical_model)
+        if cached_value is None:
+            return None, None
+        return cached_value, _MODELS_CACHE_SOURCE_KEY
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValueError(f"model {canonical_model!r} context window must be a positive integer")
-    return value
+    return value, _SOURCE_KEY
 
 
 def _reasoning_efforts(raw: RawModel, canonical_model: str) -> tuple[str, ...] | None:
