@@ -7431,6 +7431,10 @@
       "definition": "CREATE INDEX idx_gh_issues_triaged_task ON $schema.gh_issues_triaged USING btree (task_id)"
     },
     {
+      "name": "idx_gh_triage_build_dispatches_task_id",
+      "definition": "CREATE INDEX idx_gh_triage_build_dispatches_task_id ON $schema.gh_triage_build_dispatches USING btree (task_id)"
+    },
+    {
       "name": "idx_gh_triage_deliveries_issue",
       "definition": "CREATE INDEX idx_gh_triage_deliveries_issue ON $schema.gh_triage_deliveries USING btree (project_id, repository, issue_number)"
     },

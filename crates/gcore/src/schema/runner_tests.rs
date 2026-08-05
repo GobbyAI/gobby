@@ -8,25 +8,27 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration};
+use super::assets::{BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
 use super::runner::{SchemaError, SchemaRunner};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_recovery_probe.sql",
+    version: 377,
+    filename: "377_recovery_probe.sql",
     checksum: "d63e14df78da3519a30caf2dac74341ab5f0c9aa05f7bec58174ec0adf383159",
     sql: "-- gobby:non-transactional\nCREATE UNIQUE INDEX CONCURRENTLY schema_recovery_idx ON recovery_values(id);\n",
 };
+static RECOVERY_MIGRATIONS: &[EmbeddedMigration] = &[MIGRATIONS[0], RECOVERY_MIGRATION];
 
 static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
-    version: 376,
-    filename: "376_destructive_probe.sql",
+    version: 377,
+    filename: "377_destructive_probe.sql",
     checksum: "c10820fc8be4c2bceab1610fd8372c8d864fd7c4a8985773cf903bae450b19e9",
     sql: "-- gobby:destructive\nCREATE TABLE gate_probe (id integer);\n",
 };
+static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[MIGRATIONS[0], DESTRUCTIVE_MIGRATION];
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -91,6 +93,12 @@ fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn current_schema_head() -> i32 {
+    MIGRATIONS
+        .last()
+        .map_or(BASELINE_VERSION, |migration| migration.version)
+}
+
 fn source_identity(client: &mut Client) -> anyhow::Result<SourceIdentity> {
     let row = client.query_one(
         "SELECT (pg_control_system()).system_identifier::text, current_database(), oid \
@@ -116,14 +124,10 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
     client.batch_execute(
         "CREATE TABLE recovery_values(id integer); INSERT INTO recovery_values VALUES (1), (1)",
     )?;
-
-    let first_error = SchemaRunner::with_migrations_for_test(
-        &mut client,
-        "public",
-        std::slice::from_ref(&RECOVERY_MIGRATION),
-    )?
-    .apply()
-    .expect_err("duplicate values must interrupt concurrent unique-index creation");
+    let first_error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", RECOVERY_MIGRATIONS)?
+            .apply()
+            .expect_err("duplicate values must interrupt concurrent unique-index creation");
     assert!(matches!(first_error, SchemaError::Postgres(_)));
     let invalid: bool = client
         .query_one(
@@ -137,12 +141,9 @@ fn lock_and_recovery_tests_repair_an_invalid_concurrent_index() -> anyhow::Resul
         "DELETE FROM recovery_values WHERE ctid IN (SELECT ctid FROM recovery_values LIMIT 1)",
         &[],
     )?;
-    let report = SchemaRunner::with_migrations_for_test(
-        &mut client,
-        "public",
-        std::slice::from_ref(&RECOVERY_MIGRATION),
-    )?
-    .apply()?;
+    let report =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", RECOVERY_MIGRATIONS)?
+            .apply()?;
     assert_eq!(report.migrations_applied, 1);
     let valid: bool = client
         .query_one(
@@ -164,17 +165,7 @@ fn lock_and_recovery_tests_named_schema_locks_are_independent() -> anyhow::Resul
     };
     let mut apply_client = database.connect()?;
     for schema in ["schema_lock_a", "schema_lock_b"] {
-        lock_client.batch_execute(&format!(
-            "CREATE SCHEMA {schema};
-             CREATE TABLE {schema}.schema_migrations(
-                 version integer PRIMARY KEY,
-                 applied_at timestamptz NOT NULL DEFAULT now(),
-                 filename text,
-                 checksum text
-             );
-             INSERT INTO {schema}.schema_migrations(version, filename, checksum)
-             VALUES ({BASELINE_VERSION}, 'baseline@{BASELINE_VERSION}', '{BASELINE_CHECKSUM}')"
-        ))?;
+        SchemaRunner::new(&mut lock_client, schema)?.apply()?;
     }
     lock_client.batch_execute("SET search_path TO schema_lock_a, pg_catalog")?;
     lock_client.query_one(
@@ -210,13 +201,10 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
         return Ok(());
     };
     install_baseline(&mut client)?;
-    let error = SchemaRunner::with_migrations_for_test(
-        &mut client,
-        "public",
-        std::slice::from_ref(&DESTRUCTIVE_MIGRATION),
-    )?
-    .apply()
-    .expect_err("default apply must halt at a destructive migration");
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply()
+            .expect_err("default apply must halt at a destructive migration");
     assert!(error.to_string().contains("verified hub backup"));
 
     let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
@@ -232,19 +220,16 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &fixture_identity,
-        BASELINE_VERSION,
+        current_schema_head(),
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
     let verified = VerifiedBackupManifest::verify(manifest.clone(), &context)?;
 
-    let error = SchemaRunner::with_migrations_for_test(
-        &mut client,
-        "public",
-        std::slice::from_ref(&DESTRUCTIVE_MIGRATION),
-    )?
-    .apply_with_backup(&verified)
-    .expect_err("runner must reject a backup verified for another database");
+    let error =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply_with_backup(&verified)
+            .expect_err("runner must reject a backup verified for another database");
     assert!(error.to_string().contains("source identity"));
 
     let identity = source_identity(&mut client)?;
@@ -252,18 +237,15 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
     let mut context = BackupGateContext::new(
         &root,
         &identity,
-        BASELINE_VERSION,
+        current_schema_head(),
         created_at + Duration::hours(1),
     );
     context.max_age = Duration::hours(2);
     let verified = VerifiedBackupManifest::verify(manifest, &context)?;
 
-    let report = SchemaRunner::with_migrations_for_test(
-        &mut client,
-        "public",
-        std::slice::from_ref(&DESTRUCTIVE_MIGRATION),
-    )?
-    .apply_with_backup(&verified)?;
+    let report =
+        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
+            .apply_with_backup(&verified)?;
     assert_eq!(report.migrations_applied, 1);
     let table_exists: bool = client
         .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?

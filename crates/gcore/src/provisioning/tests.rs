@@ -370,7 +370,7 @@ fn compose_template_matches_daemon_checkout_when_present() {
 }
 
 #[test]
-fn compose_template_binds_every_published_port_to_loopback() {
+fn compose_template_defaults_every_published_port_to_loopback() {
     let compose: serde_yaml::Value =
         serde_yaml::from_str(COMPOSE_TEMPLATE).expect("parse compose template");
     let services = compose["services"].as_mapping().expect("services mapping");
@@ -380,11 +380,11 @@ fn compose_template_binds_every_published_port_to_loopback() {
             continue;
         };
         for port in ports {
+            let published = port.as_str().expect("published port string");
             assert!(
-                port.as_str()
-                    .expect("published port string")
-                    .starts_with("127.0.0.1:"),
-                "published service port must be loopback-bound: {port:?}"
+                published.starts_with("127.0.0.1:")
+                    || published.starts_with("${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:"),
+                "published service port must default to loopback: {port:?}"
             );
         }
     }

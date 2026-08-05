@@ -185,6 +185,12 @@ class CodeIndexContext:
                         project_id,
                         error,
                     )
+                    await self.run_db(
+                        self._storage.record_projection_cleanup_failure,
+                        project_id,
+                        "vector",
+                        error,
+                    )
                     stores["vector"] = InvalidateStoreOutcome(
                         "vector",
                         "failed",
@@ -201,6 +207,12 @@ class CodeIndexContext:
             except GcodeGatewayError as e:
                 error = str(e)
                 logger.warning("Vector clear during invalidate failed for %s: %s", project_id, e)
+                await self.run_db(
+                    self._storage.record_projection_cleanup_failure,
+                    project_id,
+                    "vector",
+                    error,
+                )
                 stores["vector"] = InvalidateStoreOutcome(
                     "vector",
                     "failed",

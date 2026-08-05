@@ -26,7 +26,15 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset, identity.baseline);
+    assert_eq!(identity.latest_asset.version, 376);
+    assert_eq!(
+        identity.latest_asset.filename,
+        "376_add_gh_triage_build_dispatches_task_id_index.sql"
+    );
+    assert_eq!(
+        identity.latest_asset.checksum,
+        "1f83ec9602764f59038e447ec31f1138fe05f4034709a5cb03e7aaf80e2586bf"
+    );
     assert_eq!(identity.root_hash.len(), 64);
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
@@ -58,7 +66,7 @@ fn python_backup_manifest_v2_fixture_round_trips() {
 
     assert_eq!(manifest.manifest_format, "gobby-hub-backup-manifest");
     assert_eq!(manifest.manifest_version, 2);
-    assert_eq!(manifest.backup_starting_head, BASELINE_VERSION);
+    assert_eq!(manifest.backup_starting_head, 376);
     assert_eq!(manifest.stores.len(), 4);
 
     let round_trip = serde_json::to_string(&manifest).expect("serializable manifest");

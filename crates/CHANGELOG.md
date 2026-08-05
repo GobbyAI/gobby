@@ -11,8 +11,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+#### gobby-core
+
+- **Post-baseline schema authority** — publish append-only migration 376 and
+  the indexed GitHub-triage task foreign-key lookup under the shared schema
+  runner. Version: `0.9.1`.
+
+#### gdaemon
+
+- **Exclusive schema maintenance** — ship the schema CLI and single-active
+  daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
+
+#### gcode
+
+- **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
+  schema contract. Version: `1.6.0`.
+
+#### gwiki
+
+- **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
+  schema contract. Version: `0.9.0`.
+
 #### ghook
 
+- **Shared foundation floor** — require `gobby-core 0.9.1`. Version: `0.8.3`.
 - **Lifecycle run identity** — enrich normalized `SessionStart`, `SessionEnd`,
   `Stop`, `AfterAgent`, and `PostInvocation` hooks with the exact
   `GOBBY_AGENT_RUN_ID`, while preserving provider terminal-context fields.

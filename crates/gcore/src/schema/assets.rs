@@ -16,9 +16,15 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-// The flattened baseline currently has no post-375 migrations. New append-only
-// migrations are embedded here in version order when they are introduced.
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
+const MIGRATION_376_SQL: &str =
+    include_str!("../../assets/schema/376_add_gh_triage_build_dispatches_task_id_index.sql");
+
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[EmbeddedMigration {
+    version: 376,
+    filename: "376_add_gh_triage_build_dispatches_task_id_index.sql",
+    checksum: "1f83ec9602764f59038e447ec31f1138fe05f4034709a5cb03e7aaf80e2586bf",
+    sql: MIGRATION_376_SQL,
+}];
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

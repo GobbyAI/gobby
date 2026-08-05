@@ -66,6 +66,12 @@ Project config fields:
   seconds, and values must be greater than zero.
 - `webhook_secret_ref`: secret reference, not the secret value.
 
+The daemon rereads project integration configuration every 30 seconds, so an
+enablement change takes effect without restart within that bound. This
+configuration cadence is separate from the per-project recovery interval above;
+it avoids continuously polling every project on the scheduler's former
+five-second tick.
+
 Required webhook headers:
 
 - `X-GitHub-Event`

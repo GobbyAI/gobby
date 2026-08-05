@@ -420,12 +420,6 @@ async def _sync_file(
             else:
                 _record_breaker_outcomes(armed)
                 await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
-                await _run_db(
-                    run_db,
-                    storage.clear_projection_cleanup_pending,
-                    project_id,
-                    "vector",
-                )
                 did_work = True
 
     # Graph sync
@@ -435,12 +429,6 @@ async def _sync_file(
                 if not _file_needs_graph_sync(current):
                     await _run_db(
                         run_db, storage.mark_graph_synced, current.id, current.content_hash
-                    )
-                    await _run_db(
-                        run_db,
-                        storage.clear_projection_cleanup_pending,
-                        project_id,
-                        "graph",
                     )
                     did_work = True
                 else:
@@ -514,12 +502,6 @@ async def _sync_file(
                                     storage.mark_graph_synced,
                                     current.id,
                                     current.content_hash,
-                                )
-                                await _run_db(
-                                    run_db,
-                                    storage.clear_projection_cleanup_pending,
-                                    project_id,
-                                    "graph",
                                 )
                                 did_work = True
             except Exception as e:

@@ -54,6 +54,12 @@ def _coordinator(
     return coordinator, project_manager
 
 
+def test_configuration_polling_defaults_to_thirty_seconds() -> None:
+    coordinator, _ = _coordinator([])
+
+    assert coordinator.refresh_interval_seconds == 30.0
+
+
 def _status_store(coordinator: ExternalIssueSyncCoordinator) -> MagicMock:
     return cast(MagicMock, coordinator.status_store)
 
@@ -494,6 +500,7 @@ async def test_github_recovery_skips_triage_when_disabled() -> None:
 
     service.recover_project.assert_awaited_once_with(project.id)
     triage_factory.assert_not_called()
+    assert coordinator._due[("github_recovery", project.id)] == 3600.0
 
 
 @pytest.mark.asyncio
@@ -510,19 +517,20 @@ async def test_run_logs_throttled_warning_on_pool_outage(
     coordinator_module._pool_outage_log._last_logged.clear()
     coordinator, _ = _coordinator([_project()])
     coordinator.refresh_interval_seconds = 0.01
-    refresh_mock = AsyncMock(side_effect=PoolTimeout("couldn't get a connection after 5.00 sec"))
-
     shutdown = asyncio.Event()
 
-    async def stop_after_passes() -> None:
-        await asyncio.sleep(0.05)
-        shutdown.set()
+    async def fail_refresh() -> None:
+        if refresh_mock.await_count >= 2:
+            shutdown.set()
+        raise PoolTimeout("couldn't get a connection after 5.00 sec")
+
+    refresh_mock = AsyncMock(side_effect=fail_refresh)
 
     with (
         patch.object(coordinator, "refresh", refresh_mock),
         caplog.at_level(logging.DEBUG, logger="gobby.sync.external_coordinator"),
     ):
-        await asyncio.gather(coordinator.run(shutdown), stop_after_passes())
+        await coordinator.run(shutdown)
 
     assert refresh_mock.await_count >= 2
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]

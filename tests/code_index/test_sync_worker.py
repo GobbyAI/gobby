@@ -271,7 +271,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "vector")
+    storage.clear_projection_cleanup_pending.assert_not_called()
     storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_not_called()
 
@@ -327,7 +327,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
+    storage.clear_projection_cleanup_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -415,7 +415,7 @@ async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
+    storage.clear_projection_cleanup_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -451,7 +451,7 @@ async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
+    storage.clear_projection_cleanup_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -777,7 +777,7 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
         pending_file.id,
         pending_file.content_hash,
     )
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
+    storage.clear_projection_cleanup_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -922,7 +922,10 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     assert synced_file is not None
     assert synced_file.vectors_synced is True
     assert synced_file.vector_sync_attempted_at is not None
-    assert code_storage.list_projection_cleanup_pending() == []
+    assert [
+        (pending.project_id, pending.store)
+        for pending in code_storage.list_projection_cleanup_pending()
+    ] == [(project_id, "vector")]
 
 
 @pytest.mark.asyncio
@@ -1178,7 +1181,6 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
         "get_file",
         "mark_vector_sync_attempted",
         "mark_vectors_synced",
-        "clear_projection_cleanup_pending",
     ]
     assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)]
 
@@ -1236,7 +1238,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_called_once_with(current_file.id)
     storage.mark_graph_synced.assert_called_once_with(current_file.id, current_file.content_hash)
-    storage.clear_projection_cleanup_pending.assert_called_once_with(PROJECT_ID, "graph")
+    storage.clear_projection_cleanup_pending.assert_not_called()
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 

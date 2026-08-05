@@ -31,6 +31,8 @@ from gobby.utils.logging import ThrottledLogger
 
 logger = logging.getLogger(__name__)
 
+EXTERNAL_ISSUE_CONFIG_REFRESH_INTERVAL_SECONDS = 30.0
+
 _pool_outage_log = ThrottledLogger()
 
 
@@ -46,7 +48,7 @@ class ExternalIssueSyncCoordinator:
         project_manager: LocalProjectManager | None = None,
         memory_manager: Any | None = None,
         secret_store: Any | None = None,
-        refresh_interval_seconds: float = 5.0,
+        refresh_interval_seconds: float = EXTERNAL_ISSUE_CONFIG_REFRESH_INTERVAL_SECONDS,
         linear_interval_seconds: float = 300.0,
         linear_batch_interval_seconds: float = 5.0,
         linear_batch_size: int = 25,

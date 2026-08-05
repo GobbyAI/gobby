@@ -57,7 +57,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 0);
+    assert_eq!(first.migrations_applied, 1);
 
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!second.baseline_applied);
@@ -234,7 +234,7 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
     };
     SchemaRunner::new(&mut client, "public")?.apply()?;
     client.execute(
-        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (376, '376_future.sql', $1)",
+        "INSERT INTO schema_migrations(version, filename, checksum) VALUES (377, '377_future.sql', $1)",
         &[&"f".repeat(64)],
     )?;
 
@@ -242,5 +242,33 @@ fn guard_test_rejects_a_database_newer_than_the_embedded_runner() -> anyhow::Res
         .apply()
         .expect_err("older runner must reject newer database");
     assert!(error.to_string().contains("newer than this runner"));
+    Ok(())
+}
+
+#[test]
+fn task_delete_foreign_key_lookup_uses_the_dispatch_task_index() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    client.batch_execute("SET enable_seqscan = off")?;
+
+    let plan = client
+        .query(
+            "EXPLAIN (COSTS OFF) SELECT 1 FROM gh_triage_build_dispatches WHERE task_id = $1",
+            &[&Uuid::nil()],
+        )?
+        .into_iter()
+        .map(|row| row.get::<_, String>(0))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert!(
+        plan.contains("idx_gh_triage_build_dispatches_task_id"),
+        "unexpected query plan:\n{plan}"
+    );
     Ok(())
 }
