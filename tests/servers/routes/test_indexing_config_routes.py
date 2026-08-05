@@ -27,6 +27,7 @@ def test_config_values_expose_indexing_default(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json()["values"]["indexing"]["respect_gitignore"] is True
+    assert response.json()["values"]["indexing"]["extra_excludes"] == []
 
 
 def test_config_values_round_trip_indexing_respect_gitignore(
@@ -44,3 +45,22 @@ def test_config_values_round_trip_indexing_respect_gitignore(
 
     values = client.get("/api/config/values").json()["values"]
     assert values["indexing"]["respect_gitignore"] is False
+
+
+def test_config_values_round_trip_indexing_extra_excludes(
+    client: TestClient,
+    hub_db: HubDatabase,
+) -> None:
+    patterns = ["generated", "*.snapshot"]
+
+    response = client.put(
+        "/api/config/values",
+        json={"values": {"indexing": {"extra_excludes": patterns}}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert ConfigStore(hub_db).get("indexing.extra_excludes") == patterns
+
+    values = client.get("/api/config/values").json()["values"]
+    assert values["indexing"]["extra_excludes"] == patterns

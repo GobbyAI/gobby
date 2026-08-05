@@ -14,7 +14,7 @@ use std::time::{Duration, SystemTime};
 
 use crate::index::walker;
 
-use super::util::{DEFAULT_EXCLUDES, relative_path};
+use super::util::{effective_excludes, relative_path};
 
 /// Clock-skew / mtime-granularity margin. Subtracted from `last_indexed_at`
 /// before comparing file mtimes, so the gate only ever errs toward refreshing
@@ -25,28 +25,31 @@ use super::util::{DEFAULT_EXCLUDES, relative_path};
 const SKEW_MARGIN: Duration = Duration::from_secs(2);
 
 /// Returns `true` if a discovered file is absent from the recorded index, newer
-/// than `last_indexed_at`, or if any previously indexed path no longer exists on
-/// disk. A `false` result lets the caller skip the advisory lock and the full
-/// re-hash entirely.
+/// than `last_indexed_at`, or if any previously indexed path is no longer
+/// discoverable. A `false` result lets the caller skip the advisory lock and
+/// the full re-hash entirely.
 ///
-/// Discovery mirrors the indexer (`walker::discover_files` with
-/// `DEFAULT_EXCLUDES`), so the `.gobby/plans/**/*.md` allowlist and every other
-/// exclusion stay in lockstep with what actually gets indexed — including the
-/// internal `.gobby/plans/*.md` edits the daemon trigger never forwards.
+/// Discovery mirrors the indexer's combined built-in and configured exclusions,
+/// so the `.gobby/plans/**/*.md` allowlist and every other exclusion stay in
+/// lockstep with what actually gets indexed — including the internal
+/// `.gobby/plans/*.md` edits the daemon trigger never forwards.
 /// Short-circuits on the first sign of change.
 pub fn project_changed_since(
     project_root: &Path,
     last_indexed_at: SystemTime,
     indexed_paths: &[String],
+    extra_excludes: &[String],
     options: walker::DiscoveryOptions,
 ) -> bool {
     let threshold = last_indexed_at
         .checked_sub(SKEW_MARGIN)
         .unwrap_or(last_indexed_at);
 
+    let excludes = effective_excludes(extra_excludes);
     let (candidates, content_only) =
-        walker::discover_files_with_options(project_root, DEFAULT_EXCLUDES, options);
+        walker::discover_files_with_options(project_root, &excludes, options);
     let indexed_paths: HashSet<&str> = indexed_paths.iter().map(String::as_str).collect();
+    let mut discovered_paths = HashSet::new();
 
     // Add: any discovered path absent from code_indexed_files. Check this before
     // mtime so previously excluded files refresh even when their mtimes are old.
@@ -55,6 +58,7 @@ pub fn project_changed_since(
         let Ok(rel) = relative_path(path, project_root) else {
             return true;
         };
+        discovered_paths.insert(rel.clone());
         if !indexed_paths.contains(rel.as_str()) {
             return true;
         }
@@ -81,10 +85,11 @@ pub fn project_changed_since(
         }
     }
 
-    // Delete / rename: a path recorded in the index that is gone from disk.
+    // Delete, rename, or newly excluded: an indexed path absent from discovery
+    // needs a reconcile so stale facts and projections are pruned.
     indexed_paths
         .iter()
-        .any(|rel| !project_root.join(rel).exists())
+        .any(|rel| !discovered_paths.contains(*rel))
 }
 
 #[cfg(test)]
@@ -140,6 +145,7 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             default_options()
         ));
     }
@@ -158,6 +164,7 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             default_options()
         ));
     }
@@ -176,6 +183,7 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             default_options()
         ));
     }
@@ -195,6 +203,7 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             default_options()
         ));
     }
@@ -215,6 +224,7 @@ mod tests {
             root,
             within_margin,
             &indexed,
+            &[],
             default_options()
         ));
 
@@ -225,6 +235,7 @@ mod tests {
             root,
             at_margin,
             &indexed,
+            &[],
             default_options()
         ));
 
@@ -235,6 +246,7 @@ mod tests {
             root,
             beyond_margin,
             &indexed,
+            &[],
             default_options()
         ));
     }
@@ -255,6 +267,7 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             walker::DiscoveryOptions {
                 respect_gitignore: true
             }
@@ -263,9 +276,30 @@ mod tests {
             root,
             last,
             &indexed,
+            &[],
             walker::DiscoveryOptions {
                 respect_gitignore: false
             }
+        ));
+    }
+
+    #[test]
+    fn newly_excluded_indexed_file_triggers_pruning_refresh() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path();
+        let generated = write_file(root, "generated/output.rs", b"fn generated() {}\n");
+        set_mtime(&generated, base_time());
+
+        let last = base_time() + Duration::from_secs(3600);
+        let indexed = vec!["generated/output.rs".to_string()];
+        let extra_excludes = vec!["generated".to_string()];
+
+        assert!(project_changed_since(
+            root,
+            last,
+            &indexed,
+            &extra_excludes,
+            default_options()
         ));
     }
 }

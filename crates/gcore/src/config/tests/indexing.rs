@@ -9,6 +9,51 @@ fn indexing_config_defaults_to_respecting_gitignore() {
     let indexing = resolve_indexing_config(&mut source).expect("indexing config");
 
     assert!(indexing.respect_gitignore);
+    assert!(indexing.extra_excludes.is_empty());
+}
+
+#[test]
+fn indexing_config_resolves_extra_excludes_from_standalone_yaml() {
+    let _env = EnvGuard::new();
+    let standalone = StandaloneConfig::from_yaml_str(
+        "indexing:\n  extra_excludes:\n    - generated\n    - '*.snapshot'\n",
+    )
+    .expect("standalone config");
+    let mut source =
+        LayeredConfigSource::<TestSource, StandaloneConfig>::new(None, Some(standalone));
+
+    let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+    assert_eq!(indexing.extra_excludes, ["generated", "*.snapshot"]);
+}
+
+#[test]
+fn indexing_config_store_extra_excludes_override_standalone_yaml() {
+    let _env = EnvGuard::new();
+    let store = TestSource::with_raw_values([(
+        INDEXING_EXTRA_EXCLUDES_KEY,
+        r#"["generated","*.snapshot"]"#,
+    )]);
+    let standalone =
+        StandaloneConfig::from_yaml_str("indexing:\n  extra_excludes:\n    - ignored\n")
+            .expect("standalone config");
+    let mut source = LayeredConfigSource::new(Some(store), Some(standalone));
+
+    let indexing = resolve_indexing_config(&mut source).expect("indexing config");
+
+    assert_eq!(indexing.extra_excludes, ["generated", "*.snapshot"]);
+}
+
+#[test]
+fn indexing_config_rejects_invalid_extra_excludes() {
+    let _env = EnvGuard::new();
+    for raw in [r#""generated""#, r#"[""]"#, r#"["nested/generated"]"#] {
+        let mut source = TestSource::with_raw_values([(INDEXING_EXTRA_EXCLUDES_KEY, raw)]);
+
+        let error = resolve_indexing_config(&mut source).expect_err("invalid extra excludes");
+
+        assert!(error.to_string().contains(INDEXING_EXTRA_EXCLUDES_KEY));
+    }
 }
 
 #[test]

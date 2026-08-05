@@ -34,10 +34,33 @@ def config_registry(
 
 
 def test_mcp_config_gets_indexing_default(config_registry: InternalToolRegistry) -> None:
-    result = config_registry.get_tool("get_config")(key="indexing.respect_gitignore")
+    get_config = config_registry.get_tool("get_config")
+    assert get_config is not None
+
+    result = get_config(key="indexing.respect_gitignore")
 
     assert result["success"] is True
     assert result["value"] is True
+
+
+def test_mcp_config_sets_indexing_extra_excludes(
+    config_registry: InternalToolRegistry,
+    config_store: ConfigStore,
+    config_state: dict[str, DaemonConfig],
+) -> None:
+    patterns = ["generated", "*.snapshot"]
+    set_config = config_registry.get_tool("set_config")
+    assert set_config is not None
+
+    result = set_config(
+        key="indexing.extra_excludes",
+        value=patterns,
+    )
+
+    assert result["success"] is True
+    assert result["value"] == patterns
+    assert config_store.get("indexing.extra_excludes") == patterns
+    assert config_state["config"].indexing.extra_excludes == patterns
 
 
 def test_mcp_config_sets_indexing_respect_gitignore(
@@ -45,7 +68,10 @@ def test_mcp_config_sets_indexing_respect_gitignore(
     config_store: ConfigStore,
     config_state: dict[str, DaemonConfig],
 ) -> None:
-    result = config_registry.get_tool("set_config")(
+    set_config = config_registry.get_tool("set_config")
+    assert set_config is not None
+
+    result = set_config(
         key="indexing.respect_gitignore",
         value=False,
     )

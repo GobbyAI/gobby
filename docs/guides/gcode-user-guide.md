@@ -581,7 +581,14 @@ Indexing git-ignore behavior resolves from `config_store`, then
 ```yaml
 indexing:
   respect_gitignore: true
+  extra_excludes:
+    - generated
+    - "*.snapshot"
 ```
+
+`extra_excludes` adds component-name glob patterns to gcode's built-in
+exclusions. Full and explicit indexing apply the same combined pattern set, and
+a full scan prunes facts for files that become excluded.
 
 The database connection is resolved in this order:
 1. Local daemon broker

@@ -25,6 +25,14 @@ pub(super) const DEFAULT_EXCLUDES: &[&str] = &[
     ".cache",
 ];
 
+pub(super) fn effective_excludes(extra_excludes: &[String]) -> Vec<&str> {
+    DEFAULT_EXCLUDES
+        .iter()
+        .copied()
+        .chain(extra_excludes.iter().map(String::as_str))
+        .collect()
+}
+
 pub(super) fn filter_discovered_paths(
     root_path: &Path,
     path_filter: &Path,

@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+
+_ExcludePattern = Annotated[
+    str,
+    StringConstraints(min_length=1, pattern=r"^[^/\\]+$"),
+]
 
 
 class IndexingConfig(BaseModel):
@@ -14,5 +21,11 @@ class IndexingConfig(BaseModel):
         default=True,
         description=(
             "Respect .gitignore, .git/info/exclude, and global git excludes while indexing."
+        ),
+    )
+    extra_excludes: list[_ExcludePattern] = Field(
+        default_factory=list,
+        description=(
+            "Additional component-name glob patterns to exclude alongside built-in patterns."
         ),
     )

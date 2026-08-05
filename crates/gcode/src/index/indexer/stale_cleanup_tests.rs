@@ -116,6 +116,58 @@ mod serial_db {
             "excluded token.txt should not produce an indexed-file row"
         );
     }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn configured_exclude_prunes_previously_indexed_file_facts() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_id = unique_test_project_id("gcode-configured-exclude-cleanup");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+
+        write_file(
+            project_root.path(),
+            "generated/output.rs",
+            b"pub fn generated() -> u8 { 1 }\n",
+        );
+        let mut ctx = test_context(
+            database_url,
+            project_root.path().to_path_buf(),
+            project_id.clone(),
+        );
+        index_files(
+            discovered_request(project_root.path(), true),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("initial discovered index");
+        assert_eq!(
+            indexed_file_count(&mut conn, &project_id, "generated/output.rs"),
+            1
+        );
+
+        ctx.indexing.extra_excludes.push("generated".to_string());
+        index_files(
+            discovered_request(project_root.path(), false),
+            &ctx,
+            IndexOptions::default(),
+        )
+        .expect("reindex with configured exclusion");
+
+        assert_eq!(
+            indexed_file_count(&mut conn, &project_id, "generated/output.rs"),
+            0,
+            "whole-project reconciliation should prune newly excluded file facts"
+        );
+    }
 }
 
 fn connect_test_db() -> (postgres::Client, String) {

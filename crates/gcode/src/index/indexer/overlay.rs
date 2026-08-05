@@ -22,7 +22,7 @@ use super::local_imports::resolve_local_import_calls;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
 use super::util::{
-    DEFAULT_EXCLUDES, epoch_secs_str, relative_path, requested_relative_path,
+    effective_excludes, epoch_secs_str, relative_path, requested_relative_path,
     unsupported_file_types,
 };
 
@@ -110,9 +110,10 @@ pub(super) fn index_overlay_files(
         parent_root: parent_root.to_string_lossy().to_string(),
     });
 
+    let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let (candidates, content_only) = walker::discover_files_with_options(
         root_path,
-        DEFAULT_EXCLUDES,
+        &excludes,
         walker::DiscoveryOptions {
             respect_gitignore: ctx.indexing.respect_gitignore,
         },
@@ -196,7 +197,7 @@ pub(super) fn index_overlay_files(
                     &abs,
                     overlay_project_id,
                     root_path,
-                    DEFAULT_EXCLUDES,
+                    &excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
                 )? {
@@ -205,13 +206,7 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Index if content_by_rel.contains_key(&rel) => {
-                match index_content_only(
-                    conn,
-                    &abs,
-                    overlay_project_id,
-                    root_path,
-                    DEFAULT_EXCLUDES,
-                )? {
+                match index_content_only(conn, &abs, overlay_project_id, root_path, &excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }

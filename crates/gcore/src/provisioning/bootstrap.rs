@@ -207,9 +207,10 @@ fn scalar_to_string(path: &str, value: &serde_yaml::Value) -> anyhow::Result<Opt
         serde_yaml::Value::String(value) => Some(value.clone()),
         serde_yaml::Value::Bool(value) => Some(value.to_string()),
         serde_yaml::Value::Number(value) => Some(value.to_string()),
-        serde_yaml::Value::Sequence(_) => {
-            anyhow::bail!("gcore.yaml path `{path}` cannot be a sequence")
-        }
+        serde_yaml::Value::Sequence(_) => Some(
+            serde_json::to_string(value)
+                .with_context(|| format!("convert gcore.yaml path `{path}` to JSON"))?,
+        ),
         serde_yaml::Value::Mapping(_) => {
             anyhow::bail!("gcore.yaml path `{path}` cannot be a mapping")
         }

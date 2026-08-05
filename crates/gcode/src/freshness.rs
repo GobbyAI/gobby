@@ -116,6 +116,7 @@ fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
         &ctx.project_root,
         last_indexed_at,
         &indexed_paths,
+        &ctx.indexing.extra_excludes,
         crate::index::walker::DiscoveryOptions {
             respect_gitignore: ctx.indexing.respect_gitignore,
         },

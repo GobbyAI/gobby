@@ -1,9 +1,11 @@
 use super::*;
+use anyhow::Context as _;
 
 pub(crate) const FALKORDB_DEFAULT_PORT: u16 = 16379;
 pub(crate) const EMBEDDING_DEFAULT_MODEL: &str = "nomic-embed-text";
 pub(crate) const EMBEDDING_DEFAULT_TIMEOUT_SECONDS: u64 = 10;
 const AI_DEFAULT_MAX_CONCURRENCY: u8 = 1;
+pub const INDEXING_EXTRA_EXCLUDES_KEY: &str = "indexing.extra_excludes";
 pub const INDEXING_RESPECT_GITIGNORE_KEY: &str = "indexing.respect_gitignore";
 const INDEXING_RESPECT_GITIGNORE_ENV: &str = "GOBBY_INDEXING_RESPECT_GITIGNORE";
 
@@ -184,8 +186,34 @@ pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result
         Some(value) => parse_config_bool_or_default(INDEXING_RESPECT_GITIGNORE_ENV, &value, true),
         None => resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY, true),
     };
+    let extra_excludes = resolve_config_string_list(source, INDEXING_EXTRA_EXCLUDES_KEY)?;
 
-    Ok(IndexingConfig { respect_gitignore })
+    Ok(IndexingConfig {
+        respect_gitignore,
+        extra_excludes,
+    })
+}
+
+fn resolve_config_string_list(
+    source: &mut impl ConfigSource,
+    key: &str,
+) -> anyhow::Result<Vec<String>> {
+    let Some(raw) = source.config_value(key) else {
+        return Ok(Vec::new());
+    };
+    let values: Vec<String> = serde_json::from_str(&raw)
+        .with_context(|| format!("config `{key}` must be a JSON array of strings"))?;
+    for (index, value) in values.iter().enumerate() {
+        if value.is_empty() {
+            anyhow::bail!("config `{key}` entry {index} must not be empty");
+        }
+        if value.contains(['/', '\\']) {
+            anyhow::bail!(
+                "config `{key}` entry {index} must be a component-name pattern without path separators"
+            );
+        }
+    }
+    Ok(values)
 }
 
 /// Resolve embedding API config and report which namespace supplied api_base.

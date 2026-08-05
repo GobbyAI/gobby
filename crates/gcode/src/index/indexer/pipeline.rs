@@ -21,7 +21,7 @@ use super::local_imports::{resolve_local_import_calls, resolve_project_local_imp
 use super::overlay::index_overlay_files;
 use super::types::{IndexOptions, IndexOutcome, IndexProgressSink, IndexRequest};
 use super::util::{
-    DEFAULT_EXCLUDES, filter_discovered_paths, relative_path, requested_relative_path,
+    effective_excludes, filter_discovered_paths, relative_path, requested_relative_path,
     unsupported_file_types,
 };
 
@@ -62,9 +62,9 @@ fn index_discovered_files(
     let root_path = &request.project_root;
     let mut outcome = IndexOutcome::new(project_id);
 
-    let excludes = DEFAULT_EXCLUDES;
+    let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let (mut candidates, mut content_only) =
-        walker::discover_files_with_options(root_path, excludes, discovery_options(ctx));
+        walker::discover_files_with_options(root_path, &excludes, discovery_options(ctx));
     if let Some(filter) = request.path_filter.as_deref() {
         candidates = filter_discovered_paths(root_path, filter, candidates);
         content_only = filter_discovered_paths(root_path, filter, content_only);
@@ -127,7 +127,7 @@ fn index_discovered_files(
             path,
             project_id,
             root_path,
-            excludes,
+            &excludes,
             &import_context,
             semantic_resolver.as_deref_mut(),
         )? {
@@ -159,7 +159,7 @@ fn index_discovered_files(
             outcome.skipped_files += 1;
             continue;
         }
-        match index_content_only(conn, path, project_id, root_path, excludes)? {
+        match index_content_only(conn, path, project_id, root_path, &excludes)? {
             Some(counts) => outcome.add_counts(counts),
             None => outcome.skipped_files += 1,
         }
@@ -201,7 +201,7 @@ fn index_explicit_files_with_connection(
     let mut outcome = IndexOutcome::new(project_id);
     outcome.scanned_files = request.explicit_files.len();
 
-    let excludes = DEFAULT_EXCLUDES;
+    let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let mut routed_files = Vec::new();
     let mut ast_files = Vec::new();
     let mut content_only_files = Vec::new();
@@ -223,7 +223,7 @@ fn index_explicit_files_with_connection(
         let route = explicit_route_with_discovery_options(
             root_path,
             &abs,
-            excludes,
+            &excludes,
             discovery_options(ctx),
         );
 
@@ -285,7 +285,7 @@ fn index_explicit_files_with_connection(
                     &abs,
                     project_id,
                     root_path,
-                    excludes,
+                    &excludes,
                     &import_context,
                     semantic_resolver.as_deref_mut(),
                 )? {
@@ -295,7 +295,7 @@ fn index_explicit_files_with_connection(
                 }
             }
             ExplicitFileRoute::ContentOnly => {
-                match index_content_only(conn, &abs, project_id, root_path, excludes)? {
+                match index_content_only(conn, &abs, project_id, root_path, &excludes)? {
                     Some(counts) => outcome.add_counts(counts),
                     None => outcome.skipped_files += 1,
                 }

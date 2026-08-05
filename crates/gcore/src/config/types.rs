@@ -30,15 +30,17 @@ pub struct EmbeddingConfig {
 }
 
 /// Shared indexing behavior for gcode/gwiki consumers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexingConfig {
     pub respect_gitignore: bool,
+    pub extra_excludes: Vec<String>,
 }
 
 impl Default for IndexingConfig {
     fn default() -> Self {
         Self {
             respect_gitignore: true,
+            extra_excludes: Vec::new(),
         }
     }
 }

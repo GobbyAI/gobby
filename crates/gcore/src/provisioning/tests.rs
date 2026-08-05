@@ -215,21 +215,21 @@ fn gcore_yaml_rejects_excessive_nesting() {
 }
 
 #[test]
-fn gcore_yaml_rejects_sequence_scalar_values() {
-    let err = StandaloneConfig::from_yaml_str(
+fn gcore_yaml_preserves_sequence_values_as_json() {
+    let config = StandaloneConfig::from_yaml_str(
         r#"
-ai:
-  embeddings:
-    provider:
-      - ollama
+indexing:
+  extra_excludes:
+    - generated
+    - "*.snapshot"
 "#,
     )
-    .expect_err("sequence scalar rejected");
+    .expect("sequence value");
 
     assert!(
-        err.to_string()
-            .contains("gcore.yaml path `ai.embeddings.provider` cannot be a sequence"),
-        "unexpected error: {err}"
+        config
+            .get("indexing.extra_excludes")
+            .is_some_and(|value| value == r#"["generated","*.snapshot"]"#)
     );
 }
 

@@ -1,6 +1,6 @@
 use super::super::file::{ExplicitFileRoute, explicit_file_route};
 use super::super::pipeline::explicit_route_with_discovery_options;
-use super::super::util::DEFAULT_EXCLUDES;
+use super::super::util::{DEFAULT_EXCLUDES, effective_excludes};
 use super::fixtures::write_file;
 use crate::index::walker;
 use std::path::Path;
@@ -96,6 +96,25 @@ fn explicit_file_routes_follow_respect_gitignore_setting() {
         },
     );
     assert_eq!(route, ExplicitFileRoute::Ast);
+}
+
+#[test]
+fn configured_excludes_extend_built_in_excludes() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "generated/output.rs", b"fn generated() {}\n");
+    write_file(root, "target/output.rs", b"fn built_in() {}\n");
+    let extra_excludes = vec!["generated".to_string()];
+    let excludes = effective_excludes(&extra_excludes);
+
+    assert_eq!(
+        explicit_file_route(root, &root.join("generated/output.rs"), &excludes),
+        ExplicitFileRoute::Skip
+    );
+    assert_eq!(
+        explicit_file_route(root, &root.join("target/output.rs"), &excludes),
+        ExplicitFileRoute::Skip
+    );
 }
 
 #[test]

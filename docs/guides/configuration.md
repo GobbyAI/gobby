@@ -50,7 +50,14 @@ and `gwiki` respect `.gitignore`, `.git/info/exclude`, and global git excludes:
 ```yaml
 indexing:
   respect_gitignore: true
+  extra_excludes:
+    - generated
+    - "*.snapshot"
 ```
+
+For gcode code indexing, `extra_excludes` accepts component-name glob patterns.
+These patterns extend the built-in exclusions; they cannot re-enable built-in
+excluded paths.
 
 Project wiki markdown for the default project scope lives under
 `<project>/wiki/`. When `wiki/` is occupied by a non-vault path, resolution
