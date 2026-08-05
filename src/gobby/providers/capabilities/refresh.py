@@ -15,6 +15,7 @@ from gobby.providers.capabilities.collectors import (
 from gobby.providers.capabilities.collectors import (
     collectors as registered_collectors,
 )
+from gobby.providers.capabilities.coverage import CoverageAuditor
 from gobby.providers.capabilities.models import ProviderSnapshot
 from gobby.providers.capabilities.seed import apply_seed
 from gobby.providers.capabilities.store import ProviderCapabilityStore
@@ -73,6 +74,7 @@ class CapabilityRefreshCoordinator:
         interval_seconds: float = CAPABILITY_REFRESH_INTERVAL_SECONDS,
         run_db: RunDatabase | None = None,
         sleep: Sleep = asyncio.sleep,
+        coverage_auditor: CoverageAuditor | None = None,
     ) -> None:
         self.store = store
         self._collectors = dict(
@@ -82,10 +84,16 @@ class CapabilityRefreshCoordinator:
         self._interval_seconds = interval_seconds
         self._run_db = run_db
         self._sleep = sleep
+        self._coverage_auditor = coverage_auditor
 
     def prepare(self) -> None:
         """Install bundled fallback rows before HTTP starts serving."""
         apply_seed(cast(ProviderCapabilityStore, self.store))
+        if self._coverage_auditor is not None:
+            try:
+                self._coverage_auditor.audit()
+            except Exception:
+                logger.exception("Provider model metadata coverage audit failed during startup")
 
     def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
         """Return one durable last-good provider snapshot."""
@@ -135,6 +143,21 @@ class CapabilityRefreshCoordinator:
                 )
             logger.warning(
                 "Provider capability refresh failed for %s: %s", collector.provider, detail
+            )
+        else:
+            await self._audit_coverage(collector.provider)
+
+    async def _audit_coverage(self, provider: str) -> None:
+        if self._coverage_auditor is None:
+            return
+        try:
+            await self._coverage_auditor.audit_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception(
+                "Provider model metadata coverage audit failed after %s refresh",
+                provider,
             )
 
     async def _run_store[T](self, operation: Callable[..., T], *args: object) -> T:

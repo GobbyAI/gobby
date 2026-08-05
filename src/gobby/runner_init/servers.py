@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
+from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
@@ -29,14 +30,24 @@ def init_servers(runner: GobbyRunner) -> None:
     web_chat_session_registry = WebChatSessionRegistry()
     runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
-    provider_capability_service = CapabilityRefreshCoordinator(
-        ProviderCapabilityStore(runner.database),
+    provider_capability_store = ProviderCapabilityStore(runner.database)
+    model_metadata_store = ModelMetadataStore(runner.database)
+    model_metadata_coverage_auditor = ModelMetadataCoverageAuditor(
+        provider_capability_store,
+        model_metadata_store,
+        runner.config_store,
         run_db=getattr(runner.db_executor, "run", None),
+    )
+    provider_capability_service = CapabilityRefreshCoordinator(
+        provider_capability_store,
+        run_db=getattr(runner.db_executor, "run", None),
+        coverage_auditor=model_metadata_coverage_auditor,
     )
     provider_capability_service.prepare()
     provider_capability_resolver = CapabilityResolver(
         provider_capability_service,
-        ModelMetadataStore(runner.database),
+        model_metadata_store,
+        runner.config_store,
     )
 
     def tool_proxy_getter() -> object | None:
@@ -89,6 +100,7 @@ def init_servers(runner: GobbyRunner) -> None:
         config_store=runner.config_store,
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
+        model_metadata_coverage_auditor=model_metadata_coverage_auditor,
         web_chat_runtime_manager=None,
         web_chat_session_registry=web_chat_session_registry,
         prompt_manager=runner.prompt_manager,

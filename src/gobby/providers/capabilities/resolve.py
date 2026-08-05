@@ -7,6 +7,10 @@ from enum import StrEnum
 from typing import Protocol
 
 from gobby.llm.context_window_values import positive_context_window
+from gobby.providers.capabilities.metadata_aliases import (
+    AliasConfigReader,
+    find_model_metadata_alias,
+)
 from gobby.providers.capabilities.models import (
     ActivationDescriptor,
     ModelCapability,
@@ -86,9 +90,15 @@ class _ModelMetadataStore(Protocol):
 class CapabilityResolver:
     """Resolve context, reasoning, and route facts from durable capability data."""
 
-    def __init__(self, store: _CapabilityStore, model_metadata_store: _ModelMetadataStore) -> None:
+    def __init__(
+        self,
+        store: _CapabilityStore,
+        model_metadata_store: _ModelMetadataStore,
+        config_store: AliasConfigReader | None = None,
+    ) -> None:
         self._store = store
         self._model_metadata_store = model_metadata_store
+        self._config_store = config_store
 
     def resolve_context(
         self,
@@ -119,6 +129,15 @@ class CapabilityResolver:
         )
         if metadata_value is not None:
             return ContextResolution(metadata_value, ContextSource.OPENROUTER)
+
+        if self._config_store is not None:
+            alias = find_model_metadata_alias(self._config_store, provider, model)
+            if alias is not None:
+                alias_value = positive_context_window(
+                    self._model_metadata_store.get_context_window(alias.openrouter_model_id)
+                )
+                if alias_value is not None:
+                    return ContextResolution(alias_value, ContextSource.OPENROUTER)
         return ContextResolution(None, ContextSource.UNKNOWN)
 
     def resolve_reasoning(

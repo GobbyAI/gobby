@@ -196,6 +196,37 @@ class GenerationConfig(BaseModel):
         }
 
 
+class ModelMetadataAlias(BaseModel):
+    """Provider-scoped identity correction for OpenRouter model metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    provider_model_id: str
+    openrouter_model_id: str
+
+    @field_validator("provider", "provider_model_id")
+    @classmethod
+    def normalize_source_key(cls, value: str) -> str:
+        normalized = value.strip().casefold()
+        if not normalized:
+            raise ValueError("model metadata alias source fields must not be blank")
+        return normalized
+
+    @field_validator("openrouter_model_id")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("model metadata alias target must not be blank")
+        return normalized
+
+
+def model_metadata_alias_source_key(provider: str, provider_model_id: str) -> tuple[str, str]:
+    """Return the normalized provider-scoped alias source key."""
+    return provider.strip().casefold(), provider_model_id.strip().casefold()
+
+
 class AIConfig(BaseModel):
     """Daemon-owned AI configuration namespace."""
 
@@ -205,3 +236,27 @@ class AIConfig(BaseModel):
         default_factory=GenerationConfig,
         description="Text generation configuration.",
     )
+    model_metadata_aliases: list[ModelMetadataAlias] = Field(
+        default_factory=list,
+        description="Provider-scoped aliases into the OpenRouter model metadata registry.",
+    )
+
+    @model_validator(mode="after")
+    def validate_model_metadata_aliases(self) -> AIConfig:
+        keys: set[tuple[str, str]] = set()
+        for alias in self.model_metadata_aliases:
+            key = (alias.provider, alias.provider_model_id)
+            if key in keys:
+                raise ValueError(
+                    "duplicate model metadata alias source: "
+                    f"{alias.provider}/{alias.provider_model_id}"
+                )
+            keys.add(key)
+        return self
+
+
+def parse_model_metadata_aliases(value: object | None) -> tuple[ModelMetadataAlias, ...]:
+    """Validate a ConfigStore alias value using the daemon AI schema."""
+    raw_value = [] if value is None else value
+    config = AIConfig.model_validate({"model_metadata_aliases": raw_value})
+    return tuple(config.model_metadata_aliases)

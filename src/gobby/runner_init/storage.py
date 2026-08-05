@@ -109,6 +109,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database)
+    from gobby.providers.capabilities.metadata_aliases import seed_model_metadata_aliases
+
+    seed_model_metadata_aliases(runner.config_store)
     runner.secret_store.ensure_ready()
     ensure_local_api_token(runner.config_store)
     runner.config = load_config(

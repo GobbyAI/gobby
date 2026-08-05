@@ -114,6 +114,7 @@ class ServiceContainer:
     config_store: Any | None = None  # ConfigStore
     provider_capability_service: Any | None = None  # CapabilityRefreshCoordinator
     provider_capability_resolver: Any | None = None  # CapabilityResolver
+    model_metadata_coverage_auditor: Any | None = None  # ModelMetadataCoverageAuditor
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager
     web_chat_session_registry: Any | None = None  # WebChatSessionRegistry
 

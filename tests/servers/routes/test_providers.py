@@ -25,6 +25,7 @@ from gobby.providers.capabilities.models import (
     SourceState,
     SpeedMode,
 )
+from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
 from gobby.servers.provider_model_defaults import AGY_MODELS
@@ -601,6 +602,38 @@ class TestProviderModelsRoute:
             "status": "known",
             "supported_efforts": ["minimal", "low", "medium", "high"],
             "default_effort": "medium",
+        }
+
+    def test_models_route_resolves_registry_context_and_preserves_unknown(self) -> None:
+        app = FastAPI()
+        service = _capability_service(
+            droid=(
+                _model("registry-backed-model"),
+                _model("unknown-model"),
+            )
+        )
+        metadata_store = MagicMock()
+        metadata_store.get_context_window.side_effect = {
+            "registry-backed-model": 77_000,
+        }.get
+        resolver = CapabilityResolver(service, metadata_store)
+        server = _server_stub(
+            provider_capability_service=service,
+            provider_capability_resolver=resolver,
+        )
+        app.include_router(create_providers_router(server))
+
+        response = TestClient(app).get("/api/providers/models")
+
+        providers = {entry["provider"]: entry for entry in response.json()["providers"]}
+        models = {model["canonical_model"]: model for model in providers["droid"]["models"]}
+        assert models["registry-backed-model"]["context_length"] == {
+            "value": 77_000,
+            "source": "registry",
+        }
+        assert models["unknown-model"]["context_length"] == {
+            "value": None,
+            "source": "unknown",
         }
 
     def test_models_route_has_no_static_droid_fallback(self) -> None:

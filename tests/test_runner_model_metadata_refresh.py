@@ -31,6 +31,17 @@ def _model() -> ModelInfo:
     )
 
 
+class _CoverageAuditorSpy:
+    def __init__(self) -> None:
+        self.async_calls = 0
+
+    def audit(self) -> None:
+        return None
+
+    async def audit_async(self) -> None:
+        self.async_calls += 1
+
+
 class _FakePGConn:
     def __init__(self, activity: list[str]) -> None:
         self.activity = activity
@@ -116,7 +127,8 @@ async def test_replace_uses_bounded_four_statement_contract(
 
 @pytest.mark.asyncio
 async def test_empty_refresh_retains_cache(caplog: pytest.LogCaptureFixture) -> None:
-    database = SimpleNamespace(conninfo="postgresql://metadata")
+    database = cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata"))
+    auditor = _CoverageAuditorSpy()
     with (
         patch(
             "gobby.runner_model_metadata_refresh.fetch_models_async",
@@ -127,10 +139,11 @@ async def test_empty_refresh_retains_cache(caplog: pytest.LogCaptureFixture) -> 
             new=AsyncMock(),
         ) as replace,
     ):
-        assert await refresh_model_metadata_once(database) is False  # type: ignore[arg-type]
+        assert await refresh_model_metadata_once(database, coverage_auditor=auditor) is False
 
     fetch.assert_awaited_once_with()
     replace.assert_not_awaited()
+    assert auditor.async_calls == 0
     assert "returned no models; retaining cached metadata" in caplog.text
 
 
@@ -138,6 +151,7 @@ async def test_successful_refresh_logs_population_at_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     database = cast(HubDatabase, SimpleNamespace(conninfo="postgresql://metadata"))
+    auditor = _CoverageAuditorSpy()
     with (
         patch(
             "gobby.runner_model_metadata_refresh.fetch_models_async",
@@ -149,7 +163,7 @@ async def test_successful_refresh_logs_population_at_debug(
         ),
         caplog.at_level(logging.DEBUG, logger="gobby.runner_model_metadata_refresh"),
     ):
-        assert await refresh_model_metadata_once(database) is True
+        assert await refresh_model_metadata_once(database, coverage_auditor=auditor) is True
 
     refresh_record = next(
         record
@@ -157,6 +171,7 @@ async def test_successful_refresh_logs_population_at_debug(
         if record.getMessage() == "Refreshed model metadata cache with 1 models"
     )
     assert refresh_record.levelno == logging.DEBUG
+    assert auditor.async_calls == 1
 
 
 @pytest.mark.asyncio

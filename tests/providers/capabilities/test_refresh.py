@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from decimal import Decimal
 import pytest
 
 from gobby.providers.capabilities.collectors import SourceSpec
+from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.models import (
     FactProvenance,
     ModelCapability,
@@ -24,7 +26,11 @@ from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.storage.hub.protocol import HubDatabase
 
 
-def _snapshot(provider: str, *model_names: str) -> ProviderSnapshot:
+def _snapshot(
+    provider: str,
+    *model_names: str,
+    context_length: int | None = 128_000,
+) -> ProviderSnapshot:
     observed_at = datetime(2026, 8, 4, 12, 0, tzinfo=UTC)
     source_key = "provider-api"
     source_url = f"https://example.test/{provider}/models"
@@ -64,7 +70,7 @@ def _snapshot(provider: str, *model_names: str) -> ProviderSnapshot:
             available=True,
             hidden=False,
             is_default=index == 0,
-            context_length=128_000,
+            context_length=context_length,
             max_output_tokens=16_000,
             reasoning=ReasoningSupport.KNOWN,
             supported_efforts=("low", "medium", "high"),
@@ -115,6 +121,9 @@ class _MemoryStore:
     def get_provider_snapshot(self, provider: str) -> ProviderSnapshot | None:
         return self.snapshot if self.snapshot.provider == provider else None
 
+    def has_rows(self, provider: str) -> bool:
+        return True
+
     def get_all_snapshots(self) -> tuple[ProviderSnapshot, ...]:
         return (self.snapshot,)
 
@@ -135,6 +144,34 @@ class _MemoryStore:
                 ),
             ),
         )
+
+
+class _MetadataStore:
+    def __init__(self, contexts: dict[str, int] | None = None) -> None:
+        self.contexts = dict(contexts or {})
+
+    def get_context_window(self, model: str) -> int | None:
+        return self.contexts.get(model)
+
+
+class _ConfigStore:
+    def __init__(self, aliases: list[dict[str, str]] | None = None) -> None:
+        self.aliases = aliases or []
+
+    def get(self, key: str) -> object:
+        return self.aliases
+
+
+class _CoverageAuditorSpy:
+    def __init__(self) -> None:
+        self.sync_calls = 0
+        self.async_calls = 0
+
+    def audit(self) -> None:
+        self.sync_calls += 1
+
+    async def audit_async(self) -> None:
+        self.async_calls += 1
 
 
 class _Collector:
@@ -181,6 +218,94 @@ async def test_startup_nonblocking() -> None:
 
     release.set()
     await refresh
+
+
+@pytest.mark.asyncio
+async def test_startup_and_successful_refresh_run_coverage_audits() -> None:
+    prior = _snapshot("synthetic", "old-model")
+    store = _MemoryStore(prior)
+    auditor = _CoverageAuditorSpy()
+    coordinator = CapabilityRefreshCoordinator(
+        store,
+        {
+            "synthetic": _Collector(
+                lambda: _async_snapshot("synthetic", "new-model"),
+                provider="synthetic",
+            )
+        },
+        coverage_auditor=auditor,
+    )
+
+    coordinator.prepare()
+    await coordinator.refresh_all()
+
+    assert auditor.sync_calls == 1
+    assert auditor.async_calls == 1
+
+
+async def _async_snapshot(provider: str, model: str) -> ProviderSnapshot:
+    return _snapshot(provider, model)
+
+
+def test_coverage_audit_bounds_deduplicates_and_logs_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    model_ids = tuple(f"model-{index:02d}" for index in range(12))
+    store = _MemoryStore(_snapshot("synthetic", *model_ids, context_length=None))
+    metadata = _MetadataStore()
+    auditor = ModelMetadataCoverageAuditor(store, metadata, _ConfigStore())
+
+    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
+        auditor.audit()
+        first_record_count = len(caplog.records)
+        auditor.audit()
+
+        metadata.contexts.update(dict.fromkeys(model_ids, 64_000))
+        auditor.audit()
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if "models without context metadata" in record.getMessage()
+    ]
+    assert len(warnings) == 1
+    assert "model-00" in warnings[0]
+    assert "model-09" in warnings[0]
+    assert "model-10" not in warnings[0]
+    assert "; 2 omitted" in warnings[0]
+    assert first_record_count == 1
+    assert "Provider synthetic context metadata coverage recovered" in [
+        record.getMessage() for record in caplog.records
+    ]
+
+
+def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _MemoryStore(_snapshot("synthetic", "provider-model", context_length=None))
+    metadata = _MetadataStore()
+    config = _ConfigStore(
+        [
+            {
+                "provider": "synthetic",
+                "provider_model_id": "provider-model",
+                "openrouter_model_id": "vendor/registry-model",
+            }
+        ]
+    )
+    auditor = ModelMetadataCoverageAuditor(store, metadata, config)
+
+    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
+        auditor.audit()
+        auditor.audit()
+        metadata.contexts["vendor/registry-model"] = 64_000
+        auditor.audit()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert sum("models without context metadata" in message for message in messages) == 1
+    assert sum("configured alias targets missing" in message for message in messages) == 1
+    assert "Provider synthetic context metadata coverage recovered" in messages
+    assert "Provider synthetic model metadata alias targets recovered" in messages
 
 
 @pytest.mark.asyncio

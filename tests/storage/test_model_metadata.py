@@ -7,7 +7,14 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
+from pydantic import ValidationError
 
+from gobby.config.ai import AIConfig
+from gobby.providers.capabilities.metadata_aliases import (
+    DEFAULT_MODEL_METADATA_ALIASES,
+    MODEL_METADATA_ALIASES_KEY,
+    seed_model_metadata_aliases,
+)
 from gobby.storage import model_metadata
 from gobby.storage.model_metadata import ModelMetadataStore
 
@@ -105,17 +112,17 @@ def test_endpoint_prefixed_lookup_normalizes_to_bare_model() -> None:
     assert params == ("gpt-5.4",)
 
 
-def test_prefix_lookup_matches_longest_bare_model_key() -> None:
+def test_versioned_lookup_does_not_use_prefix_matching() -> None:
     db = MagicMock()
-    db.fetchone.side_effect = [None, {"context_length": 200_000}]
+    db.fetchone.return_value = None
 
     result = ModelMetadataStore(db).get_context_window("anthropic/shared-model-versioned")
 
-    assert result == 200_000
+    assert result is None
+    assert db.fetchone.call_count == 1
     query, params = db.fetchone.call_args.args
     assert "provider" not in query
-    assert "LEFT(%s, LENGTH(model)) = model" in query
-    assert "ORDER BY LENGTH(model) DESC" in query
+    assert "WHERE model = %s" in query
     assert params == ("shared-model-versioned",)
 
 
@@ -130,38 +137,85 @@ def test_prefix_lookup_matches_longest_bare_model_key() -> None:
         pytest.param(1.5, id="float"),
     ],
 )
-def test_invalid_exact_row_does_not_shadow_positive_prefix(invalid_value: object) -> None:
+def test_invalid_exact_row_is_rejected(invalid_value: object) -> None:
     db = MagicMock()
-    db.fetchone.side_effect = [
-        {"context_length": invalid_value},
-        {"context_length": 128_000},
-    ]
+    db.fetchone.return_value = {"context_length": invalid_value}
 
     result = ModelMetadataStore(db).get_context_window("gpt-family-versioned")
 
-    assert result == 128_000
-    assert db.fetchone.call_count == 2
-    exact_query = db.fetchone.call_args_list[0].args[0]
-    prefix_query = db.fetchone.call_args_list[1].args[0]
-    assert "context_length > 0" in exact_query
-    assert "context_length > 0" in prefix_query
-    assert "LIKE" not in prefix_query
-    assert "LEFT(%s, LENGTH(model)) = model" in prefix_query
+    assert result is None
+    assert db.fetchone.call_count == 1
+    assert "context_length > 0" in db.fetchone.call_args.args[0]
 
 
 @pytest.mark.parametrize(
-    "invalid_value",
+    ("field", "value"),
     [
-        pytest.param(None, id="null"),
-        pytest.param(0, id="zero"),
-        pytest.param(-1, id="negative"),
-        pytest.param(True, id="bool"),
-        pytest.param("malformed", id="string"),
-        pytest.param(1.5, id="float"),
+        pytest.param("provider", " ", id="blank-provider"),
+        pytest.param("provider_model_id", "", id="blank-provider-model"),
+        pytest.param("openrouter_model_id", "\t", id="blank-openrouter-model"),
     ],
 )
-def test_invalid_prefix_row_is_rejected(invalid_value: object) -> None:
-    db = MagicMock()
-    db.fetchone.side_effect = [None, {"context_length": invalid_value}]
+def test_model_metadata_alias_rejects_blank_fields(field: str, value: str) -> None:
+    alias = {
+        "provider": "synthetic-provider",
+        "provider_model_id": "provider-model",
+        "openrouter_model_id": "vendor/registry-model",
+    }
+    alias[field] = value
 
-    assert ModelMetadataStore(db).get_context_window("gpt-family-versioned") is None
+    with pytest.raises(ValidationError, match="must not be blank"):
+        AIConfig(model_metadata_aliases=[alias])
+
+
+def test_model_metadata_alias_rejects_duplicate_normalized_source_keys() -> None:
+    with pytest.raises(ValidationError, match="duplicate model metadata alias source"):
+        AIConfig(
+            model_metadata_aliases=[
+                {
+                    "provider": " Synthetic-Provider ",
+                    "provider_model_id": " Provider-Model ",
+                    "openrouter_model_id": "vendor/registry-model-a",
+                },
+                {
+                    "provider": "synthetic-provider",
+                    "provider_model_id": "provider-model",
+                    "openrouter_model_id": "vendor/registry-model-b",
+                },
+            ]
+        )
+
+
+class _MemoryConfigStore:
+    def __init__(self, values: dict[str, object] | None = None) -> None:
+        self.values = dict(values or {})
+        self.writes: list[tuple[str, object, str]] = []
+
+    def get(self, key: str) -> object | None:
+        return self.values.get(key)
+
+    def list_keys(self, prefix: str | None = None) -> list[str]:
+        return [key for key in self.values if prefix is None or key.startswith(prefix)]
+
+    def set(self, key: str, value: object, source: str = "user") -> None:
+        self.values[key] = value
+        self.writes.append((key, value, source))
+
+
+def test_model_metadata_alias_seed_installs_current_corrections_when_absent() -> None:
+    store = _MemoryConfigStore()
+
+    assert seed_model_metadata_aliases(store) is True
+
+    expected = [alias.model_dump(mode="json") for alias in DEFAULT_MODEL_METADATA_ALIASES]
+    assert store.values[MODEL_METADATA_ALIASES_KEY] == expected
+    assert store.writes == [(MODEL_METADATA_ALIASES_KEY, expected, "default")]
+
+
+def test_model_metadata_alias_seed_preserves_operator_owned_value() -> None:
+    configured: list[dict[str, str]] = []
+    store = _MemoryConfigStore({MODEL_METADATA_ALIASES_KEY: configured})
+
+    assert seed_model_metadata_aliases(store) is False
+    assert store.values[MODEL_METADATA_ALIASES_KEY] is configured
+    assert store.writes == []

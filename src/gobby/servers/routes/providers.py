@@ -15,6 +15,7 @@ from gobby.ai.codex_endpoint import codex_endpoint_display_name
 from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
 from gobby.providers.capabilities.models import ModelCapability, ProviderSnapshot
+from gobby.providers.capabilities.resolve import CapabilityResolver, ContextSource
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
@@ -42,7 +43,27 @@ def _fact(model: ModelCapability, name: str, value: int | None) -> dict[str, Any
     return {"value": value, "source": source}
 
 
-def _matrix_model_entry(model: ModelCapability) -> dict[str, Any]:
+def _context_fact(
+    provider: str,
+    model: ModelCapability,
+    resolver: CapabilityResolver | None,
+) -> dict[str, Any]:
+    if resolver is None:
+        return _fact(model, "context_length", model.context_length)
+    resolution = resolver.resolve_context(provider, model.canonical_model)
+    if resolution.source is ContextSource.PROVIDER_MATRIX:
+        return _fact(model, "context_length", resolution.value)
+    if resolution.source is ContextSource.OPENROUTER:
+        return {"value": resolution.value, "source": "registry"}
+    return {"value": None, "source": "unknown"}
+
+
+def _matrix_model_entry(
+    model: ModelCapability,
+    *,
+    provider: str,
+    resolver: CapabilityResolver | None,
+) -> dict[str, Any]:
     route_provenance = {
         name: provenance.to_dict()
         for route in model.routes
@@ -55,7 +76,7 @@ def _matrix_model_entry(model: ModelCapability) -> dict[str, Any]:
         "available": model.available,
         "hidden": model.hidden,
         "is_default": model.is_default,
-        "context_length": _fact(model, "context_length", model.context_length),
+        "context_length": _context_fact(provider, model, resolver),
         "max_output_tokens": _fact(model, "max_output_tokens", model.max_output_tokens),
         "latency_class": model.latency_class,
         "reasoning": {
@@ -90,9 +111,16 @@ def _matrix_model_entry(model: ModelCapability) -> dict[str, Any]:
     }
 
 
-def _matrix_snapshot_payload(snapshot: ProviderSnapshot) -> dict[str, Any]:
+def _matrix_snapshot_payload(
+    snapshot: ProviderSnapshot,
+    resolver: CapabilityResolver | None,
+) -> dict[str, Any]:
     return {
-        "models": [_matrix_model_entry(model) for model in snapshot.models if not model.hidden],
+        "models": [
+            _matrix_model_entry(model, provider=snapshot.provider, resolver=resolver)
+            for model in snapshot.models
+            if not model.hidden
+        ],
         "refresh": {
             "generation": snapshot.generation,
             "sources": [source.to_dict() for source in snapshot.sources],
@@ -323,6 +351,11 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             "provider_capability_service",
             None,
         )
+        capability_resolver = getattr(
+            getattr(server, "services", None),
+            "provider_capability_resolver",
+            None,
+        )
         local_model_groups = await _local_generation_model_groups(server)
         result: list[dict[str, Any]] = []
         codex_installed = False
@@ -339,7 +372,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     else None
                 )
                 capability_payload = (
-                    _matrix_snapshot_payload(snapshot)
+                    _matrix_snapshot_payload(snapshot, capability_resolver)
                     if snapshot is not None
                     else _pending_snapshot_payload()
                 )

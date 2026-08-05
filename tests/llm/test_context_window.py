@@ -26,7 +26,12 @@ from gobby.llm.context_windows import (
     resolve_context_window,
     resolve_context_window_with_source,
 )
+from gobby.llm.model_registry import ModelInfo
+from gobby.providers.capabilities.metadata_aliases import MODEL_METADATA_ALIASES_KEY
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.model_metadata import ModelMetadataStore
 
 pytestmark = pytest.mark.unit
 
@@ -465,3 +470,44 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("qwen3-coder(openai)", None, provider="qwen")
         assert result == 262_144
+
+
+def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDatabase) -> None:
+    ModelMetadataStore(postgres_db).populate(
+        [
+            ModelInfo(
+                id="openai/registry-model",
+                name="Registry Model",
+                context_length=64_000,
+                max_completion_tokens=8_000,
+            )
+        ]
+    )
+    config_store = ConfigStore(postgres_db)
+    config_store.set(
+        MODEL_METADATA_ALIASES_KEY,
+        [
+            {
+                "provider": "synthetic-provider",
+                "provider_model_id": "provider-model",
+                "openrouter_model_id": "openai/registry-model",
+            }
+        ],
+    )
+
+    resolved = resolve_context_window_with_source(
+        "provider-model",
+        provider="synthetic-provider",
+        db=postgres_db,
+    )
+    config_store.set(MODEL_METADATA_ALIASES_KEY, [])
+    removed = resolve_context_window_with_source(
+        "provider-model",
+        provider="synthetic-provider",
+        db=postgres_db,
+    )
+
+    assert resolved is not None
+    assert (resolved.value, resolved.source) == (64_000, "registry")
+    assert removed is not None
+    assert (removed.value, removed.source) == (None, "unknown")

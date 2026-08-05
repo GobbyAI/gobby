@@ -238,15 +238,21 @@ def start_periodic_tasks(
         ),
         name="metrics-archive",
     )
+    services = getattr(getattr(runner, "http_server", None), "services", None)
+    model_metadata_coverage_auditor = getattr(
+        services,
+        "model_metadata_coverage_auditor",
+        None,
+    )
     runner._model_metadata_refresh_task = asyncio.create_task(
         loops["model_metadata_refresh_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
+            coverage_auditor=model_metadata_coverage_auditor,
         ),
         name="model-metadata-refresh",
     )
     runner._provider_capability_refresh_task = None
-    services = getattr(getattr(runner, "http_server", None), "services", None)
     provider_capability_service = getattr(services, "provider_capability_service", None)
     if provider_capability_service is not None:
         run = getattr(provider_capability_service, "run", None)

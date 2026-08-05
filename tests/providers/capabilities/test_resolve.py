@@ -33,11 +33,23 @@ class _CapabilityStore:
 
 
 class _ModelMetadataStore:
-    def __init__(self, context_length: int | None) -> None:
-        self.context_length = context_length
+    def __init__(self, context_length: int | None | dict[str, int]) -> None:
+        self.context_lengths = (
+            context_length
+            if isinstance(context_length, dict)
+            else ({"model": context_length} if context_length is not None else {})
+        )
 
     def get_context_window(self, model: str) -> int | None:
-        return self.context_length
+        return self.context_lengths.get(model)
+
+
+class _ConfigStore:
+    def __init__(self, aliases: list[dict[str, str]] | None = None) -> None:
+        self.aliases = aliases
+
+    def get(self, key: str) -> object | None:
+        return self.aliases
 
 
 def _snapshot(
@@ -135,6 +147,82 @@ def test_context_precedence_order() -> None:
     assert (matrix.value, matrix.source) == (128_000, ContextSource.PROVIDER_MATRIX)
     assert (metadata.value, metadata.source) == (32_000, ContextSource.OPENROUTER)
     assert (unknown.value, unknown.source) == (None, ContextSource.UNKNOWN)
+
+
+def test_direct_metadata_match_precedes_provider_alias() -> None:
+    metadata = _ModelMetadataStore({"model": 32_000, "registry-model": 64_000})
+    config = _ConfigStore(
+        [
+            {
+                "provider": "provider",
+                "provider_model_id": "model",
+                "openrouter_model_id": "registry-model",
+            }
+        ]
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(context_length=None)),
+        metadata,
+        config,
+    )
+
+    result = resolver.resolve_context("provider", "model")
+
+    assert (result.value, result.source) == (32_000, ContextSource.OPENROUTER)
+
+
+def test_provider_alias_is_scoped_and_config_edits_are_live() -> None:
+    metadata = _ModelMetadataStore({"registry-model": 64_000})
+    config = _ConfigStore(
+        [
+            {
+                "provider": "other-provider",
+                "provider_model_id": "model",
+                "openrouter_model_id": "registry-model",
+            }
+        ]
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(context_length=None)),
+        metadata,
+        config,
+    )
+
+    assert resolver.resolve_context("provider", "model").source is ContextSource.UNKNOWN
+
+    config.aliases = [
+        {
+            "provider": " Provider ",
+            "provider_model_id": " MODEL ",
+            "openrouter_model_id": "registry-model",
+        }
+    ]
+    resolved = resolver.resolve_context("provider", "model")
+    assert (resolved.value, resolved.source) == (64_000, ContextSource.OPENROUTER)
+
+    config.aliases = []
+    assert resolver.resolve_context("provider", "model").source is ContextSource.UNKNOWN
+
+
+def test_missing_alias_target_remains_unknown() -> None:
+    config = _ConfigStore(
+        [
+            {
+                "provider": "provider",
+                "provider_model_id": "model",
+                "openrouter_model_id": "missing-registry-model",
+            }
+        ]
+    )
+    resolver = CapabilityResolver(
+        _CapabilityStore(_snapshot(context_length=None)),
+        _ModelMetadataStore(None),
+        config,
+    )
+
+    result = resolver.resolve_context("provider", "model")
+
+    assert (result.value, result.source) == (None, ContextSource.UNKNOWN)
 
 
 def test_reasoning_tristate() -> None:

@@ -457,6 +457,11 @@ class _UnavailableCapabilityService:
         return None
 
 
+class _UnavailableConfigStore:
+    def get(self, key: str) -> None:
+        return None
+
+
 class _RegistryMetadataStore:
     def __init__(self, db: HubDatabase | None) -> None:
         self._db = db
@@ -467,15 +472,22 @@ class _RegistryMetadataStore:
 
 def _get_capability_resolver(db: HubDatabase | None = None) -> CapabilityResolver:
     from gobby.app_context import get_app_context
+    from gobby.storage.config_store import ConfigStore
 
     ctx = get_app_context()
     resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
     if resolver is not None and db is None:
         return cast(CapabilityResolver, resolver)
     service = getattr(ctx, "provider_capability_service", None) if ctx else None
+    config_store = (
+        ConfigStore(db)
+        if db is not None
+        else getattr(ctx, "config_store", None) or _UnavailableConfigStore()
+    )
     return CapabilityResolver(
         service if service is not None else _UnavailableCapabilityService(),
         _RegistryMetadataStore(db),
+        config_store,
     )
 
 

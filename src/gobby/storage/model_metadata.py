@@ -118,7 +118,7 @@ class ModelMetadataStore:
         }
 
     def get_context_window(self, model: str) -> int | None:
-        """Look up context_length for a model (exact match, then prefix match)."""
+        """Look up context_length for a normalized exact model identity."""
         from gobby.llm.model_registry import normalize_model_id
 
         model = normalize_model_id(model)
@@ -126,18 +126,6 @@ class ModelMetadataStore:
         row = self.db.fetchone(
             "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
             "WHERE model = %s AND context_length > 0",
-            (model,),
-        )
-        self._warn_if_stale(row)
-        exact_context_window = positive_context_window(row["context_length"] if row else None)
-        if exact_context_window is not None:
-            return exact_context_window
-
-        # Prefix match — find longest matching model key via SQL
-        row = self.db.fetchone(
-            "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
-            "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
-            "ORDER BY LENGTH(model) DESC LIMIT 1",
             (model,),
         )
         self._warn_if_stale(row)

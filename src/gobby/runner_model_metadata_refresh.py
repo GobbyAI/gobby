@@ -6,13 +6,16 @@ import asyncio
 import logging
 import math
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import psycopg
 
 from gobby.llm.model_registry import ModelInfo, fetch_models_async, normalize_model_id
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError, run_bounded_db
 from gobby.storage.hub.protocol import HubDatabase
+
+if TYPE_CHECKING:
+    from gobby.providers.capabilities.coverage import CoverageAuditor
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +94,11 @@ async def replace_model_metadata_async(
     )
 
 
-async def refresh_model_metadata_once(database: HubDatabase) -> bool:
+async def refresh_model_metadata_once(
+    database: HubDatabase,
+    *,
+    coverage_auditor: CoverageAuditor | None = None,
+) -> bool:
     """Fetch and persist one registry snapshot, retaining cache on failure."""
     models = await fetch_models_async()
     if not models:
@@ -105,6 +112,13 @@ async def refresh_model_metadata_once(database: HubDatabase) -> bool:
         logger.exception("Model metadata refresh write failed; retaining cached metadata")
         return False
     logger.debug("Refreshed model metadata cache with %s models", inserted)
+    if coverage_auditor is not None:
+        try:
+            await coverage_auditor.audit_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Provider model metadata coverage audit failed after registry refresh")
     return True
 
 
@@ -113,10 +127,11 @@ async def model_metadata_refresh_loop(
     shutdown_requested: Callable[[], bool],
     *,
     interval_seconds: float = MODEL_METADATA_REFRESH_INTERVAL_SECONDS,
+    coverage_auditor: CoverageAuditor | None = None,
 ) -> None:
     """Refresh metadata every 24 hours until daemon shutdown."""
     while not shutdown_requested():
         await asyncio.sleep(interval_seconds)
         if shutdown_requested():
             return
-        await refresh_model_metadata_once(database)
+        await refresh_model_metadata_once(database, coverage_auditor=coverage_auditor)
