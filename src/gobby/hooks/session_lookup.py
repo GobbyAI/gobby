@@ -336,7 +336,7 @@ class SessionLookupService:
             return compact_session_id
 
         if event.event_type == HookEventType.SESSION_END:
-            self._logger.warning(
+            self._logger.info(
                 "Skipping auto-registration for orphaned SESSION_END: "
                 "external_id=%s not found in DB "
                 "(machine_id=%s, project_id=%s, source=%s).",

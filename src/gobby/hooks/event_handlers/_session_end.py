@@ -21,7 +21,7 @@ class SessionEndMixin(EventHandlersBase):
         if session_id:
             self.logger.debug("SESSION_END: session %s", session_id)
         else:
-            self.logger.warning("SESSION_END: session_id not found for external_id=%s", external_id)
+            self.logger.info("SESSION_END: session_id not found for external_id=%s", external_id)
 
         # If not in mapping, query database
         if not session_id and external_id and self._session_manager:

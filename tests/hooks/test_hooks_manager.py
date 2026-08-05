@@ -1481,10 +1481,14 @@ class TestHookManagerSessionLookup:
         ]
 
     def test_handle_does_not_auto_register_unknown_session_end(
-        self, hook_manager_with_mocks: HookManager, temp_dir: Path
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Unknown SESSION_END hooks should not create placeholder session rows."""
         manager = hook_manager_with_mocks
+        caplog.set_level(logging.INFO)
 
         event = HookEvent(
             event_type=HookEventType.SESSION_END,
@@ -1513,6 +1517,9 @@ class TestHookManagerSessionLookup:
         assert response.decision == "allow"
         assert event.metadata.get("_platform_session_id") is None
         assert rows == []
+        assert "Skipping auto-registration for orphaned SESSION_END" in caplog.text
+        assert "SESSION_END: session_id not found" in caplog.text
+        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
     def test_handle_recovers_existing_session_across_source_mismatch(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
