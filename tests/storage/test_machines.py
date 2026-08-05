@@ -56,10 +56,11 @@ class TestLocalMachineManager:
 
     def test_upsert_seen_skips_missing_attribution(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
+        before = _count_machines(temp_db)
 
         assert manager.upsert_seen(None) is None
 
-        assert _count_machines(temp_db) == 0
+        assert _count_machines(temp_db) == before
 
     def test_manager_canonicalizes_uuid_and_rejects_non_uuid(self, temp_db) -> None:
         manager = LocalMachineManager(temp_db)
@@ -129,4 +130,27 @@ def test_tombstoned_boot_identity_rekeys_and_registers(
 
     assert registered_id == MACHINE_B
     assert identity_file.read_text() == MACHINE_B
+    assert LocalMachineManager(temp_db).get(MACHINE_B) is not None
+
+
+def test_tombstoned_boot_identity_uses_active_gobby_home(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gobby_home = tmp_path / "acceptance-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    temp_db.execute(
+        """
+        INSERT INTO retired_machine_identities(old_id, disposition)
+        VALUES (%s, 'identity-cutover-retired')
+        """,
+        (MACHINE_A,),
+    )
+
+    with patch("gobby.runner_init.helpers._generate_machine_id", return_value=MACHINE_B):
+        registered_id = ensure_machine_identity(temp_db, MACHINE_A)
+
+    assert registered_id == MACHINE_B
+    assert (gobby_home / "machine_id").read_text() == MACHINE_B
     assert LocalMachineManager(temp_db).get(MACHINE_B) is not None

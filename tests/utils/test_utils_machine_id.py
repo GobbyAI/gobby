@@ -15,6 +15,7 @@ from gobby.utils.machine_id import (
     _get_or_create_machine_id,
     clear_cache,
     get_machine_id,
+    get_machine_id_file,
 )
 
 pytestmark = pytest.mark.unit
@@ -81,7 +82,7 @@ class TestGetOrCreateMachineId:
         test_file.write_text("existing-id-from-file")
         test_file.chmod(0o644)
 
-        with patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file):
+        with patch("gobby.utils.machine_id.get_machine_id_file", return_value=test_file):
             result = _get_or_create_machine_id()
 
         assert result == "existing-id-from-file"
@@ -92,7 +93,7 @@ class TestGetOrCreateMachineId:
         test_file = tmp_path / "machine_id"
 
         with (
-            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id.get_machine_id_file", return_value=test_file),
             patch("gobby.utils.machine_id._generate_machine_id", return_value="new-generated-id"),
         ):
             result = _get_or_create_machine_id()
@@ -120,7 +121,7 @@ class TestGetOrCreateMachineId:
             return f"generated-id-{generation_count}"
 
         with (
-            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id.get_machine_id_file", return_value=test_file),
             patch(
                 "gobby.utils.machine_id._generate_machine_id", side_effect=generate
             ) as mock_generate,
@@ -143,7 +144,7 @@ class TestGetOrCreateMachineId:
         test_file = tmp_path / "subdir" / "machine_id"
 
         with (
-            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id.get_machine_id_file", return_value=test_file),
             patch("gobby.utils.machine_id._generate_machine_id", return_value="new-id"),
         ):
             result = _get_or_create_machine_id()
@@ -157,12 +158,44 @@ class TestGetOrCreateMachineId:
         test_file.write_text("   \n")  # Whitespace only
 
         with (
-            patch("gobby.utils.machine_id.MACHINE_ID_FILE", test_file),
+            patch("gobby.utils.machine_id.get_machine_id_file", return_value=test_file),
             patch("gobby.utils.machine_id._generate_machine_id", return_value="new-id"),
         ):
             result = _get_or_create_machine_id()
 
         assert result == "new-id"
+
+    def test_isolates_identity_by_gobby_home(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Each explicit Gobby home owns its machine identity."""
+        first_home = tmp_path / "first"
+        second_home = tmp_path / "second"
+
+        with patch(
+            "gobby.utils.machine_id._generate_machine_id",
+            side_effect=["first-id", "second-id"],
+        ):
+            monkeypatch.setenv("GOBBY_HOME", str(first_home))
+            first = _get_or_create_machine_id()
+            monkeypatch.setenv("GOBBY_HOME", str(second_home))
+            second = _get_or_create_machine_id()
+
+        assert first == "first-id"
+        assert second == "second-id"
+        assert (first_home / "machine_id").read_text() == "first-id"
+        assert (second_home / "machine_id").read_text() == "second-id"
+
+
+def test_machine_id_file_defaults_to_user_gobby_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("GOBBY_HOME", raising=False)
+    with patch("gobby.paths.Path.home", return_value=tmp_path):
+        assert get_machine_id_file() == tmp_path / ".gobby" / "machine_id"
 
 
 class TestDurableReplace:

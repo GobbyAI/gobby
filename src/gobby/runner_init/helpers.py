@@ -24,7 +24,7 @@ from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.maintenance_epoch import admitted_database_url
 from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
-from gobby.utils.machine_id import MACHINE_ID_FILE, _generate_machine_id, clear_cache
+from gobby.utils.machine_id import _generate_machine_id, clear_cache, get_machine_id_file
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ def ensure_machine_identity(
     identity_file: Path | None = None,
 ) -> str:
     """Re-key stale identities and canonically register this daemon's machine."""
-    path = identity_file or MACHINE_ID_FILE
+    path = identity_file if identity_file is not None else get_machine_id_file()
     tombstone = database.fetchone(
         "SELECT old_id FROM retired_machine_identities WHERE old_id = %s",
         (machine_id,),

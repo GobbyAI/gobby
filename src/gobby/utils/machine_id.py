@@ -1,17 +1,19 @@
 """Machine ID utility.
 
-Provides stable UUID identification stored in ~/.gobby/machine_id.
+Provides stable UUID identification stored in the active Gobby home.
 """
 
 import threading
 import uuid
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
 from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
 
 __all__ = [
     "clear_cache",
     "get_machine_id",
+    "get_machine_id_file",
     "require_machine_id",
 ]
 
@@ -19,16 +21,18 @@ __all__ = [
 _cache_lock = threading.Lock()
 _cached_machine_id: str | None = None
 
-# Default location for machine ID file
-MACHINE_ID_FILE = Path("~/.gobby/machine_id").expanduser()
+
+def get_machine_id_file() -> Path:
+    """Return the identity file in the active Gobby home."""
+    return get_gobby_home() / "machine_id"
 
 
 def get_machine_id() -> str | None:
-    """Get stable machine ID from ~/.gobby/machine_id.
+    """Get the stable machine ID from the active Gobby home.
 
     Strategy:
     1. Return cached ID if available
-    2. Check ~/.gobby/machine_id file
+    2. Check the active Gobby home's machine_id file
     3. If not present, generate ID and save to file
 
     Returns:
@@ -66,7 +70,7 @@ def require_machine_id() -> str:
 
 
 def _get_or_create_machine_id() -> str:
-    """Get or create machine ID from ~/.gobby/machine_id.
+    """Get or create the machine ID in the active Gobby home.
 
     Strategy:
     1. Read from file if present
@@ -79,17 +83,18 @@ def _get_or_create_machine_id() -> str:
     Raises:
         OSError: If file operations fail
     """
-    with exclusive_file_lock(MACHINE_ID_FILE):
+    machine_id_file = get_machine_id_file()
+    with exclusive_file_lock(machine_id_file):
         # Check if file exists and has content
-        if MACHINE_ID_FILE.exists():
-            MACHINE_ID_FILE.chmod(0o600)
-            content = MACHINE_ID_FILE.read_text().strip()
+        if machine_id_file.exists():
+            machine_id_file.chmod(0o600)
+            content = machine_id_file.read_text().strip()
             if content:
                 return content
 
         # Generate new ID and save with atomic permissions
         new_id = _generate_machine_id()
-        durable_replace_text(MACHINE_ID_FILE, new_id)
+        durable_replace_text(machine_id_file, new_id)
 
         return new_id
 

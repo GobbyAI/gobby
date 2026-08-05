@@ -37,7 +37,11 @@ def test_concurrent_first_boot_hooks_converge_on_persisted_machine_id(tmp_path: 
     machine_id_module.clear_cache()
     try:
         with (
-            patch.object(machine_id_module, "MACHINE_ID_FILE", machine_id_file),
+            patch.object(
+                machine_id_module,
+                "get_machine_id_file",
+                return_value=machine_id_file,
+            ),
             patch.object(app_server_adapter, "_get_daemon_machine_id", return_value=None),
             patch.object(
                 machine_id_module,
