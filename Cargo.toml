@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/gcode", "crates/gcore", "crates/ghook", "crates/gwiki"]
+members = ["crates/gcode", "crates/gcore", "crates/gdaemon", "crates/ghook", "crates/gwiki"]
 resolver = "3"
 
 [profile.release]
@@ -7,6 +7,9 @@ lto = true
 strip = true
 
 [profile.release.package.gobby-code]
+opt-level = 3
+
+[profile.release.package.gobby-daemon]
 opt-level = 3
 
 [profile.release.package.gobby-hooks]

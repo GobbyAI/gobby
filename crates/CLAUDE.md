@@ -10,9 +10,10 @@ and load the `rust` skill before editing Rust. Detailed Rust conventions live in
 # Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)
 cargo build -p gobby-code                 # gcode CLI
 cargo build --release -p gobby-code       # release artifact (installed to ~/.gobby/bin/gcode)
+cargo build --release -p gobby-daemon     # schema CLI (installed to ~/.gobby/bin/gdaemon)
 
 # Lint & format — match repo config; never relax lints to pass
-cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-hooks, gobby-wiki
+cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-daemon, gobby-hooks, gobby-wiki
 cargo fmt -p <package> -- --check         # drop --check to auto-format
 
 # Tests — scope with -p (or a test name). NEVER run bare `cargo test` across the workspace
@@ -29,8 +30,9 @@ Keep large unit-test modules out of production Rust files. Place the tests at
 mod tests;
 ```
 
-Crate → binary map: `gobby-code` → `gcode`, `gobby-hooks` → `ghook`,
-`gobby-wiki` → `gwiki`; `gobby-core` is the shared library crate. The daemon and
-hooks shell out to the installed `~/.gobby/bin/{gcode,ghook,gwiki}` binaries, so
-rebuild **and reinstall** those after changing crate behavior — a committed change
-is not live until the binary is reinstalled.
+Crate → binary map: `gobby-code` → `gcode`, `gobby-daemon` → `gdaemon`,
+`gobby-hooks` → `ghook`, `gobby-wiki` → `gwiki`; `gobby-core` is the shared
+library crate. Gobby runtime components use the installed
+`~/.gobby/bin/{gcode,gdaemon,ghook,gwiki}` binaries, so rebuild **and reinstall**
+those after changing crate behavior — a committed change is not live until the
+binary is reinstalled.

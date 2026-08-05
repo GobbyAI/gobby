@@ -54,6 +54,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         ORDER BY table_name, ordinal_position
         "#,
         schema,
+        SchemaQualification::Omit,
     )?;
     let constraints = query_entries(
         client,
@@ -67,6 +68,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         ORDER BY relation.relname, constraint_record.conname
         "#,
         schema,
+        SchemaQualification::Omit,
     )?;
     let indexes = query_entries(
         client,
@@ -77,6 +79,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         ORDER BY indexname
         "#,
         schema,
+        SchemaQualification::Placeholder,
     )?;
     let functions = query_entries(
         client,
@@ -90,6 +93,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         ORDER BY name
         "#,
         schema,
+        SchemaQualification::Placeholder,
     )?;
     let triggers = query_entries(
         client,
@@ -103,6 +107,7 @@ pub fn catalog_manifest(client: &mut Client, schema: &str) -> Result<CatalogMani
         ORDER BY relation.relname, trigger_record.tgname
         "#,
         schema,
+        SchemaQualification::Omit,
     )?;
     Ok(CatalogManifest {
         columns,
@@ -142,26 +147,37 @@ pub(crate) fn verify_schema(
     })
 }
 
+#[derive(Clone, Copy)]
+enum SchemaQualification {
+    Omit,
+    Placeholder,
+}
+
 fn query_entries(
     client: &mut Client,
     query: &str,
     schema: &str,
+    qualification: SchemaQualification,
 ) -> Result<Vec<CatalogEntry>, SchemaError> {
     let mut entries = client
         .query(query, &[&schema])?
         .into_iter()
         .map(|row| CatalogEntry {
-            name: normalize_schema(row.get::<_, String>(0), schema),
-            definition: normalize_schema(row.get::<_, String>(1), schema),
+            name: normalize_schema(row.get::<_, String>(0), schema, qualification),
+            definition: normalize_schema(row.get::<_, String>(1), schema, qualification),
         })
         .collect::<Vec<_>>();
     entries.sort();
     Ok(entries)
 }
 
-fn normalize_schema(mut value: String, schema: &str) -> String {
-    value = value.replace(&format!("\"{schema}\"."), "$schema.");
-    value = value.replace(&format!("{schema}."), "$schema.");
+fn normalize_schema(mut value: String, schema: &str, qualification: SchemaQualification) -> String {
+    let replacement = match qualification {
+        SchemaQualification::Omit => "",
+        SchemaQualification::Placeholder => "$schema.",
+    };
+    value = value.replace(&format!("\"{schema}\"."), replacement);
+    value = value.replace(&format!("{schema}."), replacement);
     value = value.replace(&format!("IN SCHEMA \"{schema}\""), "IN SCHEMA $schema");
     value.replace(&format!("IN SCHEMA {schema}"), "IN SCHEMA $schema")
 }

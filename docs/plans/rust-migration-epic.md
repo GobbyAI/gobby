@@ -1,5 +1,10 @@
 # Rust Migration Epic
 
+> **Status: superseded 2026-08-05.** The `gobbyd`/port `60890` sidecar design in
+> this document is stale. `.gobby/plans/gcore-schema-authority.md` is the
+> canonical implementation plan for `gcore` schema authority and `gdaemon`.
+> Do not implement legacy behavior from this file.
+
 ## Summary
 
 This is the active Rust migration plan for Gobby. It replaces the earlier

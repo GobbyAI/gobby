@@ -10,6 +10,7 @@ holds pre-monorepo release history only.
 |---|---|---:|---|---|
 | `gobby-core` | n/a | `0.8.1` | `gobby-core-v0.8.1` | crates.io only |
 | `gobby-code` | `gcode` | `1.5.0` | `gcode-v1.5.0` | crates.io + GitHub binaries |
+| `gobby-daemon` | `gdaemon` | `0.1.0` | `gdaemon-v0.1.0` | crates.io + GitHub binaries |
 | `gobby-hooks` | `ghook` | `0.7.3` | `ghook-v0.7.3` | crates.io + GitHub binaries |
 | `gobby-wiki` | `gwiki` | `0.8.0` | `gwiki-v0.8.0` | crates.io + GitHub binaries |
 
@@ -23,7 +24,7 @@ holds pre-monorepo release history only.
   and `ghook`). crates.io rejects path dependencies without a `version` field,
   so never drop it.
 - Keep tag prefixes aligned with the package release contract: `gcode-v*`,
-  `ghook-v*`, `gwiki-v*`, and `gobby-core-v*`.
+  `gdaemon-v*`, `ghook-v*`, `gwiki-v*`, and `gobby-core-v*`.
 
 ## Merge Order
 
@@ -32,7 +33,7 @@ After validation passes, push the branch, sync `main`, and merge it into
 `main` with:
 
 ```text
-Merge 0.5.0 into main for release: gobby-core 0.8.1, gcode 1.5.0, ghook 0.7.3, gwiki 0.8.0
+Merge 0.5.0 into main for release: gobby-core 0.8.1, gcode 1.5.0, gdaemon 0.1.0, ghook 0.7.3, gwiki 0.8.0
 ```
 
 Push `main` and wait for main CI to pass before tagging. Tags are lightweight
@@ -52,6 +53,7 @@ git push origin gobby-core-v0.8.1
 # Wait for crates.io to index gobby-core 0.8.1.
 
 git tag gcode-v1.5.0
+git tag gdaemon-v0.1.0
 git tag ghook-v0.7.3
 git tag gwiki-v0.8.0
 
@@ -59,7 +61,7 @@ git tag gwiki-v0.8.0
 # any tag when more than three tags arrive in a single push, so a batched
 # `git push origin <tag> <tag> <tag> <tag> ...` silently triggers NO release
 # workflows. Push each tag in its own invocation:
-for tag in gcode-v1.5.0 ghook-v0.7.3 gwiki-v0.8.0; do
+for tag in gcode-v1.5.0 gdaemon-v0.1.0 ghook-v0.7.3 gwiki-v0.8.0; do
   git push origin "refs/tags/$tag"
 done
 ```
@@ -72,7 +74,7 @@ fires no event.
 The release workflows verify binary crate tag/version alignment where the
 installer expects GitHub assets. `gobby-core` has no binary artifact matrix.
 
-All four crates publish to crates.io with the repository `CARGO_REGISTRY_TOKEN`
+All five crates publish to crates.io with the repository `CARGO_REGISTRY_TOKEN`
 secret via `cargo publish` (which reads the token from the environment). `gwiki`
 previously used GitHub OIDC Trusted Publishing, but that path needs a
 crates.io-side config that cannot be registered from the CLI, so its publish job
@@ -84,16 +86,25 @@ Build release binaries locally before tagging and copy the released binaries
 into the Gobby bin directory:
 
 ```bash
-cargo build --release -p gobby-code -p gobby-hooks -p gobby-wiki
+cargo build --release -p gobby-code -p gobby-daemon -p gobby-hooks -p gobby-wiki
 mkdir -p ~/.gobby/bin
-cp target/release/gcode target/release/ghook target/release/gwiki ~/.gobby/bin/
+install -m 755 target/release/gcode ~/.gobby/bin/gcode
+install -m 755 target/release/gdaemon ~/.gobby/bin/gdaemon
+install -m 755 target/release/ghook ~/.gobby/bin/ghook
+install -m 755 target/release/gwiki ~/.gobby/bin/gwiki
 ~/.gobby/bin/gcode --version
+~/.gobby/bin/gdaemon --version
 ~/.gobby/bin/ghook --version
 ~/.gobby/bin/gwiki --version
 ```
 
 Refresh each `~/.gobby/bin/.<name>-version` sidecar to the released version, and
 run `ghook --version` so it rewrites `~/.gobby/bin/.ghook-runtime.json`.
+For `gdaemon`, also write `gdaemon schema version --json` atomically to
+`~/.gobby/bin/.gdaemon-schema-identity.json`. This file records the installed
+binary's observed schema identity. It is never an expected-identity trust
+anchor; callers supply `GOBBY_EXPECTED_SCHEMA_IDENTITY` through the child-only
+environment for guarded schema operations.
 
 ## Validation
 
@@ -106,6 +117,8 @@ cargo clippy -p gobby-core --all-targets -- -D warnings
 cargo clippy -p gobby-core --all-targets --no-default-features -- -D warnings
 cargo clippy -p gobby-code -- -D warnings
 cargo clippy -p gobby-code --no-default-features -- -D warnings
+cargo clippy -p gobby-daemon --all-targets -- -D warnings
+cargo clippy -p gobby-daemon --all-targets --no-default-features -- -D warnings
 cargo clippy -p gobby-hooks --all-targets -- -D warnings
 cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
 cargo clippy -p gobby-wiki --all-targets -- -D warnings
@@ -116,15 +129,16 @@ cargo nextest run -p gobby-core
 cargo test --doc -p gobby-core
 cargo nextest run -p gobby-code
 cargo test --doc -p gobby-code
+cargo nextest run -p gobby-daemon
 cargo nextest run -p gobby-hooks
 cargo test --doc -p gobby-hooks
 cargo nextest run -p gobby-wiki
 cargo test --doc -p gobby-wiki
 cargo build --workspace --no-default-features
-cargo build --release -p gobby-code -p gobby-hooks -p gobby-wiki
+cargo build --release -p gobby-code -p gobby-daemon -p gobby-hooks -p gobby-wiki
 ```
 
 The repository CI still owns cross-target release packaging. Local validation
 only proves manifests, lockfile resolution, and native release binaries.
 
-_Last verified: 2026-07-14_
+_Last verified: 2026-08-05_
