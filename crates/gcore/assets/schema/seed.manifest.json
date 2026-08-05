@@ -1,0 +1,822 @@
+{
+  "projects": [
+    {
+      "key": [
+        "00000000-0000-0000-0000-000000000000"
+      ],
+      "values": {
+        "deleted_at": null,
+        "github_repo": null,
+        "github_url": null,
+        "id": "00000000-0000-0000-0000-000000000000",
+        "linear_project_id": null,
+        "linear_sync_enabled": false,
+        "linear_synced_at": null,
+        "linear_team_id": null,
+        "name": "_orphaned",
+        "repo_path": null
+      }
+    },
+    {
+      "key": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "values": {
+        "deleted_at": null,
+        "github_repo": null,
+        "github_url": null,
+        "id": "00000000-0000-0000-0000-000000000001",
+        "linear_project_id": null,
+        "linear_sync_enabled": false,
+        "linear_synced_at": null,
+        "linear_team_id": null,
+        "name": "_migrated",
+        "repo_path": null
+      }
+    },
+    {
+      "key": [
+        "00000000-0000-0000-0000-000000000002"
+      ],
+      "values": {
+        "deleted_at": null,
+        "github_repo": null,
+        "github_url": null,
+        "id": "00000000-0000-0000-0000-000000000002",
+        "linear_project_id": null,
+        "linear_sync_enabled": false,
+        "linear_synced_at": null,
+        "linear_team_id": null,
+        "name": "_global",
+        "repo_path": null
+      }
+    },
+    {
+      "key": [
+        "00000000-0000-0000-0000-000000060887"
+      ],
+      "values": {
+        "deleted_at": null,
+        "github_repo": null,
+        "github_url": null,
+        "id": "00000000-0000-0000-0000-000000060887",
+        "linear_project_id": null,
+        "linear_sync_enabled": false,
+        "linear_synced_at": null,
+        "linear_team_id": null,
+        "name": "_personal",
+        "repo_path": null
+      }
+    }
+  ],
+  "sessions": [
+    {
+      "key": [
+        "00000000-0000-0000-0000-000000000001"
+      ],
+      "values": {
+        "agent_depth": 0,
+        "agent_run_id": null,
+        "approved_tools_json": null,
+        "chat_mode": "plan",
+        "context_injected": false,
+        "context_usage_confidence": null,
+        "context_usage_ratio": null,
+        "context_usage_source": null,
+        "context_usage_updated_at": null,
+        "context_used_tokens": null,
+        "context_window": null,
+        "digest_markdown": null,
+        "external_id": "system",
+        "git_branch": null,
+        "had_edits": false,
+        "id": "00000000-0000-0000-0000-000000000001",
+        "is_local": false,
+        "last_assistant_content": null,
+        "last_completion_output_tokens": null,
+        "last_digest_input_hash": null,
+        "last_digested_pair_index": 0,
+        "last_prompt_cache_creation_tokens": null,
+        "last_prompt_cache_read_tokens": null,
+        "last_prompt_input_tokens": null,
+        "last_prompt_uncached_input_tokens": null,
+        "last_turn_markdown": null,
+        "machine_id": null,
+        "message_count": 0,
+        "model": null,
+        "original_prompt": null,
+        "parent_session_id": null,
+        "project_id": "00000000-0000-0000-0000-000000060887",
+        "sandbox_enabled": false,
+        "sandbox_policy_hash": null,
+        "seq_num": null,
+        "session_type": "terminal",
+        "source": "system",
+        "spawned_by_agent_id": null,
+        "status": "active",
+        "summary_digest_turn_count": null,
+        "summary_generated_at": null,
+        "summary_generation_mode": null,
+        "summary_markdown": null,
+        "summary_path": null,
+        "summary_revision_id": null,
+        "summary_source_context_hash": null,
+        "terminal_context": null,
+        "title": "_system",
+        "title_source": null,
+        "tool_call_count": 0,
+        "transcript_path": null,
+        "transcript_processed": false,
+        "turn_count": 0,
+        "usage_cache_creation_tokens": 0,
+        "usage_cache_read_tokens": 0,
+        "usage_input_tokens": 0,
+        "usage_output_tokens": 0,
+        "workflow_name": null
+      }
+    }
+  ],
+  "task_stages_registry": [
+    {
+      "key": [
+        "architecture"
+      ],
+      "values": {
+        "bundled_hash": "d084b4acbf67c7012e577d2d386dc20ae45cbfebe347a58f3fbc89cef5038b2c",
+        "category": "design",
+        "default_agent": "architect",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Cross-cutting design decisions and component shape.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Architecture",
+        "is_terminal": false,
+        "name": "architecture",
+        "position_hint": 30,
+        "requires_human": false,
+        "review_policy": "none",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "development"
+      ],
+      "values": {
+        "bundled_hash": "f8821338fc237ebc8abeb46a1e3303113e096593041a5dde768d0ff604221e54",
+        "category": "implementation",
+        "default_agent": "backend-developer",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Leaf implementation work; carries skill-backed TDD when required.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Development",
+        "is_terminal": false,
+        "name": "development",
+        "position_hint": 100,
+        "requires_human": false,
+        "review_policy": "required",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": {
+          "default": "qa-reviewer",
+          "rules": [
+            {
+              "category": "docs",
+              "reviewer_agent": "doc-reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "key": [
+        "epic_qa"
+      ],
+      "values": {
+        "bundled_hash": "d5723c4eca017e49c46aa73ab3e331f1e37c98347af149f74863c5aa744145ae",
+        "category": "verification",
+        "default_agent": "epic-reviewer",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Whole-epic review after every leaf is parked.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Epic QA",
+        "is_terminal": false,
+        "name": "epic_qa",
+        "position_hint": 120,
+        "requires_human": false,
+        "review_policy": "required",
+        "reviewer_agent": "epic-reviewer",
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "expansion"
+      ],
+      "values": {
+        "bundled_hash": "7aea4dbb7119bcdab1cb5957239670ff4a68d2d78d50c6e3a7bda922fa3d9aa1",
+        "category": "implementation",
+        "default_agent": null,
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Decompose plan into manifest-backed leaf tasks.",
+        "dispatch_inputs_json": {
+          "plan_file": "${{ artifacts.plan_file_path }}",
+          "task_id": "${{ task_id }}"
+        },
+        "dispatch_target": "expand-task",
+        "dispatch_type": "pipeline",
+        "display_label": "Expansion",
+        "is_terminal": false,
+        "name": "expansion",
+        "position_hint": 80,
+        "requires_human": false,
+        "review_policy": "required",
+        "reviewer_agent": "expansion-qa",
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "ideation"
+      ],
+      "values": {
+        "bundled_hash": "30d0d059953b56f2cf9e809b42993be29df0da15598a38925b79a900a71e6331",
+        "category": "discovery",
+        "default_agent": "analyst",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Early problem framing; capture motivating questions and constraints.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Ideation",
+        "is_terminal": false,
+        "name": "ideation",
+        "position_hint": 10,
+        "requires_human": false,
+        "review_policy": "none",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "merge"
+      ],
+      "values": {
+        "bundled_hash": "636a12f800c8ceef76dd7fdea41baaa0b227fa3f178bf45e3802688e179ec6ef",
+        "category": "delivery",
+        "default_agent": "merge-orchestrator",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Land approved PR; resolve conflicts; close terminal task.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Merge",
+        "is_terminal": true,
+        "name": "merge",
+        "position_hint": 140,
+        "requires_human": false,
+        "review_policy": "none",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "planning"
+      ],
+      "values": {
+        "bundled_hash": "b7d0a297c57659700b759ce3f3fd6cc5e4d66e8a2a18759358ec683f613f2b51",
+        "category": "design",
+        "default_agent": "planner",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Implementation plan authoring (interactive or autonomous).",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Planning",
+        "is_terminal": false,
+        "name": "planning",
+        "position_hint": 50,
+        "requires_human": false,
+        "review_policy": "required",
+        "reviewer_agent": "plan-adversary",
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "pr"
+      ],
+      "values": {
+        "bundled_hash": "d39dab6946f4d93373497192cb1d751767cc593f7b45564d5aa2cb92d5a32aaa",
+        "category": "delivery",
+        "default_agent": "merge-orchestrator",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Open/update PR, capture verdict, gate on external review.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Pull Request",
+        "is_terminal": false,
+        "name": "pr",
+        "position_hint": 130,
+        "requires_human": false,
+        "review_policy": "required",
+        "reviewer_agent": "trajectory-monitor",
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "prd"
+      ],
+      "values": {
+        "bundled_hash": "fd609d682a6fe7e807cfb487f301bfdb39f352bc8836b87e030bb0bbe7836360",
+        "category": "design",
+        "default_agent": "product-manager",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Productized requirements; bridges discovery and planning.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "PRD",
+        "is_terminal": false,
+        "name": "prd",
+        "position_hint": 40,
+        "requires_human": false,
+        "review_policy": "none",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": null
+      }
+    },
+    {
+      "key": [
+        "research"
+      ],
+      "values": {
+        "bundled_hash": "c18eb91008e5375fcc3395a220cf6bf7146cb5c1752f68daf848598a45857221",
+        "category": "discovery",
+        "default_agent": "researcher",
+        "default_max_review_rounds": 5,
+        "default_max_work_attempts": 3,
+        "deleted_at": null,
+        "description": "Targeted investigation; produce findings consumable by architecture/PRD.",
+        "dispatch_inputs_json": null,
+        "dispatch_target": null,
+        "dispatch_type": null,
+        "display_label": "Research",
+        "is_terminal": false,
+        "name": "research",
+        "position_hint": 20,
+        "requires_human": false,
+        "review_policy": "none",
+        "reviewer_agent": null,
+        "reviewer_agent_selector_json": null
+      }
+    }
+  ],
+  "task_type_default_stages": [
+    {
+      "key": [
+        "architecture_doc",
+        "architecture"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "architecture",
+        "task_type": "architecture_doc"
+      }
+    },
+    {
+      "key": [
+        "architecture_doc",
+        "research"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "research",
+        "task_type": "architecture_doc"
+      }
+    },
+    {
+      "key": [
+        "bug",
+        "development"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "development",
+        "task_type": "bug"
+      }
+    },
+    {
+      "key": [
+        "bug",
+        "merge"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "merge",
+        "task_type": "bug"
+      }
+    },
+    {
+      "key": [
+        "bug",
+        "pr"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "pr",
+        "task_type": "bug"
+      }
+    },
+    {
+      "key": [
+        "chore",
+        "development"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "development",
+        "task_type": "chore"
+      }
+    },
+    {
+      "key": [
+        "chore",
+        "merge"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "merge",
+        "task_type": "chore"
+      }
+    },
+    {
+      "key": [
+        "chore",
+        "pr"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "pr",
+        "task_type": "chore"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "architecture"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "architecture",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "development"
+      ],
+      "values": {
+        "position": 6,
+        "stage_name": "development",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "epic_qa"
+      ],
+      "values": {
+        "position": 7,
+        "stage_name": "epic_qa",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "expansion"
+      ],
+      "values": {
+        "position": 5,
+        "stage_name": "expansion",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "ideation"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "ideation",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "merge"
+      ],
+      "values": {
+        "position": 9,
+        "stage_name": "merge",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "planning"
+      ],
+      "values": {
+        "position": 4,
+        "stage_name": "planning",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "pr"
+      ],
+      "values": {
+        "position": 8,
+        "stage_name": "pr",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "prd"
+      ],
+      "values": {
+        "position": 3,
+        "stage_name": "prd",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "epic",
+        "research"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "research",
+        "task_type": "epic"
+      }
+    },
+    {
+      "key": [
+        "feature",
+        "development"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "development",
+        "task_type": "feature"
+      }
+    },
+    {
+      "key": [
+        "feature",
+        "expansion"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "expansion",
+        "task_type": "feature"
+      }
+    },
+    {
+      "key": [
+        "feature",
+        "merge"
+      ],
+      "values": {
+        "position": 4,
+        "stage_name": "merge",
+        "task_type": "feature"
+      }
+    },
+    {
+      "key": [
+        "feature",
+        "planning"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "planning",
+        "task_type": "feature"
+      }
+    },
+    {
+      "key": [
+        "feature",
+        "pr"
+      ],
+      "values": {
+        "position": 3,
+        "stage_name": "pr",
+        "task_type": "feature"
+      }
+    },
+    {
+      "key": [
+        "prd_doc",
+        "ideation"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "ideation",
+        "task_type": "prd_doc"
+      }
+    },
+    {
+      "key": [
+        "prd_doc",
+        "prd"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "prd",
+        "task_type": "prd_doc"
+      }
+    },
+    {
+      "key": [
+        "refactor",
+        "development"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "development",
+        "task_type": "refactor"
+      }
+    },
+    {
+      "key": [
+        "refactor",
+        "merge"
+      ],
+      "values": {
+        "position": 3,
+        "stage_name": "merge",
+        "task_type": "refactor"
+      }
+    },
+    {
+      "key": [
+        "refactor",
+        "planning"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "planning",
+        "task_type": "refactor"
+      }
+    },
+    {
+      "key": [
+        "refactor",
+        "pr"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "pr",
+        "task_type": "refactor"
+      }
+    },
+    {
+      "key": [
+        "research_spike",
+        "ideation"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "ideation",
+        "task_type": "research_spike"
+      }
+    },
+    {
+      "key": [
+        "research_spike",
+        "prd"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "prd",
+        "task_type": "research_spike"
+      }
+    },
+    {
+      "key": [
+        "research_spike",
+        "research"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "research",
+        "task_type": "research_spike"
+      }
+    },
+    {
+      "key": [
+        "simple_fix",
+        "development"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "development",
+        "task_type": "simple_fix"
+      }
+    },
+    {
+      "key": [
+        "simple_fix",
+        "merge"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "merge",
+        "task_type": "simple_fix"
+      }
+    },
+    {
+      "key": [
+        "simple_fix",
+        "pr"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "pr",
+        "task_type": "simple_fix"
+      }
+    },
+    {
+      "key": [
+        "task",
+        "development"
+      ],
+      "values": {
+        "position": 0,
+        "stage_name": "development",
+        "task_type": "task"
+      }
+    },
+    {
+      "key": [
+        "task",
+        "merge"
+      ],
+      "values": {
+        "position": 2,
+        "stage_name": "merge",
+        "task_type": "task"
+      }
+    },
+    {
+      "key": [
+        "task",
+        "pr"
+      ],
+      "values": {
+        "position": 1,
+        "stage_name": "pr",
+        "task_type": "task"
+      }
+    }
+  ]
+}

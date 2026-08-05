@@ -21,7 +21,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2", "dep:time"]"#,
         r#"falkor = ["dep:redis"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
@@ -45,6 +45,7 @@ fn cargo_features_define_public_boundary() {
         r#"ureq = { version = "2", optional = true }"#,
         r#"ignore = { version = "0.4", optional = true }"#,
         r#"sha2 = { version = "0.11", optional = true }"#,
+        r#"time = { version = "0.3", features = ["parsing"], optional = true }"#,
         r#"urlencoding = { version = "2", optional = true }"#,
     ] {
         assert!(
@@ -79,6 +80,7 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod ai;",
         r#"#[cfg(feature = "postgres")]"#,
         "pub mod postgres;",
+        "pub mod schema;",
         r#"#[cfg(feature = "falkor")]"#,
         "pub mod falkor;",
         r#"#[cfg(feature = "qdrant")]"#,

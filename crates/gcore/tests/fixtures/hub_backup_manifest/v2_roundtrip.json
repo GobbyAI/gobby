@@ -1,0 +1,76 @@
+{
+  "artifacts": [
+    {
+      "name": "fixture-artifact",
+      "path": "postgres/fixture.dump",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size_bytes": 0
+    }
+  ],
+  "backup_starting_head": 375,
+  "created_at": "2026-08-05T00:00:00+00:00",
+  "epoch_id": null,
+  "gobby_version": "0.5.0",
+  "manifest_format": "gobby-hub-backup-manifest",
+  "manifest_version": 2,
+  "row_count_probes": {},
+  "source_identity": {
+    "database_name": "gobby_fixture",
+    "database_oid": 16384,
+    "pg_system_identifier": "7642479605904478251"
+  },
+  "stores": {
+    "falkordb": {
+      "archive_verified": {
+        "method": "fixture",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      },
+      "details": {},
+      "restore_verified": {
+        "method": "fixture-restore",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      }
+    },
+    "postgres": {
+      "archive_verified": {
+        "method": "fixture",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      },
+      "details": {},
+      "restore_verified": {
+        "method": "fixture-restore",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      }
+    },
+    "qdrant": {
+      "archive_verified": {
+        "method": "fixture",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      },
+      "details": {},
+      "restore_verified": {
+        "method": "fixture-restore",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      }
+    },
+    "volumes": {
+      "archive_verified": {
+        "method": "fixture",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      },
+      "details": {},
+      "restore_verified": {
+        "method": "fixture-restore",
+        "timestamp": "2026-08-05T00:00:00+00:00",
+        "verified": true
+      }
+    }
+  }
+}

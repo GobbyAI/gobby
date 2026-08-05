@@ -47,6 +47,9 @@ pub mod ai;
 pub mod postgres;
 
 #[cfg(feature = "postgres")]
+pub mod schema;
+
+#[cfg(feature = "postgres")]
 pub mod secrets;
 
 #[cfg(feature = "falkor")]
