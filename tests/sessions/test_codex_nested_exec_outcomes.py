@@ -96,6 +96,64 @@ def test_derives_single_literal_exec_result() -> None:
     ]
 
 
+@pytest.mark.parametrize("exit_code", [0, 1])
+def test_derives_json_style_serialized_exec_result(exit_code: int) -> None:
+    parser = CodexTranscriptParser()
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
+    lines = [
+        _call(
+            "exec-json",
+            "exec",
+            (
+                f'const r = await tools.exec_command({{"cmd":{json.dumps(command)}}}); '
+                "text(JSON.stringify(r));"
+            ),
+        ),
+        _output(
+            "exec-json",
+            "Script completed\nWall time 0.8 seconds\nOutput:\n",
+            json.dumps({"exit_code": exit_code, "output": "focused result"}),
+        ),
+    ]
+
+    outcomes = _outcomes(parser, lines)
+
+    assert [(item.command, item.result["exit_code"]) for item in outcomes] == [(command, exit_code)]
+
+
+def test_serialized_exec_result_without_structured_payload_is_unknown() -> None:
+    parser = CodexTranscriptParser()
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
+    lines = [
+        _call(
+            "exec-incomplete",
+            "exec",
+            (
+                f'const r = await tools.exec_command({{"cmd":{json.dumps(command)}}}); '
+                "text(JSON.stringify(r));"
+            ),
+        ),
+        _output(
+            "exec-incomplete",
+            "Script completed\nWall time 0.8 seconds\nOutput:\n",
+            "incomplete",
+        ),
+    ]
+
+    outcomes = _outcomes(parser, lines)
+
+    assert [(item.command, item.result) for item in outcomes] == [
+        (
+            command,
+            {
+                "success": None,
+                "outcome_provenance": "codex.execution_chain",
+                "unknown_reason": "terminal_result_missing_structured_outcome",
+            },
+        )
+    ]
+
+
 def test_derives_batched_results_in_content_block_order() -> None:
     parser = CodexTranscriptParser()
     lines = [

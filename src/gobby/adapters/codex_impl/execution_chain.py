@@ -35,8 +35,15 @@ _FUNCTIONS_EXEC_TERMINAL_RE = re.compile(
 )
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
-    r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
+    r'(?:^|[{,])\s*(?:cmd|"cmd")\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
+)
+_EXEC_RESULT_BINDING_RE = re.compile(
+    r"\b(?:const|let|var)\s+(?P<name>[$A-Z_a-z][$\w]*)\s*=\s*"
+    r"await\s+tools\.exec_command\s*\("
+)
+_SERIALIZED_RESULT_RE = re.compile(
+    r"\btext\s*\(\s*JSON\.stringify\s*\(\s*(?P<name>[$A-Z_a-z][$\w]*)\s*\)\s*\)"
 )
 _REPEATED_EXEC_SCAFFOLD_RE = re.compile(
     r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
@@ -66,6 +73,15 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     except (TypeError, ValueError):
         return None
     return command if isinstance(command, str) and command else None
+
+
+def _expects_serialized_exec_result(arguments: Any) -> bool:
+    """Return whether one nested exec result is emitted as structured JSON."""
+    if not isinstance(arguments, str):
+        return False
+    bindings = _EXEC_RESULT_BINDING_RE.findall(arguments)
+    serialized = _SERIALIZED_RESULT_RE.findall(arguments)
+    return len(bindings) == 1 and serialized == bindings
 
 
 def validate_functions_exec_wrapper(arguments: Any) -> str | None:
@@ -182,10 +198,20 @@ def _functions_exec_terminal_result(value: Any) -> dict[str, Any] | None:
     }
 
 
-def decoded_exec_results(value: Any) -> list[dict[str, Any]]:
+def decoded_exec_results(
+    value: Any,
+    *,
+    expects_serialized_result: bool = False,
+) -> list[dict[str, Any]]:
     """Decode exact structured result objects without reading prose stdout as outcome."""
     terminal_result = _functions_exec_terminal_result(value)
     if terminal_result is not None:
+        if expects_serialized_result and isinstance(value, list):
+            serialized_results: list[dict[str, Any]] = []
+            for item in value[1:]:
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    serialized_results.extend(decoded_exec_results(item["text"]))
+            return serialized_results if len(serialized_results) == 1 else []
         return [terminal_result]
     if isinstance(value, str):
         try:
@@ -330,6 +356,7 @@ class PendingExecution:
     cell_id: str | None = None
     session_id: str | None = None
     direct: bool = False
+    expects_serialized_result: bool = False
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -338,6 +365,7 @@ class PendingExecution:
             "cell_id": self.cell_id,
             "session_id": self.session_id,
             "direct": self.direct,
+            "expects_serialized_result": self.expects_serialized_result,
         }
 
     @classmethod
@@ -351,9 +379,15 @@ class PendingExecution:
         if any(item is not None and not isinstance(item, str) for item in optional.values()):
             return None
         direct = value.get("direct", False)
-        if not isinstance(direct, bool):
+        expects_serialized_result = value.get("expects_serialized_result", False)
+        if not isinstance(direct, bool) or not isinstance(expects_serialized_result, bool):
             return None
-        return cls(outer_call_id=outer_call_id, direct=direct, **optional)
+        return cls(
+            outer_call_id=outer_call_id,
+            direct=direct,
+            expects_serialized_result=expects_serialized_result,
+            **optional,
+        )
 
 
 @dataclass(frozen=True)
@@ -395,7 +429,11 @@ class ExecutionChainCorrelator:
             command = extract_functions_exec_command(arguments)
             session_id = extract_functions_write_stdin_session_id(arguments)
             if command is not None:
-                execution = PendingExecution(call_id, command)
+                execution = PendingExecution(
+                    call_id,
+                    command,
+                    expects_serialized_result=_expects_serialized_exec_result(arguments),
+                )
             elif session_id is not None:
                 execution = self._sessions.get(session_id)
             elif allow_unattributed:
@@ -442,7 +480,10 @@ class ExecutionChainCorrelator:
         elif execution.direct:
             results = []
         else:
-            results = decoded_exec_results(output)
+            results = decoded_exec_results(
+                output,
+                expects_serialized_result=execution.expects_serialized_result,
+            )
         terminal_results = tuple(result for result in results if _has_structured_outcome(result))
         if terminal_results:
             self._clear_execution(execution)

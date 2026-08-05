@@ -263,6 +263,73 @@ async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("exit_code", "expected_outcome"),
+    [(0, "success"), (1, "failure")],
+)
+async def test_codex_ingests_json_style_functions_exec_evidence(
+    tmp_path: Path,
+    exit_code: int,
+    expected_outcome: str,
+) -> None:
+    transcript = tmp_path / "codex-functions-exec.jsonl"
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/tasks/test_validation.py -q"
+    _write_jsonl(
+        transcript,
+        [
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "outer-json-exec",
+                    "name": "exec",
+                    "input": (
+                        f'const r = await tools.exec_command({{"cmd":{json.dumps(command)}}}); '
+                        "text(JSON.stringify(r));"
+                    ),
+                },
+                BASE_TIME,
+            ),
+            _codex_response_item(
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "outer-json-exec",
+                    "output": [
+                        {
+                            "type": "input_text",
+                            "text": "Script completed\nWall time 0.8 seconds\nOutput:\n",
+                        },
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "chunk_id": "focused",
+                                    "wall_time_seconds": 0.5,
+                                    "exit_code": exit_code,
+                                    "output": "focused result",
+                                }
+                            ),
+                        },
+                    ],
+                },
+                BASE_TIME + timedelta(seconds=1),
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    assert [(run.command, run.outcome, run.exit_code) for run in evidence.validation_runs] == [
+        (command, expected_outcome, exit_code)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("exit_code", "expected_outcome"),
     [(0, "success"), (7, "failure")],
 )
 async def test_codex_direct_exec_command_accepts_native_terminal_envelope(
