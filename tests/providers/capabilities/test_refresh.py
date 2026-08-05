@@ -23,6 +23,7 @@ from gobby.providers.capabilities.models import (
 )
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.store import ProviderCapabilityStore
+from gobby.servers.provider_model_discovery import qwen_local_model_values
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -306,6 +307,55 @@ def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
     assert sum("configured alias targets missing" in message for message in messages) == 1
     assert "Provider synthetic context metadata coverage recovered" in messages
     assert "Provider synthetic model metadata alias targets recovered" in messages
+
+
+def test_coverage_audit_skips_configured_local_models(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    local_model = "local-model(openai)"
+    remote_model = "remote-model(openai)"
+    store = _MemoryStore(_snapshot("qwen", local_model, remote_model, context_length=None))
+    auditor = ModelMetadataCoverageAuditor(
+        store,
+        _MetadataStore(),
+        _ConfigStore(),
+        excluded_models=lambda: frozenset({("qwen", local_model)}),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="gobby.providers.capabilities.coverage"):
+        auditor.audit()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert len(messages) == 1
+    assert remote_model in messages[0]
+    assert local_model not in messages[0]
+
+
+def test_qwen_local_model_values_uses_loopback_base_urls() -> None:
+    settings = {
+        "modelProviders": {
+            "openai": [
+                {
+                    "id": "lm-studio-model",
+                    "baseUrl": "http://127.0.0.1:1234/v1",
+                },
+                {
+                    "id": "remote-model",
+                    "baseUrl": "https://models.example.test/v1",
+                },
+            ],
+            "anthropic": [
+                {
+                    "id": "ollama-model",
+                    "baseUrl": "http://[::1]:11434/v1",
+                }
+            ],
+        }
+    }
+
+    assert qwen_local_model_values(settings) == frozenset(
+        {"lm-studio-model(openai)", "ollama-model(anthropic)"}
+    )
 
 
 @pytest.mark.asyncio

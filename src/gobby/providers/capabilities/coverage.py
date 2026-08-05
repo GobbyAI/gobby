@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 
 _WARNING_MODEL_LIMIT = 10
 RunDatabase = Callable[..., Awaitable[object]]
+ExcludedModels = Callable[[], frozenset[tuple[str, str]]]
+
+
+def _no_excluded_models() -> frozenset[tuple[str, str]]:
+    return frozenset()
 
 
 class _CapabilityStore(Protocol):
@@ -46,11 +51,13 @@ class ModelMetadataCoverageAuditor:
         config_store: AliasConfigReader,
         *,
         run_db: RunDatabase | None = None,
+        excluded_models: ExcludedModels | None = None,
     ) -> None:
         self._capability_store = capability_store
         self._model_metadata_store = model_metadata_store
         self._config_store = config_store
         self._run_db = run_db
+        self._excluded_models = excluded_models or _no_excluded_models
         self._lock = Lock()
         self._unresolved: dict[str, frozenset[str]] = {}
         self._missing_targets: dict[str, frozenset[str]] = {}
@@ -62,12 +69,22 @@ class ModelMetadataCoverageAuditor:
                 (alias.provider, alias.provider_model_id): alias.openrouter_model_id
                 for alias in load_model_metadata_aliases(self._config_store)
             }
+            excluded_models = {
+                model_metadata_alias_source_key(provider, model)
+                for provider, model in self._excluded_models()
+            }
             unresolved: dict[str, frozenset[str]] = {}
             missing_targets: dict[str, frozenset[str]] = {}
             for snapshot in self._capability_store.get_all_snapshots():
                 provider_unresolved: set[str] = set()
                 provider_missing_targets: set[str] = set()
                 for model in snapshot.models:
+                    source_key = model_metadata_alias_source_key(
+                        snapshot.provider,
+                        model.canonical_model,
+                    )
+                    if source_key in excluded_models:
+                        continue
                     if positive_context_window(model.context_length) is not None:
                         continue
                     if (
@@ -77,12 +94,7 @@ class ModelMetadataCoverageAuditor:
                         is not None
                     ):
                         continue
-                    alias_target = aliases.get(
-                        model_metadata_alias_source_key(
-                            snapshot.provider,
-                            model.canonical_model,
-                        )
-                    )
+                    alias_target = aliases.get(source_key)
                     if alias_target is not None:
                         if (
                             positive_context_window(

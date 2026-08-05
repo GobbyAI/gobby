@@ -11,6 +11,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from gobby.adapters.acp_client import ACPClient
 from gobby.llm.context_windows import (
@@ -42,6 +43,7 @@ CLAUDE_ALIASES = (
 )
 CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
+_LOCAL_ENDPOINT_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # qwen-code reports its built-in Qwen OAuth coder alias as the opaque id "coder-model"
 # with no friendly name; relabel known aliases for the model picker.
 QWEN_ALIAS_LABELS = {"coder-model": "Qwen Coder (OAuth)"}
@@ -252,6 +254,34 @@ def discover_qwen_configured_models(settings: dict[str, Any]) -> list[dict[str, 
                 entry["description"] = description.strip()
             models.append(entry)
     return models
+
+
+def qwen_local_model_values(settings: dict[str, Any]) -> frozenset[str]:
+    """Return configured Qwen model identities backed by loopback endpoints."""
+    model_providers = settings.get("modelProviders")
+    if not isinstance(model_providers, dict):
+        return frozenset()
+
+    models: set[str] = set()
+    for auth_type, configured_models in model_providers.items():
+        if auth_type not in QWEN_AUTH_TYPES or auth_type == "qwen-oauth":
+            continue
+        if not isinstance(configured_models, list):
+            continue
+        for configured_model in configured_models:
+            if not isinstance(configured_model, dict):
+                continue
+            model_id = str(configured_model.get("id") or "").strip()
+            base_url = configured_model.get("baseUrl")
+            if not model_id or not isinstance(base_url, str):
+                continue
+            try:
+                hostname = urlsplit(base_url).hostname
+            except ValueError:
+                continue
+            if hostname is not None and hostname.casefold() in _LOCAL_ENDPOINT_HOSTS:
+                models.add(format_qwen_model_value(model_id, auth_type))
+    return frozenset(models)
 
 
 def load_qwen_settings(

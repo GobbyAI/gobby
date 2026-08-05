@@ -8,11 +8,16 @@ from typing import TYPE_CHECKING
 
 from gobby.ai.vision import build_daemon_vision_extract_service
 from gobby.app_context import ServiceContainer, set_app_context
+from gobby.config.app import deep_merge
 from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.servers.http import HTTPServer
+from gobby.servers.provider_model_discovery import (
+    load_qwen_settings,
+    qwen_local_model_values,
+)
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.models import WebSocketConfig
@@ -23,6 +28,11 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
+
+
+def _local_model_metadata_exclusions() -> frozenset[tuple[str, str]]:
+    settings = load_qwen_settings(deep_merge=deep_merge, logger=logger)
+    return frozenset(("qwen", model) for model in qwen_local_model_values(settings))
 
 
 def init_servers(runner: GobbyRunner) -> None:
@@ -37,6 +47,7 @@ def init_servers(runner: GobbyRunner) -> None:
         model_metadata_store,
         runner.config_store,
         run_db=getattr(runner.db_executor, "run", None),
+        excluded_models=_local_model_metadata_exclusions,
     )
     provider_capability_service = CapabilityRefreshCoordinator(
         provider_capability_store,
