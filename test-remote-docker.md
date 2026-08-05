@@ -5,6 +5,12 @@ physical machine A and one active Gobby daemon on physical machine B. It uses a
 separate acceptance home and separate remote Docker stack. The production local
 volumes stay intact and return without a data migration.
 
+Before starting, ensure machine A has Docker and SSH access, all three machines
+are online in the same tailnet, and machine B has `jq`, `nc`, and a running local
+embedding/generation provider. The examples use LM Studio with the recommended
+Nomic embedding catalog entry; load both the embedding model and a text-generation
+model before the daemon starts.
+
 ## Safety contract
 
 - Use the same Gobby commit on both machines.
@@ -29,6 +35,7 @@ datastore ports.
 On machine B, from the Gobby repository:
 
 ```bash
+set -euo pipefail
 export GOBBY_REPO="$(pwd -P)"
 export LOCAL_PROD_HOME="$HOME/.gobby"
 export LOCAL_ACCEPT_HOME="$HOME/.gobby-m0-acceptance"
@@ -42,9 +49,8 @@ export DENIED_TS_IP="100.d.e.f"
 export ACCEPT_HTTP_PORT="61887"
 export ACCEPT_WS_PORT="61888"
 export ACCEPT_UI_PORT="61889"
-export ACCEPT_EMBEDDING_URL="http://127.0.0.1:1234/v1"
-export ACCEPT_EMBEDDING_MODEL="nomic-embed-text"
-export ACCEPT_EMBEDDING_DIM="768"
+export ACCEPT_EMBEDDING_PROVIDER="lmstudio"
+export ACCEPT_EMBEDDING_CATALOG_KEY="nomic-v1.5-f16"
 export ACCEPT_RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 export ACCEPT_EVIDENCE="$GOBBY_REPO/.gobby/acceptance/$ACCEPT_RUN_ID"
 mkdir -p "$ACCEPT_EVIDENCE"
@@ -80,49 +86,99 @@ Define these functions in each shell that will stop or start a stack:
 
 ```bash
 capture_stack_ids() {
-  stack_home="$(cd "$1" && pwd -P)"
+  stack_home="$(cd "$1" && pwd -P)" || return 1
   evidence_file="$2"
   services_dir="$stack_home/services"
-  test -f "$services_dir/docker-compose.yml"
-  docker ps -aq \
-    --filter "label=com.docker.compose.project.working_dir=$services_dir" \
-    | sort -u > "$evidence_file"
-  test "$(wc -l < "$evidence_file" | tr -d ' ')" = "3"
+  test -f "$services_dir/docker-compose.yml" || {
+    printf 'missing Compose file: %s\n' "$services_dir/docker-compose.yml" >&2
+    return 1
+  }
+  (
+    set -o pipefail
+    docker ps -aq --no-trunc \
+      --filter "label=com.docker.compose.project.working_dir=$services_dir" \
+      | sort -u > "$evidence_file"
+  ) || return 1
+  validate_captured_stack "$stack_home" "$evidence_file"
+}
+
+validate_captured_container() {
+  container_id="$1"
+  services_dir="$2"
+  test "${#container_id}" = "64" || {
+    printf 'container ID is not full length: %s\n' "$container_id" >&2
+    return 1
+  }
+  case "$container_id" in
+    *[!0-9a-f]*) printf 'invalid immutable container ID: %s\n' "$container_id" >&2; return 1 ;;
+  esac
+  actual_id="$(docker inspect --format '{{.Id}}' "$container_id")" || return 1
+  test "$actual_id" = "$container_id" || {
+    printf 'container ID changed: %s != %s\n' "$actual_id" "$container_id" >&2
+    return 1
+  }
+  working_dir="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.project.working_dir" }}' "$container_id")" || return 1
+  test "$working_dir" = "$services_dir" || {
+    printf 'unexpected Compose working directory: %s\n' "$working_dir" >&2
+    return 1
+  }
+  service="$(docker inspect --format '{{ index .Config.Labels "com.docker.compose.service" }}' "$container_id")" || return 1
+  case "$service" in
+    postgres|qdrant|falkordb) printf '%s\n' "$service" ;;
+    *) printf 'unexpected Compose service: %s\n' "$service" >&2; return 1 ;;
+  esac
+}
+
+validate_captured_stack() {
+  stack_home="$(cd "$1" && pwd -P)" || return 1
+  evidence_file="$2"
+  services_dir="$stack_home/services"
+  test -f "$services_dir/docker-compose.yml" || return 1
+  test -f "$evidence_file" || return 1
+  test "$(wc -l < "$evidence_file" | tr -d ' ')" = "3" || {
+    printf 'captured stack does not contain exactly three containers\n' >&2
+    return 1
+  }
+  captured_services=""
   while IFS= read -r container_id; do
-    test -n "$container_id"
-    test "$(docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.working_dir\" }}' "$container_id")" = "$services_dir"
-    service="$(docker inspect --format '{{ index .Config.Labels \"com.docker.compose.service\" }}' "$container_id")"
-    case "$service" in
-      postgres|qdrant|falkordb) ;;
-      *) printf 'unexpected Compose service: %s\n' "$service" >&2; return 1 ;;
-    esac
-    docker inspect --format '{{.Id}} {{.Name}} {{.State.Status}}' "$container_id"
+    test -n "$container_id" || return 1
+    service="$(validate_captured_container "$container_id" "$services_dir")" || return 1
+    captured_services="${captured_services}${service}\n"
+    docker inspect --format '{{.Id}} {{.Name}} {{.State.Status}}' "$container_id" || return 1
   done < "$evidence_file"
+  test "$(printf '%b' "$captured_services" | sort -u)" = "$(printf 'falkordb\npostgres\nqdrant')" || {
+    printf 'captured stack service set is incomplete or duplicated\n' >&2
+    return 1
+  }
 }
 
 stop_captured_stack() {
-  stack_home="$(cd "$1" && pwd -P)"
+  stack_home="$(cd "$1" && pwd -P)" || return 1
   evidence_file="$2"
   services_dir="$stack_home/services"
+  validate_captured_stack "$stack_home" "$evidence_file" || return 1
   while IFS= read -r container_id; do
-    test "$(docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.working_dir\" }}' "$container_id")" = "$services_dir"
-    docker stop --time 30 "$container_id"
+    validate_captured_container "$container_id" "$services_dir" >/dev/null || return 1
+    docker stop --time 30 "$container_id" || return 1
   done < "$evidence_file"
 }
 
 start_captured_stack() {
-  stack_home="$(cd "$1" && pwd -P)"
+  stack_home="$(cd "$1" && pwd -P)" || return 1
   evidence_file="$2"
   services_dir="$stack_home/services"
+  validate_captured_stack "$stack_home" "$evidence_file" || return 1
   while IFS= read -r container_id; do
-    test "$(docker inspect --format '{{ index .Config.Labels \"com.docker.compose.project.working_dir\" }}' "$container_id")" = "$services_dir"
-    docker start "$container_id"
+    validate_captured_container "$container_id" "$services_dir" >/dev/null || return 1
+    docker start "$container_id" || return 1
   done < "$evidence_file"
 }
 ```
 
-These helpers refuse a stack that does not resolve to exactly the three expected
-Compose services. They never remove a container or volume.
+These helpers require full immutable IDs and refuse a stack unless it resolves to
+exactly one each of `postgres`, `qdrant`, and `falkordb` in the expected Compose
+working directory. Every stop or start revalidates the complete set, then revalidates
+each container immediately before acting. They never remove a container or volume.
 
 ## Phase 1: protect and inventory the local installation
 
@@ -150,6 +206,7 @@ identity check fails.
 On machine A:
 
 ```bash
+set -euo pipefail
 export REMOTE_REPO="/absolute/path/to/gobby"
 export REMOTE_ACCEPT_HOME="/absolute/home/path/.gobby-m0-acceptance"
 export REMOTE_TS_DNS="remote-host.example-tailnet.ts.net"
@@ -274,11 +331,7 @@ export GOBBY_HOME="$LOCAL_ACCEPT_HOME"
 uv run gobby install \
   --config-only \
   --no-interactive \
-  --auth-mode required \
-  --embedding-provider openai-compatible \
-  --embedding-url "$ACCEPT_EMBEDDING_URL" \
-  --embedding-model "$ACCEPT_EMBEDDING_MODEL" \
-  --embedding-dim "$ACCEPT_EMBEDDING_DIM"
+  --auth-mode required
 test -s "$LOCAL_ACCEPT_HOME/machine_id"
 ```
 
@@ -288,7 +341,7 @@ Record both identities. Their values must differ:
 cat "$LOCAL_ACCEPT_HOME/machine_id" \
   | tee "$ACCEPT_EVIDENCE/machine-b.id"
 ssh "$REMOTE_SSH" \
-"cat '$REMOTE_ACCEPT_HOME/machine_id'" \
+  "cat '$REMOTE_ACCEPT_HOME/machine_id'" \
   | tee "$ACCEPT_EVIDENCE/machine-a.id"
 test "$(cat "$ACCEPT_EVIDENCE/machine-a.id")" != \
   "$(cat "$ACCEPT_EVIDENCE/machine-b.id")"
@@ -296,10 +349,20 @@ test "$(cat "$ACCEPT_EVIDENCE/machine-a.id")" != \
 
 ## Phase 4: stop the local production runtime without removing it
 
-On machine B:
+Inventory every active local session, notify its operator that the daemon is
+entering a maintenance window, and record the session refs that must be resumed.
+Do not continue until every operator has acknowledged or paused their session:
 
 ```bash
-unset GOBBY_HOME
+unset GOBBY_HOME GOBBY_CONFIG
+uv run gobby sessions list --status active --json \
+  | tee "$ACCEPT_EVIDENCE/local-active-sessions-before-stop.json"
+```
+
+Then, on machine B:
+
+```bash
+unset GOBBY_HOME GOBBY_CONFIG
 uv run gobby stop
 stop_captured_stack "$LOCAL_PROD_HOME" "$ACCEPT_EVIDENCE/local-stack.ids" \
   | tee "$ACCEPT_EVIDENCE/local-stack-stop.txt"
@@ -313,6 +376,9 @@ done
 ```
 
 The saved local container IDs must remain inspectable with state `exited`.
+From this point onward, Phase 9 is the mandatory recovery path after any test
+failure. Restore the local containers and daemon before diagnosing an optional
+acceptance check.
 
 ## Phase 5: start the active daemon on machine B
 
@@ -330,10 +396,16 @@ export ACCEPT_DAEMON_PID="$!"
 printf '%s\n' "$ACCEPT_DAEMON_PID" > "$ACCEPT_EVIDENCE/acceptance-daemon.pid"
 
 for attempt in $(seq 1 60); do
-  curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/health" >/dev/null && break
+  startup_done="$(
+    curl --fail --silent \
+      "http://127.0.0.1:$ACCEPT_HTTP_PORT/api/admin/startup-progress" \
+      | jq -r '.done // false' 2>/dev/null || true
+  )"
+  test "$startup_done" = "true" && break
   sleep 1
 done
-curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/health" \
+test "$startup_done" = "true"
+curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/api/admin/health" \
   | tee "$ACCEPT_EVIDENCE/daemon-health.json"
 GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby status \
   | tee "$ACCEPT_EVIDENCE/remote-mode-status.txt"
@@ -346,6 +418,39 @@ GOBBY_HOME="$LOCAL_ACCEPT_HOME" gdaemon schema version --json \
 
 The status must identify machine B as the active daemon, report remote
 PostgreSQL/Qdrant/FalkorDB healthy, and show no local Compose lifecycle action.
+
+Configure the isolated stack's embedding model through the running acceptance
+daemon, then wait for the staged switch to finish. A final `not_found` status
+means the completed run removed its journal as designed:
+
+```bash
+GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby embeddings switch \
+  "$ACCEPT_EMBEDDING_CATALOG_KEY" \
+  --provider "$ACCEPT_EMBEDDING_PROVIDER" \
+  | tee "$ACCEPT_EVIDENCE/embedding-switch-start.json"
+
+for attempt in $(seq 1 120); do
+  switch_status="$(
+    GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby embeddings switch --status
+  )"
+  switch_state="$(printf '%s' "$switch_status" | jq -r '.status')"
+  test "$switch_state" = "not_found" && break
+  test "$switch_state" = "running" || {
+    printf '%s\n' "$switch_status" >&2
+    exit 1
+  }
+  sleep 5
+done
+test "$switch_state" = "not_found"
+printf '%s\n' "$switch_status" \
+  | tee "$ACCEPT_EVIDENCE/embedding-switch-final.json"
+GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby embeddings doctor \
+  | tee "$ACCEPT_EVIDENCE/embedding-doctor.json"
+```
+
+The doctor output must name the selected model, dimension, and local provider
+endpoint. `gobby status` must also show a healthy text-generation model before
+Phase 7; load or repair that model on machine B before continuing.
 
 ## Phase 6: network and ACL acceptance
 
@@ -451,9 +556,15 @@ uv run python -m gobby.runner --config "$GOBBY_CONFIG" \
   >>"$LOCAL_ACCEPT_HOME/logs/acceptance-daemon.log" 2>&1 &
 export ACCEPT_DAEMON_PID="$!"
 for attempt in $(seq 1 60); do
-  curl --fail --silent "http://127.0.0.1:$ACCEPT_HTTP_PORT/health" >/dev/null && break
+  startup_done="$(
+    curl --fail --silent \
+      "http://127.0.0.1:$ACCEPT_HTTP_PORT/api/admin/startup-progress" \
+      | jq -r '.done // false' 2>/dev/null || true
+  )"
+  test "$startup_done" = "true" && break
   sleep 1
 done
+test "$startup_done" = "true"
 
 curl --fail --silent \
   -H "Authorization: Bearer $ACCEPT_TOKEN" \
@@ -566,11 +677,19 @@ uv run gobby lease status | tee "$ACCEPT_EVIDENCE/local-lease-restored.txt"
 gdaemon schema verify
 gdaemon schema version --json \
   | tee "$ACCEPT_EVIDENCE/local-schema-restored.json"
+capture_stack_ids "$LOCAL_PROD_HOME" \
+  "$ACCEPT_EVIDENCE/local-stack-restored.ids" \
+  | tee "$ACCEPT_EVIDENCE/local-stack-restored.txt"
+cmp "$ACCEPT_EVIDENCE/local-stack.ids" \
+  "$ACCEPT_EVIDENCE/local-stack-restored.ids"
 ```
 
 Watch `~/.gobby/logs/` for five continuous minutes. Any new warning or error
 owned by this test or the restored runtime resets the five-minute window and
 must be fixed before acceptance closes.
+
+Resume every session recorded before the maintenance window and send each one a
+continue message after the daemon is healthy.
 
 ## Completion record
 
