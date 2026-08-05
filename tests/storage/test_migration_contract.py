@@ -13,6 +13,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.migrations import Migration, MigrationRunner
 
 pytestmark = pytest.mark.unit
 
@@ -178,19 +179,20 @@ def test_destructive_sql_marker_audit_recognizes_required_statements(sql: str) -
     assert _contains_destructive_sql(sql)
 
 
-def test_post_bookkeeping_destructive_migrations_carry_marker() -> None:
+def test_post_bookkeeping_destructive_migrations_are_classified() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
-    unmarked: list[str] = []
+    unclassified: list[str] = []
 
     for path in migrations_dir.glob("*.sql"):
         version = int(path.name.split("_", 1)[0])
         if version < DESTRUCTIVE_MIGRATION_VERSION:
             continue
         sql = path.read_text(encoding="utf-8")
-        if _contains_destructive_sql(sql) and not _has_destructive_directive(sql):
-            unmarked.append(path.name)
+        migration = Migration(version=version, name=path.stem, path=path)
+        if _contains_destructive_sql(sql) and not MigrationRunner._is_destructive(migration):
+            unclassified.append(path.name)
 
-    assert unmarked == []
+    assert unclassified == []
 
 
 def test_maintenance_login_fence_hardening_is_schema_independent_and_token_safe() -> None:
@@ -1617,6 +1619,19 @@ def test_applied_migration_chain_is_contiguous_from_baseline(
 
     with pytest.raises(module.MigrationUnsupportedError, match=r"missing applied migration v346"):
         module.MigrationRunner._validate_contiguous_chain(applied, migrations)
+
+
+def test_apply_pending_accepts_retired_unattested_historical_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runner, hub, migrations, _applied = _migration_audit_fixture(tmp_path, monkeypatch)
+    retained_migrations = [migration for migration in migrations if migration.version != 345]
+    monkeypatch.setattr(runner, "_discover_migrations", lambda: retained_migrations)
+
+    runner.apply_pending()
+
+    assert sum("SELECT version, filename, checksum" in query for query in hub.queries) == 1
 
 
 def test_apply_pending_accepts_null_historical_receipts_and_attests_baseline(

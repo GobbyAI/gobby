@@ -1,4 +1,3 @@
--- gobby:destructive
 -- Managed credential lifecycle metadata and daemon leases.
 
 CREATE TABLE IF NOT EXISTS gobby_agent_auth.daemon_registry (

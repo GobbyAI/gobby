@@ -98,6 +98,7 @@ class DestructiveMigrationContext:
 
 _NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
 _DESTRUCTIVE_DIRECTIVE = "-- gobby:destructive"
+_DESTRUCTIVE_VERSION_OVERRIDES = frozenset({361, 371, 373})
 _BOOKKEEPING_VERSION = 354
 _MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
 _SQL_IDENTIFIER_PATTERN = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
@@ -614,23 +615,20 @@ class MigrationRunner:
 
     @staticmethod
     def _is_destructive(migration: Migration) -> bool:
-        return _has_directive(migration, _DESTRUCTIVE_DIRECTIVE)
+        return migration.version in _DESTRUCTIVE_VERSION_OVERRIDES or _has_directive(
+            migration, _DESTRUCTIVE_DIRECTIVE
+        )
 
     @staticmethod
     def _validate_contiguous_chain(
         applied: set[int],
         migrations: list[Migration],
     ) -> None:
-        local_by_version = {migration.version: migration for migration in migrations}
         database_head = max(applied, default=BASELINE_VERSION)
         for version in range(BASELINE_VERSION + 1, database_head + 1):
             if version not in applied:
                 raise MigrationUnsupportedError(
                     f"Migration chain is not contiguous: missing applied migration v{version}."
-                )
-            if version not in local_by_version:
-                raise MigrationUnsupportedError(
-                    f"Migration chain is not contiguous: missing on-disk migration v{version}."
                 )
 
         expected = database_head + 1

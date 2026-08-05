@@ -1,5 +1,3 @@
--- gobby:destructive
-
 -- Migration 342 added tasks_require_validation_criteria as NOT VALID precisely
 -- because rows predating the requirement carry a NULL validation_criteria.
 -- Retyping a legacy review_anchor row re-checks that constraint for the updated

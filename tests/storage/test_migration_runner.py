@@ -172,6 +172,19 @@ def test_retire_review_anchor_migration_is_classified_destructive() -> None:
     assert runner._is_destructive(migration)
 
 
+@pytest.mark.parametrize("version", [361, 371, 373])
+def test_retroactive_destructive_classification_preserves_receipt_bytes(
+    tmp_path: Path,
+    version: int,
+) -> None:
+    module = _migration_module()
+    path = tmp_path / f"{version}_receipt_stable.sql"
+    path.write_text("SELECT 1;\n", encoding="utf-8")
+    migration = Migration(version=version, name="receipt_stable", path=path)
+
+    assert module.MigrationRunner(_PostgresMigrationHub())._is_destructive(migration)
+
+
 def test_fresh_schema_apply_may_cross_destructive_marker(tmp_path: Path) -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
