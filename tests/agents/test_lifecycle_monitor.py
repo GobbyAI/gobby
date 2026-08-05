@@ -120,11 +120,14 @@ async def test_cleanup_and_termination_ignore_other_machine_runs(
         tmux_config=TmuxConfig(),
     )
 
-    await monitor.run_acknowledged_stale_sweeps(
+    stale_run_ids = await monitor.run_acknowledged_stale_sweeps(
         running_timeout_minutes=5,
         pending_timeout_minutes=7,
     )
-    await monitor.reconcile_pending_terminations()
+    reconciled_count = await monitor.reconcile_pending_terminations()
+
+    assert stale_run_ids == []
+    assert reconciled_count == 0
 
     run_manager.cleanup_stale_runs.assert_called_once_with(
         machine_id=LOCAL_MACHINE_ID,
@@ -657,7 +660,6 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
     agent_run_manager.start(run.id)
 
     mutexes = TaskDispatchMutexManager(temp_db)
-    mutexes.ensure_table()
     assert mutexes.get_mutex(task.id) is None
 
     monitor = AgentLifecycleMonitor(
@@ -775,7 +777,6 @@ def _make_dispatched_stage_run(
     assert stored_run is not None
 
     mutexes = TaskDispatchMutexManager(temp_db)
-    mutexes.ensure_table()
     assert mutexes.acquire_mutex(
         task.id,
         holder="dispatcher",

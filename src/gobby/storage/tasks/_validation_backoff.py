@@ -71,21 +71,6 @@ class TaskValidationBackoffStore:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
-    def ensure_table(self) -> None:
-        """Create the table when a focused test uses an unmigrated database."""
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS task_validation_backoff (
-                    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
-                    next_retry_at TIMESTAMPTZ,
-                    last_error TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                """
-            )
-
     def get(self, task_id: str) -> ValidationBackoffState | None:
         """Return the current backoff state for ``task_id`` or None if absent."""
         with self.db.transaction() as conn:

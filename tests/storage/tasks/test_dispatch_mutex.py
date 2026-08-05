@@ -395,25 +395,6 @@ def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_proje
     assert other_mutex.lease_until == past + timedelta(seconds=60)
 
 
-def test_ensure_table_creates_run_id_index(temp_db) -> None:
-    manager = _manager_class()(temp_db)
-
-    manager.ensure_table()
-
-    indexes = {
-        row["name"]
-        for row in temp_db.fetchall(
-            """
-            SELECT indexname AS name
-              FROM pg_indexes
-             WHERE schemaname = current_schema()
-               AND tablename = 'task_dispatch_mutex'
-            """
-        )
-    }
-    assert "idx_dispatch_mutex_run_id" in indexes
-
-
 def test_sweep_expired(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     stale = task_manager.create_task(

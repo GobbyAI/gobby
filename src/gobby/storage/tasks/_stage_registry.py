@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import table_column_names
 from gobby.storage.tasks._stage_reviewer_selector import (
     ReviewerAgentSelectorError,
     validate_reviewer_agent_selector_json,
@@ -72,7 +71,6 @@ class StageRegistryEntry:
 class StageRegistryManager:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
-        self._ensure_phase2_columns()
 
     def list_all(self, *, include_deleted: bool = False) -> list[StageRegistryEntry]:
         deleted_filter = "" if include_deleted else "WHERE deleted_at IS NULL"
@@ -322,40 +320,6 @@ class StageRegistryManager:
             deleted_at=self._row_value(row, "deleted_at"),
             is_edited=self._is_row_edited(row),
         )
-
-    def _ensure_phase2_columns(self) -> None:
-        columns = self._columns("task_stages_registry")
-        additions = {
-            "reviewer_agent": "ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent TEXT",
-            "reviewer_agent_selector_json": (
-                "ALTER TABLE task_stages_registry ADD COLUMN reviewer_agent_selector_json TEXT"
-            ),
-            "review_policy": (
-                "ALTER TABLE task_stages_registry ADD COLUMN review_policy TEXT "
-                "NOT NULL DEFAULT 'none'"
-            ),
-            "default_max_work_attempts": (
-                "ALTER TABLE task_stages_registry ADD COLUMN default_max_work_attempts "
-                "INTEGER NOT NULL DEFAULT 3"
-            ),
-            "default_max_review_rounds": (
-                "ALTER TABLE task_stages_registry ADD COLUMN default_max_review_rounds "
-                "INTEGER NOT NULL DEFAULT 5"
-            ),
-            "dispatch_type": "ALTER TABLE task_stages_registry ADD COLUMN dispatch_type TEXT",
-            "dispatch_target": "ALTER TABLE task_stages_registry ADD COLUMN dispatch_target TEXT",
-            "dispatch_inputs_json": (
-                "ALTER TABLE task_stages_registry ADD COLUMN dispatch_inputs_json TEXT"
-            ),
-            "deleted_at": "ALTER TABLE task_stages_registry ADD COLUMN deleted_at TEXT",
-        }
-        with self.db.transaction() as conn:
-            for column, sql in additions.items():
-                if column not in columns:
-                    conn.execute(sql)
-
-    def _columns(self, table_name: str) -> set[str]:
-        return table_column_names(self.db, table_name)
 
     @staticmethod
     def _row_value(row: Mapping[str, Any], column: str) -> Any:

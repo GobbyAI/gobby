@@ -10,7 +10,7 @@ use gobby_core::gobby_home;
 use gobby_core::postgres::connect_readwrite;
 use gobby_core::schema::{
     BackupGateContext, HubBackupManifest, SchemaRunner, SourceIdentity, VerifiedBackupManifest,
-    parse_backup_manifest, schema_identity,
+    parse_backup_manifest, schema_identity, sweep_test_schemas as sweep_orphaned_test_schemas,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -42,6 +42,10 @@ enum SchemaCommand {
         schema: String,
         #[arg(long)]
         destructive: bool,
+    },
+    SweepTestSchemas {
+        #[arg(long, default_value_t = 1)]
+        age_hours: u64,
     },
     Verify,
     Version {
@@ -91,7 +95,30 @@ fn main() -> Result<()> {
         Command::Schema {
             command: SchemaCommand::Verify,
         } => verify_schema(),
+        Command::Schema {
+            command: SchemaCommand::SweepTestSchemas { age_hours },
+        } => sweep_test_schemas(age_hours),
     }
+}
+
+fn sweep_test_schemas(age_hours: u64) -> Result<()> {
+    enforce_expected_identity()?;
+    let age_seconds =
+        i64::try_from(age_hours.saturating_mul(60 * 60)).context("--age-hours is too large")?;
+    let cutoff_epoch = OffsetDateTime::now_utc()
+        .unix_timestamp()
+        .checked_sub(age_seconds)
+        .context("--age-hours is too large")?;
+    let database_url = resolve_database_url()?;
+    let mut client = connect_readwrite(&database_url).map_err(|_| {
+        anyhow::anyhow!(
+            "failed to connect to the Gobby PostgreSQL hub at {}",
+            redact_database_url(&database_url)
+        )
+    })?;
+    let dropped = sweep_orphaned_test_schemas(&mut client, cutoff_epoch)?;
+    println!("swept {dropped} orphaned PostgreSQL test schema(s)");
+    Ok(())
 }
 
 fn apply_schema(schema: &str, destructive: bool) -> Result<()> {

@@ -87,7 +87,6 @@ class MemoryDreamService:
         self.current_project_id = current_project_id
         self.store = MemoryDreamStore(memory_manager.db)
         self._aggregate_runner = _AggregateDreamRunner(self)
-        self._schema_ready = False
 
     async def run(self, options: DreamRunOptions) -> dict[str, Any]:
         async with _execution_lock():
@@ -269,16 +268,9 @@ class MemoryDreamService:
         except Exception:
             logger.exception("memory dream: platform truth-change trigger failed")
 
-    async def _ensure_schema_async(self) -> None:
-        if self._schema_ready:
-            return
-        await asyncio.to_thread(self.store.ensure_schema)
-        self._schema_ready = True
-
     async def start_async(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
-        await self._ensure_schema_async()
         run_project_id = None if options.global_only else options.project_id
         admission = await asyncio.to_thread(
             self.store.admit_run,
@@ -298,7 +290,6 @@ class MemoryDreamService:
     ) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
-        await self._ensure_schema_async()
         options = {
             "aggregate": True,
             "dry_run": dry_run,
@@ -334,8 +325,6 @@ class MemoryDreamService:
     def start(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
-        self.store.ensure_schema()
-        self._schema_ready = True
         run_project_id = None if options.global_only else options.project_id
         admission = self.store.admit_run(
             project_id=run_project_id,
@@ -429,7 +418,6 @@ class MemoryDreamService:
         )
 
     async def _execute_run_locked(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
-        await self._ensure_schema_async()
         related_session = RelatedEvidenceSession()
         try:
             # The admission window bounds every run regardless of trigger.
@@ -504,14 +492,12 @@ class MemoryDreamService:
         return await orchestrator.run_sweep()
 
     async def status(self, run_id: str) -> dict[str, Any]:
-        await self._ensure_schema_async()
         run = await asyncio.to_thread(self.store.get_run, run_id)
         if run is None:
             return {"success": False, "error": f"Dream run not found: {run_id}"}
         return {"success": True, "run": run}
 
     async def revert(self, run_id: str) -> dict[str, Any]:
-        await self._ensure_schema_async()
         return await revert_dream_run(
             store=self.store,
             run_id=run_id,

@@ -364,7 +364,6 @@ async def test_dirty_daemon_stop_resume_failure_propagates_unexpected_escalation
 
     monkeypatch.setattr(daemon_resume, "escalate_task", failed_escalation)
     storage = TaskDispatchMutexManager(temp_db)
-    storage.ensure_table()
     mutex = RuntimeDispatchMutex(
         storage,
         task_id=task.id,

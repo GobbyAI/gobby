@@ -60,8 +60,6 @@ class _AggregateDreamHost(Protocol):
         run_id: str | None = None,
     ) -> dict[str, Any]: ...
 
-    async def _ensure_schema_async(self) -> None: ...
-
     async def _truth_changed_project_ids(
         self, scopes: list[MemoryScope] | None = None
     ) -> list[str]: ...
@@ -131,7 +129,6 @@ class _AggregateDreamRunner:
                 "runs": [],
             }
 
-        await self._host._ensure_schema_async()
         redream_hours = _positive_int(
             getattr(
                 self._host.dream_config,
@@ -547,7 +544,6 @@ class _AggregateDreamRunner:
         full_sweep: bool = False,
     ) -> dict[str, Any]:
         """Execute an admitted aggregate run and persist its terminal state."""
-        await self._host._ensure_schema_async()
         try:
             aggregate = await self._host.run_all_due_projects(
                 dry_run=dry_run,

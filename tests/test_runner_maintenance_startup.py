@@ -26,38 +26,6 @@ _DAY_SECONDS = 24 * 60 * 60
 _TEST_STARTUP_DELAY_SECONDS = 10.0
 
 
-def _schema_sweep_connection(
-    schema_name: str,
-    *,
-    lease_acquired: bool,
-) -> tuple[MagicMock, list[str]]:
-    events: list[str] = []
-    connection = MagicMock()
-    connection.__enter__.return_value = connection
-
-    def execute(query: object, params: object | None = None) -> MagicMock:
-        del params
-        rendered = str(query)
-        result = MagicMock()
-        if "schema_name LIKE" in rendered:
-            events.append("scan")
-            result.fetchall.return_value = [(schema_name,)]
-        elif "pg_try_advisory_lock" in rendered:
-            events.append("try-lease")
-            result.fetchone.return_value = (lease_acquired,)
-        elif "schema_name =" in rendered:
-            events.append("recheck")
-            result.fetchone.return_value = (schema_name,)
-        elif "DROP SCHEMA" in rendered:
-            events.append("drop")
-        elif "pg_advisory_unlock" in rendered:
-            events.append("unlock")
-        return result
-
-    connection.execute.side_effect = execute
-    return connection, events
-
-
 class CancelAtInterval:
     def __init__(self) -> None:
         self.elapsed = 0.0
@@ -109,62 +77,14 @@ async def test_metrics_cleanup_runs_before_24_hours_then_waits_for_normal_interv
     assert sleep.requests == [_TEST_STARTUP_DELAY_SECONDS, _DAY_SECONDS]
 
 
-@pytest.mark.parametrize(
-    "schema_name",
-    [
-        "gobby_test_malformed",
-        "gobby_test_100_1_master_abc123",
-    ],
-)
-def test_schema_sweep_rechecks_eligibility_under_acquired_lease(
-    monkeypatch: pytest.MonkeyPatch,
-    schema_name: str,
-) -> None:
-    connection, events = _schema_sweep_connection(schema_name, lease_acquired=True)
-    monkeypatch.setattr(
-        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
-        lambda *_args, **_kwargs: connection,
-    )
-    monkeypatch.setattr("gobby.runner_maintenance.storage_hygiene.time.time", lambda: 100)
+def test_schema_sweep_delegates_to_gdaemon(monkeypatch: pytest.MonkeyPatch) -> None:
+    sweep = MagicMock()
+    monkeypatch.setattr(storage_hygiene, "sweep_test_schemas", sweep, raising=False)
 
-    dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
+    result = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test", age_hours=12)
 
-    assert dropped == 0
-    assert events == ["scan", "try-lease", "recheck", "unlock"]
-
-
-def test_schema_sweep_skips_schema_with_held_lease(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    connection, events = _schema_sweep_connection(
-        "gobby_test_0_1_master_abc123",
-        lease_acquired=False,
-    )
-    monkeypatch.setattr(
-        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
-        lambda *_args, **_kwargs: connection,
-    )
-
-    dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
-
-    assert dropped == 0
-    assert events == ["scan", "try-lease"]
-
-
-def test_schema_sweep_drops_eligible_schema_only_after_recheck(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    schema_name = "gobby_test_0_1_master_abc123"
-    connection, events = _schema_sweep_connection(schema_name, lease_acquired=True)
-    monkeypatch.setattr(
-        "gobby.runner_maintenance.storage_hygiene.psycopg.connect",
-        lambda *_args, **_kwargs: connection,
-    )
-
-    dropped = storage_hygiene.sweep_orphaned_test_schemas("postgresql://test")
-
-    assert dropped == 1
-    assert events == ["scan", "try-lease", "recheck", "drop", "unlock"]
+    assert result is None
+    sweep.assert_called_once_with("postgresql://test", age_hours=12)
 
 
 @pytest.mark.asyncio
@@ -274,10 +194,12 @@ async def test_comms_cleanup_runs_before_24_hours_then_waits_for_normal_interval
     sleep = CancelAtInterval()
     work_times: list[float] = []
     store = MagicMock()
-    store.delete_messages_before.side_effect = lambda *_args, **_kwargs: (
-        work_times.append(sleep.elapsed) or 0,
-        [],
-    )
+
+    def delete_messages_before(*_args: Any, **_kwargs: Any) -> tuple[int, list[Any]]:
+        work_times.append(sleep.elapsed)
+        return 0, []
+
+    store.delete_messages_before.side_effect = delete_messages_before
     attachment_manager = MagicMock()
     attachment_manager.delete_paths.return_value = 0
     attachment_manager.cleanup_old.return_value = 0

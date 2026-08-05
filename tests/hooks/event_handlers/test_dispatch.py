@@ -38,7 +38,6 @@ def _stage_pipeline_task(
     initialize_manifest(temp_db, task.id, [spec("expansion", 0)])
     set_stage_state(temp_db, task.id, "expansion", requested)
     storage = TaskDispatchMutexManager(temp_db)
-    storage.ensure_table()
     storage.acquire_mutex(task.id, holder="dispatcher", kind="heartbeat", ttl_seconds=30)
     temp_db.execute(
         """

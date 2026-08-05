@@ -129,7 +129,6 @@ def _hold_dispatch_mutex(
     run_id: str,
 ) -> None:
     mutexes = TaskDispatchMutexManager(setup.db)
-    mutexes.ensure_table()
     assert mutexes.acquire_mutex(
         task_id,
         holder=f"test:{run_id}",

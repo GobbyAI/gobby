@@ -14,7 +14,6 @@ from gobby.storage.tasks._stage_registry import StageRegistryManager
 from gobby.storage.tasks._stage_state_manifest_ops import StageStateManifestOps
 from gobby.storage.tasks._stage_state_mutex import StageStateMutexFactory, snapshot_state
 from gobby.storage.tasks._stage_state_rows import StageStateRows
-from gobby.storage.tasks._stage_state_schema import StageStateSchema
 from gobby.storage.tasks._stage_state_transitions import (
     StageStateTransitions,
     illegal,
@@ -56,7 +55,6 @@ class StageStatesManager:
         self.mutexes = TaskDispatchMutexManager(db)
         self._rows = StageStateRows(db, self.registry)
         self._mutexes = StageStateMutexFactory(self.mutexes, self._rows)
-        self._schema = StageStateSchema(db, self._rows)
         self._manifest = StageStateManifestOps(db, events, self._rows, self._mutexes)
         self._transitions = StageStateTransitions(db, events, self._rows, self._mutexes)
 
@@ -390,9 +388,6 @@ class StageStatesManager:
 
     def _state_from_row(self, row: Mapping[str, Any]) -> StageState:
         return self._rows.state_from_row(row)
-
-    def _ensure_phase2_columns(self) -> None:
-        self._schema.ensure_phase2_columns()
 
     @staticmethod
     def _snapshot_state(value: StageState5) -> RuntimeStageSnapshotState | None:

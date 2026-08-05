@@ -28,17 +28,29 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.types.json import Jsonb
 
-from gobby.runner_maintenance.storage_hygiene import (
-    _TEST_SCHEMA_PREFIX,
-    _test_schema_created_epoch,
-    sweep_orphaned_test_schemas,
-)
+from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.schema_contract import apply_schema
 from gobby.utils.machine_id import get_machine_id
 
 _POSTGRES_IDENTIFIER_MAX_BYTES = 63
 _DEFAULT_POSTGRES_PORT = "5432"
+_TEST_SCHEMA_PREFIX = "gobby_test_"
+
+
+def _test_schema_created_epoch(schema_name: str) -> int | None:
+    parts = schema_name.split("_")
+    if len(parts) != 6 or parts[:2] != ["gobby", "test"]:
+        return None
+    created_epoch, process_id, worker_label, nonce = parts[2:]
+    if not created_epoch.isascii() or not created_epoch.isdigit():
+        return None
+    if not process_id.isascii() or not process_id.isdigit():
+        return None
+    if not worker_label or not nonce:
+        return None
+    return int(created_epoch)
+
 
 # Reserved machine-id namespace seeded into every worker schema's canonical
 # snapshot; fixtures attribute sessions to these ids to satisfy the

@@ -23,7 +23,6 @@ def test_acquire_link_release_round_trip(temp_db, sample_project) -> None:
         validation_criteria="The dispatch mutex round trip completes without leaking.",
     )
     storage = TaskDispatchMutexManager(temp_db)
-    storage.ensure_table()
 
     with RuntimeDispatchMutex(
         storage,
@@ -52,7 +51,6 @@ def test_detach_on_terminal_no_leak(temp_db, sample_project) -> None:
         validation_criteria="Terminal cleanup removes the dispatch mutex.",
     )
     storage = TaskDispatchMutexManager(temp_db)
-    storage.ensure_table()
 
     with RuntimeDispatchMutex(storage, task.id, "dispatcher", "spawn_agent", 30) as mutex:
         mutex.attach("a0a76c4c-539f-51e2-b9b3-6bd1333cbd45")

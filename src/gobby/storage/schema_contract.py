@@ -64,23 +64,20 @@ def latest_schema_version() -> int:
     return value
 
 
-def apply_schema(database_url: str, *, schema: str = "public", destructive: bool = False) -> None:
-    """Apply schema assets through one identity-enforcing gdaemon process."""
+def _run_gdaemon(database_url: str, args: list[str], *, action: str) -> None:
+    """Run one identity-enforcing gdaemon schema action."""
     binary = resolve_native_bin("gdaemon")
     if binary is None:
         raise SchemaContractError(
-            "gdaemon is required to apply the PostgreSQL schema; run `gobby install` to install it"
+            f"gdaemon is required to {action}; run `gobby install` to install it"
         )
 
-    args = [binary, "schema", "apply", "--schema", schema]
-    if destructive:
-        args.append("--destructive")
     env = os.environ.copy()
     env[DATABASE_URL_ENV] = database_url
     env[EXPECTED_IDENTITY_ENV] = expected_schema_identity_json()
     try:
         result = subprocess.run(
-            args,
+            [binary, *args],
             check=False,
             capture_output=True,
             text=True,
@@ -89,7 +86,7 @@ def apply_schema(database_url: str, *, schema: str = "public", destructive: bool
         )
     except subprocess.TimeoutExpired as exc:
         raise SchemaContractError(
-            f"gdaemon schema apply timed out after {exc.timeout:g} seconds; "
+            f"gdaemon {action} timed out after {exc.timeout:g} seconds; "
             "check PostgreSQL availability and retry"
         ) from exc
     except OSError as exc:
@@ -99,6 +96,23 @@ def apply_schema(database_url: str, *, schema: str = "public", destructive: bool
             result.stderr.strip() or result.stdout.strip() or f"exit status {result.returncode}"
         )
         raise SchemaContractError(
-            f"gdaemon schema apply failed: {detail}. Run `gobby install` to refresh gdaemon"
+            f"gdaemon {action} failed: {detail}. Run `gobby install` to refresh gdaemon"
         )
+
+
+def sweep_test_schemas(database_url: str, *, age_hours: int) -> None:
+    """Delegate abandoned test-schema sweeping to gdaemon."""
+    _run_gdaemon(
+        database_url,
+        ["schema", "sweep-test-schemas", "--age-hours", str(age_hours)],
+        action="schema sweep-test-schemas",
+    )
+
+
+def apply_schema(database_url: str, *, schema: str = "public", destructive: bool = False) -> None:
+    """Apply schema assets through one identity-enforcing gdaemon process."""
+    args = ["schema", "apply", "--schema", schema]
+    if destructive:
+        args.append("--destructive")
+    _run_gdaemon(database_url, args, action="schema apply")
     logger.info("gdaemon schema apply completed for schema %s", schema)

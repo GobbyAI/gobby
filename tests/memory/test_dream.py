@@ -1389,50 +1389,18 @@ def test_postgres_restart_recovery_interrupts_and_frees_admission(temp_db: Any) 
     assert readmitted.outcome == "admitted"
 
 
-def test_postgres_ensure_schema_sweeps_non_terminal_rows_before_building_index(
-    temp_db: Any,
-) -> None:
-    store = MemoryDreamStore(temp_db)
-    temp_db.execute("DROP INDEX idx_memory_dream_runs_single_running", ())
-    stale_running = store.create_run(project_id=None, dry_run=False, options={})
-    stale_started = store.create_run(project_id=None, dry_run=False, options={}, status="started")
-
-    store.ensure_schema()
-
-    for run_id in (stale_running, stale_started):
-        run = store.get_run(run_id)
-        assert run is not None
-        assert run["status"] == "interrupted"
-        assert run["error"] == INTERRUPTED_RESTART_ERROR
-    row = temp_db.fetchone(
-        "SELECT to_regclass('idx_memory_dream_runs_single_running') AS index_name", ()
-    )
-    assert row is not None
-    assert row["index_name"] is not None
-
-
 def test_dream_action_vocabulary_matches_live_pipeline() -> None:
     assert set(get_args(DreamActionName)) == {"keep", "delete", "refresh", "review", "promote"}
 
 
-def test_baseline_and_ensure_schema_share_admission_contract() -> None:
+def test_baseline_admission_contract_matches_runtime_status_vocabulary() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     baseline = (repo_root / "crates/gcore/assets/schema/baseline.sql").read_text(encoding="utf-8")
-    runtime = (repo_root / "src/gobby/memory/dream/storage_schema.py").read_text(encoding="utf-8")
 
-    for label, content in (("baseline", baseline), ("runtime", runtime)):
-        for fragment in (
-            "'partial'",
-            "'revert_forfeited'",
-        ):
-            assert fragment in content, f"{label} is missing {fragment!r}"
-    # The status vocabulary must be identical everywhere.
+    for fragment in ("'partial'", "'revert_forfeited'"):
+        assert fragment in baseline
     for status in sorted(RUN_TERMINAL_STATUSES | {"started", "running"}):
-        for label, content in (
-            ("baseline", baseline),
-            ("runtime", runtime),
-        ):
-            assert f"'{status}'" in content, f"{label} is missing status {status!r}"
+        assert f"'{status}'" in baseline, f"baseline is missing status {status!r}"
 
 
 def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
@@ -3303,7 +3271,6 @@ async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
         memory_manager=cast(MemoryDreamManagerProtocol, manager),
         dream_config=_sweep_config(),
     )
-    await service._ensure_schema_async()
 
     just_now = datetime.now(UTC).isoformat()
     cooldown_cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
@@ -3353,7 +3320,6 @@ async def test_platform_truth_change_rejudges_global_and_current_project_memorie
         dream_config=_sweep_config(),
         current_project_id=current_project.id,
     )
-    await service._ensure_schema_async()
 
     just_now = datetime.now(UTC).isoformat()
     global_memory = manager.create_memory(

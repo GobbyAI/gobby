@@ -79,13 +79,6 @@ def test_stage_states_manager_exposes_reads_writes_and_models(temp_db) -> None:
         assert callable(getattr(manager, method_name))
 
 
-def test_stage_state_schema_rejects_invalid_table_name(temp_db) -> None:
-    manager = LocalTaskManager(temp_db).stage_states
-
-    with pytest.raises(ValueError, match="Invalid table name"):
-        manager._schema.columns("task_stage_states); DROP TABLE tasks; --")
-
-
 def test_initialize_manifest_mirrors_registry_policy_and_current_stage(
     temp_db,
     sample_project,
@@ -681,11 +674,13 @@ def test_epic_failure_reactivates_merged_cited_child_worktree(
     temp_db.execute(
         """
         INSERT INTO worktrees (
-            id, project_id, task_id, branch_name, worktree_path, base_branch,
+            id, project_id, machine_id, task_id, branch_name, worktree_path, base_branch,
             agent_session_id, status, created_at, updated_at, merged_at, cleanup_after
         )
         VALUES (
-            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04', %s, %s, 'task-reopened', '/tmp/gobby-reopened', 'main',
+            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee04', %s,
+            '21000000-0000-4000-8000-000000000001', %s,
+            'task-reopened', '/tmp/gobby-reopened', 'main',
             NULL, 'merged', '2026-05-07T00:00:00+00:00',
             '2026-05-07T00:00:00+00:00', '2026-05-07T00:00:00+00:00',
             '2026-05-14T00:00:00+00:00'

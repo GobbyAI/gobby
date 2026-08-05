@@ -2,15 +2,91 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import logging
+import re
 import subprocess
+from collections import Counter
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
 from gobby.storage import schema_contract
 from gobby.storage.hub import postgres
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PRODUCTION_PYTHON_ROOT = _REPO_ROOT / "src" / "gobby"
+_POSTGRES_DDL = re.compile(
+    r"\b(?P<verb>CREATE|ALTER|DROP)\s+"
+    r"(?P<temporary>TEMP(?:ORARY)?\s+)?"
+    r"(?P<object>TABLE|INDEX|SCHEMA|TYPE|FUNCTION|TRIGGER|SEQUENCE|CONSTRAINT|EXTENSION|VIEW)\b"
+    r"|(?P<reindex>\AREINDEX)\s+(?:INDEX|TABLE|DATABASE|SYSTEM)\b",
+    re.IGNORECASE,
+)
+
+# These SQL-adjacent cases are intentionally outside persistent PostgreSQL
+# runtime schema authority: temporary staging, repair, FalkorDB Cypher, and the
+# one-shot PostgreSQL installer. Container initdb and hub-backup SQL are not
+# production Python and therefore are outside this scan.
+_KEPT_ADJACENT_SQL = Counter(
+    {
+        ("src/gobby/cli/installers/postgres.py", "CREATE EXTENSION"): 1,
+        ("src/gobby/code_index/_storage/files.py", "CREATE TEMP TABLE"): 1,
+        ("src/gobby/code_index/_storage/files.py", "DROP TABLE"): 1,
+        ("src/gobby/code_index/bm25_health.py", "REINDEX"): 1,
+        ("src/gobby/memory/falkor_client.py", "CREATE INDEX"): 1,
+    }
+)
+
+
+def _production_sql_ddl() -> Counter[tuple[str, str]]:
+    found: Counter[tuple[str, str]] = Counter()
+    for path in sorted(_PRODUCTION_PYTHON_ROOT.rglob("*.py")):
+        relative_path = path.relative_to(_REPO_ROOT).as_posix()
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            for match in _POSTGRES_DDL.finditer(node.value):
+                if match.group("reindex"):
+                    operation = "REINDEX"
+                else:
+                    temporary = "TEMP " if match.group("temporary") else ""
+                    operation = f"{match.group('verb')} {temporary}{match.group('object')}".upper()
+                found[(relative_path, operation)] += 1
+    return found
+
+
+def test_production_python_has_no_persistent_postgres_ddl() -> None:
+    assert _production_sql_ddl() == _KEPT_ADJACENT_SQL
+
+
+def test_sweep_pins_database_in_child_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""))
+    monkeypatch.setattr(schema_contract, "resolve_native_bin", lambda name: "/managed/gdaemon")
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setenv("GOBBY_DATABASE_URL", "postgresql://decoy.example/decoy")
+
+    schema_contract.sweep_test_schemas(
+        "postgresql://gobby:secret@database.example/gobby",
+        age_hours=2,
+    )
+
+    args = run.call_args.args[0]
+    kwargs = run.call_args.kwargs
+    assert args == [
+        "/managed/gdaemon",
+        "schema",
+        "sweep-test-schemas",
+        "--age-hours",
+        "2",
+    ]
+    assert all("postgresql://" not in arg for arg in args)
+    assert kwargs["env"]["GOBBY_DATABASE_URL"] == (
+        "postgresql://gobby:secret@database.example/gobby"
+    )
 
 
 def test_apply_pins_database_and_expected_identity_in_child_environment(

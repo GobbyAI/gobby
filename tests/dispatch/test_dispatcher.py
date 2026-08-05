@@ -176,9 +176,7 @@ def _parent_with_stage_order(
 
 
 def _mutex_storage(temp_db: HubDatabase) -> TaskDispatchMutexManager:
-    storage = TaskDispatchMutexManager(temp_db)
-    storage.ensure_table()
-    return storage
+    return TaskDispatchMutexManager(temp_db)
 
 
 def _session(

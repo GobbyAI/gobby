@@ -48,34 +48,6 @@ class TaskDispatchMutexManager:
     def __init__(self, db: HubDatabase):
         self.db = db
 
-    def ensure_table(self) -> None:
-        """Create the table when a focused test uses an unmigrated database."""
-        with self.db.transaction() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS task_dispatch_mutex (
-                    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
-                    lease_until TIMESTAMPTZ,
-                    lease_holder TEXT,
-                    run_id TEXT,
-                    action_kind TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_dispatch_mutex_scan
-                    ON task_dispatch_mutex (lease_until, run_id)
-                """
-            )
-            conn.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_dispatch_mutex_run_id
-                    ON task_dispatch_mutex (run_id)
-                """
-            )
-
     def get_mutex(self, task_id: str) -> DispatchMutex | None:
         row = self.db.fetchone(
             "SELECT * FROM task_dispatch_mutex WHERE task_id = %s",

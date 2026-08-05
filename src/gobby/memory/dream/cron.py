@@ -62,7 +62,6 @@ def reconcile_interrupted_dream_runs(memory_manager: MemoryDreamManagerProtocol)
     reconciled run IDs.
     """
     store = MemoryDreamStore(memory_manager.db)
-    store.ensure_schema()
     return store.mark_interrupted_runs()
 
 

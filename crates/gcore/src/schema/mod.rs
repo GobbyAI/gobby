@@ -7,6 +7,7 @@ mod assets;
 mod gate;
 mod identity;
 mod runner;
+mod sweep;
 mod verify;
 
 #[cfg(test)]
@@ -22,6 +23,7 @@ pub use gate::{
 };
 pub use identity::{AssetIdentity, SchemaIdentity, schema_identity};
 pub use runner::{ApplyReport, SchemaError, SchemaRunner, split_sql_statements};
+pub use sweep::sweep_test_schemas;
 pub use verify::{
     CatalogEntry, CatalogManifest, VerificationReport, catalog_manifest, render_catalog_manifest,
 };

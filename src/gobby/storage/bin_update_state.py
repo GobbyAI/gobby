@@ -29,30 +29,6 @@ BIN_UPDATE_STATUS_VALUES = (
     "source_unavailable",
 )
 
-_STATUS_SQL = ",".join(f"'{status}'" for status in BIN_UPDATE_STATUS_VALUES)
-
-BIN_UPDATE_STATE_SCHEMA = f"""
-CREATE TABLE IF NOT EXISTS bin_update_state (
-    machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    tool_name TEXT NOT NULL,
-    installed_version TEXT,
-    floor_version TEXT NOT NULL,
-    latest_version TEXT,
-    binary_path TEXT,
-    target TEXT,
-    last_status TEXT NOT NULL CHECK (last_status IN ({_STATUS_SQL})),
-    last_error TEXT,
-    checked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    installed_at TEXT,
-    source_url TEXT,
-    is_dev BOOLEAN NOT NULL DEFAULT FALSE CHECK (is_dev IN (FALSE, TRUE)),
-    floor_drift BOOLEAN NOT NULL DEFAULT FALSE CHECK (floor_drift IN (FALSE, TRUE)),
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (machine_id, tool_name)
-);
-"""
-
-
 _RECORD_COLUMNS = """
             machine_id,
             tool_name,
@@ -219,7 +195,6 @@ class BinUpdateStateStore:
 
 
 __all__ = [
-    "BIN_UPDATE_STATE_SCHEMA",
     "BIN_UPDATE_STATUS_VALUES",
     "BinUpdateRecord",
     "BinUpdateStateStore",

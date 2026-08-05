@@ -165,9 +165,8 @@ def test_orphan_cleanup_delegates_to_leased_sweeper_with_live_process_grace(
 
     calls: list[tuple[str, int]] = []
 
-    def sweep(url: str, age_hours: int) -> int:
+    def sweep(url: str, age_hours: int) -> None:
         calls.append((url, age_hours))
-        return 0
 
     monkeypatch.setattr(postgres_fixture, "sweep_orphaned_test_schemas", sweep)
 
@@ -296,12 +295,11 @@ def test_orphan_sweep_drops_recent_unleased_schema_and_preserves_live_schema(
         live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(stale_schema)))
         live_connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(live_schema)))
         try:
-            dropped = storage_hygiene.sweep_orphaned_test_schemas(
+            storage_hygiene.sweep_orphaned_test_schemas(
                 isolated_postgres_database_url,
                 age_hours=0,
             )
 
-            assert dropped == 1
             assert (
                 live_connection.execute(
                     "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",

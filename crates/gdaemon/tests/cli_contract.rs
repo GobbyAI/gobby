@@ -13,6 +13,18 @@ fn embedded_identity_json() -> anyhow::Result<String> {
 }
 
 #[test]
+fn schema_help_exposes_test_schema_sweep() -> anyhow::Result<()> {
+    let output = Command::cargo_bin("gdaemon")?
+        .args(["schema", "--help"])
+        .output()?;
+    let stdout = String::from_utf8(output.stdout.clone())?;
+
+    assert!(output.status.success(), "{output:?}");
+    assert!(stdout.contains("sweep-test-schemas"), "{stdout}");
+    Ok(())
+}
+
+#[test]
 fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "version", "--json"])
