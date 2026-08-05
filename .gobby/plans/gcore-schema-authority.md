@@ -2916,15 +2916,15 @@ entry below.
 4.6's remaining-work child ids land here at close-out. -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
-| 4.6 remaining-work child epic | #19379.19654 | Open under root #19379; owns the remaining leaves |
-| 4.6.1 retention policy | #19655 | Open; TTL and cleanup cadence plan |
-| 4.6.2 Hub-PC datastore move | #19656 | Open; migration, cutover, and rollback plan |
+| 4.6 remaining-work child epic | #19379.19654 | Complete; all seven child leaves closed |
+| 4.6.1 retention policy | #19655 | Closed; TTL and cleanup cadence plan recorded |
+| 4.6.2 Hub-PC datastore move | #19656 | Closed; migration, cutover, and rollback plan recorded |
 | 4.6.3 shared-daemon topology | #17488 / #19647 | Existing open epic and research leaf; linked instead of duplicated |
-| 4.6.4 hot-path performance | #19657 | Open; cleanup DELETEs, vector enqueue, polling cadence, and FK index |
-| 4.6.5 indexing.extra_excludes | #19658 | Open; configuration and indexing behavior |
-| 4.6.6 machine attribution | #19659 | Open; artifact attribution and machine-scoped pruning |
-| 4.6.7 git-history scrub | #19660 | Open; pre-publication decision and runbook |
-| 4.6.8 Rust inline-test linter | #19661 | Implemented: full-file Rust counts include inline tests; 999/1,000-line boundary and out-of-line exemption tests added |
+| 4.6.4 hot-path performance | #19657 | Closed; cleanup DELETEs, vector enqueue, polling cadence, and FK index completed |
+| 4.6.5 indexing.extra_excludes | #19658 | Closed; configuration and indexing behavior completed |
+| 4.6.6 machine attribution | #19659 | Closed; artifact attribution and machine-scoped pruning completed |
+| 4.6.7 git-history scrub | #19660 | Closed; pre-publication decision and runbook recorded |
+| 4.6.8 Rust inline-test linter | #19661 | Closed; full-file Rust counts include inline tests; 999/1,000-line boundary and out-of-line exemption tests added |
 | 4.6.8 disabled `*-steps` keep-records | No task | Confirmed 2026-08-05: DB lists exactly 29 agent-sourced step workflows, all disabled; no tasks generated |
 | Repository-wide Rust inline-test extraction | #19673 | Follow-up outside #19379; parser-backed extraction and enforcement across all crates |
 | #17435 | Existing open epic | Linked by #19659 for remote-session content/path contracts |
