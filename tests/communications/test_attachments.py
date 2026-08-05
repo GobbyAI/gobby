@@ -17,6 +17,9 @@ from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 
+LOCAL_MACHINE_ID = "cccccccc-cccc-4ccc-8ccc-000000000001"
+REMOTE_MACHINE_ID = "cccccccc-cccc-4ccc-8ccc-000000000002"
+
 
 @pytest.fixture
 def attachment_dir(tmp_path: Path) -> Path:
@@ -133,6 +136,7 @@ def test_storage_dir_created_automatically(tmp_path: Path) -> None:
 def test_comms_attachment_from_row() -> None:
     row = {
         "id": "ca-123",
+        "machine_id": LOCAL_MACHINE_ID,
         "message_id": "cm-456",
         "filename": "report.pdf",
         "content_type": "application/pdf",
@@ -143,6 +147,7 @@ def test_comms_attachment_from_row() -> None:
     }
     attachment = CommsAttachment.from_row(row)
     assert attachment.id == "ca-123"
+    assert attachment.machine_id == LOCAL_MACHINE_ID
     assert attachment.message_id == "cm-456"
     assert attachment.filename == "report.pdf"
     assert attachment.content_type == "application/pdf"
@@ -150,7 +155,12 @@ def test_comms_attachment_from_row() -> None:
 
 
 def test_comms_attachment_from_row_defaults() -> None:
-    row = {"id": "ca-789", "message_id": "cm-000", "filename": "file.bin"}
+    row = {
+        "id": "ca-789",
+        "machine_id": LOCAL_MACHINE_ID,
+        "message_id": "cm-000",
+        "filename": "file.bin",
+    }
     attachment = CommsAttachment.from_row(row)
     assert attachment.content_type == "application/octet-stream"
     assert attachment.size_bytes == 0
@@ -413,6 +423,64 @@ def test_attachment_cascade_on_message_delete(
     assert deleted_count == 1
     assert local_paths == [str(attachment_path)]
     assert comms_store.list_attachments(message_id) == []
+
+
+def test_attachment_crud_and_message_cleanup_are_machine_scoped(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    for machine_id in (LOCAL_MACHINE_ID, REMOTE_MACHINE_ID):
+        temp_db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}"),
+        )
+
+    local_store = LocalCommunicationsStore(
+        temp_db,
+        project_id="00000000-0000-0000-0000-000000000000",
+        machine_id=LOCAL_MACHINE_ID,
+    )
+    remote_store = LocalCommunicationsStore(
+        temp_db,
+        project_id="00000000-0000-0000-0000-000000000000",
+        machine_id=REMOTE_MACHINE_ID,
+    )
+    channel_id = _create_test_channel(local_store)
+    message_id = _create_test_message(local_store, channel_id)
+    local_path = tmp_path / "local.txt"
+    remote_path = tmp_path / "remote.txt"
+    local_path.write_text("local")
+    remote_path.write_text("remote")
+    local_attachment = local_store.create_attachment(
+        CommsAttachment(
+            id="",
+            message_id=message_id,
+            filename=local_path.name,
+            content_type="text/plain",
+            size_bytes=local_path.stat().st_size,
+            local_path=str(local_path),
+        )
+    )
+    remote_attachment = remote_store.create_attachment(
+        CommsAttachment(
+            id="",
+            message_id=message_id,
+            filename=remote_path.name,
+            content_type="text/plain",
+            size_bytes=remote_path.stat().st_size,
+            local_path=str(remote_path),
+        )
+    )
+
+    assert local_store.get_attachment(remote_attachment.id) is None
+    assert [row.id for row in local_store.list_attachments(message_id)] == [local_attachment.id]
+    local_store.delete_attachment(remote_attachment.id)
+    deleted_count, local_paths = local_store.delete_messages_before(datetime(2025, 1, 1))
+
+    assert deleted_count == 0
+    assert local_paths == []
+    assert local_store.get_message(message_id) is not None
+    assert remote_store.get_attachment(remote_attachment.id) is not None
 
 
 def test_delete_paths_only_unlinks_files_in_storage_directory(

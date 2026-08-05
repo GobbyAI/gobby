@@ -301,6 +301,7 @@ CREATE TABLE build_runs (
 
 CREATE TABLE chat_attachments (
     id uuid NOT NULL,
+    machine_id uuid NOT NULL,
     project_id uuid NOT NULL,
     draft_id text,
     conversation_id text,
@@ -427,6 +428,7 @@ CREATE TABLE code_index_projection_cleanup_pending (
 ALTER TABLE ONLY code_index_projection_cleanup_pending FORCE ROW LEVEL SECURITY;
 
 CREATE TABLE code_index_prune_dirty_projects (
+    machine_id uuid NOT NULL,
     project_id uuid NOT NULL,
     root_path text NOT NULL,
     reason text NOT NULL,
@@ -494,6 +496,7 @@ ALTER TABLE ONLY code_symbols FORCE ROW LEVEL SECURITY;
 
 CREATE TABLE comms_attachments (
     id uuid NOT NULL,
+    machine_id uuid NOT NULL,
     message_id uuid NOT NULL,
     filename text NOT NULL,
     content_type text DEFAULT 'application/octet-stream'::text NOT NULL,
@@ -2223,7 +2226,7 @@ ALTER TABLE ONLY code_index_projection_cleanup_pending
     ADD CONSTRAINT code_index_projection_cleanup_pending_pkey PRIMARY KEY (project_id, store);
 
 ALTER TABLE ONLY code_index_prune_dirty_projects
-    ADD CONSTRAINT code_index_prune_dirty_projects_pkey PRIMARY KEY (project_id);
+    ADD CONSTRAINT code_index_prune_dirty_projects_pkey PRIMARY KEY (machine_id, project_id);
 
 ALTER TABLE ONLY code_indexed_files
     ADD CONSTRAINT code_indexed_files_pkey PRIMARY KEY (id);
@@ -2692,6 +2695,8 @@ CREATE INDEX idx_chat_attachments_local_path ON chat_attachments USING btree (lo
 
 CREATE INDEX idx_chat_attachments_message ON chat_attachments USING btree (message_id);
 
+CREATE INDEX idx_chat_attachments_machine_unbound ON chat_attachments USING btree (machine_id, created_at) WHERE ((conversation_id IS NULL) AND (message_id IS NULL) AND (target_session_id IS NULL) AND (bound_at IS NULL));
+
 CREATE INDEX idx_chat_attachments_project ON chat_attachments USING btree (project_id);
 
 CREATE INDEX idx_chat_attachments_target_session ON chat_attachments USING btree (target_session_id);
@@ -2725,6 +2730,8 @@ CREATE INDEX idx_clones_status ON clones USING btree (status);
 CREATE INDEX idx_clones_task ON clones USING btree (task_id);
 
 CREATE INDEX idx_comms_attachments_message ON comms_attachments USING btree (message_id);
+
+CREATE INDEX idx_comms_attachments_message_machine ON comms_attachments USING btree (message_id, machine_id);
 
 CREATE INDEX idx_comms_identities_channel ON comms_identities USING btree (channel_id);
 
@@ -2811,6 +2818,8 @@ CREATE INDEX idx_gh_triage_deliveries_issue ON gh_triage_deliveries USING btree 
 CREATE INDEX idx_gh_triage_deliveries_project_status ON gh_triage_deliveries USING btree (project_id, status);
 
 CREATE INDEX idx_gh_triage_deliveries_retry ON gh_triage_deliveries USING btree (project_id, status, next_attempt_at, updated_at);
+
+CREATE INDEX idx_gh_triage_build_dispatches_task_id ON gh_triage_build_dispatches USING btree (task_id);
 
 CREATE INDEX idx_inter_session_messages_from_session ON inter_session_messages USING btree (from_session);
 
@@ -3197,6 +3206,9 @@ ALTER TABLE ONLY chat_attachments
     ADD CONSTRAINT chat_attachments_project_id_fkey FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY chat_attachments
+    ADD CONSTRAINT chat_attachments_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
+
+ALTER TABLE ONLY chat_attachments
     ADD CONSTRAINT chat_attachments_target_session_id_fkey FOREIGN KEY (target_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE;
 
 ALTER TABLE ONLY checkpoints
@@ -3222,6 +3234,12 @@ ALTER TABLE ONLY clones
 
 ALTER TABLE ONLY comms_attachments
     ADD CONSTRAINT comms_attachments_message_id_fkey FOREIGN KEY (message_id) REFERENCES comms_messages(id) ON DELETE CASCADE DEFERRABLE;
+
+ALTER TABLE ONLY comms_attachments
+    ADD CONSTRAINT comms_attachments_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
+
+ALTER TABLE ONLY code_index_prune_dirty_projects
+    ADD CONSTRAINT code_index_prune_dirty_projects_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
 
 ALTER TABLE ONLY comms_identities
     ADD CONSTRAINT comms_identities_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES comms_channels(id) ON DELETE CASCADE DEFERRABLE;

@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 pub const RUNNER_PROTOCOL_VERSION: u32 = 1;
 pub const BASELINE_VERSION: i32 = 375;
 pub const BASELINE_CHECKSUM: &str =
-    "eaf97c2662053cf0f3b112410d66b7bc123402f1100224873656bbe199bc7a80";
+    "c4c66fd45f03122e648482229f7e5e5ebb67ae8ca49f80255d2f63e4ded54aab";
 pub const BASELINE_SQL: &str = include_str!("../../assets/schema/baseline.sql");
 pub const SEED_MANIFEST_JSON: &str = include_str!("../../assets/schema/seed.manifest.json");
 pub const CATALOG_MANIFEST_JSON: &str = include_str!("../../assets/schema/catalog.manifest.json");
@@ -16,15 +16,9 @@ pub(crate) struct EmbeddedMigration {
     pub sql: &'static str,
 }
 
-const MIGRATION_376_SQL: &str =
-    include_str!("../../assets/schema/376_add_gh_triage_build_dispatches_task_id_index.sql");
-
-pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[EmbeddedMigration {
-    version: 376,
-    filename: "376_add_gh_triage_build_dispatches_task_id_index.sql",
-    checksum: "1f83ec9602764f59038e447ec31f1138fe05f4034709a5cb03e7aaf80e2586bf",
-    sql: MIGRATION_376_SQL,
-}];
+// Pre-0.5.0 schema changes are folded into baseline 375. Numbered migrations
+// resume after the release boundary.
+pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[];
 
 pub(crate) fn root_hash() -> String {
     let mut digest = Sha256::new();

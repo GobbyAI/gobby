@@ -57,7 +57,7 @@ fn embedded_runner_applies_fresh_and_idempotently() -> anyhow::Result<()> {
 
     let first = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(first.baseline_applied);
-    assert_eq!(first.migrations_applied, 1);
+    assert_eq!(first.migrations_applied, 0);
 
     let second = SchemaRunner::new(&mut client, "public")?.apply()?;
     assert!(!second.baseline_applied);
@@ -270,5 +270,91 @@ fn task_delete_foreign_key_lookup_uses_the_dispatch_task_index() -> anyhow::Resu
         plan.contains("idx_gh_triage_build_dispatches_task_id"),
         "unexpected query plan:\n{plan}"
     );
+    Ok(())
+}
+
+#[test]
+fn baseline_supports_machine_owned_attachments_and_prune_rows() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    client.batch_execute(
+        "
+        INSERT INTO machines (id, hostname)
+        VALUES ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'migration-test');
+        INSERT INTO projects (id, name)
+        VALUES ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'migration-test');
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id)
+        VALUES (
+            'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            'migration-test',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'test',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+        );
+        INSERT INTO chat_attachments (
+            id, machine_id, project_id, target_session_id, filename, mime_type, size_bytes,
+            local_path
+        ) VALUES (
+            'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+            'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+            'chat.txt', 'text/plain', 4, '/tmp/chat.txt'
+        );
+        INSERT INTO comms_channels (id, channel_type, name)
+        VALUES ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'test', 'migration-test');
+        INSERT INTO comms_messages (id, channel_id, direction, content, session_id)
+        VALUES (
+            'ffffffff-ffff-4fff-8fff-ffffffffffff',
+            'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            'inbound', 'test', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+        );
+        INSERT INTO comms_attachments (id, machine_id, message_id, filename, local_path)
+        VALUES (
+            '11111111-1111-4111-8111-111111111111',
+            'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            'ffffffff-ffff-4fff-8fff-ffffffffffff',
+            'comms.txt', '/tmp/comms.txt'
+        );
+        ",
+    )?;
+
+    for table in ["chat_attachments", "comms_attachments"] {
+        let machine_id: String = client
+            .query_one(&format!("SELECT machine_id::text FROM {table}"), &[])?
+            .get(0);
+        assert_eq!(machine_id, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+    }
+    client.batch_execute(
+        "
+        INSERT INTO code_index_prune_dirty_projects (
+            machine_id, project_id, root_path, reason
+        ) VALUES
+            (
+                'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                '/machine-a/project', 'test'
+            );
+        INSERT INTO machines (id, hostname)
+        VALUES ('22222222-2222-4222-8222-222222222222', 'migration-test-2');
+        INSERT INTO code_index_prune_dirty_projects (
+            machine_id, project_id, root_path, reason
+        ) VALUES
+            (
+                '22222222-2222-4222-8222-222222222222',
+                'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+                '/machine-b/project', 'test'
+            );
+        ",
+    )?;
+    let count: i64 = client
+        .query_one("SELECT count(*) FROM code_index_prune_dirty_projects", &[])?
+        .get(0);
+    assert_eq!(count, 2);
     Ok(())
 }

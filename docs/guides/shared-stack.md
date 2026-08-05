@@ -99,6 +99,13 @@ configuration follow the user between machines. Each machine still owns its daem
 processes, tmux sessions, worktrees, clones, and transcript files. A client must never
 process another machine's filesystem paths or transcripts.
 
+Attachment metadata that points at local blobs and code-index dirty-prune rows carry
+their originating `machine_id`. Cleanup and retry queries use that owner, so one daemon
+cannot delete another machine's blob metadata or retry its absolute checkout path.
+Indexed file paths remain project-root-relative and portable. Global `gcode prune`
+still reconciles shared datastore orphans, while it skips filesystem-based stale-root
+classification until #17435 and #17437 add authoritative machine-to-checkout mappings.
+
 Before packing up on one machine:
 
 1. Commit and push work that the next machine needs. Identical checkout paths across
@@ -143,4 +150,4 @@ Do not invent a sentinel machine or guess ownership.
   churn and retain headroom for migrations and operator access. Validate the PostgreSQL
   default limit of 100 against the measured workload.
 
-_Last verified: 2026-08-04_
+_Last verified: 2026-08-05_

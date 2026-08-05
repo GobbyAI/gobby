@@ -469,6 +469,10 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "chat_attachments.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "chat_attachments.message_id",
       "definition": "text|text|YES||NEVER"
     },
@@ -753,6 +757,10 @@
       "definition": "text|text|YES||NEVER"
     },
     {
+      "name": "code_index_prune_dirty_projects.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
       "name": "code_index_prune_dirty_projects.project_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -943,6 +951,10 @@
     {
       "name": "comms_attachments.local_path",
       "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "comms_attachments.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
     },
     {
       "name": "comms_attachments.message_id",
@@ -5459,6 +5471,10 @@
       "definition": "CHECK (status = ANY (ARRAY['started'::text, 'completed'::text, 'failed'::text, 'skipped'::text]))"
     },
     {
+      "name": "chat_attachments.chat_attachments_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
       "name": "chat_attachments.chat_attachments_pkey",
       "definition": "PRIMARY KEY (id)"
     },
@@ -5551,8 +5567,12 @@
       "definition": "CHECK (store = ANY (ARRAY['graph'::text, 'vector'::text]))"
     },
     {
+      "name": "code_index_prune_dirty_projects.code_index_prune_dirty_projects_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
+    },
+    {
       "name": "code_index_prune_dirty_projects.code_index_prune_dirty_projects_pkey",
-      "definition": "PRIMARY KEY (project_id)"
+      "definition": "PRIMARY KEY (machine_id, project_id)"
     },
     {
       "name": "code_indexed_files.code_indexed_files_pkey",
@@ -5569,6 +5589,10 @@
     {
       "name": "code_symbols.code_symbols_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "comms_attachments.comms_attachments_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
     },
     {
       "name": "comms_attachments.comms_attachments_message_id_fkey",
@@ -6956,7 +6980,7 @@
     },
     {
       "name": "code_index_prune_dirty_projects_pkey",
-      "definition": "CREATE UNIQUE INDEX code_index_prune_dirty_projects_pkey ON $schema.code_index_prune_dirty_projects USING btree (project_id)"
+      "definition": "CREATE UNIQUE INDEX code_index_prune_dirty_projects_pkey ON $schema.code_index_prune_dirty_projects USING btree (machine_id, project_id)"
     },
     {
       "name": "code_indexed_files_pkey",
@@ -7199,6 +7223,10 @@
       "definition": "CREATE INDEX idx_chat_attachments_local_path ON $schema.chat_attachments USING btree (local_path)"
     },
     {
+      "name": "idx_chat_attachments_machine_unbound",
+      "definition": "CREATE INDEX idx_chat_attachments_machine_unbound ON $schema.chat_attachments USING btree (machine_id, created_at) WHERE ((conversation_id IS NULL) AND (message_id IS NULL) AND (target_session_id IS NULL) AND (bound_at IS NULL))"
+    },
+    {
       "name": "idx_chat_attachments_message",
       "definition": "CREATE INDEX idx_chat_attachments_message ON $schema.chat_attachments USING btree (message_id)"
     },
@@ -7269,6 +7297,10 @@
     {
       "name": "idx_comms_attachments_message",
       "definition": "CREATE INDEX idx_comms_attachments_message ON $schema.comms_attachments USING btree (message_id)"
+    },
+    {
+      "name": "idx_comms_attachments_message_machine",
+      "definition": "CREATE INDEX idx_comms_attachments_message_machine ON $schema.comms_attachments USING btree (message_id, machine_id)"
     },
     {
       "name": "idx_comms_identities_channel",

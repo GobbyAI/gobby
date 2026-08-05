@@ -6,6 +6,7 @@ from typing import Any
 
 from gobby.code_index.models import CodeIndexPruneDirtyProject
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 
 
 class CodeIndexPruneStorageMixin:
@@ -15,37 +16,42 @@ class CodeIndexPruneStorageMixin:
 
     def mark_prune_dirty(self, project_id: str, root_path: str, reason: str) -> None:
         """Mark a project root as needing gcode prune reconciliation."""
+        machine_id = require_machine_id()
         with self.db.transaction() as conn:
             conn.execute(
                 """INSERT INTO code_index_prune_dirty_projects (
-                    project_id, root_path, reason
-                ) VALUES (%s, %s, %s)
-                ON CONFLICT(project_id) DO UPDATE SET
+                    machine_id, project_id, root_path, reason
+                ) VALUES (%s, %s, %s, %s)
+                ON CONFLICT(machine_id, project_id) DO UPDATE SET
                     root_path=excluded.root_path,
                     reason=excluded.reason,
                     updated_at=CURRENT_TIMESTAMP
                 """,
-                (project_id, root_path, reason),
+                (machine_id, project_id, root_path, reason),
             )
 
     def record_prune_failure(self, project_id: str, error: str) -> None:
         """Persist a failed prune attempt for later cron retry."""
+        machine_id = require_machine_id()
         with self.db.transaction() as conn:
             conn.execute(
                 """UPDATE code_index_prune_dirty_projects
                    SET attempts = attempts + 1,
                        last_error = %s,
                        updated_at = CURRENT_TIMESTAMP
-                 WHERE project_id = %s""",
-                (error, project_id),
+                 WHERE machine_id = %s
+                   AND project_id = %s""",
+                (error, machine_id, project_id),
             )
 
     def clear_prune_dirty(self, project_id: str) -> bool:
         """Clear a dirty prune marker after prune succeeds."""
+        machine_id = require_machine_id()
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM code_index_prune_dirty_projects WHERE project_id = %s",
-                (project_id,),
+                """DELETE FROM code_index_prune_dirty_projects
+                   WHERE machine_id = %s AND project_id = %s""",
+                (machine_id, project_id),
             )
             rowcount = cursor.rowcount
             return isinstance(rowcount, int) and rowcount > 0
@@ -56,19 +62,24 @@ class CodeIndexPruneStorageMixin:
         after: tuple[Any, Any, str] | None = None,
     ) -> list[CodeIndexPruneDirtyProject]:
         """List dirty prune roots, oldest first."""
+        machine_id = require_machine_id()
         params: tuple[Any, ...]
         if after is None:
-            query = """SELECT project_id, root_path, reason, attempts, last_error, created_at, updated_at
+            query = """SELECT machine_id, project_id, root_path, reason, attempts, last_error,
+                              created_at, updated_at
                        FROM code_index_prune_dirty_projects
+                       WHERE machine_id = %s
                        ORDER BY updated_at ASC, created_at ASC, project_id ASC
                        LIMIT %s"""
-            params = (limit,)
+            params = (machine_id, limit)
         else:
-            query = """SELECT project_id, root_path, reason, attempts, last_error, created_at, updated_at
+            query = """SELECT machine_id, project_id, root_path, reason, attempts, last_error,
+                              created_at, updated_at
                        FROM code_index_prune_dirty_projects
-                       WHERE (updated_at, created_at, project_id) > (%s, %s, %s)
+                       WHERE machine_id = %s
+                         AND (updated_at, created_at, project_id) > (%s, %s, %s)
                        ORDER BY updated_at ASC, created_at ASC, project_id ASC
                        LIMIT %s"""
-            params = (*after, limit)
+            params = (machine_id, *after, limit)
         rows = self.db.fetchall(query, params)
         return [CodeIndexPruneDirtyProject.from_row(row) for row in rows]

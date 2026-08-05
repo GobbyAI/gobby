@@ -12,7 +12,6 @@ from typing import Any
 import pytest
 
 from gobby.code_index.gcode_gateway import GcodeCommandResult
-from gobby.code_index.models import IndexedProject
 from gobby.code_index.prune import (
     CODE_INDEX_PRUNE_HANDLER,
     CODE_INDEX_PRUNE_INTERVAL_SECONDS,
@@ -49,15 +48,11 @@ def _gcode_result(
 
 class PruneStorage:
     def __init__(self) -> None:
-        self.projects: list[IndexedProject] = []
         self.dirty_projects: list[Any] = []
         self.pending_by_project: dict[str, list[Any]] = {}
         self.marked_dirty: list[tuple[str, str, str]] = []
         self.cleared_dirty: list[str] = []
         self.failures: list[tuple[str, str]] = []
-
-    def list_indexed_projects(self) -> list[IndexedProject]:
-        return self.projects
 
     def list_prune_dirty_projects(
         self,
@@ -144,15 +139,6 @@ class PruneContext:
         return func(*args, **kwargs)
 
 
-def _project(project_id: str, root_path: Path | None) -> IndexedProject:
-    return IndexedProject(
-        id=project_id,
-        root_path=str(root_path) if root_path is not None else None,
-        total_files=1,
-        total_symbols=1,
-    )
-
-
 def _dirty(
     project_id: str,
     root_path: Path,
@@ -173,7 +159,6 @@ def _dirty(
 @pytest.mark.asyncio
 async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) -> None:
     storage = PruneStorage()
-    storage.projects = [_project("proj-1", tmp_path / "one")]
     storage.dirty_projects = [_dirty("proj-1", tmp_path / "one")]
     gateway = PruneGateway()
     context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
@@ -201,17 +186,13 @@ async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) 
 
 
 @pytest.mark.asyncio
-async def test_global_prune_failure_retries_all_indexed_project_roots(
+async def test_global_prune_failure_retries_only_machine_owned_dirty_roots(
     tmp_path: Path,
 ) -> None:
     root_one = tmp_path / "one"
     root_two = tmp_path / "two"
     storage = PruneStorage()
-    storage.projects = [
-        _project("proj-1", root_one),
-        _project("proj-2", root_two),
-        _project("proj-missing", None),
-    ]
+    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
     gateway = PruneGateway(
         global_result=_gcode_result(
             ("/tmp/gcode", "prune", "--force"),
@@ -235,10 +216,7 @@ async def test_global_prune_failure_retries_all_indexed_project_roots(
         "stderr": "projection prune failed",
         "retried_projects": 2,
     }
-    assert storage.marked_dirty == [
-        ("proj-1", str(root_one), "global_prune_failed"),
-        ("proj-2", str(root_two), "global_prune_failed"),
-    ]
+    assert storage.marked_dirty == []
     assert storage.failures == [
         ("proj-1", "projection prune failed"),
         ("proj-2", "projection prune failed"),
@@ -254,7 +232,7 @@ async def test_global_prune_failure_retries_structured_failed_project_ids(
     root_one = tmp_path / "one"
     root_two = tmp_path / "two"
     storage = PruneStorage()
-    storage.projects = [_project("proj-1", root_one), _project("proj-2", root_two)]
+    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
     gateway = PruneGateway(
         global_result=_gcode_result(
             ("/tmp/gcode", "prune", "--force"),
@@ -270,7 +248,7 @@ async def test_global_prune_failure_retries_structured_failed_project_ids(
     assert result["success"] is False
     assert result["status"] == "failed"
     assert result["retried_projects"] == 1
-    assert storage.marked_dirty == [("proj-2", str(root_two), "global_prune_failed")]
+    assert storage.marked_dirty == []
     assert gateway.targeted_roots == [root_two]
 
 

@@ -303,6 +303,7 @@ class CodeIndexPruneDirtyProject:
     """Project root that needs a gcode prune retry."""
 
     project_id: str
+    machine_id: str
     root_path: str
     reason: str
     attempts: int = 0
@@ -314,6 +315,7 @@ class CodeIndexPruneDirtyProject:
     def from_row(cls, row: Mapping[str, Any]) -> CodeIndexPruneDirtyProject:
         return cls(
             project_id=row["project_id"],
+            machine_id=row["machine_id"],
             root_path=row["root_path"],
             reason=row["reason"],
             attempts=row["attempts"],

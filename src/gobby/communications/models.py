@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from gobby.utils.datetime import normalize_datetime_model, utc_now
+from gobby.utils.machine_id import require_machine_id
 
 
 def _required(data: Mapping[str, Any], key: str) -> Any:
@@ -215,6 +216,7 @@ class CommsAttachment:
     filename: str
     content_type: str
     size_bytes: int
+    machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     local_path: str | None = None
     platform_url: str | None = None
     created_at: datetime = field(default_factory=utc_now)
@@ -225,6 +227,7 @@ class CommsAttachment:
         data = dict(row)
         return cls(
             id=_required(data, "id"),
+            machine_id=_required(data, "machine_id"),
             message_id=_required(data, "message_id"),
             filename=_required(data, "filename"),
             content_type=data.get("content_type", "application/octet-stream"),

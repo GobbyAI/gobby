@@ -2,6 +2,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::reconcile::{bounded_project_id_summary, optional_reconcile_totals_lines};
 use super::*;
+use crate::models::IndexedProject;
+
+#[test]
+fn global_authority_does_not_classify_machine_local_roots_as_stale() {
+    let projects = vec![IndexedProject {
+        id: "shared-project".to_string(),
+        root_path: "/missing/on-this-machine".to_string(),
+        total_files: 1,
+        total_symbols: 1,
+        last_indexed_at: "2026-08-05T00:00:00Z".to_string(),
+        index_duration_ms: 1,
+        total_eligible_files: Some(1),
+    }];
+
+    let authority = global_project_authority(&projects);
+
+    assert_eq!(authority, HashSet::from(["shared-project".to_string()]));
+}
 
 #[test]
 fn prune_without_project_uses_all_indexed_projection_scope() {

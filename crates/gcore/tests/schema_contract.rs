@@ -21,19 +21,16 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "eaf97c2662053cf0f3b112410d66b7bc123402f1100224873656bbe199bc7a80"
+        "c4c66fd45f03122e648482229f7e5e5ebb67ae8ca49f80255d2f63e4ded54aab"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
     assert_eq!(identity.baseline.checksum, BASELINE_CHECKSUM);
-    assert_eq!(identity.latest_asset.version, 376);
-    assert_eq!(
-        identity.latest_asset.filename,
-        "376_add_gh_triage_build_dispatches_task_id_index.sql"
-    );
+    assert_eq!(identity.latest_asset.version, 375);
+    assert_eq!(identity.latest_asset.filename, "baseline@375");
     assert_eq!(
         identity.latest_asset.checksum,
-        "1f83ec9602764f59038e447ec31f1138fe05f4034709a5cb03e7aaf80e2586bf"
+        "c4c66fd45f03122e648482229f7e5e5ebb67ae8ca49f80255d2f63e4ded54aab"
     );
     assert_eq!(identity.root_hash.len(), 64);
 

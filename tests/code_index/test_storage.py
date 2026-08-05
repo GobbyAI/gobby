@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -494,6 +495,35 @@ def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None
     assert code_storage.clear_prune_dirty(PROJECT_ID) is True
     assert code_storage.clear_prune_dirty(PROJECT_ID) is False
     assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == [PROJECT_ID_2]
+
+
+def test_prune_dirty_projects_are_isolated_by_machine(code_storage: CodeIndexStorage) -> None:
+    local_machine_id = "dddddddd-dddd-4ddd-8ddd-000000000001"
+    remote_machine_id = "dddddddd-dddd-4ddd-8ddd-000000000002"
+    for machine_id in (local_machine_id, remote_machine_id):
+        code_storage.db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}"),
+        )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
+        code_storage.mark_prune_dirty(PROJECT_ID, "/local/repo", "local")
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
+        code_storage.mark_prune_dirty(PROJECT_ID, "/remote/repo", "remote")
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
+        local_rows = code_storage.list_prune_dirty_projects()
+        assert [(row.machine_id, row.root_path) for row in local_rows] == [
+            (local_machine_id, "/local/repo")
+        ]
+        code_storage.record_prune_failure(PROJECT_ID, "local failure")
+        assert code_storage.clear_prune_dirty(PROJECT_ID) is True
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
+        remote_rows = code_storage.list_prune_dirty_projects()
+        assert [(row.machine_id, row.root_path, row.attempts) for row in remote_rows] == [
+            (remote_machine_id, "/remote/repo", 0)
+        ]
 
 
 def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:

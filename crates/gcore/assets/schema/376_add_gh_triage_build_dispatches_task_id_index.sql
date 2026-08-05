@@ -1,2 +1,0 @@
-CREATE INDEX idx_gh_triage_build_dispatches_task_id
-ON gh_triage_build_dispatches (task_id);

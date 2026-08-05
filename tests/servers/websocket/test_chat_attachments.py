@@ -207,6 +207,7 @@ def test_append_prepared_attachment_context() -> None:
 def test_prepared_attachment_context_hides_local_path() -> None:
     record = chat_attachments.ChatAttachmentRecord(
         id="att-1",
+        machine_id="bbbbbbbb-bbbb-4bbb-8bbb-000000000001",
         project_id=PERSONAL_PROJECT_ID,
         draft_id=None,
         conversation_id=None,

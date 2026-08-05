@@ -26,6 +26,10 @@ HISTORICALLY_BOUND_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000005"
 CONVERSATION_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000006"
 MESSAGE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000007"
 OTHER_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000008"
+LOCAL_MACHINE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-000000000001"
+REMOTE_MACHINE_ID = "bbbbbbbb-bbbb-4bbb-8bbb-000000000002"
+LOCAL_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000009"
+REMOTE_ATTACHMENT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-000000000010"
 
 
 def _create_attachment(
@@ -46,6 +50,60 @@ def _create_attachment(
         local_path=str(path),
     )
     return attachment_id
+
+
+def _insert_machine(temp_db: HubDatabase, machine_id: str) -> None:
+    temp_db.execute(
+        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (machine_id, f"test-{machine_id[-4:]}"),
+    )
+
+
+def test_attachment_storage_is_scoped_to_active_machine(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    _insert_machine(temp_db, LOCAL_MACHINE_ID)
+    _insert_machine(temp_db, REMOTE_MACHINE_ID)
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        _create_attachment(temp_db, tmp_path, LOCAL_ATTACHMENT_ID)
+        chat_attachments.bind_attachments(
+            temp_db,
+            [LOCAL_ATTACHMENT_ID],
+            conversation_id="shared-conversation",
+        )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=REMOTE_MACHINE_ID):
+        _create_attachment(temp_db, tmp_path, REMOTE_ATTACHMENT_ID)
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        assert chat_attachments.get_attachment(temp_db, REMOTE_ATTACHMENT_ID) is None
+        assert [
+            row.id
+            for row in chat_attachments.get_attachments_by_ids(
+                temp_db,
+                [LOCAL_ATTACHMENT_ID, REMOTE_ATTACHMENT_ID],
+            )
+        ] == [LOCAL_ATTACHMENT_ID]
+        with pytest.raises(ValueError, match=f"Unknown attachment id: {REMOTE_ATTACHMENT_ID}"):
+            chat_attachments.bind_attachments(
+                temp_db,
+                [REMOTE_ATTACHMENT_ID],
+                conversation_id="shared-conversation",
+            )
+        assert chat_attachments.delete_unbound_attachment(temp_db, REMOTE_ATTACHMENT_ID) is None
+        deleted = chat_attachments.delete_attachments_for_conversations(
+            temp_db,
+            ["shared-conversation"],
+        )
+        assert [row.id for row in deleted] == [LOCAL_ATTACHMENT_ID]
+
+    remote_row = temp_db.fetchone(
+        "SELECT machine_id::text, conversation_id FROM chat_attachments WHERE id = %s",
+        (REMOTE_ATTACHMENT_ID,),
+    )
+    assert remote_row == {"machine_id": REMOTE_MACHINE_ID, "conversation_id": None}
 
 
 def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(

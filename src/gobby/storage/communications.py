@@ -21,6 +21,7 @@ from gobby.utils.datetime import (
     to_aware_utc,
     utc_now,
 )
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import Transaction
@@ -31,10 +32,17 @@ logger = logging.getLogger(__name__)
 class LocalCommunicationsStore:
     """Storage manager for communications data."""
 
-    def __init__(self, db: HubDatabase, project_id: str = ""):
+    def __init__(
+        self,
+        db: HubDatabase,
+        project_id: str = "",
+        *,
+        machine_id: str | None = None,
+    ):
         """Initialize with database connection and optional project ID."""
         self.db = db
         self.project_id = project_id
+        self.machine_id = machine_id or require_machine_id()
 
     # --- Channels ---
 
@@ -393,12 +401,19 @@ class LocalCommunicationsStore:
 WITH messages_to_delete AS MATERIALIZED (
     SELECT id FROM comms_messages
     WHERE created_at < %s
+      AND NOT EXISTS (
+          SELECT 1
+          FROM comms_attachments
+          WHERE comms_attachments.message_id = comms_messages.id
+            AND comms_attachments.machine_id <> %s
+      )
     ORDER BY created_at ASC
     LIMIT %s
 ), attachment_paths AS MATERIALIZED (
     SELECT local_path
     FROM comms_attachments
     WHERE message_id IN (SELECT id FROM messages_to_delete)
+      AND machine_id = %s
       AND local_path IS NOT NULL
 ), deleted_messages AS (
     DELETE FROM comms_messages
@@ -412,7 +427,7 @@ SELECT
         ARRAY[]::TEXT[]
     ) AS local_paths
 """,
-                (cutoff_value, limit),
+                (cutoff_value, self.machine_id, limit, self.machine_id),
             ).fetchone()
             if row is None:
                 return 0, []
@@ -572,17 +587,18 @@ SELECT
 
     # --- Attachments ---
 
-    @staticmethod
-    def _insert_attachment(conn: Transaction, attachment: CommsAttachment) -> None:
+    def _insert_attachment(self, conn: Transaction, attachment: CommsAttachment) -> None:
+        attachment.machine_id = self.machine_id
         conn.execute(
             """
             INSERT INTO comms_attachments (
-                id, message_id, filename, content_type, size_bytes,
+                id, machine_id, message_id, filename, content_type, size_bytes,
                 local_path, platform_url, created_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 attachment.id,
+                attachment.machine_id,
                 attachment.message_id,
                 attachment.filename,
                 attachment.content_type,
@@ -604,26 +620,35 @@ SELECT
 
     def get_attachment(self, attachment_id: str) -> CommsAttachment | None:
         """Get an attachment by ID."""
-        row = self.db.fetchone("SELECT * FROM comms_attachments WHERE id = %s", (attachment_id,))
+        row = self.db.fetchone(
+            "SELECT * FROM comms_attachments WHERE id = %s AND machine_id = %s",
+            (attachment_id, self.machine_id),
+        )
         return CommsAttachment.from_row(dict(row)) if row else None
 
     def list_attachments(self, message_id: str) -> list[CommsAttachment]:
         """List all attachments for a message."""
         rows = self.db.fetchall(
-            "SELECT * FROM comms_attachments WHERE message_id = %s ORDER BY created_at",
-            (message_id,),
+            """SELECT * FROM comms_attachments
+               WHERE message_id = %s AND machine_id = %s
+               ORDER BY created_at""",
+            (message_id, self.machine_id),
         )
         return [CommsAttachment.from_row(dict(row)) for row in rows]
 
     def delete_attachment(self, attachment_id: str) -> None:
         """Delete an attachment by ID."""
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM comms_attachments WHERE id = %s", (attachment_id,))
+            conn.execute(
+                "DELETE FROM comms_attachments WHERE id = %s AND machine_id = %s",
+                (attachment_id, self.machine_id),
+            )
 
     def delete_attachments_for_message(self, message_id: str) -> int:
         """Delete all attachments for a message."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "DELETE FROM comms_attachments WHERE message_id = %s", (message_id,)
+                "DELETE FROM comms_attachments WHERE message_id = %s AND machine_id = %s",
+                (message_id, self.machine_id),
             )
             return cursor.rowcount

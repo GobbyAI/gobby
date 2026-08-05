@@ -131,7 +131,6 @@ class CodeIndexPruner:
             }
 
         async with self._global_lock:
-            projects = await self._context.run_db(self._context.storage.list_indexed_projects)
             gateway = self._context.gcode_gateway
             if gateway is None:
                 return {
@@ -176,19 +175,14 @@ class CodeIndexPruner:
                 }
 
             detail = result.stderr.strip() or result.stdout.strip() or "gcode prune failed"
-            retry_projects = _retry_projects(projects, result)
+            dirty_projects = await self._list_dirty_projects()
+            retry_projects = _retry_dirty_projects(dirty_projects, result)
             outcomes: list[str] = []
             for project in retry_projects:
-                project_id = str(project.id)
+                project_id = str(project.project_id)
                 if not project.root_path:
                     outcomes.append(f"{project_id}:skipped_missing_root")
                     continue
-                await self._context.run_db(
-                    self._context.storage.mark_prune_dirty,
-                    project_id,
-                    str(project.root_path),
-                    "global_prune_failed",
-                )
                 await self._context.run_db(
                     self._context.storage.record_prune_failure,
                     project_id,
@@ -216,6 +210,20 @@ class CodeIndexPruner:
                 "stderr": result.stderr,
                 "retried_projects": len(outcomes),
             }
+
+    async def _list_dirty_projects(self, *, page_size: int = 100) -> list[Any]:
+        dirty_projects: list[Any] = []
+        after: tuple[Any, Any, str] | None = None
+        while True:
+            page = await self._context.run_db(
+                self._context.storage.list_prune_dirty_projects,
+                page_size,
+                after,
+            )
+            dirty_projects.extend(page)
+            if len(page) < page_size:
+                return dirty_projects
+            after = _dirty_prune_cursor(page[-1])
 
     async def prune_project(
         self,
@@ -375,12 +383,12 @@ def register_code_index_prune_cron(
         cron_storage.wake_system_job(repaired.id)
 
 
-def _retry_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any]:
+def _retry_dirty_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any]:
     failed_ids = _failed_project_ids(result.stdout) | _failed_project_ids(result.stderr)
     projects_with_roots = [project for project in projects if getattr(project, "root_path", None)]
     if not failed_ids:
         return projects_with_roots
-    return [project for project in projects_with_roots if str(project.id) in failed_ids]
+    return [project for project in projects_with_roots if str(project.project_id) in failed_ids]
 
 
 def _dirty_prune_cursor(dirty: Any) -> tuple[Any, Any, str]:

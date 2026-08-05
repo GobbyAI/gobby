@@ -204,26 +204,14 @@ fn prune_global(force: bool, quiet: bool) -> anyhow::Result<()> {
 
 fn discover_global_prune(quiet: bool) -> anyhow::Result<GlobalPruneDiscovery> {
     let all_projects = collect_projects()?;
-    let stale = stale_projects(&all_projects);
     let database_url = db::resolve_database_url()?;
     let mut conn = db::connect_readonly(&database_url)?;
     let orphan_sql_project_ids = collect_orphan_project_ids(&mut conn)?;
-    let authority = all_projects
-        .iter()
-        .map(|project| project.id.clone())
-        .collect::<HashSet<_>>();
-    let stale_project_ids = stale
-        .iter()
-        .map(|project| project.project.id.clone())
-        .collect::<HashSet<_>>();
-    let stale_projects = stale
-        .into_iter()
-        .map(|project| StaleProjectPlan {
-            id: project.project.id.clone(),
-            label: display_name(project.project),
-            reason: project.reason,
-        })
-        .collect();
+    let authority = global_project_authority(&all_projects);
+    // #17435/#17437 will add machine-owned root mappings. Until then, an absolute
+    // root missing on this machine says nothing about shared project liveness.
+    let stale_project_ids = HashSet::new();
+    let stale_projects = Vec::new();
 
     let services = Context::resolve_for_project_id_with_services(
         GLOBAL_SERVICE_CONTEXT_PROJECT_ID,
@@ -257,6 +245,10 @@ fn discover_global_prune(quiet: bool) -> anyhow::Result<GlobalPruneDiscovery> {
         graph_scopes,
         orphan_sql_project_ids,
     })
+}
+
+fn global_project_authority(projects: &[crate::models::IndexedProject]) -> HashSet<String> {
+    projects.iter().map(|project| project.id.clone()).collect()
 }
 
 fn discover_project_scoped_records(ctx: &Context) -> anyhow::Result<GlobalPruneDiscovery> {
