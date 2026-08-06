@@ -1240,3 +1240,35 @@ def test_set_graph_expansion_timeout_persists_and_requires_restart(
     changed = tool(key=key, value=20.0)
     assert changed["success"] is True
     assert changed["requires_restart"] is True
+
+
+def test_set_adapter_hook_timeout_requires_daemon_restart(
+    config_registry: InternalToolRegistry,
+    config_store: ConfigStore,
+) -> None:
+    tool = config_registry.get_tool("set_config")
+    assert tool is not None
+
+    result = tool(key="hooks.adapter_timeout", value=110)
+
+    assert result["success"] is True
+    assert result["requires_restart"] is True
+    assert "hook timeout policy" in result["restart_hint"]
+    assert "requires_provider_reinstall" not in result
+    assert config_store.get("hooks.adapter_timeout") == 110
+
+
+def test_set_provider_hook_timeout_requires_restart_and_provider_reinstall(
+    config_registry: InternalToolRegistry,
+    config_store: ConfigStore,
+) -> None:
+    tool = config_registry.get_tool("set_config")
+    assert tool is not None
+
+    result = tool(key="hooks.provider_timeout", value=150)
+
+    assert result["success"] is True
+    assert result["requires_restart"] is True
+    assert result["requires_provider_reinstall"] is True
+    assert "gobby install" in result["provider_reinstall_hint"]
+    assert config_store.get("hooks.provider_timeout") == 150

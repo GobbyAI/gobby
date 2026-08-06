@@ -15,6 +15,7 @@ from .hook_commands import (
     merge_gobby_hook_groups,
     remove_gobby_hook_handlers,
     rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
 )
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
@@ -57,7 +58,12 @@ def _remove_gobby_hooks(settings: dict[str, Any], hook_types: list[str]) -> list
     return removed
 
 
-def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
+def install_qwen(
+    project_path: Path,
+    mode: str = "global",
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Gobby integration for Qwen CLI."""
     hooks_installed: list[str] = []
     result: dict[str, Any] = {
@@ -127,6 +133,7 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
         cli_name="qwen",
         hooks_dir=hooks_dir,
     )
+    set_gobby_hook_timeouts(gobby_settings, timeout=hook_timeout_seconds * 1000)
 
     if "hooks" not in existing_settings:
         existing_settings["hooks"] = {}

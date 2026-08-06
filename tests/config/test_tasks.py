@@ -432,7 +432,7 @@ class TestWorkflowConfigDefaults:
 
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 30.0
+        assert config.timeout == 90.0
 
 
 class TestWorkflowConfigCustom:
@@ -462,15 +462,14 @@ class TestWorkflowConfigValidation:
 
         with pytest.raises(ValidationError) as exc_info:
             WorkflowConfig(timeout=-1.0)
-        assert "non-negative" in str(exc_info.value).lower()
+        assert "positive" in str(exc_info.value).lower()
 
-    def test_zero_timeout_uses_finite_default(self) -> None:
-        """The former persisted zero default is normalized to a finite timeout."""
-        from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS, WorkflowConfig
+    def test_zero_timeout_is_rejected(self) -> None:
+        """Test that zero cannot disable the workflow deadline."""
+        from gobby.config.tasks import WorkflowConfig
 
-        config = WorkflowConfig(timeout=0.0)
-
-        assert config.timeout == DEFAULT_WORKFLOW_TIMEOUT_SECONDS
+        with pytest.raises(ValidationError, match="positive"):
+            WorkflowConfig(timeout=0.0)
 
 
 # =============================================================================
@@ -550,7 +549,7 @@ class TestWorkflowConfigFromAppPy:
 
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 30.0
+        assert config.timeout == 90.0
 
     def test_validation_via_app_py(self) -> None:
         """Test validation works when imported from app.py."""

@@ -202,7 +202,7 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | memory_recall.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | memory-knowledge |  |
 | memory_recall.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=string map= |
 | memory_recall.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
-| memory_recall.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
+| memory_recall.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge | Default 60 seconds; daemon restart required; must remain below workflow.timeout. |
 | memory_recall.candidate_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | memory_recall.selected_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | memory_recall.min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
@@ -236,8 +236,10 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | hook_extensions.webhooks.endpoints | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | integrations-hooks | array items=object map= |
 | hook_extensions.webhooks.default_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks |  |
 | hook_extensions.webhooks.async_dispatch | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | integrations-hooks |  |
+| hooks.adapter_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks | Default 105 seconds; daemon restart required. |
+| hooks.provider_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | integrations-hooks | Default 120 seconds; daemon restart and provider reinstall required. |
 | workflow.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| workflow.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| workflow.timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows | Default 90 seconds; daemon restart required; must remain between memory recall and adapter deadlines. |
 | workflow.debug_echo_context | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | databases.qdrant.url | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
 | databases.qdrant.api_key | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |

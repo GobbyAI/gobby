@@ -20,7 +20,11 @@ from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 from gobby.utils.native_bin import resolve_native_bin_or_default
 
-from .hook_commands import merge_gobby_hook_groups, rewrite_hook_template_commands
+from .hook_commands import (
+    merge_gobby_hook_groups,
+    rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
+)
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -119,7 +123,12 @@ def _restore_statusline(settings: dict[str, Any]) -> None:
         del settings["statusLine"]
 
 
-def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
+def install_claude(
+    project_path: Path,
+    mode: str = "global",
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Gobby integration for Claude Code (hooks, workflows).
 
     Args:
@@ -262,6 +271,11 @@ def install_claude(project_path: Path, mode: str = "global") -> dict[str, Any]:
         result["error"] = f"Failed to parse hooks template: {e}"
         return result
     rewrite_hook_template_commands(gobby_settings, cli_name="claude", hooks_dir=hooks_dir)
+    set_gobby_hook_timeouts(
+        gobby_settings,
+        timeout=hook_timeout_seconds,
+        hook_overrides={"SessionEnd": min(hook_timeout_seconds, 60)},
+    )
 
     # Ensure hooks section exists
     if "hooks" not in existing_settings:

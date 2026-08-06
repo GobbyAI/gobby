@@ -618,16 +618,19 @@ def install(
     db: HubDatabase | None = None
     secret_store: SecretStore | None = None
     config_store: ConfigStore | None = None
+    provider_hook_timeout_seconds = 120
     database_stack = ExitStack()
 
     try:
         try:
             from gobby.storage.hub.runtime import runtime_hub_database
 
-            load_full_config_from_db()
             db = database_stack.enter_context(runtime_hub_database())
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)
+            provider_hook_timeout_seconds = load_full_config_from_db(
+                database=db
+            ).hooks.provider_timeout
         except (
             BootstrapConfigError,
             FileNotFoundError,
@@ -670,7 +673,14 @@ def install(
         }
         for cli_name, installer_fn in _standard_installers.items():
             if cli_name in clis_to_install:
-                _run_standard_cli_install(cli_name, installer_fn, project_path, mode, results)
+                _run_standard_cli_install(
+                    cli_name,
+                    installer_fn,
+                    project_path,
+                    mode,
+                    results,
+                    hook_timeout_seconds=provider_hook_timeout_seconds,
+                )
 
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)

@@ -51,6 +51,7 @@ from gobby.config.features import (
     ToolResultOffloadConfig,
     ToolSummarizerConfig,
 )
+from gobby.config.hooks import HookTimeoutConfig
 from gobby.config.indexing import IndexingConfig
 from gobby.config.logging import LoggingSettings, common_log_parent
 from gobby.config.persistence import (
@@ -330,6 +331,10 @@ class DaemonConfig(BaseModel):
         default_factory=WorkflowConfig,
         description="Workflow engine configuration",
     )
+    hooks: HookTimeoutConfig = Field(
+        default_factory=HookTimeoutConfig,
+        description="Coordinated daemon and provider hook timeout configuration",
+    )
     databases: DatabasesConfig = Field(
         default_factory=DatabasesConfig,
         description="Shared database connections (Qdrant, FalkorDB)",
@@ -494,6 +499,22 @@ class DaemonConfig(BaseModel):
         if not (1.0 <= v <= 300.0):
             raise ValueError("daemon_health_check_interval must be between 1.0 and 300.0 seconds")
         return v
+
+    @model_validator(mode="after")
+    def validate_hook_timeout_order(self) -> DaemonConfig:
+        """Require each enclosing hook layer to outlive the work it contains."""
+        timeouts = (
+            self.memory_recall.timeout,
+            self.workflow.timeout,
+            self.hooks.adapter_timeout,
+            self.hooks.provider_timeout,
+        )
+        if not all(inner < outer for inner, outer in zip(timeouts, timeouts[1:], strict=False)):
+            raise ValueError(
+                "Hook timeouts must satisfy memory_recall.timeout < workflow.timeout < "
+                "hooks.adapter_timeout < hooks.provider_timeout"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_remote_ui_auth(self) -> DaemonConfig:

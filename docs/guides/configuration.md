@@ -419,8 +419,15 @@ gobby-tasks:
 
 workflow:
   enabled: true
-  timeout: 0.0
+  timeout: 90.0
   debug_echo_context: false
+
+memory_recall:
+  timeout: 60
+
+hooks:
+  adapter_timeout: 105.0
+  provider_timeout: 120
 ```
 
 Task lifecycle automation is stage-manifest based. Docs leaf work can run inside
@@ -432,6 +439,14 @@ Rule authors should target semantic workflow events such as `turn_start`,
 `turn_end`, `before_tool`, and `after_tool`. Provider runtime events are adapter
 details below that authoring API. See [rules.md](./rules.md) for the complete
 rule model.
+
+Hook deadlines must stay strictly ordered:
+`memory_recall.timeout < workflow.timeout < hooks.adapter_timeout <
+hooks.provider_timeout`. All four values must be positive. Changes require a
+daemon restart. A `hooks.provider_timeout` change also requires `gobby install`
+to rewrite provider settings. Qwen stores the provider value in milliseconds;
+Claude caps `SessionEnd` at 60 seconds; Codex keeps its enqueue-only `SessionEnd`
+hook at 3 seconds. AGY manages its own timeout contract.
 
 ### Code Index
 
@@ -639,7 +654,8 @@ constraints include:
 | --- | --- |
 | Port | `1024` through `65535` |
 | Positive timeout | Greater than `0` |
-| Non-negative workflow timeout | `0` or greater |
+| Workflow timeout | Greater than `0` |
+| Hook timeout policy | `memory_recall < workflow < adapter < provider` |
 | Weight or threshold | `0.0` through `1.0` |
 | MCP search mode | `llm`, `semantic`, or `hybrid` |
 | Provider auth mode | `subscription`, `api_key`, or `adc` |
@@ -660,6 +676,11 @@ List DB overrides with `gobby-config:list_config_keys`. If a key is absent, the
 daemon is using the Pydantic default. If a key is present but behavior did not
 change, restart the daemon; the HTTP config save route reports
 `requires_restart: true` for config updates.
+
+Hook timeout changes report this restart requirement explicitly. When
+`hooks.provider_timeout` changes, rerun `gobby install` after restarting so the
+Claude, Codex, Qwen, Droid, and Grok client configurations receive the new
+outer deadline.
 
 ### Secret Is Masked Or Missing
 

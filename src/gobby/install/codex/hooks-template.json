@@ -5,7 +5,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=SessionStart"
+          "command": "ghook --gobby-owned --cli=codex --type=SessionStart",
+          "timeout": 120
           }
         ]
       }
@@ -15,7 +16,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=UserPromptSubmit"
+          "command": "ghook --gobby-owned --cli=codex --type=UserPromptSubmit",
+          "timeout": 120
           }
         ]
       }
@@ -26,7 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PreToolUse"
+          "command": "ghook --gobby-owned --cli=codex --type=PreToolUse",
+          "timeout": 120
           }
         ]
       }
@@ -37,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PermissionRequest"
+          "command": "ghook --gobby-owned --cli=codex --type=PermissionRequest",
+          "timeout": 120
           }
         ]
       }
@@ -48,7 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PostToolUse"
+          "command": "ghook --gobby-owned --cli=codex --type=PostToolUse",
+          "timeout": 120
           }
         ]
       }
@@ -58,7 +63,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PreCompact"
+          "command": "ghook --gobby-owned --cli=codex --type=PreCompact",
+          "timeout": 120
           }
         ]
       }
@@ -68,7 +74,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PostCompact"
+          "command": "ghook --gobby-owned --cli=codex --type=PostCompact",
+          "timeout": 120
           }
         ]
       }
@@ -78,7 +85,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=Stop"
+          "command": "ghook --gobby-owned --cli=codex --type=Stop",
+          "timeout": 120
           }
         ]
       }

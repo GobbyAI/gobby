@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -17,7 +18,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -27,7 +29,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -37,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -47,7 +51,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -57,7 +62,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -67,7 +73,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -77,7 +84,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }
@@ -87,7 +95,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "__GOBBY_HOOK_COMMAND__"
+          "command": "__GOBBY_HOOK_COMMAND__",
+          "timeout": 120
           }
         ]
       }

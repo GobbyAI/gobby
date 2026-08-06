@@ -17,7 +17,7 @@ from gobby.cli.utils import get_install_dir
 from gobby.install.bin_freshness_models import is_at_least_version
 from gobby.utils.deps import get_ghook_version
 
-from .hook_commands import build_hook_command
+from .hook_commands import build_hook_command, set_gobby_hook_timeouts
 from .shared import install_global_hooks, install_shared_content
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,12 @@ def _grok_ghook_support_error() -> str | None:
     )
 
 
-def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
+def install_grok(
+    project_path: Path,
+    mode: str = "global",
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Gobby integration for Grok CLI native hook files."""
     hooks_installed: list[str] = []
     result: dict[str, Any] = {
@@ -124,6 +129,7 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
         hook_config = json.load(f)
 
     _rewrite_grok_hook_commands(hook_config, hooks_dir)
+    set_gobby_hook_timeouts(hook_config, timeout=hook_timeout_seconds)
 
     with open(gobby_hook_file, "w") as f:
         json.dump(hook_config, f, indent=2)

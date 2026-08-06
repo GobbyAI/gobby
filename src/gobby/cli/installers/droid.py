@@ -19,7 +19,11 @@ from gobby.agents.trust import seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 from gobby.utils.deps import get_ghook_version
 
-from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
+from .hook_commands import (
+    config_contains_gobby_hook,
+    rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
+)
 from .mcp_config import configure_mcp_server_json, remove_mcp_server_json
 from .shared import (
     clean_project_hooks,
@@ -102,7 +106,11 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> str | None:
     return str(backup_path) if backup_path else None
 
 
-def _load_droid_hooks_template(hooks_dir: Path) -> dict[str, Any]:
+def _load_droid_hooks_template(
+    hooks_dir: Path,
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Load and rewrite the bundled Droid hooks template.
 
     The template stores hooks under a ``hooks`` wrapper (consistent with other
@@ -120,6 +128,7 @@ def _load_droid_hooks_template(hooks_dir: Path) -> dict[str, Any]:
         raise ValueError(f"{template_path} must contain a JSON object")
 
     rewrite_hook_template_commands(template, cli_name="droid", hooks_dir=hooks_dir)
+    set_gobby_hook_timeouts(template, timeout=hook_timeout_seconds)
 
     hooks = template.get("hooks")
     if not isinstance(hooks, dict):
@@ -245,7 +254,12 @@ def _droid_ghook_version_warning() -> str | None:
     return None
 
 
-def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
+def install_droid(
+    project_path: Path,
+    mode: str = "global",
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Gobby integration for Factory Droid hooks and MCP registration."""
     hooks_installed: list[str] = []
     result: dict[str, Any] = {
@@ -281,7 +295,10 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
     warnings = _warn_empty_project_hooks(project_path)
 
     try:
-        gobby_hooks = _load_droid_hooks_template(hooks_dir)
+        gobby_hooks = _load_droid_hooks_template(
+            hooks_dir,
+            hook_timeout_seconds=hook_timeout_seconds,
+        )
         existing_settings = _load_json_file(hooks_file)
         updated_settings = _merge_gobby_hooks(existing_settings, gobby_hooks)
     except (FileNotFoundError, ValueError, json.JSONDecodeError, OSError) as exc:

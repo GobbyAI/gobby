@@ -52,6 +52,12 @@ _FALKOR_RESTART_HINT = (
 _MEMORY_GRAPH_EXPANSION_RESTART_HINT = (
     "Run `gobby restart` for the new memory graph related-expansion timeout to take effect."
 )
+_HOOK_TIMEOUT_RESTART_HINT = (
+    "Run `gobby restart` for the new hook timeout policy to take effect in the daemon."
+)
+_HOOK_PROVIDER_REINSTALL_HINT = (
+    "Re-run `gobby install` for the provider hook timeout to take effect in CLI settings."
+)
 _UNEXPECTED_CONFIG_ERROR = "Internal config error"
 
 
@@ -98,6 +104,23 @@ def _add_restart_metadata(
         != after_config.memory.graph_related_expansion_timeout_seconds
     ):
         restart_hints.append(_MEMORY_GRAPH_EXPANSION_RESTART_HINT)
+    before_hook_timeouts = (
+        before_config.memory_recall.timeout,
+        before_config.workflow.timeout,
+        before_config.hooks.adapter_timeout,
+        before_config.hooks.provider_timeout,
+    )
+    after_hook_timeouts = (
+        after_config.memory_recall.timeout,
+        after_config.workflow.timeout,
+        after_config.hooks.adapter_timeout,
+        after_config.hooks.provider_timeout,
+    )
+    if before_hook_timeouts != after_hook_timeouts:
+        restart_hints.append(_HOOK_TIMEOUT_RESTART_HINT)
+    if before_config.hooks.provider_timeout != after_config.hooks.provider_timeout:
+        result["requires_provider_reinstall"] = True
+        result["provider_reinstall_hint"] = _HOOK_PROVIDER_REINSTALL_HINT
     if restart_hints:
         result["requires_restart"] = True
         result["restart_hint"] = " ".join(restart_hints)

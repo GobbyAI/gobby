@@ -7,8 +7,8 @@
           {
             "name": "gobby-session-start",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=SessionStart",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=SessionStart",
+          "timeout": 120000
           }
         ]
       }
@@ -19,8 +19,8 @@
           {
             "name": "gobby-session-end",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=SessionEnd",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=SessionEnd",
+          "timeout": 120000
           }
         ]
       }
@@ -31,8 +31,8 @@
           {
             "name": "gobby-user-prompt-submit",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=UserPromptSubmit",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=UserPromptSubmit",
+          "timeout": 120000
           }
         ]
       }
@@ -44,8 +44,8 @@
           {
             "name": "gobby-pre-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PreToolUse",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PreToolUse",
+          "timeout": 120000
           }
         ]
       }
@@ -57,8 +57,8 @@
           {
             "name": "gobby-permission-request",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PermissionRequest",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PermissionRequest",
+          "timeout": 120000
           }
         ]
       }
@@ -70,8 +70,8 @@
           {
             "name": "gobby-post-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PostToolUse",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PostToolUse",
+          "timeout": 120000
           }
         ]
       }
@@ -83,8 +83,8 @@
           {
             "name": "gobby-post-tool-use-failure",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PostToolUseFailure",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PostToolUseFailure",
+          "timeout": 120000
           }
         ]
       }
@@ -95,8 +95,8 @@
           {
             "name": "gobby-stop",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=Stop",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=Stop",
+          "timeout": 120000
           }
         ]
       }
@@ -108,8 +108,8 @@
           {
             "name": "gobby-stop-failure",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=StopFailure",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=StopFailure",
+          "timeout": 120000
           }
         ]
       }
@@ -121,8 +121,8 @@
           {
             "name": "gobby-subagent-start",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=SubagentStart",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=SubagentStart",
+          "timeout": 120000
           }
         ]
       }
@@ -134,8 +134,8 @@
           {
             "name": "gobby-subagent-stop",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=SubagentStop",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=SubagentStop",
+          "timeout": 120000
           }
         ]
       }
@@ -146,8 +146,8 @@
           {
             "name": "gobby-pre-compact",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PreCompact",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PreCompact",
+          "timeout": 120000
           }
         ]
       }
@@ -158,8 +158,8 @@
           {
             "name": "gobby-post-compact",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=PostCompact",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=PostCompact",
+          "timeout": 120000
           }
         ]
       }
@@ -170,8 +170,8 @@
           {
             "name": "gobby-notification",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=Notification",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=Notification",
+          "timeout": 120000
           }
         ]
       }
@@ -182,8 +182,8 @@
           {
             "name": "gobby-todo-created",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=TodoCreated",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=TodoCreated",
+          "timeout": 120000
           }
         ]
       }
@@ -194,8 +194,8 @@
           {
             "name": "gobby-todo-completed",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=qwen --type=TodoCompleted",
-            "timeout": 45000
+          "command": "ghook --gobby-owned --cli=qwen --type=TodoCompleted",
+          "timeout": 120000
           }
         ]
       }

@@ -50,7 +50,7 @@ def test_install_droid_global_writes_hooks_and_mcp(
     project_path: Path,
     droid_env: Path,
 ) -> None:
-    result = install_droid(project_path, mode="global")
+    result = install_droid(project_path, mode="global", hook_timeout_seconds=150)
 
     assert result["success"] is True
     assert tuple(result["hooks_installed"]) == DROID_PASCAL_HOOK_NAMES
@@ -62,9 +62,11 @@ def test_install_droid_global_writes_hooks_and_mcp(
     assert tuple(hooks) == DROID_PASCAL_HOOK_NAMES
     assert "hooks" not in hooks  # flat format, no wrapper
     for hook_type in DROID_PASCAL_HOOK_NAMES:
-        command = hooks[hook_type][0]["hooks"][0]["command"]
+        handler = hooks[hook_type][0]["hooks"][0]
+        command = handler["command"]
         base = f"/Users/test/.gobby/bin/ghook --gobby-owned --cli=droid --type={hook_type}"
         assert command == base
+        assert handler["timeout"] == 150
 
     mcp = _load_json(droid_env / ".factory" / "mcp.json")
     assert mcp["mcpServers"]["gobby"]["type"] == "stdio"

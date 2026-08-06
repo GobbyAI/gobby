@@ -386,6 +386,8 @@ def _run_standard_cli_install(
     project_path: Path,
     mode: str,
     results: dict[str, dict[str, Any]],
+    *,
+    hook_timeout_seconds: int = 120,
 ) -> None:
     """Run install + echo for a standard CLI."""
     display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
@@ -394,7 +396,14 @@ def _run_standard_cli_install(
     click.echo(display_name)
     click.echo("-" * 40)
 
-    result = installer(project_path, mode=mode)
+    if cli_name == "agy":
+        result = installer(project_path, mode=mode)
+    else:
+        result = installer(
+            project_path,
+            mode=mode,
+            hook_timeout_seconds=hook_timeout_seconds,
+        )
     results[cli_name] = result
 
     if result["success"]:

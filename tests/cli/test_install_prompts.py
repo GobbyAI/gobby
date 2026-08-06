@@ -13,6 +13,7 @@ from gobby.cli._install_prompts import (
     _echo_install_summary,
     _prompt_hub_api_keys,
     _run_falkordb_install,
+    _run_standard_cli_install,
     _run_voice_install,
 )
 from gobby.cli._install_state import empty_install_state
@@ -20,6 +21,44 @@ from gobby.cli.install import install as install_command
 from gobby.config.skills import HubConfig, SkillsConfig
 
 pytestmark = pytest.mark.unit
+
+
+def test_standard_cli_install_forwards_provider_hook_timeout(tmp_path: Path) -> None:
+    installer = MagicMock(return_value={"success": False, "error": "expected"})
+    results: dict[str, dict[str, Any]] = {}
+
+    _run_standard_cli_install(
+        "claude",
+        installer,
+        tmp_path,
+        "project",
+        results,
+        hook_timeout_seconds=150,
+    )
+
+    installer.assert_called_once_with(
+        tmp_path,
+        mode="project",
+        hook_timeout_seconds=150,
+    )
+    assert results == {"claude": {"success": False, "error": "expected"}}
+
+
+def test_standard_cli_install_keeps_agy_signature_unchanged(tmp_path: Path) -> None:
+    installer = MagicMock(return_value={"success": False, "error": "expected"})
+    results: dict[str, dict[str, Any]] = {}
+
+    _run_standard_cli_install(
+        "agy",
+        installer,
+        tmp_path,
+        "project",
+        results,
+        hook_timeout_seconds=150,
+    )
+
+    installer.assert_called_once_with(tmp_path, mode="project")
+    assert results == {"agy": {"success": False, "error": "expected"}}
 
 
 def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
@@ -404,6 +443,7 @@ class TestInstallCommandSharedStores:
     def test_builds_one_db_and_secret_store_and_reuses_them(self, tmp_path: Path) -> None:
         config = MagicMock()
         config.database_url = str(tmp_path / "shared.db")
+        config.hooks.provider_timeout = 150
         db = MagicMock()
         db.fetchone.return_value = None
         secret_store = MagicMock()
@@ -442,7 +482,7 @@ class TestInstallCommandSharedStores:
             ),
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
-            patch("gobby.cli.install._run_standard_cli_install"),
+            patch("gobby.cli.install._run_standard_cli_install") as mock_standard_install,
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
             patch("gobby.cli.install._echo_install_summary", return_value=True) as mock_summary,
@@ -476,6 +516,7 @@ class TestInstallCommandSharedStores:
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
         mock_provision_token.assert_called_once_with(config_store)
+        assert mock_standard_install.call_args.kwargs["hook_timeout_seconds"] == 150
         assert mock_voice_install.call_args.kwargs["db"] is db
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db

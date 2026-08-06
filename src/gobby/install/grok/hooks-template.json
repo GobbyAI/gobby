@@ -6,8 +6,8 @@
           {
             "name": "gobby-session-start",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=session_start",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=session_start",
+          "timeout": 120
           }
         ]
       }
@@ -18,8 +18,8 @@
           {
             "name": "gobby-session-end",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=session_end",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=session_end",
+          "timeout": 120
           }
         ]
       }
@@ -30,8 +30,8 @@
           {
             "name": "gobby-user-prompt-submit",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=user_prompt_submit",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=user_prompt_submit",
+          "timeout": 120
           }
         ]
       }
@@ -43,8 +43,8 @@
           {
             "name": "gobby-pre-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=pre_tool_use",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=pre_tool_use",
+          "timeout": 120
           }
         ]
       }
@@ -56,8 +56,8 @@
           {
             "name": "gobby-post-tool-use",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=post_tool_use",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=post_tool_use",
+          "timeout": 120
           }
         ]
       }
@@ -69,8 +69,8 @@
           {
             "name": "gobby-post-tool-use-failure",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=post_tool_use_failure",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=post_tool_use_failure",
+          "timeout": 120
           }
         ]
       }
@@ -81,8 +81,8 @@
           {
             "name": "gobby-pre-compact",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=pre_compact",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=pre_compact",
+          "timeout": 120
           }
         ]
       }
@@ -93,8 +93,8 @@
           {
             "name": "gobby-post-compact",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=post_compact",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=post_compact",
+          "timeout": 120
           }
         ]
       }
@@ -105,8 +105,8 @@
           {
             "name": "gobby-stop",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=stop",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=stop",
+          "timeout": 120
           }
         ]
       }
@@ -117,8 +117,8 @@
           {
             "name": "gobby-notification",
             "type": "command",
-            "command": "ghook --gobby-owned --cli=grok --type=notification",
-            "timeout": 45
+          "command": "ghook --gobby-owned --cli=grok --type=notification",
+          "timeout": 120
           }
         ]
       }

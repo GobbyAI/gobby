@@ -55,10 +55,6 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_current_source_fingerprint,
 )
 from gobby.servers.http import HTTPServer
-from gobby.servers.routes.mcp.hooks import (
-    FAIL_SAFE_HOOK_TIMEOUT_SECONDS,
-    NON_CRITICAL_HOOK_TIMEOUT_SECONDS,
-)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -3338,10 +3334,11 @@ class TestHooksEndpoints:
         server = create_http_server(
             port=60887,
             test_mode=True,
+            config=DaemonConfig(),
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
-        assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS == 35
+        server.config.hooks.adapter_timeout = 0.01
         release_adapter = threading.Event()
         adapter_finished = threading.Event()
 
@@ -3357,7 +3354,6 @@ class TestHooksEndpoints:
                 "gobby.adapters.droid.DroidAdapter.handle_native",
                 side_effect=stalled_evaluation,
             ),
-            patch("gobby.servers.routes.mcp.hooks.NON_CRITICAL_HOOK_TIMEOUT_SECONDS", 0.01),
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -3383,9 +3379,11 @@ class TestHooksEndpoints:
         server = create_http_server(
             port=60887,
             test_mode=True,
+            config=DaemonConfig(),
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
+        server.config.hooks.adapter_timeout = 0.5
         runtime = WorkflowEvaluationRuntime(max_workers=2)
         handler = WorkflowHookHandler(timeout=0.05, evaluation_runtime=runtime)
         started_count = 0
@@ -3426,10 +3424,6 @@ class TestHooksEndpoints:
                 patch(
                     "gobby.adapters.droid.DroidAdapter.handle_native",
                     side_effect=run_workflow,
-                ),
-                patch(
-                    "gobby.servers.routes.mcp.hooks.NON_CRITICAL_HOOK_TIMEOUT_SECONDS",
-                    0.5,
                 ),
                 concurrent.futures.ThreadPoolExecutor(max_workers=2) as requests,
             ):
@@ -3574,12 +3568,12 @@ class TestHooksEndpoints:
             "decision": "block",
             "reason": "timed out",
         }
-        assert timeout_mock.await_args.kwargs["timeout_seconds"] == FAIL_SAFE_HOOK_TIMEOUT_SECONDS
+        assert timeout_mock.await_args.kwargs["timeout_seconds"] == 105
         mock_adapter.translate_from_hook_response.assert_called_once()
         hook_response = mock_adapter.translate_from_hook_response.call_args.args[0]
         assert hook_response.decision == "block"
         assert hook_response.reason == (
-            "Gobby hook evaluation timed out after 20s; blocking this critical hook for safety. "
+            "Gobby hook evaluation timed out after 105s; blocking this critical hook for safety. "
             "Try again after the daemon recovers."
         )
         assert hook_response.system_message is None
@@ -3930,11 +3924,13 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json() == {"decision": "approve"}
         mock_hold_open.assert_awaited_once()
-        args = mock_hold_open.await_args.args
+        await_args = mock_hold_open.await_args
+        assert await_args is not None
+        args = await_args.args
         assert args[1] == WEB_SESSION_ID
         assert args[2] == "PreToolUse"
         assert args[4] == source
-        assert mock_hold_open.await_args.kwargs["server"] is server
+        assert await_args.kwargs["server"] is server
 
     def test_execute_hook_pre_tool_use_returns_adapter_response_without_app_server_state(
         self,
@@ -4277,7 +4273,9 @@ class TestHooksEndpoints:
         assert response.status_code == 200
         assert response.json() == {"decision": "approve"}
         mock_hold_open.assert_awaited_once()
-        assert mock_hold_open.await_args.args[1] == "real-session"
+        await_args = mock_hold_open.await_args
+        assert await_args is not None
+        assert await_args.args[1] == "real-session"
 
     def test_execute_hook_logs_enqueued_at_for_envelope_requests(
         self, session_storage: SessionManager

@@ -24,7 +24,11 @@ from tomlkit.toml_document import TOMLDocument
 from gobby.agents.trust import seed_cli_trust, seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
-from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
+from .hook_commands import (
+    config_contains_gobby_hook,
+    rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
+)
 from .mcp_config import (
     configure_mcp_server_toml,
     remove_mcp_server_toml,
@@ -400,7 +404,10 @@ def _remove_codex_hook_trust_state(config: TOMLDocument, state_keys: set[str]) -
 
 
 def _install_hooks_file(
-    hooks_file: Path, hooks_dir: Path
+    hooks_file: Path,
+    hooks_dir: Path,
+    *,
+    hook_timeout_seconds: int = 120,
 ) -> tuple[list[str], list[HookTrustEntry]]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into a Codex hooks file.
 
@@ -417,6 +424,11 @@ def _install_hooks_file(
     template_str = template_str.replace("$HOOKS_DIR", str(hooks_dir.resolve()))
     gobby_hooks_config = json.loads(template_str)
     rewrite_hook_template_commands(gobby_hooks_config, cli_name="codex", hooks_dir=hooks_dir)
+    set_gobby_hook_timeouts(
+        gobby_hooks_config,
+        timeout=hook_timeout_seconds,
+        hook_overrides={"SessionEnd": 3},
+    )
 
     existing: dict[str, Any] = {}
     if hooks_file.exists():
@@ -447,10 +459,17 @@ def _install_hooks_file(
 
 
 def _install_hooks_json(
-    codex_home: Path, hooks_dir: Path
+    codex_home: Path,
+    hooks_dir: Path,
+    *,
+    hook_timeout_seconds: int = 120,
 ) -> tuple[list[str], list[HookTrustEntry]]:
     """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json."""
-    return _install_hooks_file(codex_home / "hooks.json", hooks_dir)
+    return _install_hooks_file(
+        codex_home / "hooks.json",
+        hooks_dir,
+        hook_timeout_seconds=hook_timeout_seconds,
+    )
 
 
 def _is_gobby_hook(hook_entry: Any) -> bool:
@@ -492,7 +511,12 @@ def _is_codex_dispatcher_hook(hook_entry: Any) -> bool:
     return False
 
 
-def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]:
+def install_codex(
+    project_path: Path,
+    *,
+    mode: str = "global",
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install Codex hooks via hooks.json and configure MCP server.
 
     Args:
@@ -543,7 +567,11 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
 
     # 2. Install hooks.json
     try:
-        installed_hooks, previous_gobby_trust_entries = _install_hooks_json(codex_home, hooks_dir)
+        installed_hooks, previous_gobby_trust_entries = _install_hooks_json(
+            codex_home,
+            hooks_dir,
+            hook_timeout_seconds=hook_timeout_seconds,
+        )
         hooks_installed.extend(installed_hooks)
     except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
         result["error"] = f"Failed to install hooks.json: {e}"
@@ -622,7 +650,11 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     return result
 
 
-def install_codex_project_hooks(project_path: Path) -> dict[str, Any]:
+def install_codex_project_hooks(
+    project_path: Path,
+    *,
+    hook_timeout_seconds: int = 120,
+) -> dict[str, Any]:
     """Install project-local Codex hooks for a worktree without global Codex content."""
     hooks_installed: list[str] = []
     files_installed: list[str] = []
@@ -652,6 +684,7 @@ def install_codex_project_hooks(project_path: Path) -> dict[str, Any]:
         installed_hooks, previous_gobby_trust_entries = _install_hooks_file(
             project_hooks_path,
             hooks_dir,
+            hook_timeout_seconds=hook_timeout_seconds,
         )
         hooks_installed.extend(installed_hooks)
     except (FileNotFoundError, OSError, json.JSONDecodeError) as e:

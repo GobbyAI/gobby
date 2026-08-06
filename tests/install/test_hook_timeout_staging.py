@@ -7,8 +7,8 @@ from typing import Any
 import pytest
 
 from gobby.adapters.agy_contract import AGY_HOOK_TIMEOUT_SECONDS
+from gobby.config.app import DaemonConfig
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
-from gobby.servers.routes.mcp.hooks import NON_CRITICAL_HOOK_TIMEOUT_SECONDS
 
 
 def _timeout_values(value: Any) -> list[int]:
@@ -26,14 +26,18 @@ def _timeout_values(value: Any) -> list[int]:
 
 
 def test_hook_timeout_layers_leave_ordered_cleanup_windows() -> None:
-    assert DEFAULT_WORKFLOW_TIMEOUT_SECONDS == 30
-    assert NON_CRITICAL_HOOK_TIMEOUT_SECONDS == 35
+    config = DaemonConfig()
+
+    assert config.memory_recall.timeout == 60
+    assert DEFAULT_WORKFLOW_TIMEOUT_SECONDS == 90
+    assert config.hooks.adapter_timeout == 105
+    assert config.hooks.provider_timeout == 120
     assert AGY_HOOK_TIMEOUT_SECONDS == 45
 
 
 @pytest.mark.parametrize(
     ("provider", "expected_timeout"),
-    [("agy", 45), ("grok", 45), ("qwen", 45_000)],
+    [("agy", 45), ("droid", 120), ("grok", 120), ("qwen", 120_000)],
 )
 def test_explicit_provider_hook_timeouts_use_outer_ceiling(
     provider: str,
@@ -45,3 +49,19 @@ def test_explicit_provider_hook_timeouts_use_outer_ceiling(
 
     assert timeouts
     assert set(timeouts) == {expected_timeout}
+
+
+def test_claude_template_caps_session_end_timeout() -> None:
+    template = json.loads(Path("src/gobby/install/claude/hooks-template.json").read_text())
+
+    assert set(_timeout_values(template["hooks"]["SessionEnd"])) == {60}
+    assert set(_timeout_values(template)) == {60, 120}
+
+
+def test_codex_template_keeps_session_end_enqueue_only() -> None:
+    template = json.loads(Path("src/gobby/install/codex/hooks-template.json").read_text())
+    session_end = template["hooks"]["SessionEnd"][0]["hooks"][0]
+
+    assert session_end["timeout"] == 3
+    assert "--enqueue-only" in session_end["command"]
+    assert set(_timeout_values(template)) == {3, 120}

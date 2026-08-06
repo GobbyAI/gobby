@@ -368,6 +368,7 @@ class MemoryRecallRunner:
                     f"Parent user prompt:\n{prompt}",
                     system_prompt=CLASSIFIER_SYSTEM_PROMPT,
                     caller="memory.recall.classify",
+                    total_timeout_seconds=self.config.timeout,
                 ),
                 timeout=self.config.timeout,
             )

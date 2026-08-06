@@ -94,7 +94,11 @@ class TestInstallQwen:
             ),
             patch.object(Path, "home", return_value=temp_dir),
         ):
-            result = install_qwen(project_path, mode="project")
+            result = install_qwen(
+                project_path,
+                mode="project",
+                hook_timeout_seconds=150,
+            )
 
         assert result["success"] is True
         assert result["error"] is None
@@ -120,6 +124,13 @@ class TestInstallQwen:
             assert user_command in commands
             assert not any("--type=stale" in command for command in commands)
             assert sum("--gobby-owned" in command for command in commands) == 1
+            gobby_handler = next(
+                handler
+                for group in groups
+                for handler in group["hooks"]
+                if "--gobby-owned" in handler["command"]
+            )
+            assert gobby_handler["timeout"] == 150_000
         assert (temp_dir / ".qwen" / "projects.json").exists()
         assert (temp_dir / ".qwen" / "trustedFolders.json").exists()
 

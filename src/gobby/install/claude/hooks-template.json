@@ -6,7 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=session-start"
+          "command": "ghook --gobby-owned --cli=claude --type=session-start",
+          "timeout": 120
           }
         ]
       }
@@ -16,7 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=instructions-loaded"
+          "command": "ghook --gobby-owned --cli=claude --type=instructions-loaded",
+          "timeout": 120
           }
         ]
       }
@@ -26,7 +28,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=user-prompt-submit"
+          "command": "ghook --gobby-owned --cli=claude --type=user-prompt-submit",
+          "timeout": 120
           }
         ]
       }
@@ -37,7 +40,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=pre-tool-use"
+          "command": "ghook --gobby-owned --cli=claude --type=pre-tool-use",
+          "timeout": 120
           }
         ]
       }
@@ -48,7 +52,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=permission-request"
+          "command": "ghook --gobby-owned --cli=claude --type=permission-request",
+          "timeout": 120
           }
         ]
       }
@@ -59,7 +64,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=post-tool-use"
+          "command": "ghook --gobby-owned --cli=claude --type=post-tool-use",
+          "timeout": 120
           }
         ]
       }
@@ -70,7 +76,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=post-tool-use-failure"
+          "command": "ghook --gobby-owned --cli=claude --type=post-tool-use-failure",
+          "timeout": 120
           }
         ]
       }
@@ -81,7 +88,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=permission-denied"
+          "command": "ghook --gobby-owned --cli=claude --type=permission-denied",
+          "timeout": 120
           }
         ]
       }
@@ -91,7 +99,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=notification"
+          "command": "ghook --gobby-owned --cli=claude --type=notification",
+          "timeout": 120
           }
         ]
       }
@@ -101,7 +110,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=subagent-start"
+          "command": "ghook --gobby-owned --cli=claude --type=subagent-start",
+          "timeout": 120
           }
         ]
       }
@@ -111,7 +121,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=subagent-stop"
+          "command": "ghook --gobby-owned --cli=claude --type=subagent-stop",
+          "timeout": 120
           }
         ]
       }
@@ -121,7 +132,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=task-created"
+          "command": "ghook --gobby-owned --cli=claude --type=task-created",
+          "timeout": 120
           }
         ]
       }
@@ -131,7 +143,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=task-completed"
+          "command": "ghook --gobby-owned --cli=claude --type=task-completed",
+          "timeout": 120
           }
         ]
       }
@@ -141,7 +154,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=stop"
+          "command": "ghook --gobby-owned --cli=claude --type=stop",
+          "timeout": 120
           }
         ]
       }
@@ -151,7 +165,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=stop-failure"
+          "command": "ghook --gobby-owned --cli=claude --type=stop-failure",
+          "timeout": 120
           }
         ]
       }
@@ -161,7 +176,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=teammate-idle"
+          "command": "ghook --gobby-owned --cli=claude --type=teammate-idle",
+          "timeout": 120
           }
         ]
       }
@@ -171,7 +187,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=config-change"
+          "command": "ghook --gobby-owned --cli=claude --type=config-change",
+          "timeout": 120
           }
         ]
       }
@@ -181,7 +198,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=cwd-changed"
+          "command": "ghook --gobby-owned --cli=claude --type=cwd-changed",
+          "timeout": 120
           }
         ]
       }
@@ -192,7 +210,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=file-changed"
+          "command": "ghook --gobby-owned --cli=claude --type=file-changed",
+          "timeout": 120
           }
         ]
       }
@@ -202,7 +221,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=worktree-create"
+          "command": "ghook --gobby-owned --cli=claude --type=worktree-create",
+          "timeout": 120
           }
         ]
       }
@@ -212,7 +232,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=worktree-remove"
+          "command": "ghook --gobby-owned --cli=claude --type=worktree-remove",
+          "timeout": 120
           }
         ]
       }
@@ -222,7 +243,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=pre-compact"
+          "command": "ghook --gobby-owned --cli=claude --type=pre-compact",
+          "timeout": 120
           }
         ]
       }
@@ -232,7 +254,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=post-compact"
+          "command": "ghook --gobby-owned --cli=claude --type=post-compact",
+          "timeout": 120
           }
         ]
       }
@@ -242,7 +265,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=session-end"
+          "command": "ghook --gobby-owned --cli=claude --type=session-end",
+          "timeout": 60
           }
         ]
       }
@@ -253,7 +277,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=elicitation"
+          "command": "ghook --gobby-owned --cli=claude --type=elicitation",
+          "timeout": 120
           }
         ]
       }
@@ -264,7 +289,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=claude --type=elicitation-result"
+          "command": "ghook --gobby-owned --cli=claude --type=elicitation-result",
+          "timeout": 120
           }
         ]
       }

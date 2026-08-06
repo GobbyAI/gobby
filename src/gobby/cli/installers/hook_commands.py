@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -158,6 +158,39 @@ def rewrite_hook_template_commands(
         )
 
     return hooks_config
+
+
+def set_gobby_hook_timeouts(
+    hooks_config: dict[str, Any],
+    *,
+    timeout: int,
+    hook_overrides: Mapping[str, int] | None = None,
+) -> dict[str, Any]:
+    """Set timeouts on Gobby-owned command handlers while preserving user hooks."""
+    hooks = hooks_config.get("hooks")
+    if not isinstance(hooks, dict):
+        return hooks_config
+
+    overrides = hook_overrides or {}
+    for hook_type, hook_config in hooks.items():
+        _set_gobby_hook_timeout(hook_config, overrides.get(hook_type, timeout))
+    return hooks_config
+
+
+def _set_gobby_hook_timeout(node: Any, timeout: int) -> None:
+    if isinstance(node, dict):
+        command = node.get("command")
+        if (
+            node.get("type") == "command"
+            and isinstance(command, str)
+            and is_gobby_hook_command(command)
+        ):
+            node["timeout"] = timeout
+        for value in node.values():
+            _set_gobby_hook_timeout(value, timeout)
+    elif isinstance(node, list):
+        for item in node:
+            _set_gobby_hook_timeout(item, timeout)
 
 
 def _rewrite_command_string(command: str, *, prefix: str, placeholder_command: str) -> str:

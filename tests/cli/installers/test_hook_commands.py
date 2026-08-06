@@ -10,6 +10,7 @@ from gobby.cli.installers.hook_commands import (
     config_contains_gobby_hook,
     is_gobby_hook_command,
     rewrite_hook_template_commands,
+    set_gobby_hook_timeouts,
 )
 
 pytestmark = pytest.mark.unit
@@ -187,3 +188,43 @@ def test_gobby_hook_detection_ignores_scalar_metadata_values() -> None:
     assert not config_contains_gobby_hook(
         {"metadata": {"description": "ghook --gobby-owned is just documentation"}}
     )
+
+
+def test_set_gobby_hook_timeouts_preserves_foreign_handlers_and_applies_override() -> None:
+    config = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "ghook --gobby-owned --cli=claude --type=session-start",
+                            "timeout": 30,
+                        },
+                        {"type": "command", "command": "user-hook", "timeout": 7},
+                    ]
+                }
+            ],
+            "SessionEnd": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "ghook --gobby-owned --cli=claude --type=session-end",
+                            "timeout": 30,
+                        }
+                    ]
+                }
+            ],
+        }
+    }
+
+    result = set_gobby_hook_timeouts(
+        config,
+        timeout=120,
+        hook_overrides={"SessionEnd": 60},
+    )
+
+    assert result["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 120
+    assert result["hooks"]["SessionStart"][0]["hooks"][1]["timeout"] == 7
+    assert result["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 60

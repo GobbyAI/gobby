@@ -758,7 +758,10 @@ class TestInstallCodexProjectHooks:
         with patch("gobby.cli.installers.codex.install_global_hooks") as mock_global:
             mock_global.return_value = ["validate_settings.py"]
 
-            result = install_codex_project_hooks(project_path)
+            result = install_codex_project_hooks(
+                project_path,
+                hook_timeout_seconds=150,
+            )
 
         assert result["success"] is True
         assert result["error"] is None
@@ -772,6 +775,10 @@ class TestInstallCodexProjectHooks:
 
         hooks_config = json.loads(project_hooks_path.read_text())
         assert set(hooks_config["hooks"].keys()) == EXPECTED_HOOK_EVENT_SET
+        assert hooks_config["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
+        session_end = hooks_config["hooks"]["SessionEnd"][0]["hooks"][0]
+        assert session_end["timeout"] == 3
+        assert "--enqueue-only" in session_end["command"]
         hooks_content = project_hooks_path.read_text()
         assert "$HOOKS_DIR" not in hooks_content
         assert "ghook --gobby-owned" in hooks_content

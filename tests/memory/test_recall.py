@@ -53,6 +53,7 @@ class FakeLLMService:
         system_prompt: str | None = None,
         *,
         caller: str | None = None,
+        total_timeout_seconds: float | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -60,6 +61,7 @@ class FakeLLMService:
                 "prompt": prompt,
                 "system_prompt": system_prompt,
                 "caller": caller,
+                "total_timeout_seconds": total_timeout_seconds,
             }
         )
         if self.error is not None:
@@ -189,7 +191,11 @@ async def test_classifier_approval_runs_one_low_feature_and_one_hybrid_search(
     result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == ["21000000-0000-4000-8000-000000000005", "m2", "m3"]
+    assert [memory["id"] for memory in result.memories] == [
+        "21000000-0000-4000-8000-000000000005",
+        "m2",
+        "m3",
+    ]
     assert len(llm.calls) == 1
     assert llm.calls[0]["caller"] == "memory.recall.classify"
     assert llm.calls[0]["feature_config"].profile == FeatureProfile.LOW
@@ -207,6 +213,7 @@ async def test_classifier_rejection_does_not_search(temp_db: HubDatabase) -> Non
 
     assert result is None
     assert len(llm.calls) == 1
+    assert llm.calls[0]["total_timeout_seconds"] == 60
     assert manager.calls == []
 
 
@@ -342,7 +349,10 @@ async def test_filters_review_duplicates_and_injected_ids_in_rank_order(
     result = await _runner(temp_db, manager, llm).run(_event(), SESSION_ID, _variables())
 
     assert result is not None
-    assert [memory["id"] for memory in result.memories] == ["21000000-0000-4000-8000-000000000005", "m3"]
+    assert [memory["id"] for memory in result.memories] == [
+        "21000000-0000-4000-8000-000000000005",
+        "m3",
+    ]
 
 
 @pytest.mark.asyncio

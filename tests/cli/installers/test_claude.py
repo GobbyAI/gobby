@@ -97,7 +97,11 @@ class TestInstallClaude:
                 return_value="/custom/bin/ghook",
             ),
         ):
-            result = install_claude(temp_project, mode="project")
+            result = install_claude(
+                temp_project,
+                mode="project",
+                hook_timeout_seconds=150,
+            )
 
         assert result["success"] is True
         assert result["hooks_installed"]
@@ -118,6 +122,8 @@ class TestInstallClaude:
             settings = json.load(f)
         assert settings["statusLine"]["type"] == "command"
         assert "--gobby-owned --cli=claude --type=statusline" in settings["statusLine"]["command"]
+        assert settings["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
+        assert settings["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"] == 60
 
         # Verify global hooks were installed
         mock_global_hooks.assert_called_once()

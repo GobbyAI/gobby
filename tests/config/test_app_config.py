@@ -48,6 +48,7 @@ from gobby.config.features import (
     RecommendToolsConfig,
     ToolSummarizerConfig,
 )
+from gobby.config.hooks import HookTimeoutConfig
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
@@ -485,6 +486,35 @@ class TestDaemonConfig:
 
         with pytest.raises(ValidationError):
             DaemonConfig(daemon_health_check_interval=500.0)
+
+    def test_coordinated_hook_timeout_defaults(self) -> None:
+        config = DaemonConfig()
+
+        assert config.memory_recall.timeout == 60
+        assert config.workflow.timeout == 90
+        assert config.hooks.adapter_timeout == 105
+        assert config.hooks.provider_timeout == 120
+
+    @pytest.mark.parametrize(
+        ("overrides", "message"),
+        [
+            ({"memory_recall": {"timeout": 90}}, "memory_recall.timeout"),
+            ({"workflow": {"timeout": 105}}, "workflow.timeout"),
+            ({"hooks": {"adapter_timeout": 120}}, "hooks.adapter_timeout"),
+        ],
+    )
+    def test_hook_timeout_policy_requires_strict_order(
+        self,
+        overrides: dict[str, object],
+        message: str,
+    ) -> None:
+        with pytest.raises(ValidationError, match=message):
+            DaemonConfig(**overrides)
+
+    @pytest.mark.parametrize("field", ["adapter_timeout", "provider_timeout"])
+    def test_hook_timeout_values_must_be_positive(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            HookTimeoutConfig(**{field: 0})
 
     def test_sub_config_access(self) -> None:
         """Test accessing sub-configurations."""
@@ -1655,12 +1685,12 @@ class TestWorkflowConfig:
         """Test default workflow config."""
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 30.0
+        assert config.timeout == 90.0
 
     def test_timeout_validation(self) -> None:
         """Test timeout must be positive."""
         with pytest.raises(ValidationError):
-            WorkflowConfig(timeout=-1)
+            WorkflowConfig(timeout=0)
 
 
 class TestMessageTrackingConfig:
@@ -1952,6 +1982,7 @@ class TestDaemonConfigComposition:
         assert isinstance(config.recommend_tools, RecommendToolsConfig)
 
         # Hooks
+        assert isinstance(config.hooks, HookTimeoutConfig)
         assert isinstance(config.hook_extensions, HookExtensionsConfig)
         assert isinstance(config.hook_extensions.websocket, WebSocketBroadcastConfig)
         assert isinstance(config.hook_extensions.webhooks, WebhooksConfig)

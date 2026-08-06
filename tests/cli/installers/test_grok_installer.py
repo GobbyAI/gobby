@@ -100,7 +100,7 @@ def test_install_grok_writes_native_hook_file(
             return_value="/Users/test/.gobby/bin/ghook",
         ),
     ):
-        result = install_grok(project_dir)
+        result = install_grok(project_dir, hook_timeout_seconds=150)
 
     hook_file = temp_dir / ".grok" / "hooks" / "gobby.json"
     assert result["success"] is True
@@ -112,6 +112,7 @@ def test_install_grok_writes_native_hook_file(
         config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=grok --type=session_start"
     )
+    assert config["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 150
     assert (
         config["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
         == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=grok --type=pre_tool_use"
