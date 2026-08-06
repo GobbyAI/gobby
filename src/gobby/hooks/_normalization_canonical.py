@@ -526,11 +526,15 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     if not tokens:
         return {}
 
-    cwd: str | None = None
+    persistent_cwd: str | None = None
     metadata: list[_ShellSegmentMetadata] = []
-    for segment in _split_shell_segments(tokens):
-        if segment.separator_before not in {None, "&&", ";", "\n"}:
-            cwd = None
+    segments = _split_shell_segments(tokens)
+    for index, segment in enumerate(segments):
+        in_pipeline = segment.separator_before == "|" or (
+            index + 1 < len(segments) and segments[index + 1].separator_before == "|"
+        )
+        if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
+            persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
@@ -538,8 +542,9 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             continue
 
         cd_target = _literal_cd_target(parts)
-        if cd_target is not None and segment.separator_before in {None, "&&", ";", "\n"}:
-            cwd = _apply_cd(cwd, cd_target)
+        if cd_target is not None:
+            if not in_pipeline and segment.separator_before in {None, "&&", ";", "\n"}:
+                persistent_cwd = _apply_cd(persistent_cwd, cd_target)
             metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
             continue
 
@@ -552,7 +557,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             )
             continue
 
-        metadata.append(_classify_shell_segment(segment.tokens, parts, cwd))
+        metadata.append(_classify_shell_segment(segment.tokens, parts, persistent_cwd))
 
     return _merge_shell_segment_metadata(metadata)
 

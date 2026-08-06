@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -3553,6 +3554,62 @@ class TestCodeIndexNavigationRules:
             )
 
             assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_compound_search_after_pipeline_uses_persistent_shell_cwd(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        repo = tmp_path / "repo"
+        scratchpad = tmp_path / "scratchpad"
+        command_template = (
+            "cd {root} && "
+            "echo alpha > first.txt && "
+            "grep alpha first.txt && "
+            "echo beta > second.txt && "
+            "grep beta second.txt | head -1 && "
+            "echo gamma > third.txt && "
+            "grep gamma third.txt"
+        )
+        expected_names = ("first.txt", "second.txt", "third.txt")
+
+        for loaded in (False, True):
+            event = self._normalized_bash_event(
+                command_template.format(root=scratchpad),
+                cwd=str(repo),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_file_paths"] == [
+                str(scratchpad / name) for name in expected_names
+            ]
+            assert event.data["canonical_code_navigation_repo_scope"] is False
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+
+            assert response.decision == "allow"
+
+        for loaded in (False, True):
+            event = self._normalized_bash_event(
+                command_template.format(root=repo),
+                cwd=str(repo),
+                project_path=str(repo),
+            )
+            assert event.data["canonical_file_paths"] == [
+                str(repo / name) for name in expected_names
+            ]
+            assert event.data["canonical_code_navigation_repo_scope"] is True
+
+            response = await RuleEngine(db).evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=self._variables(loaded=loaded),
+            )
+
+            assert response.decision == "block"
 
     @pytest.mark.asyncio
     async def test_normalized_repo_search_still_blocks(self, db, tmp_path) -> None:

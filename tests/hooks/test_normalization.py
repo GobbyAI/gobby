@@ -1003,6 +1003,65 @@ class TestCanonicalToolMetadata:
         assert data["canonical_file_path"] == "dir/src"
         assert data["canonical_file_paths"] == ["dir/src"]
 
+    @pytest.mark.parametrize("separator", [" && ", "; ", "\n"])
+    def test_exec_command_pipeline_preserves_parent_cd_for_following_segment(
+        self, separator: str
+    ) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {
+                "command": (
+                    f"cd scratch && grep needle before.txt | head -1{separator}rg later after.txt"
+                )
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_paths"] == [
+            "scratch/before.txt",
+            "scratch/after.txt",
+        ]
+
+    def test_exec_command_pipeline_local_cd_does_not_change_sibling_or_parent_cwd(
+        self,
+    ) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {
+                "command": (
+                    "cd scratch && cd nested | grep needle < sibling.txt ; rg later after.txt"
+                )
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_paths"] == [
+            "scratch/sibling.txt",
+            "scratch/after.txt",
+        ]
+
+    @pytest.mark.parametrize("separator", [" || ", " & "])
+    def test_exec_command_pipeline_keeps_uncertain_separator_cwd_reset(
+        self, separator: str
+    ) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {
+                "command": (
+                    f"cd scratch && grep needle before.txt | head -1{separator}rg later after.txt"
+                )
+            },
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_paths"] == ["scratch/before.txt", "after.txt"]
+
     def test_exec_command_compound_cd_rebases_newline_sed_path(self) -> None:
         data = {
             "tool_name": "exec_command",
