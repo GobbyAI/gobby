@@ -123,30 +123,44 @@ async def test_missing_criteria_stops_before_llm() -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_task_edit_entry_reaches_paths_unavailable_close_error() -> None:
-    task = _task()
+async def test_empty_task_edit_entry_allows_no_edit_research_close() -> None:
+    task = replace(_task(), category="research")
     ctx = _ctx(task, validator=object())
     ctx.session_var_manager = cast(
         SessionVariableManager,
         SimpleNamespace(get_variables=lambda _session_id: {"task_edited_files": {task.id: []}}),
     )
+    review = AsyncMock(
+        return_value=ValidationResult(
+            can_close=True,
+            validation_status="valid",
+            validation_feedback="Research criteria satisfied.",
+            reset_reason="llm_valid",
+        )
+    )
 
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "collect_commit_diff_text", return_value=""),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
     ):
         evaluation = await _evaluate_close(
             ctx,
             task_id=task.id,
             reason="completed",
-            changes_summary="Mutation paths were unavailable.",
+            changes_summary="Completed read-only research.",
             commit_sha=None,
             project_path=None,
             response_detail="diagnostic",
         )
 
-    assert evaluation.error == "task_edit_paths_unavailable"
-    assert evaluation.gates[-1].item == 8
+    assert evaluation.ready is True
+    assert evaluation.had_attributed_edits is False
+    assert evaluation.commit_shas == []
+    review.assert_awaited_once()
 
 
 @pytest.mark.asyncio

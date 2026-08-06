@@ -898,23 +898,47 @@ def test_release_task_edited_files_preserves_same_path_in_other_checkout(
     variables = mgr.get_variables(S1)
     assert variables["task_edited_file_checkouts"] == {
         "task-1": {
-            str(first_checkout): [],
             str(second_checkout): ["src/shared.py"],
         }
     }
 
 
-def test_record_edited_files_empty_paths_creates_task_mutation_sentinel(db: Any) -> None:
+def test_release_task_edited_files_pops_last_task_path(db: Any, tmp_path: Path) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import target_task_has_edits
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.record_edited_file(S1, "src/only.py", checkout_root=str(checkout))
+
+    released, remaining = mgr.release_task_edited_files(
+        S1,
+        "task-1",
+        ["src/only.py"],
+        checkout_root=str(checkout),
+    )
+
+    assert released == ["src/only.py"]
+    assert remaining == []
+    variables = mgr.get_variables(S1)
+    assert "task-1" not in variables["task_edited_files"]
+    assert "task-1" not in variables["task_edited_file_checkouts"]
+    assert target_task_has_edits(variables, "task-1") is False
+
+
+def test_record_edited_files_empty_paths_is_noop(db: Any) -> None:
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
     mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    before = mgr.get_variables(S1)
 
-    mgr.record_edited_files(S1, [])
+    changed = mgr.record_edited_files(S1, [])
 
-    variables = mgr.get_variables(S1)
-    assert variables["session_edited_files"] == []
-    assert variables["task_edited_files"] == {"task-1": []}
+    assert changed is False
+    assert mgr.get_variables(S1) == before
 
 
 def test_record_edited_file_persists_installed_default_entries(db: Any) -> None:

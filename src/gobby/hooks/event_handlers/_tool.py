@@ -266,23 +266,6 @@ class ToolEventHandlerMixin(EventHandlersBase):
                 checkout_paths.append(repo_relative_path)
 
         structured_mutation = input_data.get("canonical_structured_mutation") is True
-        mutation_observed = bool(committable_paths) or (structured_mutation and not file_paths)
-        if not mutation_observed:
-            return
-
-        db = getattr(self._session_manager, "db", None)
-        if db is not None:
-            variable_manager = SessionVariableManager(db)
-            if paths_by_checkout:
-                for checkout_root, paths in paths_by_checkout.items():
-                    variable_manager.record_edited_files(
-                        session_id,
-                        paths,
-                        checkout_root=checkout_root,
-                    )
-            else:
-                variable_manager.record_edited_files(session_id, committable_paths)
-
         if structured_mutation and not file_paths:
             self.logger.warning(
                 "Successful structured mutation had no attributable file paths",
@@ -294,6 +277,18 @@ class ToolEventHandlerMixin(EventHandlersBase):
                     "mcp_tool": input_data.get("mcp_tool"),
                 },
             )
+        if not committable_paths:
+            return
+
+        db = getattr(self._session_manager, "db", None)
+        if db is not None:
+            variable_manager = SessionVariableManager(db)
+            for checkout_root, paths in paths_by_checkout.items():
+                variable_manager.record_edited_files(
+                    session_id,
+                    paths,
+                    checkout_root=checkout_root,
+                )
 
         self._mark_session_had_edits_if_claimed(session_id)
 
@@ -350,7 +345,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
     def _resolve_repo_edit_paths(self, file_path: str, cwd: str | None) -> tuple[Path, str] | None:
         """Return ``(repo_root, repo_relative_path)`` for an edited file."""
-        target_path = Path(file_path)
+        target_path = Path(os.path.expanduser(file_path))
         cwd_path = Path(cwd).resolve(strict=False) if cwd else None
         if target_path.is_absolute():
             resolved_target = target_path.resolve(strict=False)

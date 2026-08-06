@@ -130,11 +130,13 @@ class TestCloseTaskTool:
                 {
                     "task_id": "550e8400-e29b-41d4-a716-446655440000",
                     "changes_summary": "test changes",
+                    "response_detail": "diagnostic",
                 },
             )
 
             assert "error" in result
             assert result["error"] == "no_commits_linked"
+            assert result["attributed_paths"] == ["src/owned.py"]
 
     @pytest.mark.asyncio
     async def test_close_task_with_skip_reason_skips_commit_check(
