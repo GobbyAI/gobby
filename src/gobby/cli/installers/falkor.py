@@ -16,6 +16,7 @@ from typing import Any
 from gobby.config.persistence import validate_falkordb_password
 
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,7 @@ def _refresh_unified_compose(services_dir: Path, env: dict[str, str]) -> Path:
     if compose_file.exists():
         legacy_profile = "".join(("neo", "4j"))
         try:
+            ensure_docker_allowed("falkordb legacy-profile compose down", runner=subprocess.run)
             subprocess.run(  # nosec B603 B607
                 ["docker", "compose", "-f", str(compose_file), "--profile", legacy_profile, "down"],
                 capture_output=True,
@@ -186,6 +188,7 @@ def _install_falkordb_locked(
     compose_file = _refresh_unified_compose(services_dir, runtime.environment)
 
     try:
+        ensure_docker_allowed("falkordb install compose up", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 B607
             [
                 "docker",
@@ -248,6 +251,7 @@ def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
         else:
             try:
                 runtime = resolve_compose_runtime(home, profiles=("falkordb",))
+                ensure_docker_allowed("falkordb uninstall compose down", runner=subprocess.run)
                 result = subprocess.run(  # nosec B603 B607
                     [
                         "docker",
@@ -303,6 +307,7 @@ async def _wait_for_health_async(
 ) -> bool:
     for _ in range(retries):
         try:
+            ensure_docker_allowed("falkordb health-check compose exec", runner=subprocess.run)
             result = subprocess.run(  # nosec B603 B607
                 [
                     "docker",

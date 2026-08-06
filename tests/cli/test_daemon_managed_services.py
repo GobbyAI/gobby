@@ -8,7 +8,11 @@ from typing import Any
 import pytest
 
 from gobby.cli import daemon
-from gobby.cli.installers.compose_env import MANAGED_SERVICE_PROFILES, ComposeRuntime
+from gobby.cli.installers.compose_env import (
+    MANAGED_SERVICE_PROFILES,
+    ComposeEnvironmentError,
+    ComposeRuntime,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -149,7 +153,7 @@ def test_missing_service_config_after_postgres_bootstrap_is_fatal(
     ) -> ComposeRuntime:
         if profiles == ("postgres",):
             return ComposeRuntime(environment={}, profiles=profiles)
-        raise daemon.ComposeEnvironmentError("FalkorDB credentials are missing")
+        raise ComposeEnvironmentError("FalkorDB credentials are missing")
 
     calls: list[list[str]] = []
 

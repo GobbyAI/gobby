@@ -150,9 +150,11 @@ def _snapshot_compose_running(gobby_home: Path) -> bool:
     if not compose_file.is_file() or shutil.which("docker") is None:
         return False
     from .installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
+    from .installers.docker_guard import ensure_docker_allowed
 
     try:
         runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
+        ensure_docker_allowed("datastores compose ps snapshot", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 B607
             [
                 "docker",

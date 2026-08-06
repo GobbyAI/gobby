@@ -17,6 +17,7 @@ from .installers.compose_env import (
     ComposeEnvironmentError,
     ComposeRuntime,
 )
+from .installers.docker_guard import DockerTestProtectError, ensure_docker_allowed
 from .installers.managed_services_lock import (
     ManagedServicesLockError,
     managed_services_lock,
@@ -122,6 +123,7 @@ def _run_compose_up(
     cmd.extend(["up", "-d", "--remove-orphans", "--wait"])
 
     try:
+        ensure_docker_allowed("managed-services compose up", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 # hardcoded docker command
             cmd,
             capture_output=True,
@@ -200,6 +202,7 @@ def _stop_managed_services_locked(
         for profile in MANAGED_SERVICE_PROFILES:
             command.extend(["--profile", profile])
         command.append("down")
+        ensure_docker_allowed("managed-services compose down", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 # hardcoded Docker command list
             command,
             capture_output=True,
@@ -216,6 +219,8 @@ def _stop_managed_services_locked(
         logger.warning("Could not resolve config for services; skipping Docker shutdown: %s", exc)
     except subprocess.TimeoutExpired:
         logger.warning("Timed out stopping Docker services")
+    except DockerTestProtectError:
+        raise
     except Exception as exc:
         logger.warning("Failed to stop Docker services: %s", exc)
     return False

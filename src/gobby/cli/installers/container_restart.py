@@ -9,6 +9,8 @@ from typing import Final
 
 from gobby.paths import get_gobby_home
 
+from .docker_guard import ensure_docker_allowed
+
 DEFAULT_RESTART_POLICY: Final = "unless-stopped"
 DISABLED_RESTART_POLICY: Final = "no"
 POSTGRES_CONTAINER: Final = "gobby-postgres"
@@ -45,6 +47,7 @@ def apply_managed_service_restart_policy(
         }
 
     try:
+        ensure_docker_allowed("managed-services docker update", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 # fixed docker update command
             [docker_path, "update", "--restart", policy, *containers],
             capture_output=True,

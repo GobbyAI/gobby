@@ -584,6 +584,7 @@ class TestInstallCommandSharedStores:
                 ConfigStore=mock_config_cls,
                 _provision_local_api_token=mock_provision_token,
                 install_postgres=MagicMock(return_value={"success": True}),
+                apply_managed_service_restart_policy=MagicMock(return_value={"success": True}),
             ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",

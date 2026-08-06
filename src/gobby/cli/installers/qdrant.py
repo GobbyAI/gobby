@@ -15,6 +15,7 @@ from typing import Any
 import httpx
 
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,7 @@ def _install_qdrant_locked(*, gobby_home: Path, port: int) -> dict[str, Any]:
 
     # Run docker compose up with qdrant profile
     try:
+        ensure_docker_allowed("qdrant install compose up", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 B607
             [
                 "docker",

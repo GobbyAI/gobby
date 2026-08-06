@@ -177,19 +177,20 @@ class TestResolveAgentRunId:
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
+        machine_id = "21000000-0000-4000-8000-000000000001"
         session = session_manager.register(
             external_id="agent-wildcard-test",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=machine_id,
             source="codex",
             project_id=sample_project["id"],
         )
         run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd0001"
         temp_db.execute(
             """
-            INSERT INTO agent_runs (id, parent_session_id, provider, prompt)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO agent_runs (id, machine_id, parent_session_id, provider, prompt)
+            VALUES (%s, %s, %s, %s, %s)
             """,
-            (run_id, session.id, "codex", "wildcard escape target"),
+            (run_id, machine_id, session.id, "codex", "wildcard escape target"),
         )
         mock_db_fn.return_value = temp_db
 

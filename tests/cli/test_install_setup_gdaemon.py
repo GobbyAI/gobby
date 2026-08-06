@@ -13,7 +13,10 @@ import click
 import pytest
 
 from gobby.cli import install_setup, install_setup_gdaemon
+from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
+
+_GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -115,12 +118,12 @@ def test_existing_gdaemon_is_accepted_only_with_exact_schema_identity(
     binary = tmp_path / "gdaemon"
     binary.write_bytes(b"binary")
     expected = schema_contract.expected_schema_identity()
-    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda path: "0.1.0")
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda path: _GDAEMON_PIN)
     monkeypatch.setattr(install_setup_gdaemon, "_probe_identity", lambda path: expected)
 
     result = install_setup_gdaemon.ensure_gdaemon(bin_dir=tmp_path)
 
-    assert result == {"installed": False, "version": "0.1.0", "method": "existing"}
+    assert result == {"installed": False, "version": _GDAEMON_PIN, "method": "existing"}
 
 
 def test_existing_gdaemon_with_stale_sidecar_and_wrong_binary_fails_closed(
@@ -134,7 +137,7 @@ def test_existing_gdaemon_with_stale_sidecar_and_wrong_binary_fails_closed(
         encoding="utf-8",
     )
     observed = {**schema_contract.expected_schema_identity(), "runner_protocol": 0}
-    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda path: "0.1.0")
+    monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda path: _GDAEMON_PIN)
     monkeypatch.setattr(install_setup_gdaemon, "_probe_identity", lambda path: observed)
     monkeypatch.setattr(install_setup_gdaemon, "_install_gdaemon", lambda *args: None)
 

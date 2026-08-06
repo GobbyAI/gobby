@@ -7,6 +7,7 @@ daemon, even if subprocess.run mocking is incomplete or forgotten (#10682).
 
 from __future__ import annotations
 
+import functools
 import subprocess
 from typing import Any
 
@@ -27,6 +28,10 @@ def _guard_launchctl(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     real_run = subprocess.run
 
+    # functools.wraps sets __wrapped__, letting the production docker guard
+    # (gobby.cli.installers.docker_guard) see through this delegating wrapper
+    # to the real runner it would otherwise mistake for a test stub.
+    @functools.wraps(real_run)
     def _guarded_run(args: Any, *posargs: Any, **kwargs: Any) -> subprocess.CompletedProcess[Any]:
         if isinstance(args, (list, tuple)) and len(args) >= 2:
             if str(args[0]) == "launchctl" and str(args[1]) in _GUARDED_LAUNCHCTL_SUBCOMMANDS:

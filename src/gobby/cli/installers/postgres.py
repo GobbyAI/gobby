@@ -29,6 +29,7 @@ from gobby.paths import get_gobby_home
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
 from .compose_env import ComposeEnvironmentError, ComposeRuntime, resolve_compose_runtime
+from .docker_guard import ensure_docker_allowed
 from .managed_services_lock import ManagedServicesLockError, managed_services_lock
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
         return {"success": False, "error": str(exc)}
 
     try:
+        ensure_docker_allowed("postgres install compose up", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 B607 # fixed docker compose command
             [
                 "docker",
@@ -319,6 +321,7 @@ def _wait_for_pg_isready(
 ) -> bool:
     for _ in range(retries):
         try:
+            ensure_docker_allowed("postgres pg_isready compose exec", runner=subprocess.run)
             result = subprocess.run(  # nosec B603 B607 # fixed docker compose command
                 [
                     "docker",

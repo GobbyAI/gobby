@@ -50,14 +50,16 @@ def test_compose_defines_postgres_alongside_shared_services(
     assert "neo4j" not in services
 
 
-def test_all_published_service_ports_are_loopback_bound(
+def test_all_published_service_ports_are_loopback_bound_by_default(
     compose_data: dict[str, object],
 ) -> None:
     services = compose_data["services"]
 
     for service in services.values():
         for published_port in service.get("ports", []):
-            assert published_port.startswith("127.0.0.1:")
+            assert published_port.startswith(
+                ("127.0.0.1:", "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:")
+            )
 
 
 def test_postgres_service_uses_local_build_context_and_tag(
@@ -78,7 +80,10 @@ def test_postgres_service_has_required_profiles_ports_and_volumes(
     postgres = compose_data["services"]["postgres"]
 
     assert set(postgres["profiles"]) == {"postgres", "all"}
-    assert "127.0.0.1:${GOBBY_POSTGRES_PORT:-60891}:5432" in postgres["ports"]
+    assert (
+        "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_POSTGRES_PORT:-60891}:5432"
+        in postgres["ports"]
+    )
     assert postgres["environment"]["POSTGRES_PASSWORD"] == (
         "${GOBBY_POSTGRES_PASSWORD:?GOBBY_POSTGRES_PASSWORD must be set}"
     )
