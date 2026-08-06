@@ -346,3 +346,38 @@ def test_file_header_table_counts_as_work_table(tmp_path: Path) -> None:
     )
 
     assert any("table-row-decomposition" in error for error in errors)
+
+
+def test_mjs_and_cjs_paths_are_concrete_targets(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Targets:
+        - `src/scripts/detect.mjs`
+        - `src/scripts/runner.cjs`
+
+        Update `src/scripts/detect.mjs` and `src/scripts/runner.cjs`.
+
+        **Acceptance:**
+        - 1.1.1 - Detector behavior exists. file: `src/scripts/detect.mjs`.
+        """,
+    )
+
+    assert errors == []
+
+
+def test_mjs_body_mention_without_target_fails(tmp_path: Path) -> None:
+    errors = _lint(
+        tmp_path,
+        """
+        Target: `src/app.py`
+
+        Update `src/scripts/detect.mjs` alongside the app.
+
+        **Acceptance:**
+        - 1.1.1 - App behavior exists. file: `src/app.py`.
+        """,
+    )
+
+    assert any("target-coverage" in error for error in errors)
+    assert any("src/scripts/detect.mjs" in error for error in errors)

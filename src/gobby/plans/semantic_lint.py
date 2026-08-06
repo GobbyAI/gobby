@@ -61,6 +61,7 @@ _WORK_TABLE_HEADERS = frozenset(
 )
 _KNOWN_FILE_SUFFIXES = frozenset(
     {
+        ".cjs",
         ".css",
         ".go",
         ".html",
@@ -70,6 +71,7 @@ _KNOWN_FILE_SUFFIXES = frozenset(
         ".jsonl",
         ".jsx",
         ".md",
+        ".mjs",
         ".php",
         ".py",
         ".rb",
