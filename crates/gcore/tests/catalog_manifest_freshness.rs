@@ -11,6 +11,7 @@ static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 struct ScratchDatabase {
     admin: Client,
+    config: Config,
     name: String,
 }
 
@@ -25,7 +26,24 @@ impl ScratchDatabase {
         scratch_config.dbname(&name);
         let mut client = scratch_config.connect(NoTls)?;
         client.batch_execute("CREATE EXTENSION IF NOT EXISTS pg_search")?;
-        Ok((Self { admin, name }, client))
+        Ok((
+            Self {
+                admin,
+                config: scratch_config,
+                name,
+            },
+            client,
+        ))
+    }
+
+    fn connect(&self) -> Result<Client, postgres::Error> {
+        self.config.connect(NoTls)
+    }
+
+    fn connect_with_epoch(&self, epoch: Uuid) -> Result<Client, postgres::Error> {
+        let mut config = self.config.clone();
+        config.options(&format!("-c gobby.maintenance_epoch={epoch}"));
+        config.connect(NoTls)
     }
 }
 
@@ -90,6 +108,109 @@ fn named_schema_apply_and_verify_are_isolated() -> anyhow::Result<()> {
         .get(0);
     assert!(tenant_tasks);
     assert!(!public_tasks);
+    Ok(())
+}
+
+#[test]
+fn login_trigger_allows_connections_after_its_relation_is_dropped() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let trigger_exists: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                SELECT 1 FROM pg_event_trigger
+                WHERE evtname LIKE 'gobby_maintenance_epoch_login_%'
+            )",
+            &[],
+        )?
+        .get(0);
+    assert!(
+        trigger_exists,
+        "public baseline must install the login trigger"
+    );
+
+    client.batch_execute("DROP TABLE public.maintenance_epochs CASCADE")?;
+    let trigger_survives_drop: bool = client
+        .query_one(
+            "SELECT EXISTS (
+                SELECT 1 FROM pg_event_trigger
+                WHERE evtname LIKE 'gobby_maintenance_epoch_login_%'
+            )",
+            &[],
+        )?
+        .get(0);
+    assert!(
+        trigger_survives_drop,
+        "relation drop must leave the login trigger installed"
+    );
+    let _connection = database.connect()?;
+    Ok(())
+}
+
+#[test]
+fn login_trigger_preserves_active_epoch_fencing() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let epoch = Uuid::new_v4();
+    client.execute(
+        "INSERT INTO public.maintenance_epochs (
+            id, campaign, opened_by, scope_note
+        ) VALUES ($1, 'schema-apply', 'schema-contract-test', 'login fence regression')",
+        &[&epoch],
+    )?;
+
+    let error = database
+        .connect()
+        .err()
+        .ok_or_else(|| anyhow::anyhow!("active epoch must reject an unannotated login"))?;
+    let database_error = error
+        .as_db_error()
+        .ok_or_else(|| anyhow::anyhow!("expected PostgreSQL login rejection: {error}"))?;
+    assert_eq!(database_error.code().code(), "55000");
+    assert!(
+        database_error
+            .message()
+            .contains("Gobby hub maintenance is active")
+    );
+
+    let _annotated_connection = database.connect_with_epoch(epoch)?;
+    Ok(())
+}
+
+#[test]
+fn named_schema_applies_never_install_database_login_triggers() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    for schema in ["login_trigger_schema_a", "login_trigger_schema_b"] {
+        SchemaRunner::new(&mut client, schema)?.apply()?;
+    }
+    let trigger_count: i64 = client
+        .query_one(
+            "SELECT count(*) FROM pg_event_trigger
+             WHERE evtname LIKE 'gobby_maintenance_epoch_login_%'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(trigger_count, 0);
+
+    client.batch_execute("DROP SCHEMA login_trigger_schema_a CASCADE")?;
+    let _first_connection = database.connect()?;
+    client.batch_execute("DROP SCHEMA login_trigger_schema_b CASCADE")?;
+    let _second_connection = database.connect()?;
     Ok(())
 }
 
