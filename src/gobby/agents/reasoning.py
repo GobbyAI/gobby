@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from gobby.agents.provider_capabilities import provider_supports_terminal_reasoning
 from gobby.providers.capabilities.models import SpeedMode
@@ -14,9 +14,6 @@ from gobby.providers.capabilities.resolve import (
 from gobby.providers.capabilities.resolve import (
     ReasoningStatus as CapabilityReasoningStatus,
 )
-
-if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
 
 AUTO_REASONING_EFFORT = "auto"
 ReasoningStatus = Literal[
@@ -103,7 +100,6 @@ def resolve_spawn_reasoning(
     model: str | None,
     requested_effort: str | None,
     reasoning_required: bool | None,
-    daemon_config: DaemonConfig | None = None,
 ) -> SpawnReasoningResolution:
     """Resolve a spawn-time reasoning request for a terminal agent."""
     normalized_request = normalize_reasoning_effort(requested_effort)

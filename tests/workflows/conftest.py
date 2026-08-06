@@ -88,9 +88,8 @@ def db_loader(workflow_db: HubDatabase) -> WorkflowLoader:
 
 
 # Fixtures shared across the split test_pipeline_executor_*.py modules.
-# Other workflow test modules (test_mcp_step, test_pipeline_resume,
-# test_summary_actions, test_webhook_executor) define module-local overrides
-# for these names — pytest fixture resolution keeps those isolated.
+# test_mcp_step and test_pipeline_resume define module-local overrides for
+# these names — pytest fixture resolution keeps those isolated.
 
 
 @pytest.fixture

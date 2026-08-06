@@ -19,7 +19,7 @@ from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_mana
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.models import MCPServerConfig
-    from gobby.mcp_proxy.registry_manager import InternalToolRegistryManager
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -140,7 +140,7 @@ def _build_mcp_server_config(
 
 
 async def list_mcp_servers(
-    internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
+    internal_manager: "InternalRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
 ) -> dict[str, Any]:
     """

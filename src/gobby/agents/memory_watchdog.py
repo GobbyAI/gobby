@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
-    from gobby.storage.postgres import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 

@@ -98,6 +98,7 @@ class _SessionEndHandler(SessionEndMixin):
         self._workflow_handler = workflow_handler
         self._session_storage = session_manager
         self._session_coordinator = None
+        self._session_end_auto_link_worker = None
         self._message_processor = None
         self._task_manager = None
         self._worktree_manager = None

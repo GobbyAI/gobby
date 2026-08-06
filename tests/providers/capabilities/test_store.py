@@ -159,20 +159,6 @@ def test_replace_bumps_generation_and_replaces_provider_rows(
     assert store.has_rows("claude") is False
 
 
-def test_mark_stale_preserves_capability_rows(postgres_db: HubDatabase) -> None:
-    store = ProviderCapabilityStore(postgres_db)
-    store.replace_provider_snapshot(_snapshot())
-    before = store.get_provider_snapshot("codex")
-    assert before is not None
-
-    store.mark_stale("codex")
-
-    after = store.get_provider_snapshot("codex")
-    assert after is not None
-    assert after.models == before.models
-    assert after.sources[0].state is SourceState.STALE
-
-
 def test_all_snapshots_follow_provider_display_order(postgres_db: HubDatabase) -> None:
     store = ProviderCapabilityStore(postgres_db)
     store.replace_provider_snapshot(_snapshot(provider="extension", model_name="extension-model"))

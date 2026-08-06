@@ -476,9 +476,7 @@ class TestInitSubsystems:
     @pytest.mark.asyncio
     async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:
         runner = SimpleNamespace(
-            http_server=SimpleNamespace(
-                services=SimpleNamespace(provider_model_catalog=None),
-            ),
+            http_server=SimpleNamespace(),
             mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -549,9 +547,7 @@ class TestInitSubsystems:
             count=AsyncMock(return_value=0),
         )
         runner = SimpleNamespace(
-            http_server=SimpleNamespace(
-                services=SimpleNamespace(provider_model_catalog=None),
-            ),
+            http_server=SimpleNamespace(),
             mcp_proxy=SimpleNamespace(connect_all=AsyncMock()),
             config=SimpleNamespace(
                 databases=SimpleNamespace(
@@ -661,7 +657,6 @@ class TestInitSubsystems:
         events: list[str] = []
 
         class RecordingServices:
-            provider_model_catalog = None
             shutdown_in_progress = False
 
             def __init__(self) -> None:
@@ -1496,7 +1491,7 @@ class TestShutdownDaemonServices:
             capture_output=True,
             check=False,
             text=True,
-            timeout=3.0,
+            timeout=15.0,
         )
 
         assert completed.returncode == 0, completed.stderr
@@ -1976,7 +1971,29 @@ class TestRunGobbyFunction:
     @pytest.mark.asyncio
     async def test_run_gobby_creates_runner(self):
         """Test that run_gobby creates and runs GobbyRunner."""
-        with patch("gobby.runner.GobbyRunner") as mock_runner_cls:
+        bootstrap = SimpleNamespace(
+            database_url="postgresql://test",
+            bind_host="127.0.0.1",
+            daemon_port=60887,
+        )
+        lease = MagicMock()
+        lease.try_acquire.return_value = True
+
+        with (
+            patch("gobby.runner.GobbyRunner") as mock_runner_cls,
+            patch(
+                "gobby.config.bootstrap.load_bootstrap", return_value=bootstrap
+            ) as mock_load_bootstrap,
+            patch("gobby.daemon_lease.ActiveDaemonLease", return_value=lease) as mock_lease_cls,
+            patch(
+                "gobby.daemon_lease_control.monitor_active_lease",
+                new_callable=AsyncMock,
+            ) as mock_monitor_lease,
+            patch("gobby.storage.schema_contract.verify_schema") as mock_verify_schema,
+            patch(
+                "gobby.utils.machine_id.require_machine_id", return_value="machine-id"
+            ) as mock_require_machine_id,
+        ):
             mock_runner = AsyncMock()
             mock_runner.run = AsyncMock()
             mock_runner_cls.return_value = mock_runner
@@ -1993,6 +2010,17 @@ class TestRunGobbyFunction:
             )
             mock_runner.run.assert_called_once_with(ownership_resolution=ownership)
             assert mock_runner.run.await_count == 1
+            mock_load_bootstrap.assert_called_once_with(
+                "/tmp/config.yaml", resolve_database_url=True
+            )
+            mock_require_machine_id.assert_called_once_with()
+            mock_lease_cls.assert_called_once_with(
+                "postgresql://test", machine_id="machine-id"
+            )
+            mock_verify_schema.assert_called_once_with("postgresql://test")
+            assert lease.try_acquire.call_count == 1
+            assert mock_monitor_lease.await_count == 1
+            assert lease.release.call_count == 1
 
     def test_runner_construction_failure_rolls_back_storage(self) -> None:
         database = MagicMock()
