@@ -18,7 +18,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.sessions import SessionManager
-from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
 
@@ -104,6 +103,13 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
     manager_with_mocks._database = temp_db
     manager_with_mocks._session_manager = SessionManager(temp_db)
 
+    # The seed fixture may include the host's real machine row, so prove
+    # ingress behavior via set deltas rather than enumerating the table.
+    def machine_ids() -> set[str]:
+        return {str(row["id"]) for row in temp_db.fetchall("SELECT id FROM machines")}
+
+    baseline = machine_ids()
+
     fallback_event = make_event(
         data={"machineId": "7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410", "hostname": "laptop"}
     )
@@ -114,17 +120,14 @@ def test_record_machine_ingress_ignores_malformed_machine_ids(
     fallback_machine = LocalMachineManager(temp_db).get("7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410")
     assert fallback_machine is not None
     assert fallback_machine.hostname == "laptop"
+    assert machine_ids() == baseline | {"7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"}
 
     unattributable_event = make_event(data={"machineId": "also-not-a-uuid"})
     unattributable_event.machine_id = "unknown-machine"
 
     manager_with_mocks._record_machine_ingress(unattributable_event)
 
-    rows = temp_db.fetchall(
-        "SELECT id FROM machines WHERE id::TEXT NOT LIKE %s",
-        (f"{TEST_MACHINE_ID_PREFIX}%",),
-    )
-    assert [str(row["id"]) for row in rows] == ["7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"]
+    assert machine_ids() == baseline | {"7d9f4a68-3c21-4f6b-9e02-5a8f1c33d410"}
 
 
 class TestHandleInternalDaemonNotReady:
