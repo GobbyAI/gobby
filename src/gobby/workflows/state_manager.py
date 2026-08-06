@@ -580,19 +580,31 @@ class SessionVariableManager:
         self,
         session_id: str,
         repo_relative_path: str,
+        checkout_root: str | None = None,
     ) -> bool:
         """Record a successful repo file edit in session and active-task ledgers."""
-        return self.record_edited_files(session_id, [repo_relative_path])
+        return self.record_edited_files(
+            session_id,
+            [repo_relative_path],
+            checkout_root=checkout_root,
+        )
 
     def record_edited_files(
         self,
         session_id: str,
         repo_relative_paths: list[str],
+        *,
+        checkout_root: str | None = None,
     ) -> bool:
         """Atomically record one successful mutation observation and its paths."""
         normalized_paths = list(dict.fromkeys(path for path in repo_relative_paths if path))
 
-        from gobby.workflows.task_claim_state import active_task_id_for_edit
+        from gobby.workflows.task_claim_state import (
+            active_task_id_for_edit,
+            normalize_task_checkout_root,
+        )
+
+        normalized_checkout = normalize_task_checkout_root(checkout_root)
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             stored = variables.get("session_edited_files", [])
@@ -616,6 +628,28 @@ class SessionVariableManager:
                 task_files = dict(task_files)
                 task_files[task_id] = files_for_task
                 variables["task_edited_files"] = task_files
+                if normalized_checkout is not None:
+                    raw_checkouts = variables.get("task_edited_file_checkouts") or {}
+                    task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
+                    raw_task_checkouts = task_checkouts.get(task_id, {})
+                    checkouts_for_task = (
+                        raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
+                    )
+                    stored_for_checkout = checkouts_for_task.get(normalized_checkout, [])
+                    files_for_checkout = (
+                        stored_for_checkout if isinstance(stored_for_checkout, list) else []
+                    )
+                    files_for_checkout = list(
+                        dict.fromkeys(str(file) for file in files_for_checkout if file)
+                    )
+                    files_for_checkout.extend(
+                        path for path in normalized_paths if path not in files_for_checkout
+                    )
+                    checkouts_for_task = dict(checkouts_for_task)
+                    checkouts_for_task[normalized_checkout] = files_for_checkout
+                    task_checkouts = dict(task_checkouts)
+                    task_checkouts[task_id] = checkouts_for_task
+                    variables["task_edited_file_checkouts"] = task_checkouts
             return True, True
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)
@@ -625,9 +659,14 @@ class SessionVariableManager:
         session_id: str,
         task_id: str,
         repo_relative_paths: list[str],
+        *,
+        checkout_root: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """Atomically release owner-confirmed paths from one task attribution ledger."""
-        from gobby.workflows.task_claim_state import normalize_task_edited_path
+        from gobby.workflows.task_claim_state import (
+            normalize_task_checkout_root,
+            normalize_task_edited_path,
+        )
 
         requested = list(
             dict.fromkeys(
@@ -637,6 +676,7 @@ class SessionVariableManager:
             )
         )
         requested_set = set(requested)
+        normalized_checkout = normalize_task_checkout_root(checkout_root)
 
         def mutate(variables: dict[str, Any]) -> tuple[tuple[list[str], list[str]], bool]:
             raw_task_files = variables.get("task_edited_files") or {}
@@ -644,23 +684,60 @@ class SessionVariableManager:
             stored = task_files.get(task_id, [])
             files_for_task = stored if isinstance(stored, list) else []
 
+            raw_checkouts = variables.get("task_edited_file_checkouts") or {}
+            task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
+            raw_task_checkouts = task_checkouts.get(task_id, {})
+            checkouts_for_task = raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
+            scoped_paths = (
+                checkouts_for_task.get(normalized_checkout, [])
+                if normalized_checkout is not None
+                else None
+            )
+            has_scoped_attribution = (
+                normalized_checkout is not None
+                and normalized_checkout in checkouts_for_task
+                and isinstance(scoped_paths, list)
+            )
+            scoped_requested = set(scoped_paths or []) & requested_set
+            retained_scoped_paths = {
+                str(path)
+                for root, paths in checkouts_for_task.items()
+                if root != normalized_checkout and isinstance(paths, list)
+                for path in paths
+            }
+
             released: list[str] = []
             remaining: list[str] = []
             for value in files_for_task:
                 normalized = normalize_task_edited_path(value)
-                if normalized in requested_set:
+                should_release = normalized in requested_set
+                if has_scoped_attribution:
+                    should_release = (
+                        normalized in scoped_requested and normalized not in retained_scoped_paths
+                    )
+                if should_release:
                     if normalized is not None and normalized not in released:
                         released.append(normalized)
                     continue
                 if normalized is not None and normalized not in remaining:
                     remaining.append(normalized)
 
+            if has_scoped_attribution:
+                released = [path for path in requested if path in scoped_requested]
             if not released:
                 return (released, remaining), False
 
             updated_task_files = dict(task_files)
             updated_task_files[task_id] = remaining
             variables["task_edited_files"] = updated_task_files
+            if has_scoped_attribution and normalized_checkout is not None:
+                updated_checkouts_for_task = dict(checkouts_for_task)
+                updated_checkouts_for_task[normalized_checkout] = [
+                    path for path in (scoped_paths or []) if path not in requested_set
+                ]
+                updated_task_checkouts = dict(task_checkouts)
+                updated_task_checkouts[task_id] = updated_checkouts_for_task
+                variables["task_edited_file_checkouts"] = updated_task_checkouts
             return (released, remaining), True
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)

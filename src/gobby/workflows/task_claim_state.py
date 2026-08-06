@@ -8,6 +8,7 @@ Sessions can claim N tasks simultaneously. The state is a single dict
 from __future__ import annotations
 
 import posixpath
+from pathlib import Path
 from typing import Any
 
 
@@ -19,6 +20,16 @@ def normalize_task_edited_path(value: object) -> str | None:
     if path in {"", "."} or path.startswith("../") or path.startswith("/"):
         return None
     return path
+
+
+def normalize_task_checkout_root(value: object) -> str | None:
+    """Normalize one absolute checkout root used by task edit attribution."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        return None
+    return str(path.resolve(strict=False))
 
 
 def _claimed_tasks(variables: dict[str, Any]) -> dict[str, str]:
@@ -36,6 +47,32 @@ def _task_edited_files(variables: dict[str, Any]) -> dict[str, list[str]]:
     for task_id, files in raw.items():
         if isinstance(files, list):
             result[str(task_id)] = sorted({str(file) for file in files if file})
+    return result
+
+
+def _task_edited_file_checkouts(
+    variables: dict[str, Any],
+) -> dict[str, dict[str, list[str]]]:
+    raw = variables.get("task_edited_file_checkouts") or {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, dict[str, list[str]]] = {}
+    for task_id, raw_checkouts in raw.items():
+        if not isinstance(raw_checkouts, dict):
+            continue
+        checkouts: dict[str, list[str]] = {}
+        for raw_root, raw_files in raw_checkouts.items():
+            root = normalize_task_checkout_root(raw_root)
+            if root is None or not isinstance(raw_files, list):
+                continue
+            checkouts[root] = sorted(
+                {
+                    path
+                    for value in raw_files
+                    if (path := normalize_task_edited_path(value)) is not None
+                }
+            )
+        result[str(task_id)] = checkouts
     return result
 
 
@@ -58,6 +95,8 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
     tasks.pop(task_id, None)
     task_files = _task_edited_files(variables)
     task_files.pop(task_id, None)
+    task_file_checkouts = _task_edited_file_checkouts(variables)
+    task_file_checkouts.pop(task_id, None)
 
     active_task_id = variables.get("active_task_id")
     if active_task_id == task_id or active_task_id not in tasks:
@@ -69,6 +108,8 @@ def remove_claimed_task(variables: dict[str, Any], task_id: str) -> dict[str, An
         "active_task_id": active_task_id,
         "task_edited_files": task_files,
     }
+    if "task_edited_file_checkouts" in variables:
+        result["task_edited_file_checkouts"] = task_file_checkouts
     if not tasks:
         result["task_has_commits"] = False
     return result
@@ -115,6 +156,18 @@ def task_edited_file_set(variables: dict[str, Any], task_id: str | None) -> set[
     if not task_id:
         return set()
     return set(_task_edited_files(variables).get(task_id, []))
+
+
+def task_edited_file_set_for_checkout(
+    variables: dict[str, Any],
+    task_id: str | None,
+    checkout_root: str,
+) -> set[str]:
+    """Return task-attributed paths recorded in one absolute checkout root."""
+    root = normalize_task_checkout_root(checkout_root)
+    if not task_id or root is None:
+        return set()
+    return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
 
 
 def target_task_has_edits(variables: dict[str, Any], task_id: str | None) -> bool:

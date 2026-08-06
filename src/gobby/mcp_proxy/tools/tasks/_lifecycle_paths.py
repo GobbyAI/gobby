@@ -137,6 +137,7 @@ def register_release_task_paths(
             session_id,
             resolved_task_id,
             normalized_paths,
+            checkout_root=repo_path,
         )
         return {
             "success": True,

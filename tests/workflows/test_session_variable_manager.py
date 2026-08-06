@@ -7,6 +7,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -43,7 +44,13 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, "
         "created_at, updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
         "ON CONFLICT (id) DO NOTHING",
-        (session_id, f"ext-{session_id}", "21000000-0000-4000-8000-000000000001", "claude", PROJECT_ID),
+        (
+            session_id,
+            f"ext-{session_id}",
+            "21000000-0000-4000-8000-000000000001",
+            "claude",
+            PROJECT_ID,
+        ),
     )
 
 
@@ -794,18 +801,19 @@ def test_append_to_set_variable_and_conditional_merge_skips_updates_when_guard_f
     assert variables["audit_events"] == [{"event": "old"}]
 
 
-def test_record_edited_file_tracks_sole_claimed_task(db: Any) -> None:
+def test_record_edited_file_tracks_sole_claimed_task(db: Any, tmp_path: Path) -> None:
     """Edited files are recorded in both session and task-scoped ledgers."""
     from gobby.workflows.state_manager import SessionVariableManager
 
     mgr = SessionVariableManager(db)
     mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
 
-    mgr.record_edited_file(S1, "src/app.py")
+    mgr.record_edited_file(S1, "src/app.py", checkout_root=str(tmp_path))
 
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
     assert variables["task_edited_files"] == {"task-1": ["src/app.py"]}
+    assert variables["task_edited_file_checkouts"] == {"task-1": {str(tmp_path): ["src/app.py"]}}
 
 
 def test_record_edited_files_atomically_preserves_order_and_deduplicates(db: Any) -> None:
@@ -860,6 +868,39 @@ def test_release_task_edited_files_removes_only_requested_task_paths(db: Any) ->
     assert variables["task_edited_files"] == {
         "task-1": ["src/remaining.py"],
         "task-2": ["src/other.py"],
+    }
+
+
+def test_release_task_edited_files_preserves_same_path_in_other_checkout(
+    db: Any,
+    tmp_path: Path,
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    first_checkout = tmp_path / "first"
+    second_checkout = tmp_path / "second"
+    first_checkout.mkdir()
+    second_checkout.mkdir()
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(S1, {"claimed_tasks": {"task-1": "#1"}})
+    mgr.record_edited_file(S1, "src/shared.py", checkout_root=str(first_checkout))
+    mgr.record_edited_file(S1, "src/shared.py", checkout_root=str(second_checkout))
+
+    released, remaining = mgr.release_task_edited_files(
+        S1,
+        "task-1",
+        ["src/shared.py"],
+        checkout_root=str(first_checkout),
+    )
+
+    assert released == ["src/shared.py"]
+    assert remaining == ["src/shared.py"]
+    variables = mgr.get_variables(S1)
+    assert variables["task_edited_file_checkouts"] == {
+        "task-1": {
+            str(first_checkout): [],
+            str(second_checkout): ["src/shared.py"],
+        }
     }
 
 
