@@ -21,7 +21,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "c4c66fd45f03122e648482229f7e5e5ebb67ae8ca49f80255d2f63e4ded54aab"
+        "4bedce387f6d9c52c28769d7d506fc370441ca3cf39eaa7a533f6a4a002375e2"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
@@ -30,7 +30,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.filename, "baseline@375");
     assert_eq!(
         identity.latest_asset.checksum,
-        "c4c66fd45f03122e648482229f7e5e5ebb67ae8ca49f80255d2f63e4ded54aab"
+        "4bedce387f6d9c52c28769d7d506fc370441ca3cf39eaa7a533f6a4a002375e2"
     );
     assert_eq!(identity.root_hash.len(), 64);
 

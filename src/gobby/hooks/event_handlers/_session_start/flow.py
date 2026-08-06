@@ -406,8 +406,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                             external_id=external_id,
                             source=cli_source,
                             session_id=gobby_session_id_from_env,
-                            machine_id=existing_session.machine_id,
                             project_id=existing_session.project_id,
+                            session_type=existing_session.session_type,
                         )
                     return cast(
                         HookResponse,
@@ -451,7 +451,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         try:
             existing_web_chat = handler._session_manager.find_by_external_id(
                 external_id,
-                machine_id,
                 project_id,
                 cli_source,
                 session_type="web_chat",
@@ -549,17 +548,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             external_id=external_id,
             source=cli_source,
             session_id=session_id,
-            machine_id=canonical_session.machine_id,
             project_id=canonical_session.project_id,
+            session_type=canonical_session.session_type,
         )
-        if observed_external_id != external_id:
-            handler._session_manager.cache_session_mapping(
-                external_id=observed_external_id,
-                source=cli_source,
-                session_id=session_id,
-                machine_id=canonical_session.machine_id,
-                project_id=canonical_session.project_id,
-            )
     elif handler._session_manager:
         if not transcript_path:
             transcript_path = handler._derive_transcript_path(
@@ -825,8 +816,8 @@ def handle_pre_created_session(
             external_id=external_id,
             source=cli_source,
             session_id=existing_session.id,
-            machine_id=session_obj.machine_id,
             project_id=session_obj.project_id,
+            session_type=session_obj.session_type,
         )
 
     session_id = session_obj.id

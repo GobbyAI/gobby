@@ -95,7 +95,6 @@ def resolve_session_start_identity(
     try:
         session = handler._session_manager.find_by_external_id(
             external_id,
-            machine_id,
             project_id,
             cli_source,
             session_type="terminal",
@@ -103,7 +102,6 @@ def resolve_session_start_identity(
         if session is None:
             session = handler._session_manager.find_by_external_id_any_project(
                 external_id,
-                machine_id,
                 cli_source,
                 session_type="terminal",
             )
@@ -126,7 +124,6 @@ def resolve_session_start_identity(
     try:
         candidate_resolution = resolve_compact_continuation(
             handler._session_manager.db,
-            machine_id=machine_id,
             source=cli_source,
             terminal_context=input_data.get("terminal_context"),
         )

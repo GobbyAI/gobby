@@ -27,14 +27,12 @@ class SessionEndMixin(EventHandlersBase):
         if not session_id and external_id and self._session_manager:
             self.logger.debug("external_id %s not in mapping, querying database", external_id)
             # Resolve context for lookup
-            machine_id = self._get_machine_id()
             cwd = event.data.get("cwd")
             project_id = self._resolve_project_id(event.data.get("project_id"), cwd)
             # Lookup with full composite key
             session_id = self._session_manager.lookup_session_id(
                 external_id,
                 source=event.source.value,
-                machine_id=machine_id,
                 project_id=project_id,
             )
 

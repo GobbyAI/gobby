@@ -74,7 +74,6 @@ def test_register_session_fallback_does_not_populate_caches(
         session_mgr.lookup_session_id(
             external_id="failed-session",
             source="claude",
-            machine_id="20000000-0000-4000-8000-000000000002",
             project_id=project_id,
         )
         is None
@@ -130,7 +129,6 @@ def test_register_session_happy_path_populates_caches(
         session_mgr.lookup_session_id(
             external_id="storage-session",
             source="claude",
-            machine_id="20000000-0000-4000-8000-000000000002",
             project_id=project_id,
         )
         == session_id
@@ -252,7 +250,7 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
 ) -> None:
     weak = session_mgr.register(
         external_id="recover-terminal-session",
-        machine_id="20000000-0000-4000-8000-000000000002",
+        machine_id=None,
         source="codex",
         project_id=project_id,
         terminal_context={"cwd": "/work/repos/gobby"},
@@ -268,7 +266,6 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     recovered = session_mgr.recover_session(
         external_id="recover-terminal-session",
         source="codex",
-        machine_id="20000000-0000-4000-8000-000000000002",
         project_id=project_id,
     )
 
@@ -297,12 +294,42 @@ def test_recover_session_refuses_equal_score_cross_source_candidates(
     recovered = session_mgr.recover_session(
         external_id="ambiguous-recovery-session",
         source="agy",
-        machine_id="20000000-0000-4000-8000-000000000002",
         project_id=project_id,
     )
 
     assert first.id != second.id
     assert recovered is None
+
+
+def test_registration_failure_does_not_recover_web_chat_identity(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    web_chat = session_mgr.register(
+        external_id="terminal-web-chat-isolation",
+        machine_id=None,
+        source="codex",
+        project_id=project_id,
+        session_type="web_chat",
+    )
+
+    with patch.object(session_mgr, "register", side_effect=RuntimeError("boom")):
+        recovered_id = session_mgr.register_session(
+            external_id="terminal-web-chat-isolation",
+            machine_id="20000000-0000-4000-8000-000000000002",
+            source="codex",
+            project_id=project_id,
+        )
+
+    assert recovered_id == ""
+    assert (
+        session_mgr.find_active_by_external_id(
+            "terminal-web-chat-isolation",
+            "codex",
+        )
+        is None
+    )
+    assert session_mgr.get(web_chat.id) == web_chat
 
 
 def test_register_raises_on_storage_failure(

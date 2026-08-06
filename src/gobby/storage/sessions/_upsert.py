@@ -40,6 +40,7 @@ def update_existing_session(
     conn: _TransactionConnection,
     existing: Session,
     *,
+    machine_id: str | None,
     title: str | None | UnsetType,
     title_source: str | None | UnsetType,
     transcript_path: str | None | UnsetType,
@@ -64,6 +65,7 @@ def update_existing_session(
     conn.execute(
         """
         UPDATE sessions SET
+            machine_id = COALESCE(%s, machine_id),
             transcript_path = CASE WHEN %s THEN %s ELSE transcript_path END,
             git_branch = CASE WHEN %s THEN %s ELSE git_branch END,
             parent_session_id = CASE WHEN %s THEN %s ELSE parent_session_id END,
@@ -91,6 +93,7 @@ def update_existing_session(
         WHERE id = %s
         """,
         (
+            machine_id,
             is_set(transcript_path),
             transcript_path if is_set(transcript_path) else None,
             is_set(git_branch),

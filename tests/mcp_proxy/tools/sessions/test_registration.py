@@ -10,6 +10,8 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.session_context import session_context_for_test
 
@@ -116,7 +118,49 @@ class TestRegisterSession:
         assert r1["session_id"] == r2["session_id"]
         assert session_manager.register.call_count == 2
 
-    @patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000013")
+    def test_uuid_ingress_reuses_persisted_null_machine_session(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, Any],
+    ) -> None:
+        machine_id = "20000000-0000-4000-8000-000000000001"
+        external_id = "mcp-machine-attribution-transition"
+        project_id = str(sample_project["id"])
+        canonical = session_manager.register(
+            external_id=external_id,
+            machine_id=None,
+            source="agent-sdk",
+            project_id=project_id,
+        )
+        LocalMachineManager(session_manager.db).upsert_seen(machine_id)
+        registry = _make_registry(session_manager=session_manager)
+        register = registry.get_tool("register_session")
+        assert register is not None
+
+        result = register(
+            external_id=external_id,
+            source="agent-sdk",
+            machine_id=machine_id,
+            project_id=project_id,
+        )
+
+        row = session_manager.db.fetchone(
+            """
+            SELECT count(*) AS session_count, max(machine_id::text) AS machine_id
+            FROM sessions
+            WHERE external_id = %s AND source = %s AND project_id = %s
+              AND session_type = 'terminal'
+            """,
+            (external_id, "agent-sdk", project_id),
+        )
+        assert result["session_id"] == canonical.id
+        assert row is not None
+        assert row["session_count"] == 1
+        assert row["machine_id"] == machine_id
+
+    @patch(
+        "gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000013"
+    )
     @patch(
         "gobby.utils.project_context.get_project_context",
         return_value={"id": "auto-proj"},
@@ -156,18 +200,32 @@ class TestRegisterSession:
         )
 
     @patch("gobby.utils.machine_id.get_machine_id", return_value=None)
-    def test_error_when_machine_id_unresolvable(self, mock_machine_id: MagicMock) -> None:
-        """Returns error when machine_id can't be resolved."""
+    def test_machine_id_can_remain_unattributed(self, mock_machine_id: MagicMock) -> None:
         session_manager = MagicMock()
+        session_manager.register.return_value = MagicMock(
+            id="uuid-unattributed",
+            seq_num=9,
+            external_id="ext-1",
+            status="active",
+            source="claude",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
         registry = _make_registry(session_manager=session_manager)
         register = registry.get_tool("register_session")
         assert register is not None
 
-        result = register(external_id="ext-1", source="claude")
-        assert "error" in result
-        assert "machine_id" in result["error"]
+        result = register(
+            external_id="ext-1",
+            source="claude",
+            project_id="11111111-1111-4111-8111-111111110001",
+        )
 
-    @patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000005")
+        assert result["session_id"] == "uuid-unattributed"
+        assert session_manager.register.call_args.kwargs["machine_id"] is None
+
+    @patch(
+        "gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000005"
+    )
     @patch("gobby.utils.project_context.get_project_context", return_value=None)
     def test_error_when_project_id_unresolvable(
         self, mock_project_ctx: MagicMock, mock_machine_id: MagicMock
@@ -254,13 +312,14 @@ class TestRegisterSession:
             id="uuid-ambient",
             ref="#42",
             external_id="provider-stable-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=None,
             source="codex",
             project_id="11111111-1111-4111-8111-111111110001",
         )
         revived = MagicMock(
             id="uuid-ambient",
             ref="#42",
+            seq_num=42,
             external_id="provider-stable-id",
             status="active",
             source="codex",
@@ -268,7 +327,7 @@ class TestRegisterSession:
         )
         session_manager.resolve_session_reference.return_value = ambient.id
         session_manager.get.return_value = ambient
-        session_manager.update_status_from_activity.return_value = revived
+        session_manager.register.return_value = revived
         register = _make_registry(session_manager=session_manager).get_tool("register_session")
         assert register is not None
 
@@ -283,11 +342,10 @@ class TestRegisterSession:
         assert result["session_id"] == ambient.id
         assert result["session_ref"] == "#42"
         assert result["status"] == "active"
-        session_manager.update_status_from_activity.assert_called_once_with(
-            ambient.id,
-            "active",
+        assert session_manager.register.call_args.kwargs["machine_id"] == (
+            "21000000-0000-4000-8000-000000000001"
         )
-        session_manager.register.assert_not_called()
+        session_manager.update_status_from_activity.assert_not_called()
 
     def test_ambient_conflicting_external_id_returns_identity_mismatch(self) -> None:
         session_manager = MagicMock()

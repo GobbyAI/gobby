@@ -166,7 +166,6 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     session_manager.get_session_id.assert_any_call(
         "claude-external",
         "claude",
-        machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-from-cwd",
     )
 
@@ -204,7 +203,6 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.recover_session.assert_any_call(
         external_id="codex-external",
         source="codex",
-        machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-1",
     )
     session_manager.register_session.assert_not_called()
@@ -226,6 +224,7 @@ def test_prestart_compact_traffic_recovers_canonical_row_without_registration(
         machine_id="21000000-0000-4000-8000-000000000009",
         project_id="project-1",
         source="claude",
+        session_type="terminal",
         title="Canonical session",
     )
     canonical_session = cast(Session, canonical)

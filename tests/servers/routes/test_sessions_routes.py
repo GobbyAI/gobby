@@ -23,6 +23,8 @@ from gobby.servers.routes.sessions import (
     create_sessions_router,
 )
 from gobby.sessions.transcript_window import WindowResult
+from gobby.storage.machines import LocalMachineManager
+from gobby.storage.sessions import SessionManager
 from tests._timing import wait_for_condition
 
 pytestmark = pytest.mark.unit
@@ -548,6 +550,51 @@ class TestRegisterSession:
         )
         assert mock_server.session_manager.register.call_args.kwargs["title"] == "User Title"
         assert mock_server.session_manager.register.call_args.kwargs["title_source"] == "manual"
+
+    def test_register_reuses_null_machine_session_for_uuid_ingress(
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        machine_id = "20000000-0000-4000-8000-000000000001"
+        external_id = "http-machine-attribution-transition"
+        project_id = sample_project["id"]
+        canonical = session_manager.register(
+            external_id=external_id,
+            machine_id=None,
+            source="codex",
+            project_id=project_id,
+        )
+        LocalMachineManager(session_manager.db).upsert_seen(machine_id)
+        mock_server.session_manager = session_manager
+        mock_server.resolve_project_id.return_value = project_id
+
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=machine_id):
+            response = client.post(
+                "/api/sessions/register",
+                json={
+                    "external_id": external_id,
+                    "source": "codex",
+                    "project_id": project_id,
+                },
+            )
+
+        row = session_manager.db.fetchone(
+            """
+            SELECT count(*) AS session_count, max(machine_id::text) AS machine_id
+            FROM sessions
+            WHERE external_id = %s AND source = %s AND project_id = %s
+              AND session_type = 'terminal'
+            """,
+            (external_id, "codex", project_id),
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == canonical.id
+        assert row is not None
+        assert row["session_count"] == 1
+        assert row["machine_id"] == machine_id
 
     def test_register_no_session_manager(self, client, mock_server) -> None:
         """Returns 503 when session_manager is None."""

@@ -33,7 +33,7 @@ def register_registration_tools(
         description="""Register a session with Gobby. For hookless clients (Agent SDK, etc.)
 that don't trigger SessionStart hooks.
 
-Idempotent: calling with the same external_id + source + machine_id + project_id
+Idempotent: calling with the same external_id + source + project_id
 returns the existing session instead of creating a duplicate.
 
 machine_id and project_id are auto-resolved from the local environment if omitted.""",
@@ -77,8 +77,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
         resolved_machine_id = machine_id
         if not resolved_machine_id:
             resolved_machine_id = get_machine_id()
-        if not resolved_machine_id:
-            return {"error": "Could not determine machine_id — pass it explicitly"}
 
         # Auto-resolve project_id
         resolved_project_id = project_id
@@ -110,7 +108,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
             if ambient_session.source == source:
                 identity_matches = (
                     ambient_session.external_id == external_id
-                    and ambient_session.machine_id == resolved_machine_id
                     and ambient_session.project_id == resolved_project_id
                 )
                 if not identity_matches:
@@ -122,25 +119,6 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                         "canonical_external_id": ambient_session.external_id,
                         "observed_external_id": external_id,
                     }
-                revived = session_manager.update_status_from_activity(
-                    ambient_session.id,
-                    "active",
-                )
-                if revived is None:
-                    return {
-                        "error": "Current MCP session cannot be reactivated.",
-                        "error_code": "ambient_session_terminal",
-                        "session_id": ambient_session.id,
-                    }
-                return {
-                    "session_id": revived.id,
-                    "session_ref": revived.ref,
-                    "external_id": revived.external_id,
-                    "status": revived.status,
-                    "source": revived.source,
-                    "project_id": revived.project_id,
-                }
-
         try:
             session = session_manager.register(
                 external_id=external_id,

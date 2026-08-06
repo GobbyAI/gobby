@@ -31,9 +31,8 @@ class _RegistrationRecoveryHost(Protocol):
     def find_by_external_id_all_sources(
         self,
         external_id: str,
-        machine_id: str | None,
         project_id: str | None,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> list[Session]: ...
 
     def cache_session_mapping(
@@ -41,8 +40,8 @@ class _RegistrationRecoveryHost(Protocol):
         external_id: str,
         source: str,
         session_id: str,
-        machine_id: str | None = None,
         project_id: str | None = None,
+        session_type: str = "terminal",
     ) -> None: ...
 
 
@@ -51,15 +50,13 @@ class _RegistrationRecoveryMixin:
         self: _RegistrationRecoveryHost,
         external_id: str,
         source: str,
-        machine_id: str | None,
         project_id: str | None,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None:
         """Recover an existing session across sources when lookup is unambiguous."""
         try:
             candidates = self.find_by_external_id_all_sources(
                 external_id=external_id,
-                machine_id=machine_id,
                 project_id=project_id,
                 session_type=session_type,
             )
@@ -68,10 +65,9 @@ class _RegistrationRecoveryMixin:
             if project_id is None and len({candidate.project_id for candidate in candidates}) > 1:
                 self.logger.warning(
                     "Ambiguous cross-project session recovery for external_id=%s source=%s "
-                    "machine_id=%s candidates=%s",
+                    "candidates=%s",
                     external_id,
                     source,
-                    machine_id,
                     [candidate.id for candidate in candidates],
                 )
                 return None
@@ -80,10 +76,9 @@ class _RegistrationRecoveryMixin:
             if len(ranked) > 1 and _recovery_score(ranked[0]) == _recovery_score(ranked[1]):
                 self.logger.warning(
                     "Ambiguous cross-source session recovery for external_id=%s source=%s "
-                    "machine_id=%s project_id=%s candidates=%s",
+                    "project_id=%s candidates=%s",
                     external_id,
                     source,
-                    machine_id,
                     project_id,
                     [candidate.id for candidate in ranked[:2]],
                 )
@@ -94,8 +89,8 @@ class _RegistrationRecoveryMixin:
                 external_id,
                 source,
                 recovered.id,
-                machine_id=machine_id,
-                project_id=project_id,
+                project_id=recovered.project_id,
+                session_type=recovered.session_type,
             )
             return recovered
 

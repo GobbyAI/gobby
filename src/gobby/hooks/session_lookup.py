@@ -259,7 +259,6 @@ class SessionLookupService:
         platform_session_id = self._session_manager.get_session_id(
             external_id,
             event.source.value,
-            machine_id=machine_id,
             project_id=project_id,
         )
 
@@ -270,7 +269,6 @@ class SessionLookupService:
             platform_session_id = self._session_manager.get_session_id(
                 external_id,
                 event.source.value,
-                machine_id=machine_id,
                 project_id=project_id,
             )
             if platform_session_id:
@@ -298,7 +296,6 @@ class SessionLookupService:
         platform_session_id = self._session_manager.lookup_session_id(
             external_id,
             source=event.source.value,
-            machine_id=machine_id,
             project_id=project_id,
         )
         if platform_session_id:
@@ -312,7 +309,6 @@ class SessionLookupService:
         recovered_session = self._session_manager.recover_session(
             external_id=external_id,
             source=event.source.value,
-            machine_id=machine_id,
             project_id=project_id,
         )
         if recovered_session:
@@ -385,7 +381,6 @@ class SessionLookupService:
         """Recover compact identity, returning whether resolution is terminal."""
         compact_resolution = resolve_compact_continuation(
             self._session_manager.db,
-            machine_id=machine_id,
             source=event.source.value,
             terminal_context=event.data.get("terminal_context"),
         )
@@ -434,15 +429,8 @@ class SessionLookupService:
             external_id=canonical.external_id,
             source=event.source.value,
             session_id=canonical.id,
-            machine_id=canonical.machine_id,
             project_id=canonical.project_id,
-        )
-        self._session_manager.cache_session_mapping(
-            external_id=external_id,
-            source=event.source.value,
-            session_id=canonical.id,
-            machine_id=machine_id,
-            project_id=project_id,
+            session_type=canonical.session_type,
         )
         self._logger.info(
             "Recovered pre-start compact continuation as session %s",

@@ -27,12 +27,11 @@ class CompactIdentityResolution:
 def resolve_compact_continuation(
     db: HubDatabase,
     *,
-    machine_id: str | None,
     source: str,
     terminal_context: dict[str, Any] | None,
 ) -> CompactIdentityResolution:
     """Resolve a unique marked compact row for an exact terminal process."""
-    if not machine_id or not source or not terminal_context:
+    if not source or not terminal_context:
         return CompactIdentityResolution()
 
     rows = db.fetchall(
@@ -40,14 +39,13 @@ def resolve_compact_continuation(
         SELECT s.*, COALESCE(sv.variables ->> 'handoff_source', '') AS compact_marker
         FROM sessions s
         LEFT JOIN session_variables sv ON sv.session_id = s.id
-        WHERE s.machine_id = %s
-          AND s.source = %s
+        WHERE s.source = %s
           AND s.session_type = 'terminal'
           AND s.status IN ('handoff_ready', 'expired')
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT %s
         """,
-        (machine_id, source, MAX_COMPACT_CONTINUATION_CANDIDATES),
+        (source, MAX_COMPACT_CONTINUATION_CANDIDATES),
     )
     matching = [
         candidate

@@ -209,6 +209,7 @@ fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Resul
 
     let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v2_roundtrip.json");
     let mut manifest = parse_backup_manifest(fixture)?;
+    manifest.backup_starting_head = current_schema_head();
     let root = env::temp_dir().join(format!("gcore-backup-gate-{}", Uuid::new_v4()));
     let _scratch_path = ScratchPath(root.clone());
     fs::create_dir_all(root.join("postgres"))?;

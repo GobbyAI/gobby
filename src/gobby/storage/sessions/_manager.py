@@ -19,6 +19,7 @@ from ._constants import get_logger
 from ._crud import _SessionCRUDMixin
 from ._discovery import _DiscoveryMixin
 from ._field_update import _FieldUpdateMixin
+from ._identity_reconciliation import AmbiguousSessionIdentityError
 from ._lifecycle_delegate import _LifecycleDelegateMixin
 from ._query import _QueryMixin
 from ._registration_cache import (
@@ -122,6 +123,7 @@ class SessionManager(
         machine_id: str | None,
         source: str,
         project_id: str | None,
+        session_type: str,
         parent_session_id: str | None,
         transcript_path: str | None,
         title: str | None,
@@ -136,8 +138,8 @@ class SessionManager(
             external_id=external_id,
             source=source,
             session_id=session_id,
-            machine_id=machine_id,
             project_id=project_id,
+            session_type=session_type,
         )
 
         with self._session_metadata_lock:
@@ -175,12 +177,16 @@ class SessionManager(
         try:
             recovered = self.find_by_external_id(
                 external_id=external_id,
-                machine_id=machine_id,
                 project_id=project_id,
                 source=source,
+                session_type="terminal",
             )
             if recovered is None:
-                relaxed = self.find_active_by_external_id(external_id, source)
+                relaxed = self.find_active_by_external_id(
+                    external_id,
+                    source,
+                    session_type="terminal",
+                )
                 if relaxed and (project_id is None or relaxed.project_id == project_id):
                     recovered = relaxed
 
@@ -191,8 +197,9 @@ class SessionManager(
                 session_id=recovered.id,
                 external_id=external_id,
                 machine_id=machine_id,
-                source=source,
-                project_id=project_id,
+                source=recovered.source,
+                project_id=recovered.project_id,
+                session_type=recovered.session_type,
                 parent_session_id=recovered.parent_session_id,
                 transcript_path=transcript_path,
                 title=recovered.title,
@@ -203,6 +210,8 @@ class SessionManager(
                 sandbox_enabled=sandbox_enabled,
             )
             return recovered.id
+        except AmbiguousSessionIdentityError:
+            raise
         except Exception as recovery_error:
             self.logger.debug(
                 "Failed to recover persisted session after registration failure: %s",
@@ -268,10 +277,11 @@ class SessionManager(
 
             self._cache_registered_session(
                 session_id=session_id,
-                external_id=external_id,
-                machine_id=machine_id,
-                source=source,
-                project_id=project_id,
+                external_id=session.external_id,
+                machine_id=session.machine_id,
+                source=session.source,
+                project_id=session.project_id,
+                session_type=session.session_type,
                 parent_session_id=session.parent_session_id,
                 transcript_path=transcript_path,
                 title=session.title,
@@ -289,6 +299,8 @@ class SessionManager(
             )
             return session_id
 
+        except AmbiguousSessionIdentityError:
+            raise
         except Exception as e:
             recovered_session_id = self._recover_registered_session_after_failure(
                 external_id=external_id,
