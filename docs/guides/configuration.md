@@ -76,10 +76,9 @@ available:
 ```yaml
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
 postgres_pool:
-  min_size: 2
-  max_size: 20
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0
+  max_lifetime_seconds: 300.0
 daemon_port: 60887
 bind_host: "localhost"
 websocket_port: 60888
@@ -93,10 +92,10 @@ hub. The host must be a local or loopback address; external PostgreSQL servers
 are not supported.
 Startup fails when the DSN or managed service configuration is missing.
 
-`postgres_pool` configures the daemon's PostgreSQL client pool. All four values
-must be positive, and `min_size` cannot exceed `max_size`. These bootstrap values
-are resolved before `config_store` is available and are not overridden by
-config-store rows or `PGPOOL_*` environment variables.
+`postgres_pool` configures the daemon's PostgreSQL client pool. All three values
+must be positive. These bootstrap values are resolved before `config_store` is
+available and are not overridden by config-store rows or `PGPOOL_*` environment
+variables.
 
 Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
 `bootstrap.yaml` is written with mode `0600`; keep that permission so the DSN
@@ -373,13 +372,6 @@ managed Qdrant URL and FalkorDB credentials to be configured and healthy.
 ### Sessions
 
 ```yaml
-context_injection:
-  enabled: true
-  default_source: summary_markdown
-  max_file_size: 51200
-  max_content_size: 51200
-  max_transcript_messages: 100
-
 session_summary:
   enabled: true
   profile: feature_low
@@ -446,30 +438,34 @@ rule model.
 ```yaml
 code_index:
   enabled: true
-  auto_index_on_commit: true
   maintenance_interval_seconds: 3600
   maintenance_index_timeout_seconds: 900
   nightly_full_reindex_enabled: true
   nightly_full_reindex_cron: "0 2 * * *"
   nightly_full_reindex_timezone: null
-  nightly_full_reindex_timeout_seconds: 7200
+  nightly_full_reindex_timeout_seconds: 28800
   nightly_full_reindex_concurrency: 1
   maintenance_log_file: ~/.gobby/logs/code-index-maintenance.log
-  max_file_size_bytes: 1000000
+  missing_root_purge_observations: 3
   embedding_enabled: true
   graph_enabled: true
-  qdrant_collection_prefix: code_symbols_
-symbol_summary:
-  enabled: true
-  profile: feature_low
-  candidates: []
-  batch_size: 20
-  max_concurrency: 2
-  max_tokens: 100
+  symbol_summary:
+    enabled: true
+    profile: feature_low
+    candidates: []
+    batch_size: 20
+    max_concurrency: 2
+    max_tokens: 100
+  sync_worker_interval_seconds: 5.0
+  sync_worker_projection_timeout_seconds: 300.0
+  sync_worker_batch_size: 50
+  sync_worker_breaker_failure_threshold: 5
+  sync_worker_breaker_backoff_seconds: 30.0
+  sync_worker_breaker_max_backoff_seconds: 900.0
 ```
 
-`databases.qdrant.collection_prefix` must match
-`code_index.qdrant_collection_prefix`; `DaemonConfig` rejects mismatches.
+gcode owns the supported language and content-extension set. Configure additional
+path exclusions with `indexing.extra_excludes`.
 
 ### Hooks And Webhooks
 
@@ -620,24 +616,12 @@ Build defaults are loaded from `~/.gobby/build.yaml`, then
 `<project>/.gobby/build.yaml`, then CLI/MCP/HTTP request flags:
 
 ```yaml
-default_skip_stages: []
-default_isolation: worktree
-stage_caps:
-  development:
-    max_work_attempts: 3
-    max_review_rounds: 3
-default_target_branch: null
-clones_dir: ~/.gobby/clones
-cleanup_clones_on_merge: true
 max_active_agents: 10
-dispatch_interval_seconds: 60
 ```
 
-`default_isolation` accepts `none`, `worktree`, or `clone`.
-`default_skip_stages` accepts lifecycle stage names such as `research`,
-`development`, `epic_qa`, `pr`, and `merge`. Runtime flags on
-`uv run gobby build` and the `gobby-tasks-ops:build_task` tool override these
-file defaults for the requested build.
+`max_active_agents` is the supported build-file setting and caps concurrent
+agents for the project. Per-request CLI, MCP, and HTTP values override the file
+setting for that build.
 
 ### Packaging Diagnostics
 

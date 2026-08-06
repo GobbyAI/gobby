@@ -197,78 +197,33 @@ Configure indexing in `code_index`:
 ```yaml
 code_index:
   enabled: true
-  auto_index_on_commit: true
   maintenance_interval_seconds: 3600
   maintenance_index_timeout_seconds: 900
   nightly_full_reindex_enabled: true
   nightly_full_reindex_cron: "0 2 * * *"
   nightly_full_reindex_timezone: null
-  nightly_full_reindex_timeout_seconds: 7200
+  nightly_full_reindex_timeout_seconds: 28800
   nightly_full_reindex_concurrency: 1
   maintenance_log_file: ~/.gobby/logs/code-index-maintenance.log
-  max_file_size_bytes: 1000000
-  exclude_patterns:
-    - node_modules
-    - .vite
-    - .git
-    - __pycache__
-    - .mypy_cache
-    - .ruff_cache
-    - .pytest_cache
-    - .tox
-    - .eggs
-    - vendor
-    - build
-    - dist
-    - .venv
+  missing_root_purge_observations: 3
   embedding_enabled: true
   graph_enabled: true
-  qdrant_collection_prefix: code_symbols_
   symbol_summary:
     enabled: true
     max_concurrency: 2
     max_tokens: 100
     batch_size: 20
   sync_worker_interval_seconds: 5.0
+  sync_worker_projection_timeout_seconds: 300.0
   sync_worker_batch_size: 50
-  languages:
-    - python
-    - javascript
-    - typescript
-    - go
-    - rust
-    - java
-    - php
-    - dart
-    - csharp
-    - c
-    - cpp
-    - elixir
-    - ruby
-    - markdown
-    - yaml
-    - json
-  content_extensions:
-    - .html
-    - .css
-    - .scss
-    - .less
-    - .toml
-    - .cfg
-    - .ini
-    - .sh
-    - .bash
-    - .zsh
-    - .fish
-    - .sql
-    - .graphql
-    - .proto
-    - .txt
-    - .rst
-    - .csv
-    - .gitignore
-    - .editorconfig
+  sync_worker_breaker_failure_threshold: 5
+  sync_worker_breaker_backoff_seconds: 30.0
+  sync_worker_breaker_max_backoff_seconds: 900.0
 ```
+
+gcode owns the built-in language and content-extension set described above.
+Extend its built-in path exclusions with `indexing.extra_excludes` in the main
+configuration.
 
 ## Daemon Integration
 
