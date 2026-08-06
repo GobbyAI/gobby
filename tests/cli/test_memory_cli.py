@@ -774,7 +774,7 @@ class TestMemoryDreamCommand:
         assert result.exit_code == 0
         assert "Inventory-only run: 3 candidate(s) eligible" in result.output
         assert "candidates remain due" in result.output
-        assert "Candidate IDs: m1, m2, m3" in result.output
+        assert "Candidate IDs: 21000000-0000-4000-8000-000000000005, m2, m3" in result.output
         post = client.call_http_api.call_args_list[0]
         assert post.kwargs["json_data"]["skip_consolidation"] is True
 

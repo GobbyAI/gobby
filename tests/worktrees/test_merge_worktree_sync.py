@@ -1,9 +1,9 @@
-"""Tests for merge_worktree tool in _sync.py — worktree_path returns and auto-resolve."""
+"""Tests for merge_worktree tool in _sync.py."""
 
 import asyncio
 import subprocess
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -851,35 +851,29 @@ async def test_merge_worktree_prefer_remote_is_rejected():
 
 @pytest.mark.asyncio
 async def test_merge_worktree_conflict_returns_worktree_path():
-    """Merge with conflicts returns worktree_path."""
+    """Merge reports retired JSONL backup conflicts without special handling."""
     from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
 
     ctx = _make_registry_context()
 
     ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
         merge_result=_make_git_result(1, stderr="CONFLICT"),
-        unmerged_stdout="src/main.py\n",
+        unmerged_stdout=".gobby/tasks.jsonl\n",
     )
 
     registry = create_sync_registry(ctx)
     merge_tool = registry.get_tool("merge_worktree")
 
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
-            return_value=(ctx.git_manager, "test-project", None),
-        ),
-        patch(
-            "gobby.worktrees.merge.resolver.auto_resolve_trivial_conflicts",
-            new_callable=AsyncMock,
-            return_value=["src/main.py"],
-        ),
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
+        return_value=(ctx.git_manager, "test-project", None),
     ):
         result = await merge_tool("wt-123")
 
     assert result["success"] is False
     assert result["has_conflicts"] is True
     assert result["merged"] is False
+    assert result["conflicted_files"] == [".gobby/tasks.jsonl"]
     assert result["worktree_path"] == "/tmp/wt"
 
 
@@ -909,11 +903,6 @@ async def test_merge_worktree_abort_failure_is_surfaced_and_unlocks():
         patch(
             "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
             return_value=(ctx.git_manager, "test-project", None),
-        ),
-        patch(
-            "gobby.worktrees.merge.resolver.auto_resolve_trivial_conflicts",
-            new_callable=AsyncMock,
-            return_value=["src/main.py"],
         ),
         pytest.raises(RuntimeError, match="Failed to abort merge_worktree merge.*index cleanup"),
     ):
@@ -957,92 +946,6 @@ async def test_merge_worktree_timeout_aborts_before_unlock():
 
     assert cleanup_calls == ["inspect", "abort"]
     assert lock.locked() is False
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("resolver_raises", [False, True])
-async def test_merge_worktree_auto_resolution_failure_aborts(
-    resolver_raises: bool,
-):
-    """Resolver and resolution-commit failures both abort before unlock."""
-    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
-
-    ctx = _make_registry_context()
-    regular_git = _local_merge_side_effect(
-        merge_result=_make_git_result(1, stderr="CONFLICT"),
-        unmerged_stdout=".gobby/tasks.jsonl\n",
-    )
-
-    def resolution_failure(args, cwd=None, timeout=30, check=False):
-        if args == ["rev-parse", "--verify", "-q", "MERGE_HEAD"]:
-            return _make_git_result(0, stdout="merge-head\n")
-        if args == ["commit", "--no-edit"]:
-            return _make_git_result(1, stderr="commit failed")
-        return regular_git(args, cwd=cwd, timeout=timeout, check=check)
-
-    ctx.git_manager._run_git.side_effect = resolution_failure
-    merge_tool = create_sync_registry(ctx).get_tool("merge_worktree")
-    resolver = AsyncMock(
-        side_effect=RuntimeError("resolver failed") if resolver_raises else None,
-        return_value=[],
-    )
-
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
-            return_value=(ctx.git_manager, "test-project", None),
-        ),
-        patch(
-            "gobby.worktrees.merge.resolver.auto_resolve_trivial_conflicts",
-            resolver,
-        ),
-    ):
-        if resolver_raises:
-            with pytest.raises(RuntimeError, match="resolver failed"):
-                await merge_tool("wt-123")
-        else:
-            result = await merge_tool("wt-123")
-            assert result["success"] is False
-            assert "Commit after trivial conflict resolution failed" in result["error"]
-
-    commands = [call.args[0] for call in ctx.git_manager._run_git.call_args_list]
-    assert ["merge", "--abort"] in commands
-    assert get_checkout_mutation_lock(ctx.git_manager.repo_path).locked() is False
-
-
-@pytest.mark.asyncio
-async def test_merge_worktree_auto_resolves_trivial_conflicts():
-    """Merge auto-resolves .gobby/*.jsonl and succeeds when no real conflicts remain."""
-    from gobby.mcp_proxy.tools.worktrees._sync import create_sync_registry
-
-    ctx = _make_registry_context()
-
-    ctx.git_manager._run_git.side_effect = _local_merge_side_effect(
-        merge_result=_make_git_result(1, stderr="CONFLICT"),
-        unmerged_stdout=".gobby/tasks.jsonl\n",
-    )
-
-    registry = create_sync_registry(ctx)
-    merge_tool = registry.get_tool("merge_worktree")
-
-    with (
-        patch(
-            "gobby.mcp_proxy.tools.worktrees._sync.resolve_project_context",
-            return_value=(ctx.git_manager, "test-project", None),
-        ),
-        patch(
-            "gobby.worktrees.merge.resolver.auto_resolve_trivial_conflicts",
-            new_callable=AsyncMock,
-            return_value=[],  # all trivial, nothing remaining
-        ),
-    ):
-        result = await merge_tool("wt-123")
-
-    assert result["success"] is True
-    assert "auto-resolved" in result["message"]
-    assert result["worktree_path"] == "/tmp/wt"
-    assert result["auto_resolved"] == [".gobby/tasks.jsonl"]
-    assert result["merged"] is True
 
 
 @pytest.mark.asyncio

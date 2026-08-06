@@ -241,10 +241,11 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - Companion Rust toolchain under `crates/`
 
 The PostgreSQL hub is the source of truth for task state, and it is the only
-runtime hub. The pre-push hook exports `.gobby/tasks.jsonl` and
-`.gobby/memories.jsonl` as local backups; they are gitignored, and importing one
-is an explicit operator action. Linear is supported as an optional external sync
-target for teams that already track work there.
+runtime hub. The pre-push hook refreshes machine-local snapshots at
+`~/.gobby/backups/<project-uuid>/tasks.jsonl` and
+`~/.gobby/backups/<project-uuid>/memories.jsonl`; importing one is an explicit
+operator action. Linear is supported as an optional external sync target for
+teams that already track work there.
 
 The guides set is the source of truth for behavior:
 

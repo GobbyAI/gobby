@@ -318,13 +318,16 @@ class TaskBackupManager:
     ) -> None:
         self.task_manager = task_manager
         self.db = task_manager.db
-        self.backup_path = Path(backup_path or ".gobby/tasks.jsonl")
+        self.backup_path = Path(backup_path) if backup_path is not None else None
         self._custom_backup_path = backup_path is not None
 
     def _get_backup_path(self, project_id: str | None) -> Path:
         """Resolve the configured or machine-local project backup path."""
-        if self._custom_backup_path or not project_id:
+        if self._custom_backup_path:
+            assert self.backup_path is not None
             return self.backup_path
+        if not project_id:
+            raise TaskBackupError("project_id is required when backup_path is not provided")
 
         return project_backup_path(project_id, "tasks.jsonl")
 

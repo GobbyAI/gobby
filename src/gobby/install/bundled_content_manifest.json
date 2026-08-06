@@ -15,7 +15,7 @@
     "prompts/agent/help-content.md": "8227d85eecd27657b053901e713ab56758d359708f920ff95a6a05b548505700",
     "prompts/agent/skill-hint.md": "79975a3a40e92f8f9bd9dabc4216756df828c9f8cab6bf9579777e23b3146e72",
     "prompts/agent/skill-not-found.md": "9be76cd58eddd87ce0c3a170a0149a3ef90ab96de6d504bace9233000c18aaca",
-    "prompts/chat/system.md": "f36b9e0fcdad03b99a0a6a3a7f8db9a78b609526de6d817464d2e8f045688a09",
+    "prompts/chat/system.md": "ff6d03cd3c33e1335bb8fc1393dcec08909546ad5dfa81a3a1dc691e29f5abe2",
     "prompts/expansion/system.md": "512475a1ce8649f8f0e88bcbddc5566ea9d7180376a91945ee19c7b9a99a1605",
     "prompts/expansion/user.md": "abd8ce6197b5f3e3251d48cd187a9d19b1973a98da58f522281700c5fe02a112",
     "prompts/external_validation/agent.md": "e28d7ef6bac07dfe72966f44fcaf1e1911c9fd1fce0b8d5b03893a03c9251bb7",
@@ -297,7 +297,7 @@
     "workflows/agents/architect.yaml": "7d1690fc635647cb415f4081f5a70d54352f7ae5483414e5b726a796f0ee1328",
     "workflows/agents/backend-developer.yaml": "0dba811109a14bd7a0ba3c2332835eef60327a90752bc933643e221f2e84365c",
     "workflows/agents/comms-agent.yaml": "cef5924999ad30c1fc9f3139969ab80c902e8160b721cbd1565d6ba59b077169",
-    "workflows/agents/default.yaml": "3dd7a2b2eb6e355bffe037ccdb102521fb2b3a4404a5f27c1d1bf364ae2187cc",
+    "workflows/agents/default.yaml": "9799fdd54a1521075822f4f02ce7e9752d61391dd8d86b669709b069acaaefc0",
     "workflows/agents/doc-reviewer.yaml": "1556846c04334fa7f047d4ead9541f8960f8eb3828f1d47aff4ce59a3e5745b9",
     "workflows/agents/epic-reviewer.yaml": "4c6dbc9500289cf8a272c5b7e2ea0278c17df280c1e72ba4b376ecd6a3f2784b",
     "workflows/agents/expansion-qa.yaml": "387978cae344dcebf95e3cb6c237dd8f5192a11f53fd48b4030de2fc7fb0b383",
@@ -430,7 +430,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "dd04d678ef9b23902a8fb6386b207691ad17b65a89f3124555b5b846cefc29a7"
+    "workflows/variables/gobby-default-variables.yaml": "1639eecdb989012ef801866fb7d5a8aa43c0c43c8ad0f9024bec8b17112f7d8b"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

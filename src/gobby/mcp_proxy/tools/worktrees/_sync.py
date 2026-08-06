@@ -650,9 +650,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             )
             if merge_result.returncode == 0:
                 merge_cleanup_required = False
-            auto_resolved: list[str] = []
-            message = f"Merged {effective_source} into local {merge_target}"
-
             if merge_result.returncode != 0:
                 # Detect unmerged (conflicted) files via git index — more reliable
                 # than parsing human-readable merge output for "CONFLICT" strings
@@ -660,59 +657,21 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     resolved_git_mgr.get_unmerged_files, cwd=merge_cwd
                 )
                 if conflicted_files:
-                    # Auto-resolve trivial conflicts (.gobby/*.jsonl)
-                    from gobby.worktrees.merge.resolver import auto_resolve_trivial_conflicts
-
-                    remaining = await run_to_completion(
-                        auto_resolve_trivial_conflicts(conflicted_files, merge_cwd)
-                    )
-
-                    if not remaining:
-                        # All conflicts were trivial — commit the merge and continue
-                        commit_result = await run_thread_to_completion(
-                            resolved_git_mgr.run_git_command,
-                            ["commit", "--no-edit"],
-                            cwd=merge_cwd,
-                            timeout=30,
-                            env=merge_env,
-                        )
-                        if commit_result.returncode != 0:
-                            return {
-                                "success": False,
-                                "error": (
-                                    f"Commit after trivial conflict resolution failed: "
-                                    f"{(commit_result.stderr or commit_result.stdout).strip()}"
-                                ),
-                                "worktree_path": wt_path,
-                                "project_path": repo_path,
-                                "target_worktree_path": target_worktree_path,
-                                "source_branch": effective_source,
-                                "target_branch": merge_target,
-                            }
-                        merge_cleanup_required = False
-                        auto_resolved = conflicted_files
-                        message = (
-                            f"Merged {effective_source} into local {merge_target} "
-                            f"(auto-resolved {len(conflicted_files)} trivial conflict(s))"
-                        )
-                    else:
-                        # Still have real conflicts — the transaction cleanup
-                        # below aborts before the checkout lock is released.
-                        return {
-                            "success": False,
-                            "has_conflicts": True,
-                            "merged": False,
-                            "conflicted_files": remaining,
-                            "auto_resolved": [f for f in conflicted_files if f not in remaining],
-                            "worktree_path": wt_path,
-                            "project_path": repo_path,
-                            "target_worktree_path": target_worktree_path,
-                            "message": (
-                                f"Merge conflicts detected in {len(remaining)} file(s) "
-                                f"({len(conflicted_files) - len(remaining)} trivial auto-resolved). "
-                                "Use gobby-merge tools to resolve."
-                            ),
-                        }
+                    # The transaction cleanup below aborts before the checkout
+                    # lock is released.
+                    return {
+                        "success": False,
+                        "has_conflicts": True,
+                        "merged": False,
+                        "conflicted_files": conflicted_files,
+                        "worktree_path": wt_path,
+                        "project_path": repo_path,
+                        "target_worktree_path": target_worktree_path,
+                        "message": (
+                            f"Merge conflicts detected in {len(conflicted_files)} file(s). "
+                            "Use gobby-merge tools to resolve."
+                        ),
+                    }
 
                 else:
                     merge_output = "\n".join(
@@ -760,7 +719,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
             result = {
                 "success": True,
-                "message": message if git_merged else "Local target branch was not updated",
+                "message": (
+                    f"Merged {effective_source} into local {merge_target}"
+                    if git_merged
+                    else "Local target branch was not updated"
+                ),
                 "worktree_path": wt_path,
                 "project_path": repo_path,
                 "target_worktree_path": target_worktree_path,
@@ -773,8 +736,6 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 result["merge_sha"] = target_head_sha
                 result["target_head_sha"] = target_head_sha
                 result["commit_sha"] = target_head_sha
-            if auto_resolved:
-                result["auto_resolved"] = auto_resolved
             return result
         finally:
             cleanup_errors: list[RuntimeError] = []
