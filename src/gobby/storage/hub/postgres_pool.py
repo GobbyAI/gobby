@@ -572,10 +572,7 @@ def advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
     if isinstance(lock, IntegrationWorkspaceMutex):
         return (f"integration_workspace_mutex:{lock.integration_key}",)
     if isinstance(lock, SessionRegistration):
-        return (
-            "session_register:"
-            f"{lock.external_id}|{lock.machine_id}|{lock.source}|{lock.session_type}",
-        )
+        return (f"session_register:{lock.external_id}|{lock.source}|{lock.session_type}",)
     if isinstance(lock, SessionLineageMutation):
         return ("session_lineage_mutation",)
     if isinstance(lock, SessionSeqMutation):

@@ -7760,7 +7760,7 @@
     },
     {
       "name": "idx_sessions_unique",
-      "definition": "CREATE UNIQUE INDEX idx_sessions_unique ON $schema.sessions USING btree (external_id, machine_id, source, project_id, session_type) NULLS NOT DISTINCT"
+      "definition": "CREATE UNIQUE INDEX idx_sessions_unique ON $schema.sessions USING btree (external_id, source, project_id, session_type) NULLS NOT DISTINCT"
     },
     {
       "name": "idx_sessions_workflow",

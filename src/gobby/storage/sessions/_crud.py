@@ -21,6 +21,7 @@ from gobby.utils.datetime import utc_now
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._identity_crud import _SessionIdentityCRUDMixin
+from ._identity_reconciliation import reconcile_session_identity
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._registration import manual_registration_title
 from ._title_defaults import (
@@ -39,18 +40,16 @@ class _SessionCRUDHost(Protocol):
     def find_by_external_id(
         self,
         external_id: str,
-        machine_id: str | None,
         project_id: str | None,
         source: str,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None: ...
 
     def find_by_external_id_any_project(
         self,
         external_id: str,
-        machine_id: str | None,
         source: str,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None: ...
 
     def get(self, session_id: str) -> Session | None: ...
@@ -105,7 +104,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         """
         Register a new session or return existing one.
 
-        Looks up by (external_id, machine_id, project_id, source) to find if this exact
+        Looks up by (external_id, source, project_id, session_type) to find if this exact
         session already exists (e.g., daemon restarted mid-session). If found, returns
         the existing session. Otherwise creates a new one.
 
@@ -152,16 +151,27 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
 
         registration_lock = SessionRegistration(
             external_id=external_id,
-            machine_id=machine_id,
             source=source,
             session_type=session_type,
         )
 
         change_event = "session_created"
         with self.db.transaction_immediate(registration_lock) as conn:
+            reconciliation = reconcile_session_identity(
+                conn,
+                external_id=external_id,
+                source=source,
+                project_id=storage_project_id,
+                session_type=session_type,
+            )
+            if reconciliation.deleted_ids:
+                get_logger().warning(
+                    "Reconciled legacy duplicate sessions %s into %s",
+                    reconciliation.deleted_ids,
+                    reconciliation.canonical_id,
+                )
             existing = self.find_by_external_id(
                 external_id,
-                machine_id,
                 project_id,
                 source,
                 session_type=session_type,
@@ -170,7 +180,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 with self.db.transaction_immediate(SessionRecoveryByProject(project_id=project_id)):
                     existing = self.find_by_external_id_any_project(
                         external_id,
-                        machine_id,
                         source,
                         session_type=session_type,
                     )
@@ -188,7 +197,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             elif existing is None:
                 existing = self.find_by_external_id_any_project(
                     external_id,
-                    machine_id,
                     source,
                     session_type=session_type,
                 )
@@ -224,6 +232,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     self,
                     conn,
                     existing,
+                    machine_id=machine_id,
                     title=registration_title,
                     title_source=registration_title_source,
                     transcript_path=transcript_path,
@@ -312,19 +321,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         raise
                     conflicting = self.find_by_external_id(
                         external_id,
-                        machine_id,
                         project_id,
                         source,
                         session_type=session_type,
                     )
-                    if conflicting is None:
-                        conflicting = self.find_by_external_id(
-                            external_id,
-                            machine_id,
-                            project_id,
-                            source,
-                            session_type=None,
-                        )
                     if conflicting is None:
                         raise
                     get_logger().info(
@@ -357,6 +357,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         self,
                         conn,
                         conflicting,
+                        machine_id=machine_id,
                         title=registration_title,
                         title_source=registration_title_source,
                         transcript_path=transcript_path,

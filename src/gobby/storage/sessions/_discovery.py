@@ -20,6 +20,7 @@ from ._discovery_helpers import (
     terminal_session_match_score,
     unique_best_match,
 )
+from ._identity_reconciliation import AmbiguousSessionIdentityError
 
 MAX_TERMINAL_SESSION_CANDIDATES = 250
 MAX_HANDOFF_PARENT_CANDIDATES = 8
@@ -60,13 +61,12 @@ class _DiscoveryMixin:
     def find_by_external_id(
         self: _ManagerState,
         external_id: str,
-        machine_id: str | None,
         project_id: str | None,
         source: str,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None:
         """
-        Find session by external_id, machine_id, project_id, and source.
+        Find a session by its canonical provider identity.
 
         This is the primary lookup for reconnecting to an existing session after daemon
         restart. The external_id (e.g., Claude Code's session ID) is stable within a
@@ -74,7 +74,6 @@ class _DiscoveryMixin:
 
         Args:
             external_id: External session identifier
-            machine_id: Machine identifier
             project_id: Project identifier
             source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
@@ -86,25 +85,31 @@ class _DiscoveryMixin:
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id IS NOT DISTINCT FROM %s
               AND project_id = %s
               AND source = %s
         """
-        params: list[str | None] = [external_id, machine_id, storage_project_id, source]
+        params: list[str | None] = [external_id, storage_project_id, source]
         if session_type is not None:
             query += " AND session_type = %s"
             params.append(session_type)
-        row = self.db.fetchone(query, tuple(params))
-        return Session.from_row(row) if row else None
+        query += " ORDER BY created_at, id LIMIT 2"
+        rows = self.db.fetchall(query, tuple(params))
+        if len(rows) > 1:
+            raise AmbiguousSessionIdentityError(
+                "Multiple sessions share canonical identity "
+                f"{external_id!r}/{source!r}/{storage_project_id!r}/{session_type!r}"
+            )
+        return Session.from_row(rows[0]) if rows else None
 
     def find_active_by_external_id(
         self: _ManagerState,
         external_id: str,
         source: str,
+        session_type: str = "terminal",
     ) -> Session | None:
         """Find an active session by external_id and source (relaxed lookup).
 
-        Unlike find_by_external_id, this does not require machine_id or project_id,
+        Unlike find_by_external_id, this does not require project_id,
         making it suitable for the statusline handler which only knows the session_id.
 
         Args:
@@ -117,29 +122,28 @@ class _DiscoveryMixin:
         row = self.db.fetchone(
             """
             SELECT * FROM sessions
-            WHERE external_id = %s AND source = %s AND status = 'active'
+            WHERE external_id = %s AND source = %s AND session_type = %s
+              AND status = 'active'
             ORDER BY updated_at DESC
             LIMIT 1
             """,
-            (external_id, source),
+            (external_id, source, session_type),
         )
         return Session.from_row(row) if row else None
 
     def find_by_external_id_any_project(
         self: _ManagerState,
         external_id: str,
-        machine_id: str | None,
         source: str,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None:
-        """Find session by external_id, machine_id, source — ignoring project_id.
+        """Find session by external_id and source, ignoring project_id.
 
         Fallback lookup for daemon restart recovery when the caller may not know the
         correct project_id. Returns the most recently updated match.
 
         Args:
             external_id: External session identifier
-            machine_id: Machine identifier
             source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
@@ -149,10 +153,9 @@ class _DiscoveryMixin:
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id IS NOT DISTINCT FROM %s
               AND source = %s
         """
-        params: list[str | None] = [external_id, machine_id, source]
+        params: list[str | None] = [external_id, source]
         if session_type is not None:
             query += " AND session_type = %s"
             params.append(session_type)
@@ -163,17 +166,15 @@ class _DiscoveryMixin:
     def find_by_external_id_all_sources(
         self: _ManagerState,
         external_id: str,
-        machine_id: str | None,
         project_id: str | None,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> list[Session]:
         """Find all sessions sharing an external_id across sources."""
         query = """
             SELECT * FROM sessions
             WHERE external_id = %s
-              AND machine_id IS NOT DISTINCT FROM %s
         """
-        params: list[str | None] = [external_id, machine_id]
+        params: list[str | None] = [external_id]
         if project_id is not None:
             query += " AND project_id = %s"
             params.append(project_id)

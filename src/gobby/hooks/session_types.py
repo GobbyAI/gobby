@@ -86,25 +86,24 @@ class HookSessionManager(Protocol):
         self,
         external_id: str,
         source: str,
-        machine_id: str | None = None,
         project_id: str | None = None,
+        session_type: str = "terminal",
     ) -> str | None: ...
 
     def lookup_session_id(
         self,
         external_id: str,
         source: str,
-        machine_id: str | None,
         project_id: str | None,
+        session_type: str = "terminal",
     ) -> str | None: ...
 
     def recover_session(
         self,
         external_id: str,
         source: str,
-        machine_id: str | None,
         project_id: str | None,
-        session_type: str | None = None,
+        session_type: str | None = "terminal",
     ) -> Session | None: ...
 
     def cache_session_mapping(
@@ -112,8 +111,8 @@ class HookSessionManager(Protocol):
         external_id: str,
         source: str,
         session_id: str,
-        machine_id: str | None = None,
         project_id: str | None = None,
+        session_type: str = "terminal",
     ) -> None: ...
 
     def mark_session_expired(self, session_id: str) -> bool: ...

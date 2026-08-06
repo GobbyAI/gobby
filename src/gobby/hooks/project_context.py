@@ -196,7 +196,6 @@ def _project_id_from_existing_session(
         cached_session_id = session_manager.get_session_id(
             event.session_id,
             event.source.value,
-            machine_id=event.machine_id,
             project_id=event.project_id,
         )
     except Exception as exc:
@@ -224,7 +223,6 @@ def _project_id_from_existing_session(
         recovered = session_manager.recover_session(
             external_id=event.session_id,
             source=event.source.value,
-            machine_id=event.machine_id or "",
             project_id=None,
         )
     except Exception as exc:

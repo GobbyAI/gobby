@@ -2971,7 +2971,7 @@ CREATE INDEX idx_sessions_status ON sessions USING btree (status);
 
 CREATE INDEX idx_sessions_summary_revision ON sessions USING btree (summary_revision_id);
 
-CREATE UNIQUE INDEX idx_sessions_unique ON sessions USING btree (external_id, machine_id, source, project_id, session_type) NULLS NOT DISTINCT;
+CREATE UNIQUE INDEX idx_sessions_unique ON sessions USING btree (external_id, source, project_id, session_type) NULLS NOT DISTINCT;
 
 CREATE INDEX idx_sessions_workflow ON sessions USING btree (workflow_name);
 

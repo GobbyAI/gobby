@@ -208,7 +208,6 @@ class SessionRegistration:
 
     PRIORITY: ClassVar[int] = 600
     external_id: str
-    machine_id: str | None
     source: str
     session_type: str
 

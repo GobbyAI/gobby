@@ -97,7 +97,6 @@ def test_explicit_compact_activity_restores_canonical_row_and_deletes_empty_ghos
     restarted_manager = SessionManager(temp_db)
     restarted = restarted_manager.find_by_external_id(
         "canonical-provider-id",
-        "20000000-0000-4000-8000-000000000006",
         sample_project["id"],
         "claude",
     )
@@ -254,7 +253,6 @@ def test_compact_resolution_uses_marker_and_exact_terminal_process(
 
     resolution = resolve_compact_continuation(
         temp_db,
-        machine_id="20000000-0000-4000-8000-000000000006",
         source="claude",
         terminal_context=dict(TERMINAL_CONTEXT),
     )
@@ -284,7 +282,6 @@ def test_ambiguous_marked_terminal_process_matches_return_no_session(
 
     resolution = resolve_compact_continuation(
         temp_db,
-        machine_id="20000000-0000-4000-8000-000000000006",
         source="claude",
         terminal_context=dict(TERMINAL_CONTEXT),
     )
@@ -316,7 +313,6 @@ def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -
     ):
         resolution = resolve_compact_continuation(
             db,
-            machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             terminal_context={"pid": 1},
         )
@@ -324,5 +320,5 @@ def test_compact_resolution_bounds_newest_candidates_and_preserves_ambiguity() -
     query, params = db.fetchall.call_args.args
     assert "ORDER BY s.created_at DESC, s.id DESC" in query
     assert "LIMIT %s" in query
-    assert params == ("20000000-0000-4000-8000-000000000002", "codex", MAX_COMPACT_CONTINUATION_CANDIDATES)
+    assert params == ("codex", MAX_COMPACT_CONTINUATION_CANDIDATES)
     assert resolution.conflicting_session_ids == ("newer", "older")

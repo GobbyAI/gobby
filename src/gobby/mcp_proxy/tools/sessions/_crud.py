@@ -96,7 +96,7 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
                 Look up your internal session_id from external_id and source.
 
         The agent passes external_id (from injected context or GOBBY_SESSION_ID env var)
-        and source (claude, grok, qwen, codex, droid, agy). project_id and machine_id are
+        and source (claude, grok, qwen, codex, droid, agy). project_id is
                 auto-resolved from config files.
 
                 Args:
@@ -107,26 +107,21 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
                     session_id: Internal Gobby session ID (use for parent_session_id, etc.)
                     Plus basic session metadata
         """
-        from gobby.utils.machine_id import get_machine_id
         from gobby.utils.project_context import get_project_context
 
         if session_manager is None:
             return {"error": "Session manager not available"}
 
         # Auto-resolve context
-        machine_id = get_machine_id()
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
 
-        if not machine_id:
-            return {"error": "Could not determine machine_id"}
         if not project_id:
             return {"error": "Could not determine project_id (not in a gobby project?)"}
 
-        # Use find_by_external_id with full composite key (safe lookup)
+        # Use the canonical provider-session identity.
         session = session_manager.find_by_external_id(
             external_id=external_id,
-            machine_id=machine_id,
             project_id=project_id,
             source=source,
         )
