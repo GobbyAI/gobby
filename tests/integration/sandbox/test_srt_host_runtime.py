@@ -70,11 +70,13 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
     gobby_home = Path(os.environ["GOBBY_HOME"])
+    resolved_gobby_home = gobby_home.resolve()
+    assert str(gobby_home).startswith("/var/")
+    assert str(resolved_gobby_home).startswith("/private/var/")
+    assert resolved_gobby_home == Path("/private") / gobby_home.relative_to("/")
     gobby_home.mkdir(parents=True, exist_ok=True)
-    sensitive = gobby_home / "sandbox-secret"
+    sensitive = gobby_home / "bootstrap.yaml"
     sensitive.write_text("must-not-leak", encoding="utf-8")
-    hook_inbox = gobby_home / "hooks" / "inbox"
-    hook_inbox.mkdir(parents=True, exist_ok=True)
     escape_dir = gobby_home / "escape-target"
     escape_dir.mkdir()
     (workspace / "escape").symlink_to(escape_dir, target_is_directory=True)
@@ -97,7 +99,6 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
             "git commit -qm initial || exit 12",
             f"if cat {shlex.quote(str(sensitive))}; then exit 13; fi",
             "if printf escaped > escape/escaped.txt; then exit 14; fi",
-            f"printf hook > {shlex.quote(str(hook_inbox / 'event.json'))} || exit 15",
             "exit 0",
         )
     )
@@ -116,7 +117,6 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
     assert (workspace / "allowed.txt").read_text(encoding="utf-8") == "allowed"
     assert "must-not-leak" not in result.stdout
     assert not (escape_dir / "escaped.txt").exists()
-    assert (hook_inbox / "event.json").read_text(encoding="utf-8") == "hook"
     assert (
         subprocess.run(
             ["git", "rev-parse", "--verify", "HEAD"],

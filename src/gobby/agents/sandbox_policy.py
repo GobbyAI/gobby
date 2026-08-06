@@ -266,11 +266,17 @@ _TOOLCHAIN_CREDENTIAL_PATHS: tuple[str, ...] = (
 )
 
 
-def canonical_path(raw_path: str | Path, *, base: Path | None = None) -> str:
-    """Expand and resolve a policy path without requiring it to exist."""
+def _absolute_path(raw_path: str | Path, *, base: Path | None = None) -> str:
+    """Expand and absolutize a policy path without resolving symlinks."""
     path = Path(raw_path).expanduser()
     if not path.is_absolute() and base is not None:
         path = base / path
+    return os.path.abspath(path)
+
+
+def canonical_path(raw_path: str | Path, *, base: Path | None = None) -> str:
+    """Expand and resolve a policy path without requiring it to exist."""
+    path = Path(_absolute_path(raw_path, base=base))
     return str(path.resolve(strict=False))
 
 
@@ -279,10 +285,23 @@ def canonical_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
     return list(dict.fromkeys(canonical_path(path, base=base) for path in paths))
 
 
+def deny_paths(paths: list[str], *, base: Path | None = None) -> list[str]:
+    """Emit literal and symlink-resolved deny paths while preserving order."""
+    variants = (
+        variant
+        for path in paths
+        for variant in (
+            _absolute_path(path, base=base),
+            canonical_path(path, base=base),
+        )
+    )
+    return list(dict.fromkeys(variants))
+
+
 def sensitive_roots() -> list[str]:
     """Return Gobby roots excluded from every managed allow surface."""
     gobby_home = get_gobby_home()
-    return canonical_paths(
+    return deny_paths(
         [
             str(gobby_home / "bootstrap.yaml"),
             str(gobby_home / ".secret_kek"),
@@ -314,7 +333,7 @@ def sensitive_write_roots() -> list[str]:
         home / ".config" / "gcloud",
         *map(Path, sensitive_roots()),
     ]
-    return canonical_paths([str(path) for path in roots])
+    return deny_paths([str(path) for path in roots])
 
 
 def gobby_write_exceptions() -> list[str]:
