@@ -205,7 +205,7 @@ src/gobby/
 | `hooks/events.py` | Adding new hook event types |
 | `mcp_proxy/server.py` | Adding new MCP tools |
 | `config/app.py` | Adding new config options |
-| `storage/migrations.py` | Changing database schema |
+| `crates/gcore/assets/schema/` | Changing database schema |
 
 ## Environment Variables
 

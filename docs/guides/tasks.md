@@ -366,7 +366,7 @@ gobby tasks stats
 # CRUD
 gobby tasks create "Title" [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
 gobby tasks update TASK [--title TITLE] [--priority N] [--parent TASK] [--task-type TYPE] [--isolation MODE]
-gobby tasks close TASK [--reason REASON] [--skip-validation]
+gobby tasks close TASK [--reason REASON]
 gobby tasks reopen TASK [--reason REASON]
 gobby tasks delete TASK [--cascade | --unlink] [--yes]
 

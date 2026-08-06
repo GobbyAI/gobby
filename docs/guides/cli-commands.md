@@ -30,17 +30,22 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `clones` | Manage isolated clone workspaces. | `src/gobby/cli/clones.py` |
 | `comms` | Manage inter-session communication channels. | `src/gobby/cli/communications.py` |
 | `cron` | Manage scheduled jobs and dispatcher ticks. | `src/gobby/cli/cron.py` |
+| `datastores` | Manage hub-side shared datastores. | `src/gobby/cli/datastores.py` |
 | `embeddings` | Manage the embedding service and indices. | `src/gobby/cli/embeddings.py` |
 | `github` | Manage GitHub integration. | `src/gobby/cli/github.py` |
 | `health` | Check daemon health. | `src/gobby/cli/daemon.py` |
 | `hooks` | Manage hook endpoints and configuration. | `src/gobby/cli/extensions.py` |
+| `hub-backup` | Back up and verify every hub datastore. | `src/gobby/cli/hub_backup/` |
+| `hub-maintenance` | Run fenced, verified hub maintenance. | `src/gobby/cli/hub_maintenance.py` |
 | `init` | Initialize `.gobby/project.json`. | `src/gobby/cli/init.py` |
 | `install` | Install required infrastructure, configuration, integrations, and hooks. | `src/gobby/cli/install.py` |
+| `lease` | Inspect and control single-active-daemon ownership. | `src/gobby/cli/daemon_lease.py` |
 | `linear` | Manage Linear integration. | `src/gobby/cli/linear.py` |
 | `mcp-proxy` | Inspect and call tools through the MCP proxy. | `src/gobby/cli/mcp_proxy.py` |
 | `mcp-server` | Run the stdio MCP server. | `src/gobby/cli/mcp.py` |
 | `memory` | Manage persistent memories. | `src/gobby/cli/memory/` |
 | `merge` | Manage merge assistance. | `src/gobby/cli/merge.py` |
+| `observations` | Inspect unmodeled transcript observations. | `src/gobby/cli/observations.py` |
 | `pack` | Pack project context. | `src/gobby/cli/pack.py` |
 | `pipelines` | Manage pipeline definitions and runs. | `src/gobby/cli/pipelines.py` |
 | `plan` | Run plan utility commands. | `src/gobby/cli/plan.py` |
@@ -51,6 +56,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `qdrant` | Manage Qdrant helper commands. | `src/gobby/cli/qdrant.py` |
 | `restart` | Restart the daemon. | `src/gobby/cli/daemon.py` |
 | `rules` | Manage workflow rules. | `src/gobby/cli/rules.py` |
+| `schema` | Inspect or apply the hub schema migration chain. | `src/gobby/cli/schema.py` |
 | `secrets` | Manage stored secrets. | `src/gobby/cli/secrets.py` |
 | `service` | Manage service installation/runtime helpers. | `src/gobby/cli/service.py` |
 | `sessions` | Inspect stored sessions and transcripts. | `src/gobby/cli/sessions.py` |
@@ -62,6 +68,7 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 | `sync` | Sync bundled content to the database. | `src/gobby/cli/sync.py` |
 | `tasks` | Manage development tasks. | `src/gobby/cli/tasks/` |
 | `test-quality` | Run test quality helpers. | `src/gobby/cli/test_quality.py` |
+| `test-types` | Audit Python test types. | `src/gobby/cli/test_types.py` |
 | `tokens` | Audit token usage ledgers. | `src/gobby/cli/tokens.py` |
 | `ui` | Manage and launch the web UI. | `src/gobby/cli/ui.py` |
 | `uninstall` | Remove installed integrations and hooks. | `src/gobby/cli/install.py` |
@@ -334,7 +341,7 @@ gobby tasks delete TASKS... [OPTIONS]
 | --- | --- |
 | `tasks create` | `--description`, `--priority`, `--type`, `--depends-on`, `--project` |
 | `tasks update` | `--title`, `--priority`, `--parent`, `--task-type`, `--isolation` |
-| `tasks close` | `--reason`, `--skip-validation`, `--force` |
+| `tasks close` | `--reason` |
 | `tasks de-escalate` | `--reason`, `--reset-validation` |
 | `tasks delete` | `--cascade`, `--yes` |
 
@@ -450,7 +457,7 @@ Manage DB-backed plan records.
 gobby plans list [--state active|archived] [--kind implementation|strategy] [--project PROJECT]
 gobby plans show PLAN_ID [--project PROJECT]
 gobby plans register PLAN_PATH [--plan-id ID] [--kind KIND] [--root-task-ref TASK] [--project PROJECT]
-gobby plans validate PLAN_FILE [--project PROJECT] [--include-tests]
+gobby plans validate PLAN_FILE [--project PROJECT] [--mode standard|expansion]
 gobby plans archive PLAN_ID [--reason REASON] [--project PROJECT]
 gobby plans review-runs PLANNING_TASK_REF
 ```
