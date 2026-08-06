@@ -2,7 +2,10 @@
 
 import asyncio
 import textwrap
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -136,6 +139,36 @@ def _write_plan_missing_target(tmp_path) -> str:
     return str(path)
 
 
+def _register_active_plan(
+    task_manager: LocalTaskManager,
+    root_task_id: str,
+    *,
+    plan_id: str = "registered-plan",
+    plan_path: str = ".gobby/plans/registered-plan.md",
+) -> str:
+    root = task_manager.get_task(root_task_id)
+    now = datetime.now(UTC)
+    task_manager.db.execute(
+        """
+        INSERT INTO plans (
+            id, project_id, plan_id, plan_path, plan_hash, plan_kind, state,
+            root_task_ref, created_at, updated_at, archived_at
+        )
+        VALUES (%s, %s, %s, %s, NULL, 'implementation', 'active', %s, %s, %s, NULL)
+        """,
+        (
+            str(uuid4()),
+            root.project_id,
+            plan_id,
+            plan_path,
+            f"#{root.seq_num}",
+            now,
+            now,
+        ),
+    )
+    return plan_path
+
+
 class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_validate_plan_file_returns_semantic_lint_errors(
@@ -182,6 +215,142 @@ class TestExpansionRuns:
         assert run.options == {"auto_apply": False}
 
     @pytest.mark.asyncio
+    async def test_start_expansion_run_binds_active_registered_plan(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        registered_path = _register_active_plan(task_manager, parent_task)
+        run_manager = LocalExpansionRunManager(task_manager.db)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": parent_task, "plan_file": None, "auto_apply": False},
+                )
+            await drain_asyncio_tasks()
+
+        run = run_manager.get(result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == parent_task
+        assert run.input_source == "plan"
+        assert run.plan_file == registered_path
+
+    @pytest.mark.asyncio
+    async def test_start_expansion_run_rejects_conflicting_registered_plan_path(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        registered_path = _register_active_plan(task_manager, parent_task)
+
+        with session_context_for_test(test_session):
+            result = await expansion_registry.call(
+                "start_expansion_run",
+                {"task_id": parent_task, "plan_file": "docs/plans/conflict.md"},
+            )
+
+        assert registered_path in result["error"]
+        assert "reset_output=true" in result["error"]
+        assert LocalExpansionRunManager(task_manager.db).get_latest_for_task(parent_task) is None
+
+    @pytest.mark.asyncio
+    async def test_registered_plan_rebinds_organizational_child_to_root(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        registered_path = _register_active_plan(task_manager, parent_task)
+        root = task_manager.get_task(parent_task)
+        child = task_manager.create_task(
+            project_id=root.project_id,
+            title="Organizational child",
+            parent_task_id=root.id,
+            task_type="epic",
+            validation_criteria="Child organization is observable.",
+        )
+        run_manager = LocalExpansionRunManager(task_manager.db)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+            new=AsyncMock(return_value=None),
+        ):
+            with session_context_for_test(test_session):
+                root_result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": root.id, "auto_apply": False},
+                )
+                child_result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {"task_id": child.id, "auto_apply": False},
+                )
+            await drain_asyncio_tasks()
+
+        assert child_result["run_id"] == root_result["run_id"]
+        run = run_manager.get(child_result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == root.id
+        assert run.plan_file == registered_path
+        assert run_manager.get_latest_for_task(child.id) is None
+
+    @pytest.mark.asyncio
+    async def test_audited_reset_allows_plan_override_on_registered_root(
+        self,
+        expansion_registry,
+        task_manager,
+        parent_task,
+        test_session,
+    ) -> None:
+        _register_active_plan(task_manager, parent_task)
+        root = task_manager.get_task(parent_task)
+        child = task_manager.create_task(
+            project_id=root.project_id,
+            title="Organizational child",
+            parent_task_id=root.id,
+            validation_criteria="Child organization is observable.",
+        )
+        override_path = "docs/plans/audited-override.md"
+
+        with (
+            patch(
+                "gobby.tasks.expansion_service.ExpansionService.reset_expansion_output",
+                autospec=True,
+            ) as reset,
+            patch(
+                "gobby.mcp_proxy.tools.tasks._expansion._execute_run_background",
+                new=AsyncMock(return_value=None),
+            ),
+        ):
+            with session_context_for_test(test_session):
+                result = await expansion_registry.call(
+                    "start_expansion_run",
+                    {
+                        "task_id": child.id,
+                        "plan_file": override_path,
+                        "reset_output": True,
+                        "auto_apply": False,
+                    },
+                )
+            await drain_asyncio_tasks()
+
+        run = LocalExpansionRunManager(task_manager.db).get(result["run_id"])
+        assert run is not None
+        assert run.parent_task_id == root.id
+        assert run.plan_file == override_path
+        reset.assert_called_once()
+        assert reset.call_args.args[1] == root.id
+
+    @pytest.mark.asyncio
     async def test_get_latest_expansion_run_returns_most_recent(
         self,
         expansion_registry,
@@ -218,9 +387,9 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_validate_expansion_run_checks_compiled_and_applied(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
     ) -> None:
         parent = task_manager.get_task(parent_task)
         assert parent is not None
@@ -260,9 +429,9 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_cancel_expansion_run_marks_run_cancelled(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
     ) -> None:
         parent = task_manager.get_task(parent_task)
         assert parent is not None
@@ -301,9 +470,9 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_cancel_expansion_run_preserves_terminal_status(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
         terminal_status: str,
     ) -> None:
         """The MCP cancellation handler is a no-op for terminal runs."""
@@ -346,10 +515,10 @@ class TestExpansionRuns:
     @pytest.mark.asyncio
     async def test_resume_persists_compile_and_applies_after_precompile_failure(
         self,
-        expansion_registry,
-        task_manager,
-        parent_task,
-        test_session,
+        expansion_registry: Any,
+        task_manager: LocalTaskManager,
+        parent_task: str,
+        test_session: str,
     ) -> None:
         parent = task_manager.get_task(parent_task)
         assert parent is not None
