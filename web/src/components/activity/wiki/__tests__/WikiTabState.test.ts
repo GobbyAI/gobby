@@ -50,6 +50,8 @@ describe("persistence helpers", () => {
     expect(loadStoredMode()).toBe("ask");
     window.localStorage.setItem(WIKI_TAB_KEYS.mode, "bogus");
     expect(loadStoredMode()).toBe("wiki");
+    window.localStorage.setItem(WIKI_TAB_KEYS.mode, "research");
+    expect(loadStoredMode()).toBe("wiki");
   });
 
   it("round-trips topic and clears it with null", () => {
@@ -87,7 +89,7 @@ describe("persistence helpers", () => {
 
   it("validates modes", () => {
     expect(isWikiMode("wiki")).toBe(true);
-    expect(isWikiMode("research")).toBe(true);
+    expect(isWikiMode("research")).toBe(false);
     expect(isWikiMode("graph")).toBe(false);
     expect(isWikiMode(null)).toBe(false);
   });

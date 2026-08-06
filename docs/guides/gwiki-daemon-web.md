@@ -42,7 +42,6 @@ Every gateway call carries explicit scope:
 | `gwiki ingest-file --format json` | File path and scope flags | Explicit write | Daemon attach maps to this command after upload/staging. |
 | `gwiki ingest-url --format json URL...` | One or more URLs and scope flags | Explicit write | CLI owns fetching, persistence, failure classification, and batch indexing. |
 | `gwiki collect --format json` | Scope flags | Explicit write | Processes inbox items into raw sources. |
-| `gwiki research --format json` | Research prompt/options and scope flags | Explicit or scheduled write | Scheduled research may run from cron; accepted output remains CLI-owned. |
 | `gwiki compile --format json` | Compile target/options and scope flags | Explicit write | Writes compiled wiki material only under CLI rules. |
 | `gwiki ask --format json` | Question text and scope flags; optional `--llm`, `--ai`, `--require-ai` | Read-only | Question answering over scoped wiki content; consumed by `GET /api/wiki/ask` and the `wiki_ask` MCP tool. |
 | `gwiki trust --format json` | Scope flags | Read-only | Reports source trust state; consumed by the `wiki_trust` MCP tool. |
@@ -205,30 +204,6 @@ Required result fields:
 | `failed` | Items that failed with code/message. |
 | `indexed` or `index_status` | CLI-owned index result or follow-up indexing signal. |
 | `degradations` | Ambiguous items, unsupported formats, missing optional services, or setup guidance. |
-
-### `research`
-
-Required result fields:
-
-| Field | Meaning |
-| :--- | :--- |
-| `command` | `"research"` |
-| `scope` | Project/topic identity. |
-| `session` or equivalent | Durable research session/checkpoint identity. |
-| `accepted` | Accepted raw research notes or source records when produced. |
-| `failed` | Failed worker/source records with code/message. |
-| `degradations` | Missing daemon capabilities, partial worker failure, unavailable model services, or setup guidance. |
-| `indexed` or `index_status` | CLI-owned index result or follow-up indexing signal for accepted output. |
-
-Scheduled research uses the same gateway contract as explicit research.
-
-`GwikiGateway.research()` keeps `query` positional for compatibility. Its
-default call emits only `gwiki research --format json` plus scope flags; omitted
-options are not passed. `audit=True` adds `--audit`; each
-`source_constraints` entry adds `--source-constraint`; `max_steps`,
-`max_tokens`, and `max_sources` add their matching numeric flags; `ai` adds
-`--ai`; and `require_ai=True` adds `--require-ai`. When `query` is provided, it
-is appended after all option flags.
 
 ### `compile`
 

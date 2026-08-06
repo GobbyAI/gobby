@@ -632,36 +632,6 @@ export async function deletePage(scope: WikiFetchScope, path: string): Promise<W
   return envelopePayload(envelope);
 }
 
-export interface WikiResearchLaunch {
-  executionId: string | null;
-  status: string | null;
-}
-
-export async function launchResearch(
-  scope: WikiFetchScope,
-  inputs: Record<string, unknown>,
-): Promise<WikiResearchLaunch> {
-  const response = await fetch("/api/pipelines/run", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      name: "wiki-research",
-      inputs,
-      project_id: scope.projectId ?? null,
-      background: true,
-    }),
-  });
-  const body = await parseBody(response);
-  if (!response.ok) {
-    throw new Error(errorMessage(body, response.status));
-  }
-  const record = asRecord(body);
-  return {
-    executionId: fieldText(record, "execution_id"),
-    status: fieldText(record, "status"),
-  };
-}
-
 // ── Codewiki freshness (§4.2) ───────────────────────────────────
 
 export interface CodewikiLastRun {

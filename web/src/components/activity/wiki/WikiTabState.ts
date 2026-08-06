@@ -21,7 +21,7 @@ export const WIKI_TAB_KEYS = {
   askHistory: "gobby:wiki-tab:ask-history",
 } as const;
 
-export const WIKI_MODES: readonly WikiMode[] = ["wiki", "code", "ask", "research"];
+export const WIKI_MODES: readonly WikiMode[] = ["wiki", "code", "ask"];
 
 export function isWikiMode(value: unknown): value is WikiMode {
   return typeof value === "string" && (WIKI_MODES as readonly string[]).includes(value);

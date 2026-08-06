@@ -1,12 +1,11 @@
 /**
  * §6.1 keyboard-only operation acceptance (6.1.2): every interactive surface
- * in all four wiki modes stays operable without a pointer — the mode
+ * in all three wiki modes stays operable without a pointer — the mode
  * radiogroup cycles with arrows/Home/End, the page tree supports
  * arrows + Home/End jumps, quick-open selects with arrows + Enter, the reader
  * kebab opens/navigates/closes from the keyboard and Escape hands focus back
  * to its trigger, code mode keeps the same tree contract alongside the
- * freshness strip, ask citations activate from the keyboard, and the research
- * composer's disclosure, switch, and launch button all drive by key.
+ * freshness strip, and ask citations activate from the keyboard.
  *
  * Complements (not duplicates) existing coverage: tree arrows + Enter
  * (WikiBrowse), Cmd+K open / Escape close (WikiBrowse), graph Escape + zoom
@@ -112,19 +111,11 @@ function codewikiStatusBody() {
   };
 }
 
-/** One stub covering all four modes: wiki routes + pipelines + providers. */
+/** One stub covering all three modes: wiki routes + providers. */
 function stubA11yFetch() {
-  const runBodies: Array<Record<string, unknown>> = [];
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), "http://localhost");
     const route = url.pathname;
-    if (route.includes("/api/pipelines/run")) {
-      runBodies.push(JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>);
-      return jsonResponse({ execution_id: "exec-a11y", status: "pending" }, 202);
-    }
-    if (route.includes("/api/pipelines/executions")) {
-      return jsonResponse({ executions: [], total: 0, status_summary: {} });
-    }
     if (route.includes("/api/providers/models")) return jsonResponse({ providers: [] });
     if (route.includes("/api/code-index/codewiki/status")) {
       return jsonResponse(codewikiStatusBody());
@@ -142,7 +133,6 @@ function stubA11yFetch() {
     return jsonResponse({ ok: true, payload: {} });
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { fetchMock, runBodies };
 }
 
 const ASK_HISTORY_KEY = "gobby:wiki-tab:ask-history";
@@ -225,13 +215,10 @@ describe("mode switcher keyboard operation", () => {
     expect(await screen.findByRole("textbox", { name: /ask the wiki/i })).toBeInTheDocument();
 
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("radio", { name: "Research" })).toHaveAttribute(
+    expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
-    expect(
-      await screen.findByRole("textbox", { name: "Research question" }),
-    ).toBeInTheDocument();
 
     await user.keyboard("{Home}");
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
@@ -240,7 +227,7 @@ describe("mode switcher keyboard operation", () => {
     );
 
     await user.keyboard("{End}");
-    expect(screen.getByRole("radio", { name: "Research" })).toHaveAttribute(
+    expect(screen.getByRole("radio", { name: "Ask" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -390,42 +377,5 @@ describe("ask mode keyboard operation", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: /gobby/i })).toBeInTheDocument();
     expect(window.localStorage.getItem("gobby:wiki-tab:mode")).toBe("wiki");
-  });
-});
-
-// ── Research mode ───────────────────────────────────────────────
-
-describe("research mode keyboard operation", () => {
-  it("drives the options disclosure, switch, and launch button by key", async () => {
-    const { runBodies } = stubA11yFetch();
-    const user = userEvent.setup();
-    seedMode("research");
-    render(<WikiTab projectId="p1" />);
-
-    const composer = await screen.findByRole("textbox", { name: "Research question" });
-    await waitFor(() => expect(composer).toBeEnabled());
-    await user.type(composer, "How do watchers work?");
-
-    const disclosure = screen.getByRole("button", { name: "Options" });
-    expect(disclosure).toHaveAttribute("aria-expanded", "false");
-    disclosure.focus();
-    await user.keyboard("{Enter}");
-    expect(disclosure).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByRole("textbox", { name: "Topic slug" })).toBeInTheDocument();
-
-    const followUps = screen.getByRole("switch", { name: "Create follow-up tasks" });
-    expect(followUps).toHaveAttribute("aria-checked", "false");
-    followUps.focus();
-    await user.keyboard(" ");
-    expect(followUps).toHaveAttribute("aria-checked", "true");
-
-    const run = screen.getByRole("button", { name: "Run research" });
-    run.focus();
-    await user.keyboard("{Enter}");
-
-    await waitFor(() => expect(runBodies.length).toBe(1));
-    const inputs = runBodies[0].inputs as Record<string, unknown>;
-    expect(inputs.question).toBe("How do watchers work?");
-    expect(inputs.create_tasks).toBe("true");
   });
 });

@@ -16,14 +16,12 @@ const MODE_OPTIONS: readonly SegmentedControlOption<WikiMode>[] = [
   { value: "wiki", label: "Wiki" },
   { value: "code", label: "Code" },
   { value: "ask", label: "Ask" },
-  { value: "research", label: "Research" },
 ];
 
 const SEARCH_PLACEHOLDER: Record<WikiMode, string> = {
   wiki: "Filter pages",
   code: "Filter code pages",
   ask: "Filter ask history",
-  research: "Filter research runs",
 };
 
 export interface WikiToolbarActions {
@@ -165,7 +163,7 @@ export function WikiDegradedBanner({ summary }: { summary: WikiStatusSummary }) 
     ? `Wiki gateway offline${summary.message ? ` — ${summary.message}` : ""}`
     : `Wiki degraded: ${summary.degradedServices.join(", ")}`;
   const detail = offline
-    ? "Browse, ask, and research are unavailable until the gateway recovers."
+    ? "Browse and ask are unavailable until the gateway recovers."
     : `${summary.brokenLinks} broken links · ${summary.stalePages} stale pages · ${summary.uncompiledSources} uncompiled sources`;
   return (
     <div role="status" className="flex items-start gap-2 bg-info-soft px-3 py-1.5 text-xs text-info">
