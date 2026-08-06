@@ -341,6 +341,37 @@ class TestArchive:
         assert len(remaining) == 1
         assert remaining[0]["name"] == "Edit"
 
+    def test_rule_eval_archive_totals_have_block_shape(
+        self, event_store: MetricsEventStore, temp_db: "HubDatabase"
+    ) -> None:
+        old_date = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+        for result in ("block", "block", "allow"):
+            temp_db.execute(
+                """INSERT INTO metrics_events
+                   (event_type, project_id, server_name, name, success, result, created_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    "rule_eval",
+                    PROJECT_ID,
+                    "rules",
+                    "task-before-edit",
+                    result == "allow",
+                    result,
+                    old_date,
+                ),
+            )
+
+        assert event_store.archive_old_events(retention_days=30) == 3
+        assert event_store.get_archive_totals(event_type="rule_eval") == [
+            {
+                "event_type": "rule_eval",
+                "project_id": PROJECT_ID,
+                "server_name": "rules",
+                "name": "task-before-edit",
+                "block_count": 2,
+            }
+        ]
+
     def test_archive_upsert_merges(
         self, event_store: MetricsEventStore, temp_db: "HubDatabase"
     ) -> None:
