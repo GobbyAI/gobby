@@ -14,6 +14,7 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.monolith_guard import (
     MONOLITH_SOURCE_EXTENSIONS,
+    is_monolith_guard_path,
     outstanding_monolith_paths,
     projected_monolith_paths,
 )
@@ -223,6 +224,36 @@ def test_excluded_artifacts_never_trigger(tmp_path: Path, relative_path: str) ->
     )
 
     assert result == []
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "src/gobby/build/coordinator.py",
+        "src/gobby/build/service.py",
+        "src/gobby/dist/manifest.ts",
+        "src/gobby/target/config.rs",
+    ],
+)
+def test_production_packages_named_like_output_directories_are_guarded(
+    relative_path: str,
+) -> None:
+    assert is_monolith_guard_path(relative_path) is True
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "build/generated.py",
+        "dist/bundle.js",
+        "target/generated.rs",
+        "web/dist/bundle.js",
+        "crates/gcode/target/debug/generated.rs",
+        "build/src/generated.py",
+    ],
+)
+def test_output_directories_outside_source_roots_are_excluded(relative_path: str) -> None:
+    assert is_monolith_guard_path(relative_path) is False
 
 
 def test_completion_guard_uses_only_session_task_attribution(tmp_path: Path) -> None:

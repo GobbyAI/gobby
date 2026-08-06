@@ -19,8 +19,6 @@ _EXCLUDED_PATH_PARTS = frozenset(
         ".venv",
         "baseline",
         "baselines",
-        "build",
-        "dist",
         "docs",
         "documentation",
         "fixture",
@@ -28,7 +26,6 @@ _EXCLUDED_PATH_PARTS = frozenset(
         "generated",
         "node_modules",
         "site-packages",
-        "target",
         "test",
         "tests",
         "third-party",
@@ -38,6 +35,7 @@ _EXCLUDED_PATH_PARTS = frozenset(
         "venv",
     }
 )
+_EXCLUDED_OUTPUT_PATH_PARTS = frozenset({"build", "dist", "target"})
 _TARGETED_EDIT_KEYS = (
     ("old_string", "new_string"),
     ("old_text", "new_text"),
@@ -73,6 +71,11 @@ def is_monolith_guard_path(path: str) -> bool:
     if pure_path.suffix.lower() not in MONOLITH_SOURCE_EXTENSIONS:
         return False
     if any(part in _EXCLUDED_PATH_PARTS for part in parts[:-1]):
+        return False
+
+    directories = parts[:-1]
+    source_root_index = directories.index("src") if "src" in directories else len(directories)
+    if any(part in _EXCLUDED_OUTPUT_PATH_PARTS for part in directories[:source_root_index]):
         return False
 
     filename = parts[-1]
