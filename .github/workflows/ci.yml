@@ -71,7 +71,7 @@ jobs:
                   case "$file" in
                     crates/*|Cargo.toml|Cargo.lock|rust-toolchain.toml|.config/nextest.toml|.github/workflows/rust-ci.yml|.github/workflows/release-gcode.yml|.github/workflows/release-ghook.yml|.github/workflows/release-gwiki.yml|.github/workflows/release-gcore.yml)
                       ;;
-                    *.md|docs/*|LICENSE*|.gobby/*|.github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/coderabbit.yaml)
+                    *.md|docs/*|LICENSE*|.gobby/*|.github/ISSUE_TEMPLATE/*|.github/CODEOWNERS)
                       ;;
                     *)
                       requires_full_ci=true

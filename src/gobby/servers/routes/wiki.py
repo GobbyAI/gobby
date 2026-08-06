@@ -33,7 +33,7 @@ from gobby.wiki.scope_resolution import (
 from gobby.wiki.status import collect_wiki_status
 
 if TYPE_CHECKING:
-    from gobby.servers.http_server import HTTPServer
+    from gobby.servers.http import HTTPServer
 
 
 GatewayCall = Callable[[GwikiGateway], Awaitable[dict[str, Any]]]

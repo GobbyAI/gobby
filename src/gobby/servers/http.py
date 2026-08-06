@@ -32,10 +32,10 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.runner import GobbyRunner
     from gobby.servers.websocket.server import WebSocketServer
-    from gobby.utils.tool_metrics import ToolMetricsManager
 
 logger = logging.getLogger(__name__)
 

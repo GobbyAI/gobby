@@ -70,6 +70,7 @@ class _SessionEndHandler(SessionEndMixin):
             status="active",
         )
         self._session_coordinator = None
+        self._session_end_auto_link_worker = None
         self._message_processor = None
         self._task_manager = None
         self._worktree_manager = None

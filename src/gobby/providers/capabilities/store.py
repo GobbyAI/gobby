@@ -272,19 +272,6 @@ class ProviderCapabilityStore:
                 (provider, source_key, generation, state.value, error),
             )
 
-    def mark_stale(self, provider: str) -> None:
-        """Mark every known source for a provider stale without deleting rows."""
-        with self._db.transaction() as transaction:
-            self._lock_provider(transaction, provider)
-            transaction.execute(
-                """
-                UPDATE provider_capability_refresh_state
-                SET state = %s
-                WHERE provider = %s
-                """,
-                (SourceState.STALE.value, provider),
-            )
-
     def has_rows(self, provider: str) -> bool:
         """Return whether a provider has at least one durable capability row."""
         row = self._db.fetchone(

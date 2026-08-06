@@ -272,7 +272,6 @@ async def spawn_agent_impl(
         model=effective_model,
         requested_effort=requested_reasoning_effort,
         reasoning_required=effective_reasoning_required,
-        daemon_config=daemon_config,
     )
     if reasoning.reasoning_required and reasoning.effective_effort is None:
         return {

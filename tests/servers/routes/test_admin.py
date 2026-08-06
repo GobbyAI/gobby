@@ -110,7 +110,6 @@ class TestAdminRoutes:
             db_executor_stats=lambda: None,
             dev_mode=False,
             project_id=None,
-            provider_model_catalog=None,
         )
         server.config = server.services.config
 

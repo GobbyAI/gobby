@@ -18,7 +18,7 @@ from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import ParsedSkill, extract_audience_config
 
 if TYPE_CHECKING:
-    from gobby.metrics.event_store import MetricsEventStore
+    from gobby.mcp_proxy.metrics_events import MetricsEventStore
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)

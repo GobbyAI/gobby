@@ -20,6 +20,7 @@ from typing import Any, Literal, cast
 from pydantic import BaseModel, Field
 
 from gobby.agents.provider_capabilities import provider_supports_sandbox
+from gobby.paths import get_gobby_home
 
 
 class SandboxConfig(BaseModel):
@@ -609,7 +610,7 @@ def materialize_claude_settings(
     encoded = json.dumps(merged, sort_keys=True, separators=(",", ":")).encode("utf-8")
     digest = hashlib.sha256(encoded).hexdigest()[:12]
 
-    settings_dir = Path.home() / ".gobby" / "settings" / "runtime"
+    settings_dir = get_gobby_home() / "settings" / "runtime"
     settings_dir.mkdir(parents=True, exist_ok=True)
     target = settings_dir / f"claude-{name}-{digest}.json"
     if not target.exists():
@@ -702,7 +703,6 @@ def compute_sandbox_paths(
         default_write_paths,
         deny_paths,
         gobby_read_exceptions,
-        gobby_write_exceptions,
         mcp_config_read_exceptions,
         provider_read_exceptions,
         provider_write_exceptions,
@@ -720,7 +720,6 @@ def compute_sandbox_paths(
         [
             *default_write_paths(config, workspace),
             *git_paths,
-            *gobby_write_exceptions(),
             *(provider_write_exceptions(provider) if provider else []),
         ]
     )

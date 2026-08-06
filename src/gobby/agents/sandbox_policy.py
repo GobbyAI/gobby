@@ -126,12 +126,10 @@ _PACKAGE_REGISTRY_DOMAINS = (
     "luarocks.org",
 )
 
-# Toolchains that install under $HOME. sensitive_home_roots() denies all of
-# $HOME, so each of these needs an explicit grant or the language simply does
-# not work inside the sandbox (#19443: agents could build Python and nothing
-# else). Toolchains outside $HOME -- /opt/homebrew, /usr/local, Xcode,
-# /Library/Developer/CommandLineTools -- are never denied and need no entry
-# here, which is what scopes these tables to $HOME-relative paths.
+# Toolchains installed under $HOME. sensitive_roots() denies five specific
+# Gobby-owned paths; these tables separately grant the compiler, SDK, package,
+# and cache roots needed by sandboxed agents. System toolchains outside $HOME
+# do not need $HOME-relative entries here.
 #
 # Coverage tracks the languages gcode indexes
 # (crates/gcode/src/index/languages.rs). Entries are $HOME-relative and joined
@@ -334,22 +332,6 @@ def sensitive_write_roots() -> list[str]:
         *map(Path, sensitive_roots()),
     ]
     return deny_paths([str(path) for path in roots])
-
-
-def gobby_write_exceptions() -> list[str]:
-    """Return Gobby-owned roots agents must write at runtime.
-
-    Agents own hook spools, logs, personal project state, and gcode/gwiki
-    state under ~/.gobby. The operator token remains denied separately.
-
-    Shared temp roots are deliberately absent. An agent's scratchpad is the
-    per-run directory `srt_runtime` creates under the policy dir and grants
-    explicitly. Granting /tmp, /var/tmp, or tempfile.gettempdir() instead
-    exposes every concurrent agent's temp state plus the plan-review
-    snapshots the spawned `gobby mcp-server` writes, and leaves that
-    subprocess writing outside its own sandbox tmp.
-    """
-    return []
 
 
 def gobby_read_exceptions(env: Mapping[str, str]) -> list[str]:

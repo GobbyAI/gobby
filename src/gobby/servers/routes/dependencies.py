@@ -18,9 +18,9 @@ if TYPE_CHECKING:
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.mcp_proxy.metrics import ToolMetricsManager
-    from gobby.mcp_proxy.registry_manager import InternalToolRegistryManager
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.servers.http import HTTPServer
-    from gobby.storage.mcp_db import MCPDatabaseManager
+    from gobby.storage.mcp import LocalMCPManager
 
 __all__ = [
     "get_server",
@@ -61,7 +61,7 @@ async def get_mcp_manager_required(request: Request) -> MCPClientManager:
     return manager
 
 
-async def get_internal_manager(request: Request) -> InternalToolRegistryManager | None:
+async def get_internal_manager(request: Request) -> InternalRegistryManager | None:
     """Get the internal tool registry manager (gobby-tasks, gobby-memory, etc.)."""
     server = await get_server(request)
     return server._internal_manager
@@ -79,10 +79,10 @@ async def get_config(request: Request) -> DaemonConfig | None:
     return server.config
 
 
-async def get_mcp_db_manager(request: Request) -> MCPDatabaseManager | None:
+async def get_mcp_db_manager(request: Request) -> LocalMCPManager | None:
     """Get the MCP database manager."""
     server = await get_server(request)
-    return server._mcp_db_manager
+    return cast(LocalMCPManager | None, server._mcp_db_manager)
 
 
 async def get_llm_service(request: Request) -> LLMService | None:

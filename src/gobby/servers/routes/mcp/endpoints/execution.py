@@ -25,7 +25,7 @@ from gobby.utils.datetime import to_json_safe
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
-    from gobby.mcp_proxy.registry_manager import InternalToolRegistryManager
+    from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -192,7 +192,7 @@ async def list_mcp_tools(
     server_name: str,
     request: Request,
     server: "HTTPServer" = Depends(get_server),
-    internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
+    internal_manager: "InternalRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
 ) -> dict[str, Any]:
     """
