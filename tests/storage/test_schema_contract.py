@@ -32,6 +32,7 @@ _POSTGRES_DDL = re.compile(
 # production Python and therefore are outside this scan.
 _KEPT_ADJACENT_SQL = Counter(
     {
+        ("src/gobby/cli/history_scrub.py", "CREATE TEMP TABLE"): 1,
         ("src/gobby/cli/installers/postgres.py", "CREATE EXTENSION"): 1,
         ("src/gobby/code_index/_storage/files.py", "CREATE TEMP TABLE"): 1,
         ("src/gobby/code_index/_storage/files.py", "DROP TABLE"): 1,

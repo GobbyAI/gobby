@@ -4120,6 +4120,10 @@ DECLARE
     trigger_name TEXT :=
         'gobby_maintenance_epoch_login_' || SUBSTRING(MD5(current_schema()) FOR 16);
 BEGIN
+    IF target_schema <> 'public' THEN
+        RETURN;
+    END IF;
+
     EXECUTE FORMAT(
         $function$
         CREATE OR REPLACE FUNCTION %I.gobby_maintenance_epoch_login_guard()
@@ -4138,10 +4142,15 @@ BEGIN
                 RETURN;
             END IF;
 
-            SELECT id
-            INTO active_epoch
-            FROM %I.maintenance_epochs
-            WHERE released_at IS NULL;
+            BEGIN
+                SELECT id
+                INTO active_epoch
+                FROM %I.maintenance_epochs
+                WHERE released_at IS NULL;
+            EXCEPTION
+                WHEN undefined_table OR invalid_schema_name THEN
+                    RETURN;
+            END;
 
             IF active_epoch IS NULL THEN
                 RETURN;
@@ -4204,10 +4213,15 @@ BEGIN
                 RETURN;
             END IF;
 
-            SELECT id
-            INTO active_epoch
-            FROM %I.maintenance_epochs
-            WHERE released_at IS NULL;
+            BEGIN
+                SELECT id
+                INTO active_epoch
+                FROM %I.maintenance_epochs
+                WHERE released_at IS NULL;
+            EXCEPTION
+                WHEN undefined_table OR invalid_schema_name THEN
+                    RETURN;
+            END;
 
             IF active_epoch IS NULL THEN
                 RETURN;
