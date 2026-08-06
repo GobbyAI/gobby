@@ -88,6 +88,10 @@ def create_standby_app(control: StandbyLeaseControl) -> FastAPI:
     async def status() -> dict[str, object]:
         return {"status": "ok", "lease": await control.status_payload()}
 
+    @app.get("/api/admin/lease/status")
+    async def lease_status() -> dict[str, object]:
+        return await control.status_payload()
+
     @app.post("/api/admin/lease/promote", dependencies=[])
     async def promote(authorization: str | None = Header(default=None)) -> dict[str, bool]:
         require_auth(authorization)

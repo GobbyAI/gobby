@@ -68,6 +68,13 @@ def test_standby_exposes_only_health_status_and_lease_control() -> None:
 
     assert client.get("/api/admin/health").json()["lease_mode"] == "standby"
     assert client.get("/api/admin/status").json()["lease"]["mode"] == "standby"
+    assert client.get("/api/admin/lease/status").json() == {
+        "mode": "standby",
+        "held": True,
+        "owner_pid": 42,
+        "owner_application_name": "gobby-lease-v1:owner:instance",
+        "heartbeat_age_seconds": 0.25,
+    }
     assert client.get("/mcp").status_code == 404
     assert client.get("/api/sessions").status_code == 404
 

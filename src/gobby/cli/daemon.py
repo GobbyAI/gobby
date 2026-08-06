@@ -81,7 +81,10 @@ def _start_dependency_errors() -> list[str]:
     if platform_error := unsupported_platform_error():
         return [platform_error]
     gobby_home = get_gobby_home()
-    bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+    try:
+        bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
+    except BootstrapConfigError as exc:
+        return [f"Invalid bootstrap.yaml: {exc}"]
     managed_services = (
         bootstrap.datastore_mode == "local"
         and (gobby_home / "services" / "docker-compose.yml").is_file()
