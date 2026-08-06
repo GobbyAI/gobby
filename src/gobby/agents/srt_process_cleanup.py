@@ -10,11 +10,19 @@ from typing import Protocol, cast
 
 import psutil
 
+from gobby.agents.sandbox_policy import (
+    SRT_SETTINGS_RELATIVE_PATH,
+    SRT_VIOLATIONS_RELATIVE_PATH,
+    managed_execution_root,
+)
 from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
 
-_POLICY_FILENAMES = {"settings", "settings.json", "violations", "violations.jsonl"}
+_POLICY_RELATIVE_PATHS = {
+    SRT_SETTINGS_RELATIVE_PATH.as_posix(),
+    SRT_VIOLATIONS_RELATIVE_PATH.as_posix(),
+}
 
 
 class ProcessHandle(Protocol):
@@ -41,16 +49,20 @@ def _run_id_from_cmdline(cmdline: object, sandbox_root: Path) -> str | None:
     if not any(arg.rsplit("/", 1)[-1] == "runner.mjs" for arg in args):
         return None
 
-    sandbox_prefix = f"{sandbox_root.as_posix().rstrip('/')}/"
+    policy_prefixes = {
+        f"{root.as_posix().rstrip('/')}/" for root in (sandbox_root, managed_execution_root())
+    }
     run_ids: set[str] = set()
     for arg in args:
         policy_path = arg.split("=", 1)[-1]
-        if not policy_path.startswith(sandbox_prefix):
-            continue
-        relative_path = policy_path.removeprefix(sandbox_prefix)
-        run_id, separator, filename = relative_path.partition("/")
-        if separator and run_id and filename in _POLICY_FILENAMES:
-            run_ids.add(run_id)
+        for policy_prefix in policy_prefixes:
+            if not policy_path.startswith(policy_prefix):
+                continue
+            relative_path = policy_path.removeprefix(policy_prefix)
+            run_id, separator, policy_relative_path = relative_path.partition("/")
+            if separator and run_id and policy_relative_path in _POLICY_RELATIVE_PATHS:
+                run_ids.add(run_id)
+            break
     if len(run_ids) != 1:
         return None
     return run_ids.pop()
