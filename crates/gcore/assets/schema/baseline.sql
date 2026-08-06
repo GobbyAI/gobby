@@ -1465,7 +1465,7 @@ CREATE TABLE session_variables (
 CREATE TABLE sessions (
     id uuid NOT NULL,
     external_id text NOT NULL,
-    machine_id uuid,
+machine_id uuid NOT NULL,
     source text NOT NULL,
     project_id uuid NOT NULL,
     title text,
@@ -2455,7 +2455,10 @@ ALTER TABLE ONLY session_variables
     ADD CONSTRAINT session_variables_pkey PRIMARY KEY (session_id);
 
 ALTER TABLE ONLY sessions
-    ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+ADD CONSTRAINT sessions_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY sessions
+ADD CONSTRAINT sessions_id_machine_id_key UNIQUE (id, machine_id);
 
 ALTER TABLE ONLY skill_files
     ADD CONSTRAINT skill_files_pkey PRIMARY KEY (id);
@@ -3189,7 +3192,7 @@ ALTER TABLE ONLY checkpoints
     ADD CONSTRAINT checkpoints_task_id_fkey FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY clones
-    ADD CONSTRAINT clones_agent_session_id_fkey FOREIGN KEY (agent_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE;
+ADD CONSTRAINT clones_agent_session_id_machine_id_fkey FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE ONLY clones
     ADD CONSTRAINT clones_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
@@ -3489,7 +3492,7 @@ ALTER TABLE ONLY workflow_instances
     ADD CONSTRAINT workflow_instances_session_id_fkey FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE;
 
 ALTER TABLE ONLY worktrees
-    ADD CONSTRAINT worktrees_agent_session_id_fkey FOREIGN KEY (agent_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE;
+ADD CONSTRAINT worktrees_agent_session_id_machine_id_fkey FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE INITIALLY IMMEDIATE;
 
 ALTER TABLE ONLY worktrees
     ADD CONSTRAINT worktrees_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
@@ -3923,8 +3926,6 @@ INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_
 INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000002', '_global', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
 
 INSERT INTO projects (id, name, repo_path, github_url, github_repo, linear_team_id, linear_project_id, linear_synced_at, linear_sync_enabled, deleted_at, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000060887', '_personal', NULL, NULL, NULL, NULL, NULL, NULL, false, NULL, NOW(), NOW());
-
-INSERT INTO sessions (id, external_id, machine_id, source, project_id, title, title_source, status, transcript_path, summary_path, summary_markdown, summary_revision_id, summary_source_context_hash, summary_digest_turn_count, summary_generation_mode, summary_generated_at, git_branch, parent_session_id, transcript_processed, agent_depth, spawned_by_agent_id, workflow_name, agent_run_id, context_injected, original_prompt, usage_input_tokens, usage_output_tokens, usage_cache_creation_tokens, usage_cache_read_tokens, context_window, context_used_tokens, context_usage_ratio, context_usage_source, context_usage_confidence, context_usage_updated_at, last_prompt_input_tokens, last_prompt_uncached_input_tokens, last_prompt_cache_read_tokens, last_prompt_cache_creation_tokens, last_completion_output_tokens, terminal_context, seq_num, model, is_local, had_edits, digest_markdown, last_turn_markdown, chat_mode, last_digest_input_hash, last_digested_pair_index, message_count, turn_count, tool_call_count, last_assistant_content, approved_tools_json, session_type, sandbox_enabled, sandbox_policy_hash, created_at, updated_at) VALUES ('00000000-0000-0000-0000-000000000001', 'system', NULL, 'system', '00000000-0000-0000-0000-000000060887', '_system', NULL, 'active', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, 0, NULL, NULL, NULL, false, NULL, 0, 0, 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false, NULL, NULL, 'plan', NULL, 0, 0, 0, 0, NULL, NULL, 'terminal', false, NULL, NOW(), NOW());
 
 INSERT INTO task_stages_registry (name, display_label, description, category, default_agent, reviewer_agent, reviewer_agent_selector_json, review_policy, dispatch_type, dispatch_target, dispatch_inputs_json, position_hint, requires_human, is_terminal, default_max_work_attempts, default_max_review_rounds, bundled_hash, deleted_at, updated_at) VALUES ('architecture', 'Architecture', 'Cross-cutting design decisions and component shape.', 'design', 'architect', NULL, NULL, 'none', NULL, NULL, NULL, 30, false, false, 3, 5, 'd084b4acbf67c7012e577d2d386dc20ae45cbfebe347a58f3fbc89cef5038b2c', NULL, NOW());
 

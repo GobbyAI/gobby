@@ -36,7 +36,7 @@ class Session:
 
     id: str
     external_id: str
-    machine_id: str | None
+    machine_id: str
     source: str
     project_id: str  # Required - sessions must belong to a project
     title: str | None

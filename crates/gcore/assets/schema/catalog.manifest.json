@@ -3546,7 +3546,7 @@
     },
     {
       "name": "sessions.machine_id",
-      "definition": "uuid|uuid|YES||NEVER"
+      "definition": "uuid|uuid|NO||NEVER"
     },
     {
       "name": "sessions.message_count",
@@ -5459,8 +5459,8 @@
       "definition": "FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE"
     },
     {
-      "name": "clones.clones_agent_session_id_fkey",
-      "definition": "FOREIGN KEY (agent_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
+      "name": "clones.clones_agent_session_id_machine_id_fkey",
+      "definition": "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE"
     },
     {
       "name": "clones.clones_machine_id_fkey",
@@ -6319,6 +6319,10 @@
       "definition": "CHECK ((usage_input_tokens IS NULL OR usage_input_tokens >= 0) AND (usage_output_tokens IS NULL OR usage_output_tokens >= 0) AND (usage_cache_creation_tokens IS NULL OR usage_cache_creation_tokens >= 0) AND (usage_cache_read_tokens IS NULL OR usage_cache_read_tokens >= 0) AND (context_window IS NULL OR context_window >= 0) AND (context_used_tokens IS NULL OR context_used_tokens >= 0) AND (last_prompt_input_tokens IS NULL OR last_prompt_input_tokens >= 0) AND (last_prompt_uncached_input_tokens IS NULL OR last_prompt_uncached_input_tokens >= 0) AND (last_prompt_cache_read_tokens IS NULL OR last_prompt_cache_read_tokens >= 0) AND (last_prompt_cache_creation_tokens IS NULL OR last_prompt_cache_creation_tokens >= 0) AND (last_completion_output_tokens IS NULL OR last_completion_output_tokens >= 0))"
     },
     {
+      "name": "sessions.sessions_id_machine_id_key",
+      "definition": "UNIQUE (id, machine_id)"
+    },
+    {
       "name": "sessions.sessions_machine_id_fkey",
       "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
     },
@@ -6763,8 +6767,8 @@
       "definition": "UNIQUE (session_id, workflow_name)"
     },
     {
-      "name": "worktrees.worktrees_agent_session_id_fkey",
-      "definition": "FOREIGN KEY (agent_session_id) REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE"
+      "name": "worktrees.worktrees_agent_session_id_machine_id_fkey",
+      "definition": "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) ON DELETE SET NULL (agent_session_id) DEFERRABLE"
     },
     {
       "name": "worktrees.worktrees_machine_id_fkey",
@@ -8261,6 +8265,10 @@
     {
       "name": "session_variables_pkey",
       "definition": "CREATE UNIQUE INDEX session_variables_pkey ON $schema.session_variables USING btree (session_id)"
+    },
+    {
+      "name": "sessions_id_machine_id_key",
+      "definition": "CREATE UNIQUE INDEX sessions_id_machine_id_key ON $schema.sessions USING btree (id, machine_id)"
     },
     {
       "name": "sessions_pkey",

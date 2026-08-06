@@ -49,6 +49,39 @@ def _config_value(db: Any, key: str) -> Any | None:
 
 
 class TestGobbyRunnerInit:
+    def test_machine_registration_precedes_system_session_bootstrap(
+        self, mock_config_with_websocket: MagicMock
+    ) -> None:
+        order: list[str] = []
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+        def register_machine(_database: object, machine_id: str) -> str:
+            order.append("machine")
+            return machine_id
+
+        def bootstrap_system_session(_database: object) -> None:
+            order.append("system_session")
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(
+                patch(
+                    "gobby.runner_init.storage.ensure_machine_identity",
+                    side_effect=register_machine,
+                )
+            )
+            stack.enter_context(
+                patch(
+                    "gobby.runner_init.storage.ensure_system_session",
+                    side_effect=bootstrap_system_session,
+                )
+            )
+
+            GobbyRunner()
+
+        assert order == ["machine", "system_session"]
+
     """Tests for GobbyRunner initialization."""
 
     def test_init_creates_components(

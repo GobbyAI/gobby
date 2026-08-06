@@ -13,10 +13,31 @@ import importlib
 import json
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
 from gobby.storage.clones import Clone
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+
+def test_full_uuid_foreign_clone_reports_ownership_mismatch() -> None:
+    from gobby.cli.clones import resolve_clone_id
+
+    manager = MagicMock()
+    manager.get.side_effect = MachineOwnershipMismatchError(
+        resource_kind="clone",
+        resource_id="10000000-0000-4000-8000-000000000002",
+        owner_machine_id="20000000-0000-4000-8000-000000000002",
+        current_machine_id="20000000-0000-4000-8000-000000000001",
+    )
+
+    with pytest.raises(click.ClickException) as exc_info:
+        resolve_clone_id(manager, "10000000-0000-4000-8000-000000000002")
+
+    assert "machine_ownership_mismatch" in str(exc_info.value)
+    manager.list_clones.assert_not_called()
+
 
 pytestmark = pytest.mark.cli
 

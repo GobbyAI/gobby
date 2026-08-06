@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -53,7 +54,6 @@ def get_logger() -> logging.Logger:
 SYSTEM_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
 SYSTEM_SESSION_EXTERNAL_ID = "system"
-SYSTEM_SESSION_MACHINE_ID = None
 SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
 SESSION_REVIVAL_HORIZON_HOURS = 24
@@ -70,6 +70,7 @@ def past_terminal_revival_horizon(session: Session) -> bool:
 
 def ensure_system_session(db: HubDatabase) -> None:
     """Ensure the bootstrapped root session for cron/pipeline work exists."""
+    machine_id = require_machine_id()
     had_existing_sessions = False
     with db.transaction_immediate(SystemSessionBootstrap()):
         existing = db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
@@ -97,7 +98,7 @@ def ensure_system_session(db: HubDatabase) -> None:
             (
                 SYSTEM_SESSION_ID,
                 SYSTEM_SESSION_EXTERNAL_ID,
-                SYSTEM_SESSION_MACHINE_ID,
+                machine_id,
                 SYSTEM_SESSION_SOURCE,
                 SYSTEM_SESSION_PROJECT_ID,
                 SYSTEM_SESSION_TITLE,

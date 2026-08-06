@@ -11,8 +11,13 @@ from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.workspace_machine_scope import (
+    get_owned_workspace_row,
+    raise_if_foreign_workspace,
+    session_is_local,
+)
 from gobby.utils.datetime import normalize_datetime_model, utc_now
-from gobby.utils.machine_id import get_machine_id, require_machine_id
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -145,9 +150,13 @@ class LocalWorktreeManager:
         """
         worktree_id = str(uuid.uuid4())
         now = utc_now()
-        machine_id = get_machine_id()
-        if machine_id is None:
-            raise RuntimeError("Local machine identity is required to create a worktree")
+        machine_id = require_machine_id()
+        if agent_session_id and not session_is_local(
+            self.db,
+            agent_session_id,
+            current_machine_id=machine_id,
+        ):
+            raise ValueError(f"Session not found: {agent_session_id}")
 
         self.db.execute(
             """
@@ -194,7 +203,12 @@ class LocalWorktreeManager:
 
     def get(self, worktree_id: str) -> Worktree | None:
         """Get worktree by ID."""
-        row = self.db.fetchone("SELECT * FROM worktrees WHERE id = %s", (worktree_id,))
+        row = get_owned_workspace_row(
+            self.db,
+            "worktree",
+            worktree_id,
+            current_machine_id=require_machine_id(),
+        )
         return Worktree.from_row(row) if row else None
 
     def get_by_path(self, worktree_path: str) -> Worktree | None:
@@ -260,8 +274,6 @@ class LocalWorktreeManager:
         status: str | None = None,
         agent_session_id: str | None = None,
         limit: int = 50,
-        *,
-        machine_id: str | None = None,
     ) -> list[Worktree]:
         """
         List worktrees with optional filters.
@@ -275,8 +287,8 @@ class LocalWorktreeManager:
         Returns:
             List of Worktree instances
         """
-        conditions = []
-        params: list[Any] = []
+        conditions = ["machine_id = %s"]
+        params: list[Any] = [require_machine_id()]
 
         if project_id:
             conditions.append("project_id = %s")
@@ -287,11 +299,7 @@ class LocalWorktreeManager:
         if agent_session_id:
             conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
-        if machine_id is not None:
-            conditions.append("machine_id = %s")
-            params.append(machine_id)
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        where_clause = " AND ".join(conditions)
         params.append(limit)
 
         rows = self.db.fetchall(
@@ -345,14 +353,23 @@ class LocalWorktreeManager:
         if invalid_fields:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
+        machine_id = require_machine_id()
+        agent_session_id = fields.get("agent_session_id")
+        if agent_session_id is not None and not session_is_local(
+            self.db,
+            str(agent_session_id),
+            current_machine_id=machine_id,
+        ):
+            raise ValueError(f"Session not found: {agent_session_id}")
+
         # Add updated_at timestamp
         fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
-        values = list(fields.values()) + [worktree_id]
+        values = list(fields.values()) + [worktree_id, machine_id]
 
         self.db.execute(
-            f"UPDATE worktrees SET {set_clause} WHERE id = %s",  # nosec B608
+            f"UPDATE worktrees SET {set_clause} WHERE id = %s AND machine_id = %s",  # nosec B608
             tuple(values),
         )
 
@@ -361,9 +378,11 @@ class LocalWorktreeManager:
     def touch(self, worktree_id: str) -> Worktree | None:
         """Refresh a worktree's activity timestamp."""
         now = utc_now()
+        machine_id = require_machine_id()
         self.db.execute(
-            "UPDATE worktrees SET last_activity_at = %s, updated_at = %s WHERE id = %s",
-            (now, now, worktree_id),
+            """UPDATE worktrees SET last_activity_at = %s, updated_at = %s
+               WHERE id = %s AND machine_id = %s""",
+            (now, now, worktree_id, machine_id),
         )
         return self.get(worktree_id)
 
@@ -379,8 +398,15 @@ class LocalWorktreeManager:
         """
         cursor = self.db.execute(
             "DELETE FROM worktrees WHERE id = %s AND machine_id = %s",
-            (worktree_id, require_machine_id()),
+            (worktree_id, machine_id := require_machine_id()),
         )
+        if cursor.rowcount <= 0:
+            raise_if_foreign_workspace(
+                self.db,
+                "worktree",
+                worktree_id,
+                current_machine_id=machine_id,
+            )
         return cursor.rowcount > 0
 
     # Status transition methods
@@ -404,14 +430,21 @@ class LocalWorktreeManager:
 
     def is_claimed_by_live_session(self, worktree_id: str) -> bool:
         """Return True when the worktree owner is an active session."""
+        machine_id = require_machine_id()
+        get_owned_workspace_row(
+            self.db,
+            "worktree",
+            worktree_id,
+            current_machine_id=machine_id,
+        )
         row = self.db.fetchone(
             """
             SELECT 1
             FROM worktrees wt
             JOIN sessions s ON s.id = wt.agent_session_id
-            WHERE wt.id = %s AND s.status IN ('active', 'paused')
+            WHERE wt.id = %s AND wt.machine_id = %s AND s.status IN ('active', 'paused')
             """,
-            (worktree_id,),
+            (worktree_id, machine_id),
         )
         return row is not None
 
@@ -423,10 +456,13 @@ class LocalWorktreeManager:
         allowed_existing_session_ids: Iterable[str | None] = (None,),
     ) -> Worktree | None:
         """Claim a worktree only if it is unowned or owned by an allowed prior session."""
+        machine_id = require_machine_id()
+        if not session_is_local(self.db, session_id, current_machine_id=machine_id):
+            return None
         allowed = [value for value in allowed_existing_session_ids if value]
         conditions = ["id = %s", "machine_id = %s", "(agent_session_id IS NULL"]
         now = utc_now()
-        params: list[Any] = [session_id, now, now, worktree_id, require_machine_id()]
+        params: list[Any] = [session_id, now, now, worktree_id, machine_id]
         if allowed:
             placeholders = ", ".join("%s" for _ in allowed)
             conditions[-1] += f" OR agent_session_id IN ({placeholders})"
@@ -442,6 +478,12 @@ class LocalWorktreeManager:
             tuple(params),
         )
         if getattr(cursor, "rowcount", 0) <= 0:
+            raise_if_foreign_workspace(
+                self.db,
+                "worktree",
+                worktree_id,
+                current_machine_id=machine_id,
+            )
             return None
         return self.get(worktree_id)
 
@@ -621,10 +663,10 @@ class LocalWorktreeManager:
             """
             SELECT status, COUNT(*) as count
             FROM worktrees
-            WHERE project_id = %s
+            WHERE project_id = %s AND machine_id = %s
             GROUP BY status
             """,
-            (project_id,),
+            (project_id, require_machine_id()),
         )
         return {row["status"]: row["count"] for row in rows}
 
@@ -664,20 +706,20 @@ class LocalWorktreeManager:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM worktrees
-                WHERE merge_state = %s AND project_id = %s
+                WHERE merge_state = %s AND project_id = %s AND machine_id = %s
                 ORDER BY updated_at DESC
                 LIMIT %s
                 """,
-                (merge_state, project_id, limit),
+                (merge_state, project_id, require_machine_id(), limit),
             )
         else:
             rows = self.db.fetchall(
                 """
                 SELECT * FROM worktrees
-                WHERE merge_state = %s
+                WHERE merge_state = %s AND machine_id = %s
                 ORDER BY updated_at DESC
                 LIMIT %s
                 """,
-                (merge_state, limit),
+                (merge_state, require_machine_id(), limit),
             )
         return [Worktree.from_row(row) for row in rows]

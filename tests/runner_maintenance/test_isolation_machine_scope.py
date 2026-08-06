@@ -41,15 +41,13 @@ def test_missing_path_sweep_ignores_remote_rows(
     clones = LocalCloneManager(temp_db)
     worktree_owners = iter((local_machine_id, remote_machine_id))
     clone_owners = iter((local_machine_id, remote_machine_id))
-    monkeypatch.setattr(worktrees_module, "get_machine_id", lambda: next(worktree_owners))
-    monkeypatch.setattr(clones_module, "get_machine_id", lambda: next(clone_owners))
-    for module in (worktrees_module, clones_module, isolation_module):
-        monkeypatch.setattr(
-            module,
-            "require_machine_id",
-            lambda: local_machine_id,
-            raising=False,
-        )
+    monkeypatch.setattr(
+        worktrees_module,
+        "require_machine_id",
+        lambda: next(worktree_owners),
+    )
+    monkeypatch.setattr(clones_module, "require_machine_id", lambda: next(clone_owners))
+    monkeypatch.setattr(isolation_module, "require_machine_id", lambda: local_machine_id)
 
     local_worktree = worktrees.create(
         project_id=project.id,
@@ -71,6 +69,8 @@ def test_missing_path_sweep_ignores_remote_rows(
         branch_name="task/remote-clone",
         clone_path=str(tmp_path / "missing-remote-clone"),
     )
+    monkeypatch.setattr(worktrees_module, "require_machine_id", lambda: local_machine_id)
+    monkeypatch.setattr(clones_module, "require_machine_id", lambda: local_machine_id)
     remote_sentinel = tmp_path / "remote-filesystem"
     remote_sentinel.mkdir()
     (remote_sentinel / "owned-by-remote").write_text("keep", encoding="utf-8")
@@ -80,6 +80,6 @@ def test_missing_path_sweep_ignores_remote_rows(
     assert counts == {"worktrees": 1, "clones": 1}
     assert worktrees.get(local_worktree.id) is None
     assert clones.get(local_clone.id) is None
-    assert worktrees.get(remote_worktree.id) is not None
-    assert clones.get(remote_clone.id) is not None
+    assert temp_db.fetchone("SELECT id FROM worktrees WHERE id = %s", (remote_worktree.id,))
+    assert temp_db.fetchone("SELECT id FROM clones WHERE id = %s", (remote_clone.id,))
     assert (remote_sentinel / "owned-by-remote").read_text(encoding="utf-8") == "keep"

@@ -25,6 +25,7 @@ from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
 from gobby.storage.executor import DatabaseExecutor
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._constants import ensure_system_session
 from gobby.storage.tasks import LocalTaskManager
 from gobby.telemetry import init_telemetry
 from gobby.telemetry.logging import setup_file_logging
@@ -91,6 +92,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     if runner.machine_id is None:
         raise RuntimeError("local machine identity is unavailable")
     runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
+    ensure_system_session(runner.database)
     from gobby.storage.managed_credentials import ManagedCredentialManager
 
     runner.managed_credential_manager = ManagedCredentialManager(
@@ -111,8 +113,8 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner.config_store = ConfigStore(runner.database)
     from gobby.providers.capabilities.metadata_aliases import seed_model_metadata_aliases
 
-    seed_model_metadata_aliases(runner.config_store)
     runner.secret_store.ensure_ready()
+    seed_model_metadata_aliases(runner.config_store)
     ensure_local_api_token(runner.config_store)
     runner.config = load_config(
         config_file=runner._config_file,

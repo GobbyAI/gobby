@@ -14,11 +14,20 @@ if TYPE_CHECKING:
 
 def _active_work_blockers(runner: GobbyRunner) -> dict[str, int]:
     """Return local work that makes cooperative handoff unsafe."""
+    blockers: dict[str, int] = {}
     agent_runner = runner.agent_runner
     active_agents = agent_runner.get_running_agents_count() if agent_runner is not None else 0
     if active_agents:
-        return {"active_agent_runs": active_agents}
-    return {}
+        blockers["active_agent_runs"] = active_agents
+
+    cron_scheduler = runner.cron_scheduler
+    if cron_scheduler is not None:
+        if runner.machine_id is None:
+            raise RuntimeError("local machine identity is unavailable")
+        active_crons = cron_scheduler.storage.count_running(runner.machine_id)
+        if active_crons:
+            blockers["active_cron_runs"] = active_crons
+    return blockers
 
 
 def register_lease_routes(router: APIRouter, server: HTTPServer) -> None:

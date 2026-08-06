@@ -17,6 +17,10 @@ from gobby.storage.hub.protocol import (
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 from gobby.utils.datetime import utc_now
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
@@ -124,6 +128,30 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         Returns:
             Session instance
         """
+        machine_id = require_local_machine_id(
+            machine_id,
+            resource_kind="session",
+            resource_id=external_id,
+        )
+        existing_owners = self.db.fetchall(
+            """
+            SELECT id, machine_id
+            FROM sessions
+            WHERE external_id = %s AND source = %s AND session_type = %s
+              AND status <> 'deleted'
+            """,
+            (external_id, source, session_type),
+        )
+        for owner in existing_owners:
+            owner_machine_id = str(owner["machine_id"])
+            if owner_machine_id != machine_id:
+                raise MachineOwnershipMismatchError(
+                    resource_kind="session",
+                    resource_id=str(owner["id"]),
+                    owner_machine_id=owner_machine_id,
+                    current_machine_id=machine_id,
+                )
+
         now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID

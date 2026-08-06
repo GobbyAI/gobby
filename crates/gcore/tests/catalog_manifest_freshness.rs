@@ -3,7 +3,9 @@
 use std::env;
 use std::sync::Mutex;
 
-use gobby_core::schema::{SchemaRunner, catalog_manifest, render_catalog_manifest};
+use gobby_core::schema::{
+    CATALOG_MANIFEST_JSON, SchemaRunner, catalog_manifest, render_catalog_manifest,
+};
 use postgres::{Client, Config, NoTls};
 use uuid::Uuid;
 
@@ -293,6 +295,80 @@ fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
         return Ok(());
     }
     assert_eq!(generated, checked_in, "catalog manifest is stale");
+    Ok(())
+}
+
+#[test]
+fn baseline_enforces_workspace_session_machine_ownership() -> anyhow::Result<()> {
+    let manifest: serde_json::Value = serde_json::from_str(CATALOG_MANIFEST_JSON)?;
+    let entries = |kind: &str| {
+        manifest[kind]
+            .as_array()
+            .expect("catalog entry kind must be an array")
+    };
+    let definition = |kind: &str, name: &str| {
+        entries(kind)
+            .iter()
+            .find(|entry| entry["name"] == name)
+            .unwrap_or_else(|| panic!("missing {kind} entry {name}"))["definition"]
+            .as_str()
+            .expect("catalog definition must be a string")
+    };
+
+    assert_eq!(
+        definition("columns", "sessions.machine_id"),
+        "uuid|uuid|NO||NEVER"
+    );
+    assert_eq!(
+        definition("constraints", "sessions.sessions_id_machine_id_key"),
+        "UNIQUE (id, machine_id)"
+    );
+    assert_eq!(
+        definition(
+            "constraints",
+            "worktrees.worktrees_agent_session_id_machine_id_fkey"
+        ),
+        "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) \
+ON DELETE SET NULL (agent_session_id) DEFERRABLE"
+    );
+    assert_eq!(
+        definition(
+            "constraints",
+            "clones.clones_agent_session_id_machine_id_fkey"
+        ),
+        "FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) \
+ON DELETE SET NULL (agent_session_id) DEFERRABLE"
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_contract_detects_workspace_constraint_drift() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+
+    for mutation in [
+        "ALTER TABLE sessions RENAME CONSTRAINT sessions_id_machine_id_key \
+TO sessions_id_machine_id_key_renamed",
+        "ALTER TABLE worktrees DROP CONSTRAINT worktrees_agent_session_id_machine_id_fkey",
+        "ALTER TABLE clones DROP CONSTRAINT clones_agent_session_id_machine_id_fkey; \
+ALTER TABLE clones ADD CONSTRAINT clones_agent_session_id_machine_id_fkey \
+FOREIGN KEY (agent_session_id, machine_id) REFERENCES sessions(id, machine_id) \
+ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE",
+    ] {
+        client.batch_execute("BEGIN")?;
+        client.batch_execute(mutation)?;
+        let error = SchemaRunner::new(&mut client, "public")?
+            .verify()
+            .expect_err("workspace constraint drift must fail verification");
+        assert!(error.to_string().contains("catalog"), "{mutation}: {error}");
+        client.batch_execute("ROLLBACK")?;
+    }
     Ok(())
 }
 

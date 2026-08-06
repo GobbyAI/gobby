@@ -1,11 +1,13 @@
 import asyncio
 import logging
 from dataclasses import replace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import Worktree, WorktreeStatus
 
 pytestmark = pytest.mark.unit
@@ -43,6 +45,39 @@ def registry(mock_worktree_storage, mock_git_manager):
         git_manager=mock_git_manager,
         project_id="11111111-1111-4111-8111-111111110001",
     )
+
+
+@pytest.mark.asyncio
+async def test_foreign_worktree_id_fails_before_side_effects(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    worktree_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee99"
+    mock_worktree_storage.get.side_effect = MachineOwnershipMismatchError(
+        resource_kind="worktree",
+        resource_id=worktree_id,
+        owner_machine_id="21000000-0000-4000-8000-000000000002",
+        current_machine_id="21000000-0000-4000-8000-000000000001",
+    )
+    mock_worktree_storage.claim_if_available.side_effect = mock_worktree_storage.get.side_effect
+
+    with (
+        patch("pathlib.Path.exists") as path_exists,
+        patch("gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event") as emit_event,
+    ):
+        results = [
+            await registry.call("claim_worktree", {"worktree_id": worktree_id, "session_id": "s1"}),
+            await registry.call("sync_worktree", {"worktree_id": worktree_id}),
+            await registry.call("delete_worktree", {"worktree_id": worktree_id}),
+        ]
+
+    assert all(result["error_code"] == "machine_ownership_mismatch" for result in results)
+    path_exists.assert_not_called()
+    emit_event.assert_not_called()
+    mock_git_manager.assert_not_called()
+    mock_worktree_storage.claim.assert_not_called()
+    mock_worktree_storage.claim_if_available.assert_called_once()
+    mock_worktree_storage.update.assert_not_called()
+    mock_worktree_storage.delete.assert_not_called()
 
 
 def _local_merge_git_side_effect(
@@ -1720,7 +1755,7 @@ async def test_merge_worktree_uses_project_repo_for_local_target_merge(
 
 @pytest.mark.asyncio
 async def test_get_worktree_by_task_downgrades_stale_merged_status(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
 ) -> None:
     wt = Worktree(
         id="wt-123",

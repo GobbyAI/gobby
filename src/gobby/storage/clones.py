@@ -15,12 +15,17 @@ from enum import Enum
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.workspace_machine_scope import (
+    get_owned_workspace_row,
+    raise_if_foreign_workspace,
+    session_is_local,
+)
 from gobby.utils.datetime import (
     normalize_datetime_model,
     parse_stored_datetime,
     utc_now,
 )
-from gobby.utils.machine_id import get_machine_id, require_machine_id
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +175,13 @@ class LocalCloneManager:
         clone_id = str(uuid.uuid4())
         now = utc_now()
         cleanup_after_value = parse_stored_datetime(cleanup_after)
-        machine_id = get_machine_id()
-        if machine_id is None:
-            raise RuntimeError("Local machine identity is required to create a clone")
+        machine_id = require_machine_id()
+        if agent_session_id and not session_is_local(
+            self.db,
+            agent_session_id,
+            current_machine_id=machine_id,
+        ):
+            raise ValueError(f"Session not found: {agent_session_id}")
 
         self.db.execute(
             """
@@ -230,7 +239,12 @@ class LocalCloneManager:
 
     def _get_any(self, clone_id: str) -> Clone | None:
         """Get a clone by ID, including terminal cleanup records."""
-        row = self.db.fetchone("SELECT * FROM clones WHERE id = %s", (clone_id,))
+        row = get_owned_workspace_row(
+            self.db,
+            "clone",
+            clone_id,
+            current_machine_id=require_machine_id(),
+        )
         return Clone.from_row(row) if row else None
 
     def get_by_task(self, task_id: str) -> Clone | None:
@@ -291,8 +305,6 @@ class LocalCloneManager:
         status: str | None = None,
         agent_session_id: str | None = None,
         limit: int = 50,
-        *,
-        machine_id: str | None = None,
     ) -> list[Clone]:
         """
         List clones with optional filters.
@@ -306,8 +318,8 @@ class LocalCloneManager:
         Returns:
             List of Clone instances
         """
-        conditions = ["status != %s"]
-        params: list[Any] = [CloneStatus.CLEANUP.value]
+        conditions = ["status != %s", "machine_id = %s"]
+        params: list[Any] = [CloneStatus.CLEANUP.value, require_machine_id()]
 
         if project_id:
             conditions.append("project_id = %s")
@@ -318,11 +330,7 @@ class LocalCloneManager:
         if agent_session_id:
             conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
-        if machine_id is not None:
-            conditions.append("machine_id = %s")
-            params.append(machine_id)
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        where_clause = " AND ".join(conditions)
         params.append(limit)
 
         query = f"SELECT * FROM clones WHERE {where_clause} "  # nosec
@@ -372,6 +380,15 @@ class LocalCloneManager:
         if invalid_fields:
             raise ValueError(f"Invalid field names: {invalid_fields}")
 
+        machine_id = require_machine_id()
+        agent_session_id = fields.get("agent_session_id")
+        if agent_session_id is not None and not session_is_local(
+            self.db,
+            str(agent_session_id),
+            current_machine_id=machine_id,
+        ):
+            raise ValueError(f"Session not found: {agent_session_id}")
+
         for timestamp_field in ("last_sync_at", "cleanup_after", "updated_at"):
             if timestamp_field in fields:
                 fields[timestamp_field] = parse_stored_datetime(fields[timestamp_field])
@@ -380,9 +397,9 @@ class LocalCloneManager:
         fields["updated_at"] = utc_now()
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
-        values = list(fields.values()) + [clone_id]
+        values = list(fields.values()) + [clone_id, machine_id]
 
-        query = f"UPDATE clones SET {set_clause} WHERE id = %s"  # nosec
+        query = f"UPDATE clones SET {set_clause} WHERE id = %s AND machine_id = %s"  # nosec
         self.db.execute(query, tuple(values))
 
         return self._get_any(clone_id)
@@ -399,8 +416,15 @@ class LocalCloneManager:
         """
         cursor = self.db.execute(
             "DELETE FROM clones WHERE id = %s AND machine_id = %s",
-            (clone_id, require_machine_id()),
+            (clone_id, machine_id := require_machine_id()),
         )
+        if cursor.rowcount <= 0:
+            raise_if_foreign_workspace(
+                self.db,
+                "clone",
+                clone_id,
+                current_machine_id=machine_id,
+            )
         return cursor.rowcount > 0
 
     # Status transition methods
@@ -482,6 +506,9 @@ class LocalCloneManager:
         Returns:
             Updated Clone, or None if the clone is missing or owned by another session
         """
+        machine_id = require_machine_id()
+        if not session_is_local(self.db, session_id, current_machine_id=machine_id):
+            return None
         cursor = self.db.execute(
             """
             UPDATE clones
@@ -495,12 +522,18 @@ class LocalCloneManager:
                 session_id,
                 utc_now(),
                 clone_id,
-                require_machine_id(),
+                machine_id,
                 session_id,
                 CloneStatus.CLEANUP.value,
             ),
         )
         if cursor.rowcount <= 0:
+            raise_if_foreign_workspace(
+                self.db,
+                "clone",
+                clone_id,
+                current_machine_id=machine_id,
+            )
             return None
         return self.get(clone_id)
 
@@ -530,10 +563,10 @@ class LocalCloneManager:
             """
             SELECT status, COUNT(*) as count
             FROM clones
-            WHERE project_id = %s
+            WHERE project_id = %s AND machine_id = %s AND status != %s
             GROUP BY status
             """,
-            (project_id,),
+            (project_id, require_machine_id(), CloneStatus.CLEANUP.value),
         )
         return {row["status"]: row["count"] for row in rows}
 

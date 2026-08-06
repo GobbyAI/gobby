@@ -5,15 +5,6 @@ use gobby_core::schema::{
     parse_backup_manifest, schema_identity, split_sql_statements,
 };
 
-fn repo_file(path: &str) -> String {
-    std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join(path),
-    )
-    .unwrap_or_else(|error| panic!("failed to read {path}: {error}"))
-}
-
 #[test]
 fn embedded_assets_publish_a_complete_schema_identity() {
     let identity = schema_identity();
@@ -21,7 +12,7 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(BASELINE_VERSION, 375);
     assert_eq!(
         BASELINE_CHECKSUM,
-        "ee9c523b2f495e3403707f081e93a3c157b543c843951de14e331af7224b7886"
+        "0086a193a7ed83efce3933fe56d0f0ea64e49f6b47ce5cd000c289eca6a40b56"
     );
     assert_eq!(identity.runner_protocol_version, RUNNER_PROTOCOL_VERSION);
     assert_eq!(identity.baseline.version, BASELINE_VERSION);
@@ -30,19 +21,26 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.filename, "baseline@375");
     assert_eq!(
         identity.latest_asset.checksum,
-        "ee9c523b2f495e3403707f081e93a3c157b543c843951de14e331af7224b7886"
+        "0086a193a7ed83efce3933fe56d0f0ea64e49f6b47ce5cd000c289eca6a40b56"
     );
-    assert_eq!(identity.root_hash.len(), 64);
+    assert_eq!(
+        identity.root_hash,
+        "460067e3303a8a2c8ab80bdc07bce8dd516a8196ec7ea34d074c2d39c8893ab3"
+    );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();
 }
 
 #[test]
-fn embedded_seed_matches_the_flatten_evidence() {
-    assert_eq!(
-        SEED_MANIFEST_JSON,
-        repo_file("docs/evidence/pre-flatten/migrated-fresh.seed.json")
-    );
+fn embedded_seed_preserves_project_without_machine_less_system_session() {
+    let manifest: serde_json::Value =
+        serde_json::from_str(SEED_MANIFEST_JSON).expect("seed manifest must be valid JSON");
+    assert_eq!(manifest["sessions"], serde_json::json!([]));
+    assert!(manifest["projects"].as_array().is_some_and(|projects| {
+        projects
+            .iter()
+            .any(|project| project["values"]["name"] == "_personal")
+    }));
 }
 
 #[test]

@@ -12,12 +12,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.testclient import TestClient
 
+from gobby.agents.launcher_session import get_or_create_launcher_session
 from gobby.config.app import DaemonConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
+from gobby.utils.machine_id import require_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -90,6 +92,48 @@ def client(server) -> TestClient:
 
 
 class TestSpawnAgent:
+    def test_spawn_session_writers_use_required_machine_identity(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        session_manager: SessionManager,
+        test_project,
+    ) -> None:
+        task = _create_task(task_manager, test_project.id, "Machine-owned chat")
+        machine_id = require_machine_id()
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": test_project.id},
+            ),
+            patch(
+                "gobby.utils.machine_id.require_machine_id",
+                return_value=machine_id,
+            ) as web_identity,
+            patch(
+                "gobby.agents.launcher_session.require_machine_id",
+                return_value=machine_id,
+            ) as launcher_identity,
+        ):
+            response = client.post(
+                "/api/agents/spawn",
+                json={"task_id": task.id, "web_chat": True},
+            )
+            launcher_id = get_or_create_launcher_session(
+                session_manager,
+                test_project.id,
+                "launcher-test",
+            )
+
+        assert response.status_code == 200
+        web_session = session_manager.get(response.json()["conversation_id"])
+        launcher_session = session_manager.get(launcher_id)
+        assert web_session is not None and web_session.machine_id == machine_id
+        assert launcher_session is not None and launcher_session.machine_id == machine_id
+        web_identity.assert_called_once_with()
+        launcher_identity.assert_called_once_with()
+
     def test_spawn_missing_task(self, client: TestClient, test_project) -> None:
         """Spawn with nonexistent task_id returns 400."""
         with patch(
@@ -223,7 +267,7 @@ class TestSpawnAgent:
         """Web chat spawn should not overwrite a non-open task already owned elsewhere."""
         existing_owner = session_manager.register(
             external_id="claimed-review-ext",
-            machine_id="21000000-0000-4000-8000-000000000002",
+            machine_id=None,
             source="codex",
             project_id=test_project.id,
         )
@@ -465,7 +509,7 @@ class TestLaunchDefaults:
 
 class TestPromptPreview:
     def test_preview_valid_task(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
     ) -> None:
         """Preview generates prompt from task context."""
         task = _create_task(task_manager, test_project.id, "Fix login bug")

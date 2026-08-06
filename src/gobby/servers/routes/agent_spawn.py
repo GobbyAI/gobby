@@ -230,7 +230,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             if session_manager is None:
                 return AgentSpawnResponse(success=False, error="Session manager unavailable")
 
-            from gobby.utils.machine_id import get_machine_id
+            from gobby.utils.machine_id import require_machine_id
 
             runtime_manager = server.services.web_chat_runtime_manager
             if runtime_manager is not None:
@@ -242,7 +242,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             source = req.provider or "claude"
             conversation = session_manager.create_web_chat_session(
-                machine_id=get_machine_id() or "web",
+                machine_id=require_machine_id(),
                 project_id=effective_project_id,
                 source=source,
                 model=req.model,

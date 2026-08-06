@@ -4,15 +4,15 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
@@ -20,35 +20,74 @@ from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _session_metadata_update as session_metadata_update
 from gobby.storage.sessions import _upsert as session_upsert
 from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
-from gobby.storage.sessions._identity_reconciliation import AmbiguousSessionIdentityError
 from gobby.storage.sessions._title_defaults import (
     MANUAL_TITLE_SOURCE,
     PROVISIONAL_TITLE_SOURCE,
     manual_title_source,
 )
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+FOREIGN_MACHINE_ID = "20000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        yield
+
+
+def test_registration_requires_local_machine_ownership(
+    session_manager: SessionManager,
+) -> None:
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        local = session_manager.register(
+            external_id="local-session",
+            machine_id=None,
+            source="codex",
+            project_id=None,
+        )
+        assert local.machine_id == LOCAL_MACHINE_ID
+
+        with pytest.raises(MachineOwnershipMismatchError):
+            session_manager.register(
+                external_id="explicit-foreign-session",
+                machine_id=FOREIGN_MACHINE_ID,
+                source="codex",
+                project_id=None,
+            )
+
+        with pytest.raises(MachineOwnershipMismatchError):
+            session_manager.register(
+                external_id="synthetic-machine-session",
+                machine_id="web",
+                source="web",
+                project_id=None,
+            )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=FOREIGN_MACHINE_ID):
+        foreign = session_manager.register(
+            external_id="owned-by-foreign-machine",
+            machine_id=None,
+            source="codex",
+            project_id=None,
+        )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        with pytest.raises(MachineOwnershipMismatchError) as exc_info:
+            session_manager.register(
+                external_id=foreign.external_id,
+                machine_id=None,
+                source=foreign.source,
+                project_id=None,
+            )
+
+    assert exc_info.value.resource_id == foreign.id
+    assert session_manager.get(foreign.id) == foreign
+
 
 pytestmark = pytest.mark.unit
-
-
-def _replace_session_unique_index(session_manager: SessionManager, *, legacy: bool) -> None:
-    session_manager.db.execute("DROP INDEX idx_sessions_unique")
-    if legacy:
-        session_manager.db.execute(
-            """
-            CREATE UNIQUE INDEX idx_sessions_unique
-            ON sessions(external_id, machine_id, source, project_id, session_type)
-            NULLS NOT DISTINCT
-            """
-        )
-    else:
-        session_manager.db.execute(
-            """
-            CREATE UNIQUE INDEX idx_sessions_unique
-            ON sessions(external_id, source, project_id, session_type)
-            NULLS NOT DISTINCT
-            """
-        )
 
 
 @pytest.mark.parametrize(
@@ -130,7 +169,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             session_manager,
             conn,
             session,
-            machine_id=None,
+            machine_id=session.machine_id,
             title=None,
             title_source=None,
             transcript_path=None,
@@ -151,7 +190,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             session_manager,
             conn,
             cleared,
-            machine_id=None,
+            machine_id=cleared.machine_id,
             title=None,
             title_source=None,
             transcript_path=None,
@@ -189,7 +228,7 @@ def _session_stub() -> Session:
     return Session(
         id="session-1",
         external_id="external-1",
-        machine_id="20000000-0000-4000-8000-000000000002",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id="project-1",
         title=None,
@@ -212,7 +251,7 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         _StaticSessionGetter(session),
         conn,
         session,
-        machine_id=None,
+        machine_id=session.machine_id,
         title=UNSET,
         title_source=UNSET,
         transcript_path=None,
@@ -240,7 +279,7 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         _StaticSessionGetter(session),
         conn,
         session,
-        machine_id=None,
+        machine_id=session.machine_id,
         title=UNSET,
         title_source=UNSET,
         transcript_path=None,
@@ -270,7 +309,7 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
         _StaticSessionGetter(session),
         conn,
         session,
-        machine_id=None,
+        machine_id=session.machine_id,
         title=UNSET,
         title_source=UNSET,
         transcript_path=None,
@@ -298,7 +337,7 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
         _StaticSessionGetter(session),
         conn,
         session,
-        machine_id=None,
+        machine_id=session.machine_id,
         title=UNSET,
         title_source=UNSET,
         transcript_path=None,
@@ -425,7 +464,7 @@ class TestSessionManagerRegistration:
         """Test registering a new session."""
         session = session_manager.register(
             external_id="session-123",
-            machine_id="20000000-0000-4000-8000-000000000005",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
             title="My Session",
@@ -435,7 +474,7 @@ class TestSessionManagerRegistration:
 
         assert session.id is not None
         assert session.external_id == "session-123"
-        assert session.machine_id == "20000000-0000-4000-8000-000000000005"
+        assert session.machine_id == LOCAL_MACHINE_ID
         assert session.source == "claude"
         assert session.project_id == sample_project["id"]
         assert session.title == "My Session"
@@ -652,7 +691,7 @@ class TestSessionManagerRegistration:
 
         session = session_manager.register(
             external_id="pipeline-child",
-            machine_id="20000000-0000-4000-8000-000000000005",
+            machine_id=LOCAL_MACHINE_ID,
             source="pipeline",
             project_id=sample_project["id"],
             parent_session_id=SYSTEM_SESSION_ID,
@@ -757,7 +796,7 @@ class TestSessionManagerRegistration:
         # First registration
         session1 = session_manager.register(
             external_id="unique-key",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
             title="Original",
@@ -766,7 +805,7 @@ class TestSessionManagerRegistration:
         # Second registration with same key combo
         session2 = session_manager.register(
             external_id="unique-key",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
             title="Updated",
@@ -783,7 +822,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="expired-registration",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             transcript_path="/tmp/expired-registration.jsonl",
@@ -793,7 +832,7 @@ class TestSessionManagerRegistration:
 
         registered = session_manager.register(
             external_id="expired-registration",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -873,7 +912,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         session = session_manager.register(
             external_id="deleted-registration",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -881,7 +920,7 @@ class TestSessionManagerRegistration:
 
         registered = session_manager.register(
             external_id="deleted-registration",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -898,7 +937,7 @@ class TestSessionManagerRegistration:
         """Existing session re-registration must not persist itself as parent."""
         session = session_manager.register(
             external_id="self-parent-update",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -906,7 +945,7 @@ class TestSessionManagerRegistration:
         caplog.set_level(logging.WARNING)
         updated = session_manager.register(
             external_id="self-parent-update",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=session.id,
@@ -930,7 +969,7 @@ class TestSessionManagerRegistration:
         """Legacy corrupt self-parent rows are repaired during registration."""
         session = session_manager.register(
             external_id="corrupt-self-parent",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -945,7 +984,7 @@ class TestSessionManagerRegistration:
 
             repaired = session_manager.register(
                 external_id="corrupt-self-parent",
-                machine_id="20000000-0000-4000-8000-000000000002",
+                machine_id=LOCAL_MACHINE_ID,
                 source="codex",
                 project_id=sample_project["id"],
             )
@@ -975,20 +1014,20 @@ class TestSessionManagerRegistration:
         """Valid parent updates still persist on existing sessions."""
         child = session_manager.register(
             external_id="valid-parent-child",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
         parent = session_manager.register(
             external_id="valid-parent",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
 
         updated = session_manager.register(
             external_id="valid-parent-child",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=parent.id,
@@ -1005,20 +1044,20 @@ class TestSessionManagerRegistration:
         """A rejected cyclic parent must clear stale parent attribution."""
         ancestor = session_manager.register(
             external_id="cycle-ancestor",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
         root = session_manager.register(
             external_id="cycle-root",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=ancestor.id,
         )
         child = session_manager.register(
             external_id="cycle-child",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=root.id,
@@ -1026,7 +1065,7 @@ class TestSessionManagerRegistration:
 
         updated = session_manager.register(
             external_id="cycle-root",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             parent_session_id=child.id,
@@ -1042,7 +1081,7 @@ class TestSessionManagerRegistration:
     ) -> None:
         web_chat = session_manager.register(
             external_id="runtime-key",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             title="Web chat",
@@ -1050,7 +1089,7 @@ class TestSessionManagerRegistration:
         )
         terminal = session_manager.register(
             external_id="runtime-key",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
             title="Terminal",
@@ -1060,151 +1099,6 @@ class TestSessionManagerRegistration:
         assert terminal.id != web_chat.id
         assert terminal.session_type == "terminal"
         assert web_chat.session_type == "web_chat"
-
-    def test_register_reconciles_unpopulated_machine_duplicate_and_preserves_history(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        external_id = "legacy-machine-duplicate-history"
-        machine_id = "20000000-0000-4000-8000-000000000002"
-        canonical = session_manager.register(
-            external_id=external_id,
-            machine_id=None,
-            source="codex",
-            project_id=sample_project["id"],
-        )
-        task_id = str(uuid.uuid4())
-        duplicate_id = str(uuid.uuid4())
-        now = datetime.fromisoformat("2026-08-06T00:00:00+00:00")
-        LocalMachineManager(session_manager.db).upsert_seen(machine_id, seen_at=now)
-        session_manager.db.execute(
-            """
-            UPDATE sessions
-            SET message_count = 4, tool_call_count = 2,
-                last_assistant_content = 'preserved assistant output'
-            WHERE id = %s
-            """,
-            (canonical.id,),
-        )
-        session_manager.db.execute(
-            """
-            INSERT INTO tasks (
-                id, project_id, title, validation_criteria, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s)
-            """,
-            (
-                task_id,
-                sample_project["id"],
-                "Preserved task link",
-                "History remains linked.",
-                now,
-                now,
-            ),
-        )
-        session_manager.db.execute(
-            """
-            INSERT INTO session_tasks (session_id, task_id, action, created_at)
-            VALUES (%s, %s, %s, %s)
-            """,
-            (canonical.id, task_id, "created", now),
-        )
-        _replace_session_unique_index(session_manager, legacy=True)
-        try:
-            session_manager.db.execute(
-                """
-                INSERT INTO sessions (
-                    id, external_id, machine_id, source, project_id, session_type
-                ) VALUES (%s, %s, %s, %s, %s, 'terminal')
-                """,
-                (duplicate_id, external_id, machine_id, "codex", sample_project["id"]),
-            )
-
-            registered = session_manager.register(
-                external_id=external_id,
-                machine_id=machine_id,
-                source="codex",
-                project_id=sample_project["id"],
-            )
-
-            history = session_manager.db.fetchone(
-                """
-                SELECT message_count, tool_call_count, last_assistant_content,
-                       machine_id::text AS machine_id
-                FROM sessions WHERE id = %s
-                """,
-                (canonical.id,),
-            )
-            task_link = session_manager.db.fetchone(
-                "SELECT count(*) AS link_count FROM session_tasks WHERE session_id = %s",
-                (canonical.id,),
-            )
-            assert registered.id == canonical.id
-            assert history is not None
-            assert task_link is not None
-            assert history["message_count"] == 4
-            assert history["tool_call_count"] == 2
-            assert history["last_assistant_content"] == "preserved assistant output"
-            assert history["machine_id"] == machine_id
-            assert task_link["link_count"] == 1
-            assert session_manager.get(duplicate_id) is None
-        finally:
-            session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (duplicate_id,))
-            _replace_session_unique_index(session_manager, legacy=False)
-
-    def test_register_fails_safely_for_ambiguous_populated_machine_duplicates(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict[str, Any],
-    ) -> None:
-        external_id = "ambiguous-machine-duplicate-history"
-        machine_id = "20000000-0000-4000-8000-000000000002"
-        canonical = session_manager.register(
-            external_id=external_id,
-            machine_id=None,
-            source="codex",
-            project_id=sample_project["id"],
-        )
-        duplicate_id = str(uuid.uuid4())
-        LocalMachineManager(session_manager.db).upsert_seen(machine_id)
-        session_manager.db.execute(
-            "UPDATE sessions SET message_count = 1 WHERE id = %s",
-            (canonical.id,),
-        )
-        _replace_session_unique_index(session_manager, legacy=True)
-        try:
-            session_manager.db.execute(
-                """
-                INSERT INTO sessions (
-                    id, external_id, machine_id, source, project_id, session_type,
-                    tool_call_count
-                ) VALUES (%s, %s, %s, %s, %s, 'terminal', 1)
-                """,
-                (duplicate_id, external_id, machine_id, "codex", sample_project["id"]),
-            )
-
-            with pytest.raises(AmbiguousSessionIdentityError, match="contain history"):
-                session_manager.register(
-                    external_id=external_id,
-                    machine_id=machine_id,
-                    source="codex",
-                    project_id=sample_project["id"],
-                )
-
-            row = session_manager.db.fetchone(
-                """
-                SELECT count(*) AS session_count
-                FROM sessions
-                WHERE external_id = %s AND source = %s AND project_id = %s
-                  AND session_type = 'terminal'
-                """,
-                (external_id, "codex", sample_project["id"]),
-            )
-            assert row is not None
-            assert row["session_count"] == 2
-        finally:
-            session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (duplicate_id,))
-            _replace_session_unique_index(session_manager, legacy=False)
 
     def test_register_cross_project_recovery_allocates_destination_seq_num(
         self,
@@ -1217,21 +1111,21 @@ class TestSessionManagerRegistration:
         )
         original = session_manager.register(
             external_id="cross-project-recovery",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
         for index in range(2):
             session_manager.register(
                 external_id=f"destination-session-{index}",
-                machine_id="20000000-0000-4000-8000-000000000002",
+                machine_id=LOCAL_MACHINE_ID,
                 source="codex",
                 project_id=destination.id,
             )
 
         recovered = session_manager.register(
             external_id="cross-project-recovery",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=destination.id,
         )
@@ -1271,7 +1165,7 @@ class TestSessionManagerRegistration:
         """Test finding session by canonical provider identity."""
         session = session_manager.register(
             external_id="findable",
-            machine_id="20000000-0000-4000-8000-00000000000a",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )

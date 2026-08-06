@@ -6,8 +6,42 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager, ensure_system_session
 from gobby.storage.sessions._constants import SYSTEM_SESSION_ID
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity(temp_db):
+    LocalMachineManager(temp_db).upsert_seen("20000000-0000-4000-8000-000000000002")
+    with patch(
+        "gobby.utils.machine_id.get_machine_id",
+        return_value="20000000-0000-4000-8000-000000000002",
+    ):
+        yield
+
+
+def test_system_session_bootstrap_preserves_existing_owner(temp_db: HubDatabase) -> None:
+    first_machine = "20000000-0000-4000-8000-000000000001"
+    later_machine = "20000000-0000-4000-8000-000000000002"
+    machines = LocalMachineManager(temp_db)
+    machines.upsert_seen(first_machine)
+    machines.upsert_seen(later_machine)
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=first_machine):
+        ensure_system_session(temp_db)
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=later_machine):
+        ensure_system_session(temp_db)
+
+    row = temp_db.fetchone(
+        "SELECT machine_id FROM sessions WHERE id = %s",
+        (SYSTEM_SESSION_ID,),
+    )
+    assert row is not None
+    assert str(row["machine_id"]) == first_machine
+
 
 pytestmark = pytest.mark.unit
 
@@ -64,7 +98,7 @@ def test_add_usage_delta_clamps_counters_to_zero(
     assert session.usage_cache_read_tokens == 0
 
 
-def test_ensure_system_session_logs_first_create_at_info(temp_db) -> None:
+def test_ensure_system_session_logs_first_create_at_info(temp_db: HubDatabase) -> None:
     temp_db.execute("DELETE FROM sessions")
 
     with patch("gobby.storage.sessions.logger") as mock_logger:

@@ -3,7 +3,7 @@
 import threading
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,6 +15,13 @@ from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity():
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=MACHINE_ID):
+        yield
+
 
 CLONE_CREATED_AT = "2026-01-22T00:00:00+00:00"
 CLONE_UPDATED_AT = "2026-01-22T00:00:00+00:00"
@@ -279,6 +286,7 @@ class TestLocalCloneManagerCreate:
 
     def test_create_with_all_fields(self, manager, mock_db) -> None:
         """Create clone with all optional fields."""
+        mock_db.fetchone.return_value = {"machine_id": MACHINE_ID}
         clone = manager.create(
             project_id="proj-abc",
             branch_name="feature/test",
@@ -733,11 +741,11 @@ class TestLocalCloneManagerStatusMethods:
     def test_claim_returns_none_when_owned_by_another_session(self, manager, mock_db) -> None:
         """claim reports a conditional update that matched no rows."""
         mock_db.execute.return_value.rowcount = 0
+        mock_db.fetchone.return_value = {"machine_id": MACHINE_ID}
 
         result = manager.claim("clone-123", "sess-1")
 
         assert result is None
-        mock_db.fetchone.assert_not_called()
 
     def test_release(self, manager, mock_db) -> None:
         """release clears agent_session_id."""
@@ -787,7 +795,7 @@ class TestLocalCloneManagerClaimAtomicity:
         sessions = [
             session_manager.register(
                 external_id=f"atomic-clone-claim-{index}",
-                machine_id="21000000-0000-4000-8000-00000000001f",
+                machine_id=MACHINE_ID,
                 source="codex",
                 project_id=str(sample_project["id"]),
             )
@@ -852,7 +860,7 @@ class TestLocalCloneManagerCleanupSafety:
 
         session = session_manager.register(
             external_id="expired-claimed-clone",
-            machine_id="21000000-0000-4000-8000-00000000001b",
+            machine_id=MACHINE_ID,
             source="codex",
             project_id=project_id,
         )
@@ -908,7 +916,7 @@ class TestLocalCloneManagerCleanupSafety:
         project_id = str(sample_project["id"])
         session = session_manager.register(
             external_id="claim-clears-cleanup",
-            machine_id="21000000-0000-4000-8000-00000000001d",
+            machine_id=MACHINE_ID,
             source="codex",
             project_id=project_id,
         )
@@ -956,7 +964,7 @@ class TestLocalCloneManagerCountByStatus:
         query = call_args[0][0]
         assert "GROUP BY status" in query
         params = call_args[0][1]
-        assert params == ("proj-abc",)
+        assert params == ("proj-abc", MACHINE_ID, CloneStatus.CLEANUP.value)
 
     def test_count_by_status_empty(self, manager, mock_db) -> None:
         """count_by_status returns empty dict when no clones."""
@@ -1183,7 +1191,7 @@ class TestLocalCloneManagerUpdateValidation:
         assert result is not None
         mock_db.execute.assert_not_called()
 
-    def test_update_invalid_field_raises(self, manager) -> None:
+    def test_update_invalid_field_raises(self, manager: LocalCloneManager) -> None:
         """Update with invalid field name raises ValueError."""
         with pytest.raises(ValueError, match="Invalid field names"):
             manager.update("clone-123", invalid_field="value")

@@ -26,6 +26,7 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.cli.utils_config import get_daemon_url
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
@@ -336,8 +337,13 @@ def sync_worktree(worktree_ref: str, source_branch: str | None, json_format: boo
 
 def resolve_worktree_id(manager: LocalWorktreeManager, worktree_ref: str) -> str:
     """Resolve worktree reference (UUID or prefix) to full ID."""
-    if is_full_uuid(worktree_ref) and manager.get(worktree_ref):
-        return worktree_ref
+    if is_full_uuid(worktree_ref):
+        try:
+            exact = manager.get(worktree_ref)
+        except MachineOwnershipMismatchError as exc:
+            raise click.ClickException(json_dumps(exc.to_dict(), sort_keys=True)) from exc
+        if exact:
+            return worktree_ref
 
     # Use list listing since local manager doesn't expose prefix search easily
     all_worktrees = manager.list_worktrees()

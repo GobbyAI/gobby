@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from gobby.mcp_proxy.tools._background_task_lifecycle import internal_tool_background_loop
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 
 logger = logging.getLogger(__name__)
 
@@ -280,11 +281,14 @@ class InternalToolRegistry:
         """
         tool, coerced_arguments = self._prepare_call(name, arguments)
 
-        # Call the function (handle both sync and async)
-        if inspect.iscoroutinefunction(tool.func):
-            return await tool.func(**coerced_arguments)
-        with internal_tool_background_loop(asyncio.get_running_loop()):
-            return await asyncio.to_thread(tool.func, **coerced_arguments)
+        try:
+            # Call the function (handle both sync and async)
+            if inspect.iscoroutinefunction(tool.func):
+                return await tool.func(**coerced_arguments)
+            with internal_tool_background_loop(asyncio.get_running_loop()):
+                return await asyncio.to_thread(tool.func, **coerced_arguments)
+        except MachineOwnershipMismatchError as exc:
+            return exc.to_dict()
 
     def call_sync(
         self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None
@@ -293,7 +297,10 @@ class InternalToolRegistry:
         tool, coerced_arguments = self._prepare_call(name, arguments)
         if inspect.iscoroutinefunction(tool.func):
             raise TypeError(f"Tool '{name}' on '{self.name}' is async; use call()")
-        return tool.func(**coerced_arguments)
+        try:
+            return tool.func(**coerced_arguments)
+        except MachineOwnershipMismatchError as exc:
+            return exc.to_dict()
 
     def _prepare_call(
         self,

@@ -25,13 +25,10 @@ NOW = datetime(2026, 8, 4, tzinfo=UTC)
 
 def test_creation_paths_stamp_machine_id(monkeypatch: pytest.MonkeyPatch) -> None:
     """All local writers persist and return the canonical machine UUID."""
-    for module in (
-        worktrees_module,
-        clones_module,
-        agent_lifecycle_module,
-        cron_runs_module,
-    ):
+    for module in (agent_lifecycle_module, cron_runs_module):
         monkeypatch.setattr(module, "get_machine_id", lambda: MACHINE_ID, raising=False)
+    for module in (worktrees_module, clones_module):
+        monkeypatch.setattr(module, "require_machine_id", lambda: MACHINE_ID)
 
     worktree_db = MagicMock()
     worktree = LocalWorktreeManager(worktree_db).create("project", "branch", "/worktree")

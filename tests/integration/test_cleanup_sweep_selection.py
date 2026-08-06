@@ -23,7 +23,7 @@ def test_worktree_sweeps_exclude_claimed_and_ineligible_rows(
     expired_at = datetime(2020, 1, 1, tzinfo=UTC)
     session = session_manager.register(
         external_id="worktree-sweep-owner",
-        machine_id="21000000-0000-4000-8000-000000000021",
+        machine_id=None,
         source="codex",
         project_id=project_id,
     )
@@ -79,7 +79,7 @@ def test_clone_sweeps_exclude_claimed_and_ineligible_rows(
     expired_at = datetime(2020, 1, 1, tzinfo=UTC)
     session = session_manager.register(
         external_id="clone-sweep-owner",
-        machine_id="21000000-0000-4000-8000-000000000014",
+        machine_id=None,
         source="codex",
         project_id=project_id,
     )

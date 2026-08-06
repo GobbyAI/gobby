@@ -1,11 +1,30 @@
 from unittest.mock import MagicMock, patch
 
+import click
 import httpx
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.worktrees import worktrees
+from gobby.cli.worktrees import resolve_worktree_id, worktrees
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import Worktree
+
+
+def test_full_uuid_foreign_worktree_reports_ownership_mismatch() -> None:
+    manager = MagicMock()
+    manager.get.side_effect = MachineOwnershipMismatchError(
+        resource_kind="worktree",
+        resource_id="10000000-0000-4000-8000-000000000001",
+        owner_machine_id="20000000-0000-4000-8000-000000000002",
+        current_machine_id="20000000-0000-4000-8000-000000000001",
+    )
+
+    with pytest.raises(click.ClickException) as exc_info:
+        resolve_worktree_id(manager, "10000000-0000-4000-8000-000000000001")
+
+    assert "machine_ownership_mismatch" in str(exc_info.value)
+    manager.list_worktrees.assert_not_called()
+
 
 pytestmark = pytest.mark.unit
 

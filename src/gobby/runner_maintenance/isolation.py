@@ -299,10 +299,7 @@ async def _cleanup_missing_isolation_records_async(
 
 def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> int:
     removed = 0
-    for worktree in worktree_storage.list_worktrees(
-        limit=limit,
-        machine_id=require_machine_id(),
-    ):
+    for worktree in worktree_storage.list_worktrees(limit=limit):
         path = worktree.worktree_path
         if path and os.path.isdir(path):
             continue
@@ -319,10 +316,7 @@ def _delete_missing_worktree_records(worktree_storage: Any, *, limit: int) -> in
 
 def _delete_missing_clone_records(clone_storage: Any, *, limit: int) -> int:
     removed = 0
-    for clone in clone_storage.list_clones(
-        limit=limit,
-        machine_id=require_machine_id(),
-    ):
+    for clone in clone_storage.list_clones(limit=limit):
         path = clone.clone_path
         if path and os.path.isdir(path):
             continue

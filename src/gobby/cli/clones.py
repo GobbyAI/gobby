@@ -17,6 +17,7 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
@@ -434,8 +435,13 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
 def resolve_clone_id(manager: LocalCloneManager, clone_ref: str) -> str | None:
     """Resolve clone reference (UUID or prefix) to full ID."""
     # Check for exact match first
-    if is_full_uuid(clone_ref) and manager.get(clone_ref):
-        return clone_ref
+    if is_full_uuid(clone_ref):
+        try:
+            exact = manager.get(clone_ref)
+        except MachineOwnershipMismatchError as exc:
+            raise click.ClickException(json_dumps(exc.to_dict(), sort_keys=True)) from exc
+        if exact:
+            return clone_ref
 
     # Try prefix match
     project_id = resolve_project_ref(None, exit_on_not_found=False)

@@ -14,11 +14,12 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from gobby.storage.clones import Clone, CloneStatus
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.git import get_checkout_mutation_lock
 
 pytestmark = pytest.mark.integration
@@ -104,6 +105,35 @@ def registry(
         git_manager=mock_git_manager,
         project_id="11111111-1111-4111-8111-111111110001",
     )
+
+
+@pytest.mark.asyncio
+async def test_foreign_clone_id_fails_before_side_effects(
+    registry: Any, mock_clone_storage: MagicMock, mock_git_manager: MagicMock
+) -> None:
+    clone_id = "cccccccc-cccc-4ccc-8ccc-cccccccccc99"
+    mock_clone_storage.get.side_effect = MachineOwnershipMismatchError(
+        resource_kind="clone",
+        resource_id=clone_id,
+        owner_machine_id="21000000-0000-4000-8000-000000000002",
+        current_machine_id="21000000-0000-4000-8000-000000000001",
+    )
+    mock_clone_storage.claim.side_effect = mock_clone_storage.get.side_effect
+
+    with patch("gobby.utils.session_context.get_current_session_id", return_value="s1"):
+        results = [
+            await registry.call("claim_clone", {"clone_id": clone_id}),
+            await registry.call("sync_clone", {"clone_id": clone_id}),
+            await registry.call("merge_clone", {"clone_id": clone_id, "target_branch": "main"}),
+            await registry.call("delete_clone", {"clone_id": clone_id}),
+        ]
+
+    assert all(result["error_code"] == "machine_ownership_mismatch" for result in results)
+    mock_git_manager.assert_not_called()
+    mock_clone_storage.claim.assert_called_once_with(clone_id, "s1")
+    mock_clone_storage.update.assert_not_called()
+    mock_clone_storage.mark_merged.assert_not_called()
+    mock_clone_storage.delete.assert_not_called()
 
 
 class TestClonesRegistryCreation:

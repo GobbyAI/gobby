@@ -9,6 +9,7 @@ from typing import Protocol, cast
 
 from gobby.storage.hub.protocol import Transaction
 from gobby.storage.session_models import Session
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.terminal_context import parse_terminal_context_value
 
 from ._title_update import apply_title_mutation
@@ -40,7 +41,7 @@ def update_existing_session(
     conn: _TransactionConnection,
     existing: Session,
     *,
-    machine_id: str | None,
+    machine_id: str,
     title: str | None | UnsetType,
     title_source: str | None | UnsetType,
     transcript_path: str | None | UnsetType,
@@ -53,6 +54,14 @@ def update_existing_session(
     sandbox_policy_hash: str | None,
     now: datetime,
 ) -> Session:
+    if existing.machine_id != machine_id:
+        raise MachineOwnershipMismatchError(
+            resource_kind="session",
+            resource_id=existing.id,
+            owner_machine_id=existing.machine_id,
+            current_machine_id=machine_id,
+        )
+
     incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
     terminal_context_update_json = (
         json.dumps(
@@ -65,7 +74,7 @@ def update_existing_session(
     conn.execute(
         """
         UPDATE sessions SET
-            machine_id = COALESCE(%s, machine_id),
+            machine_id = %s,
             transcript_path = CASE WHEN %s THEN %s ELSE transcript_path END,
             git_branch = CASE WHEN %s THEN %s ELSE git_branch END,
             parent_session_id = CASE WHEN %s THEN %s ELSE parent_session_id END,

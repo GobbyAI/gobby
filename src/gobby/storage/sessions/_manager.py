@@ -8,6 +8,10 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.sessions.status_events import SessionStatusTransitionCallback
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.workspace_machine_scope import (
+    MachineOwnershipMismatchError,
+    require_local_machine_id,
+)
 
 from ._bootstrap import (
     SessionChangeCallback,
@@ -244,6 +248,11 @@ class SessionManager(
         If no persisted session can be recovered, returns an empty string so
         callers do not inject an ephemeral wrapper ID into later hooks.
         """
+        machine_id = require_local_machine_id(
+            machine_id,
+            resource_kind="session",
+            resource_id=external_id,
+        )
         working_dir = project_path or str(Path.cwd())
 
         if not git_branch:
@@ -300,6 +309,8 @@ class SessionManager(
             return session_id
 
         except AmbiguousSessionIdentityError:
+            raise
+        except MachineOwnershipMismatchError:
             raise
         except Exception as e:
             recovered_session_id = self._recover_registered_session_after_failure(
