@@ -426,6 +426,55 @@ fn unmanaged_hook_returns_continue_without_side_effects() -> TestResult {
 }
 
 #[test]
+fn unmanaged_statusline_never_emits_hook_action_json() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let cwd = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+
+    let with_downstream = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("statusline"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[("GOBBY_STATUSLINE_DOWNSTREAM", "printf 'MY-STATUS'")],
+            args: &[],
+            cwd: Some(cwd.path()),
+        },
+    )?;
+
+    assert!(with_downstream.status.success());
+    assert_eq!(with_downstream.stdout, b"MY-STATUS");
+    assert_stderr_empty(&with_downstream, "unmanaged statusline with downstream")?;
+
+    let without_downstream = run_ghook_with_dirs_and_args(
+        home.path(),
+        gobby_home.path(),
+        Some("claude"),
+        Some("statusline"),
+        &daemon_url,
+        VALID_STDIN,
+        RunGhookExtras {
+            env: &[],
+            args: &[],
+            cwd: Some(cwd.path()),
+        },
+    )?;
+
+    assert!(without_downstream.status.success());
+    assert!(without_downstream.stdout.is_empty());
+    assert_stderr_empty(
+        &without_downstream,
+        "unmanaged statusline without downstream",
+    )?;
+
+    Ok(())
+}
+
+#[test]
 fn malformed_project_markers_manage_and_fail_closed() -> TestResult {
     for marker in ["project.json", "gcode.json"] {
         let home = tempfile::tempdir()?;
@@ -1355,6 +1404,7 @@ fn run_ghook_with_dirs_and_args(
         .env_remove("GOBBY_PROJECT_ID")
         .env_remove("GOBBY_SESSION_ID")
         .env_remove("GOBBY_AGENT_RUN_ID")
+        .env_remove("GOBBY_STATUSLINE_DOWNSTREAM")
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")

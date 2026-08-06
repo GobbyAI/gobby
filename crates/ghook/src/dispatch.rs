@@ -54,6 +54,10 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     let mut stdin_raw = Vec::with_capacity(4096);
     let read_ok = std::io::stdin().read_to_end(&mut stdin_raw).is_ok();
 
+    if statusline::is_statusline_hook(cli, hook_type) {
+        return statusline::handle(&stdin_raw);
+    }
+
     // Parse. Empty stdin is a parse error in the Python dispatcher too.
     let parsed: Result<Value, serde_json::Error> = if read_ok {
         serde_json::from_slice(&stdin_raw)
@@ -82,10 +86,6 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     if planned_shutdown::should_skip_dispatch(hook_type) {
         return emit_action(continue_action());
-    }
-
-    if statusline::is_statusline_hook(cli, hook_type) {
-        return statusline::handle(&stdin_raw);
     }
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, context.project_id.as_deref());
