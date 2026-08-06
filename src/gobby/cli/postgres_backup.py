@@ -17,6 +17,7 @@ import yaml
 
 from gobby import __version__
 from gobby.cli import postgres_bootstrap as _bootstrap
+from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.installers.postgres import (
     DEFAULT_POSTGRES_DB,
     DEFAULT_POSTGRES_USER,
@@ -198,6 +199,7 @@ def _run_pg_dump(*, database_url: str, dump_path: Path) -> None:
         "--no-owner",
         "--no-privileges",
     ]
+    ensure_docker_allowed("PostgreSQL backup dump", runner=subprocess.run)
     try:
         with dump_path.open("wb") as output:
             result = subprocess.run(  # nosec B603
@@ -237,6 +239,7 @@ def _run_pg_restore(
         "-d",
         database,
     ]
+    ensure_docker_allowed("PostgreSQL backup restore", runner=subprocess.run)
     try:
         with dump_path.open("rb") as stdin:
             result = subprocess.run(  # nosec B603
@@ -254,6 +257,7 @@ def _verify_dump_with_pg_restore(*, dump_path: Path) -> None:
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
     command = ["docker", "exec", "-i", _POSTGRES_CONTAINER, "pg_restore", "--list"]
+    ensure_docker_allowed("PostgreSQL backup archive check", runner=subprocess.run)
     try:
         with dump_path.open("rb") as stdin:
             result = subprocess.run(  # nosec B603

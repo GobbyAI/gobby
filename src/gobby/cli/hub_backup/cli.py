@@ -75,6 +75,7 @@ from gobby.cli.installers.container_restart import (
     POSTGRES_CONTAINER,
     QDRANT_CONTAINER,
 )
+from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.postgres_backup import (
     _process_output,
     _require_managed_docker_postgres,
@@ -281,6 +282,7 @@ def _preflight(backup_root: Path) -> None:
 
 
 def _container_running(container: str) -> bool:
+    ensure_docker_allowed("hub backup container inspection", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603 B607 # fixed docker CLI argv
             ["docker", "inspect", "-f", "{{.State.Running}}", container],
@@ -456,6 +458,7 @@ def _run_epoch_compose_up(
     for profile in runtime.profiles:
         command.extend(["--profile", profile])
     command.extend(["up", "-d", "--remove-orphans", "--wait"])
+    ensure_docker_allowed("hub backup epoch compose up", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603 - fixed Docker Compose arguments
             command,

@@ -42,6 +42,7 @@ from gobby.cli.hub_backup._integrity import (
     require_regular_file,
 )
 from gobby.cli.hub_backup._manifest import VerificationState
+from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.postgres_backup import _process_output, _raise_for_subprocess_error
 
 POSTGRES_VERIFY_IMAGE = "gobby-postgres-local:18-pgsearch"
@@ -698,6 +699,7 @@ def _docker(
     stdin: IO[bytes] | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     command = ["docker", *argv]
+    ensure_docker_allowed("hub backup restore verification", runner=subprocess.run)
     try:
         return subprocess.run(  # nosec B603
             command,

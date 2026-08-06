@@ -16,6 +16,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import click
 
+from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.installers.git_hooks import install_git_hooks
 from gobby.cli.postgres_backup import (
     POSTGRES_BACKUP_ARCHIVE_PREFIX,
@@ -67,6 +68,7 @@ def _docker_available() -> bool:
 
 def _volume_exists(volume_name: str) -> bool:
     """Check if a Docker volume exists."""
+    ensure_docker_allowed("pack volume inspection", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             ["docker", "volume", "inspect", volume_name],
@@ -80,6 +82,7 @@ def _volume_exists(volume_name: str) -> bool:
 
 def _export_docker_volume(volume_name: str, output_path: Path) -> bool:
     """Export a Docker volume to a tar.gz file."""
+    ensure_docker_allowed("pack volume export", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             [
@@ -108,6 +111,7 @@ def _export_docker_volume(volume_name: str, output_path: Path) -> bool:
 
 def _import_docker_volume(volume_name: str, archive_path: Path) -> bool:
     """Import a tar.gz file into a Docker volume."""
+    ensure_docker_allowed("pack volume import", runner=subprocess.run)
     try:
         # Create volume if it doesn't exist
         subprocess.run(  # nosec B603 B607 # fixed Docker CLI command

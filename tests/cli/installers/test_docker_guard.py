@@ -9,10 +9,16 @@ from pathlib import Path
 import pytest
 
 from gobby.cli import _daemon_services
+from gobby.cli.hub_backup import _stores as hub_stores
+from gobby.cli.hub_backup import _verify as hub_verify
+from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.installers import falkor
 from gobby.cli.installers import postgres as postgres_installer
 from gobby.cli.installers.compose_env import MANAGED_SERVICE_PROFILES, ComposeRuntime
 from gobby.cli.installers.docker_guard import DockerTestProtectError, ensure_docker_allowed
+from gobby.cli.pack import _import_docker_volume
+from gobby.cli.postgres_backup import _run_pg_dump
+from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
 
@@ -139,3 +145,72 @@ def test_managed_services_compose_down_fails_closed(
 
     with pytest.raises(DockerTestProtectError):
         _daemon_services._stop_managed_services_locked(tmp_path, resolve_runtime=_resolve)
+
+
+def test_postgres_backup_fails_closed_before_dump(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _protect(monkeypatch)
+    dump_path = tmp_path / "postgres.dump"
+
+    with pytest.raises(DockerTestProtectError, match="PostgreSQL backup dump"):
+        _run_pg_dump(
+            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+            dump_path=dump_path,
+        )
+
+    assert not dump_path.exists()
+
+
+def test_pack_volume_import_fails_closed_before_volume_create(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _protect(monkeypatch)
+
+    with pytest.raises(DockerTestProtectError, match="pack volume import"):
+        _import_docker_volume("gobby_postgres_data", tmp_path / "volume.tar.gz")
+
+
+def test_hub_backup_store_fails_closed_before_container_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _protect(monkeypatch)
+
+    with pytest.raises(DockerTestProtectError, match="hub backup FalkorDB command"):
+        hub_stores._redis_cli("PING")
+
+
+def test_hub_backup_verification_fails_closed_before_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _protect(monkeypatch)
+
+    with pytest.raises(DockerTestProtectError, match="hub backup restore verification"):
+        hub_verify._docker("run", "--rm", "alpine", timeout=1)
+
+
+def test_hub_backup_container_inspection_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _protect(monkeypatch)
+
+    with pytest.raises(DockerTestProtectError, match="hub backup container inspection"):
+        hub_cli._container_running("gobby-postgres")
+
+
+def test_hub_backup_epoch_compose_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _protect(monkeypatch)
+    epoch = "test-maintenance-epoch"
+    monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, epoch)
+    runtime = ComposeRuntime(
+        environment={"PGOPTIONS": f"-c gobby.maintenance_epoch={epoch}"},
+        profiles=(),
+    )
+
+    with pytest.raises(DockerTestProtectError, match="hub backup epoch compose up"):
+        hub_cli._run_epoch_compose_up(tmp_path / "docker-compose.yml", tmp_path, runtime)

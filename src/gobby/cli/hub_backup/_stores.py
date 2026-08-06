@@ -32,6 +32,7 @@ from gobby.cli.hub_backup._integrity import (
 )
 from gobby.cli.hub_backup._manifest import ArtifactRecord, SourceIdentity
 from gobby.cli.installers.container_restart import FALKORDB_CONTAINER, POSTGRES_CONTAINER
+from gobby.cli.installers.docker_guard import ensure_docker_allowed
 from gobby.cli.installers.postgres import DEFAULT_POSTGRES_DB, DEFAULT_POSTGRES_USER
 from gobby.cli.postgres_backup import (
     _docker_pg_dump_timeout_seconds,
@@ -217,6 +218,7 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
         replay = _idempotent_global_role_creates(globals_file.read())
+        ensure_docker_allowed("hub backup PostgreSQL globals restore", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 - fixed docker/psql argv and verified file input
             _postgres_client_command(
                 "psql",
@@ -332,6 +334,7 @@ def _check_archive_readable(dump_path: Path) -> None:
     if not dump_path.is_file():
         raise click.ClickException(f"PostgreSQL dump was not created: {dump_path}")
     command = ["docker", "exec", "-i", POSTGRES_CONTAINER, "pg_restore", "--list"]
+    ensure_docker_allowed("hub backup PostgreSQL archive check", runner=subprocess.run)
     try:
         with dump_path.open("rb") as stdin:
             result = subprocess.run(  # nosec B603
@@ -513,6 +516,7 @@ def _redis_cli(request: str) -> str:
         f'redis-cli -a "$GOBBY_FALKORDB_PASSWORD" --no-auth-warning --raw {request}',
     ]
     action = f"FalkorDB {request}"
+    ensure_docker_allowed("hub backup FalkorDB command", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603
             command,
@@ -538,6 +542,7 @@ def _parse_redis_info(payload: str) -> dict[str, str]:
 
 def _copy_from_container(source: str, destination: Path) -> None:
     command = ["docker", "cp", source, str(destination)]
+    ensure_docker_allowed("hub backup container copy", runner=subprocess.run)
     try:
         result = subprocess.run(  # nosec B603
             command,
@@ -585,6 +590,7 @@ def tar_volumes(
             ".",
         ]
         action = f"Docker volume archive for {volume}"
+        ensure_docker_allowed("hub backup volume archive", runner=subprocess.run)
         try:
             result = subprocess.run(  # nosec B603
                 command,
@@ -617,6 +623,7 @@ def _source_volume_inventory(volume: str) -> dict[str, object]:
         ".",
     ]
     action = f"Docker source inventory for volume {volume}"
+    ensure_docker_allowed("hub backup volume inventory", runner=subprocess.run)
     with tempfile.TemporaryFile() as stream:
         try:
             result = subprocess.run(  # nosec B603
@@ -671,6 +678,7 @@ def archive_rule_allow_audit_logs(
 
 
 def _capture_stdout(command: list[str], destination: Path, *, action: str, timeout: int) -> None:
+    ensure_docker_allowed(action, runner=subprocess.run)
     try:
         with open_exclusive_binary(destination, label=action) as output:
             result = subprocess.run(  # nosec B603
