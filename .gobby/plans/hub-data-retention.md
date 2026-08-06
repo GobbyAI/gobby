@@ -109,8 +109,8 @@ aliases.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/376_retention_scan_indexes.sql`
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embed migration 376 and update root identity
+- `crates/gcore/assets/schema/baseline.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: update baseline 375's exact receipt while keeping the migration asset set empty
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: generated index oracle changes atomically
 
 Add `idx_token_events_event_at ON token_events(event_at, id)`. Other policies
@@ -191,7 +191,9 @@ verification fails.
 ## Rollout
 `kind: framing`
 
-1. Apply migration 376 with the daemon stopped and a fresh verified hub backup.
+1. With the daemon stopped and a fresh verified hub backup, reconcile the hub
+to the updated flattened baseline 375 and its exact receipt; the shared runner
+must pass with the migration asset set empty.
 2. Run dry mode for 24 hours and record per-table eligible counts and query
    plans. Any sequential scan on a table above 100 MB blocks activation.
 3. Enable one batch per table per cycle for seven days. Compare table/index

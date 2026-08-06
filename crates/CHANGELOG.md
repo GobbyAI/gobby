@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### gobby-core
 
-- **Post-baseline schema authority** — publish append-only migration 376 and
-  the indexed GitHub-triage task foreign-key lookup under the shared schema
-  runner. Version: `0.9.1`.
+- **Flattened schema authority** — make baseline 375 the sole schema authority
+  after commit `a3b56649a` folded migration 376 into it; ship no migration assets,
+  and require the shared schema runner to enforce the exact baseline receipt.
+  Version: `0.9.1`.
 
 #### gdaemon
 
