@@ -141,12 +141,13 @@ checks no coverage. `pre-push-test.sh` does run the full suite with
 
 ### Rust workspace (`crates/`)
 
-Cargo workspace: `gobby-code` → `gcode`, `gobby-hooks` → `ghook`, `gobby-wiki` →
-`gwiki`, plus the `gobby-core` shared library. Load the `rust` skill before
-editing Rust; commands and conventions live in `crates/CLAUDE.md` and `AGENTS.md`.
-The daemon and hooks shell out to the installed `~/.gobby/bin/{gcode,ghook,gwiki}`
-binaries, so rebuild **and reinstall** after changing crate behavior — a committed
-change is not live until the binary is reinstalled.
+Cargo workspace: `gobby-code` → `gcode`, `gobby-daemon` → `gdaemon`,
+`gobby-hooks` → `ghook`, `gobby-wiki` → `gwiki`, plus the `gobby-core` shared
+library. Load the `rust` skill before editing Rust; commands and conventions live
+in `crates/CLAUDE.md` and `AGENTS.md`. The daemon and hooks shell out to the installed
+`~/.gobby/bin/{gcode,gdaemon,ghook,gwiki}` binaries, so rebuild **and reinstall**
+after changing crate behavior — a committed change is not live until the binary
+is reinstalled.
 
 ## Architecture Overview
 
