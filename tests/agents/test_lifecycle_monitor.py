@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import os
 import threading
 import time
@@ -3073,6 +3074,7 @@ class TestCheckExpiredAgents:
         )
         agent_run_manager.update_runtime(
             run.id,
+            pid=10494,
             tmux_session_name="gobby-terminal-lingering-tmux",
         )
         completed_at = datetime.now(UTC).isoformat()
@@ -3101,19 +3103,21 @@ class TestCheckExpiredAgents:
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "success"
+        assert updated.pid is None
         assert updated.tmux_session_name is None
         assert session_manager.get(child_session.id).status == "expired"
 
     @pytest.mark.asyncio
-    async def test_terminal_error_run_recovers_in_progress_task_before_session_expiry(
+    async def test_terminal_error_run_with_exited_pane_recovers_without_pid_signal(
         self,
         agent_run_manager: LocalAgentRunManager,
         temp_db: HubDatabase,
         session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Session-end terminal errors must recover claimed dispatch tasks."""
+        """An exited tmux pane leaves no provider PID that recovery may signal."""
         child = session_manager.register(
             external_id="child-terminal-error-recovery",
             machine_id="21000000-0000-4000-8000-000000000001",
@@ -3135,10 +3139,17 @@ class TestCheckExpiredAgents:
         temp_db.execute(
             """
             UPDATE agent_runs
-            SET status = 'error', error = %s, completed_at = %s, updated_at = %s
+            SET status = 'error', error = %s, pid = %s, tmux_session_name = NULL,
+                completed_at = %s, updated_at = %s
             WHERE id = %s
             """,
-            ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
+            (
+                "agent session ended with incomplete workflow",
+                10494,
+                completed_at,
+                completed_at,
+                run.id,
+            ),
         )
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
@@ -3149,18 +3160,21 @@ class TestCheckExpiredAgents:
             check_interval_seconds=1.0,
             tmux_config=TmuxConfig(),
         )
+        caplog.set_level(logging.WARNING, logger="gobby.agents")
 
-        with (
-            patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock),
-            patch(
-                "gobby.agents.lifecycle_monitor.kill_agent",
-                new_callable=AsyncMock,
-                return_value={"success": True, "already_dead": True},
-            ),
-        ):
+        with patch(
+            "gobby.agents.lifecycle_monitor.kill_agent",
+            new_callable=AsyncMock,
+        ) as terminal_kill:
             expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
+        terminal_kill.assert_not_awaited()
+        assert not [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.WARNING and record.name.startswith("gobby.agents")
+        ]
         stage = task_manager.stage_states.get(task.id, "development")
         assert stage is not None
         assert stage.state == "ready"

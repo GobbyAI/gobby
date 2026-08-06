@@ -198,12 +198,12 @@ class _AgentRunRuntimeMixin:
         run_id: str,
         tmux_session_name: str,
     ) -> bool:
-        """Clear a persisted tmux session name if it still matches."""
+        """Clear persisted tmux identity and its pane PID if the session still matches."""
         now = utc_now()
         cursor = self.db.execute(
             """
             UPDATE agent_runs
-            SET tmux_session_name = NULL, updated_at = %s
+            SET tmux_session_name = NULL, pid = NULL, updated_at = %s
             WHERE id = %s AND tmux_session_name = %s
             """,
             (now, run_id, tmux_session_name),
