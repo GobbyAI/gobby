@@ -157,10 +157,6 @@ memory totals, and metrics charts. It is backed by admin and metrics routes:
 - `/api/admin/tokens/timeseries`
 - `/api/metrics/snapshots`
 
-The dashboard hooks live in `web/src/hooks/useDashboard.ts`,
-`web/src/hooks/useUsage.ts`, `web/src/hooks/useMetrics.ts`, and
-`web/src/hooks/useTokenTimeSeries.ts`.
-
 ## Projects And Source Control
 
 `ProjectsPage` owns project overview, files, source control, GitHub issues and

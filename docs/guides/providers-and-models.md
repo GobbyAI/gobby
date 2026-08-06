@@ -265,7 +265,6 @@ discovery and prefer explicit provider fields over model-name parsing.
 ## File Locations
 
 - `src/gobby/config/feature_base.py`: feature routing candidate schema.
-- `src/gobby/config/feature_candidate_defaults.py`: default feature candidates.
 - `src/gobby/servers/routes/providers.py`: `/api/providers` and the matrix
 envelope returned by `/api/providers/models`.
 - `src/gobby/providers/capabilities/models.py`: immutable capability, route,

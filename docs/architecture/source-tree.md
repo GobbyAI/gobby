@@ -92,11 +92,11 @@ src/gobby/
 ├── install/                            # Bundled assets and installers
 │   ├── agy/ claude/ codex/ droid/ grok/ qwen/      # Per-CLI install assets
 │   └── shared/                         # Bundled content synced to DB on startup
-│       ├── config/ hooks/ prompts/ scripts/ services/
+│       ├── config/ detection/ hooks/ prompts/ rules/ services/
 │       ├── registry/                   # build_profiles.yaml, stages.yaml
 │       ├── rules/build/                # Build rule group
 │       ├── skills/                     # Bundled skills (SKILL.md dirs)
-│       └── workflows/                  # dev.yaml, qa.yaml, review.yaml
+│       └── workflows/                  # review.yaml plus grouped workflow assets
 │           ├── agents/                 # Bundled agent definitions (YAML)
 │           ├── pipelines/              # Bundled pipelines (YAML)
 │           ├── rules/                  # Bundled rule groups (YAML)
@@ -144,11 +144,10 @@ src/gobby/
 ├── skills/                             # Skill management: loader.py (SkillLoader),
 │                                       #   parser.py, sync.py, search.py, formatting.py,
 │                                       #   hubs/
-├── storage/                            # PostgreSQL hub storage
+├── storage/                            # PostgreSQL hub storage; schema assets live in
+│                                       #   crates/gcore/assets/schema/
 │   ├── hub/                            # postgres.py (PostgresHubDatabase),
 │   │                                   #   protocol.py (HubDatabase protocol), runtime.py
-│   ├── migrations.py + migrations/     # Schema migrations
-│   ├── postgres_baseline_schema.sql    # Baseline schema
 │   ├── sessions/ tasks/ agents/        # CRUD packages (_manager.py, _crud.py, ...)
 │   └── *.py                            # plans.py, build_history.py, build_profiles.py,
 │                                       #   memories.py, secrets.py, config_store.py,
@@ -240,8 +239,7 @@ cli/
 │   ├── agents/runner.py
 │   └── sessions/ (lifecycle, processor)
 ├── build/service.py
-├── storage/hub/postgres.py
-│   └── storage/migrations.py
+├── storage/hub/postgres.py             # Schema SQL: crates/gcore/assets/schema/
 ├── llm/service.py
 │   └── llm/{claude,claude_cli,local}.py
 └── utils/*

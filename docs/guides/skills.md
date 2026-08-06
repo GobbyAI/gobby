@@ -284,8 +284,6 @@ Hub references use `hub:slug` syntax, for example
 
 ## Skill Injection
 
-Skill injection is selected by `src/gobby/skills/injector.py`.
-
 Selection order:
 
 1. Agent skill profiles can include or exclude explicit skill names.

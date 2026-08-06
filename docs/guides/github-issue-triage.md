@@ -1,8 +1,8 @@
 # GitHub Issue Triage
 
-Gobby can intake GitHub issues through a webhook-first triage path. The cron
-reconciler is a recovery path for missed deliveries, disabled webhooks, or local
-setups that cannot receive public GitHub traffic.
+Gobby can intake GitHub issues through a webhook-first triage path. The external
+issue sync coordinator is a recovery path for missed deliveries, disabled
+webhooks, or local setups that cannot receive public GitHub traffic.
 
 ## Architecture
 
@@ -16,8 +16,8 @@ flowchart TD
     Deliveries --> Accepted[202 Accepted]
     Deliveries --> Service[GitHubIssueTriageService]
 
-    Cron[Reconciliation cron] --> Service
-    Cron --> ListIssues[github:list_issues open issues]
+    Coordinator[External issue sync coordinator recovery scan] --> Service
+    Coordinator --> ListIssues[github:list_issues open issues]
     ListIssues --> Service
 
     Service --> Fetch[github:get_issue when needed]
@@ -151,17 +151,18 @@ that project.
   and not processed again.
 - Webhook signature failure: verify the GitHub webhook secret matches the
   configured `webhook_secret_ref`.
-- Missed webhook: run the project `gobby:github-triage:{project_id}` cron job or
-  wait for the next reconciliation interval.
+- Missed webhook: wait for the external issue sync coordinator's next
+reconciliation interval.
 - Merge did not close issue: verify the task has `github_repo` and
   `github_issue_number`, and that the merge agent called
   `gobby-tasks-ops:close_linked_github_issue`.
 
 ## Limitations
 
-Webhook registration is manual in v1. Cron-only mode is supported for private or
-local setups, but webhook-first is the documented default. Triage judgment is
-structured and side-effect-free; Python owns task creation, GitHub comments,
-labels, issue closing, vector writes, and build routing.
+Webhook registration is manual in v1. Recovery polling without inbound webhooks
+is supported for private or local setups, while webhook-first remains the
+documented default. Triage judgment is structured and side-effect-free; Python
+owns task creation, GitHub comments, labels, issue closing, vector writes, and
+build routing.
 
-_Last verified: 2026-05-07_
+_Last verified: 2026-08-06_

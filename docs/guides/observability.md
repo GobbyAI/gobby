@@ -316,7 +316,6 @@ Follow progressive discovery before each new tool family.
 - `src/gobby/telemetry/span_store.py`: `GobbySpanExporter` and persisted span storage.
 - `src/gobby/servers/routes/admin/_health.py`: health, status, Prometheus.
 - `src/gobby/servers/routes/admin/_usage.py`: token usage routes.
-- `src/gobby/servers/routes/admin/_savings.py`: savings routes.
 - `src/gobby/servers/routes/metrics.py`: dashboard metrics snapshots.
 - `web/src/components/dashboard/`: dashboard cards and charts.
 - `web/src/components/traces/`: trace UI.
