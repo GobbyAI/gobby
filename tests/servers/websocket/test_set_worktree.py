@@ -43,7 +43,7 @@ async def test_worktree_lookup_and_path_check_are_offloaded() -> None:
             return_value=True,
         ) as to_thread,
         patch(
-            "gobby.servers.websocket.chat._session._resolve_git_branch",
+            "gobby.servers.websocket.chat._session_runtime._resolve_git_branch",
             new_callable=AsyncMock,
             return_value=("feature", None),
         ),

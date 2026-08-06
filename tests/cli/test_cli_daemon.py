@@ -55,7 +55,7 @@ def _mock_daemon_command_runtime(
     monkeypatch: pytest.MonkeyPatch,
     mock_daemon_config: MagicMock,
 ) -> None:
-    from gobby.cli.daemon import ServiceStartResult
+    from gobby.cli._daemon_services import ServiceStartResult
 
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.require_database",
@@ -433,7 +433,7 @@ class TestStartCommand:
         call_order: list[str] = []
 
         def start_services(_home: Path) -> object:
-            from gobby.cli.daemon import ServiceStartResult
+            from gobby.cli._daemon_services import ServiceStartResult
 
             call_order.append("docker")
             return ServiceStartResult("success", "Docker services started")
@@ -457,7 +457,7 @@ class TestStartCommand:
         mock_daemon_config: MagicMock,
         tmp_path: Path,
     ) -> None:
-        from gobby.cli.daemon import ServiceStartResult
+        from gobby.cli._daemon_services import ServiceStartResult
 
         services_dir = tmp_path / "services"
         services_dir.mkdir()

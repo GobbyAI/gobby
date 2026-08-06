@@ -16,6 +16,7 @@ from click.testing import CliRunner
 import gobby.cli.datastores as datastores
 import gobby.cli.installers.managed_services_lock as managed_services_lock_module
 from gobby.cli import cli, daemon
+from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.installers.managed_services_lock import managed_services_lock
 from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
@@ -128,10 +129,10 @@ def test_cold_start_reads_bind_from_bootstrap(
     monkeypatch.setattr("gobby.cli.get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr(daemon, "_start_dependency_errors", lambda: [])
 
-    def start_services(home: Path) -> daemon.ServiceStartResult:
+    def start_services(home: Path) -> ServiceStartResult:
         bind = read_bootstrap_yaml(home / "bootstrap.yaml")["services_bind_address"]
         order.append(f"services:{bind}")
-        return daemon.ServiceStartResult("success", "ready")
+        return ServiceStartResult("success", "ready")
 
     class _Runtime:
         @property

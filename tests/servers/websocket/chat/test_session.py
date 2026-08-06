@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEventType
-from gobby.servers.websocket.chat._session import (
-    ChatSessionMixin,
-    _resolve_git_branch,
-)
+from gobby.servers.websocket.chat._session import ChatSessionMixin
+from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from tests._timing import drain_asyncio_tasks, wait_forever

@@ -21,7 +21,8 @@ from pathlib import Path
 
 import click
 
-from gobby.cli.daemon import ServiceStartResult, _services_start, _services_stop
+from gobby.cli._daemon_services import ServiceStartResult
+from gobby.cli.daemon import _services_start, _services_stop
 from gobby.cli.hub_backup._integrity import (
     create_staging_directory,
     publish_staged_backup,

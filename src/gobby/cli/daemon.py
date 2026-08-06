@@ -10,15 +10,12 @@ import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
-from urllib.parse import urlparse
+from typing import Any
 
 import click
 import httpx
 import psutil
-import yaml
 
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
@@ -35,16 +32,12 @@ from gobby.utils.dependency_requirements import (
 )
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
-from .installers.compose_env import (
-    MANAGED_SERVICE_PROFILES,
-    ComposeEnvironmentError,
-    ComposeRuntime,
-    resolve_compose_runtime,
+from ._daemon_services import (
+    ServiceStartResult,
+    start_managed_services,
+    stop_managed_services,
 )
-from .installers.managed_services_lock import (
-    ManagedServicesLockError,
-    managed_services_lock,
-)
+from .installers.compose_env import resolve_compose_runtime
 from .installers.service import (
     get_service_status,
     service_start,
@@ -71,12 +64,6 @@ logger = logging.getLogger(__name__)
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
-@dataclass(frozen=True)
-class ServiceStartResult:
-    outcome: Literal["success", "skipped", "failed"]
-    detail: str
-
-
 def _start_dependency_errors() -> list[str]:
     if platform_error := unsupported_platform_error():
         return [platform_error]
@@ -94,170 +81,11 @@ def _start_dependency_errors() -> list[str]:
 
 
 def _services_start(gobby_home: Path) -> ServiceStartResult:
-    """Start the required managed Docker stack and wait for container health."""
-    try:
-        with managed_services_lock(gobby_home, operation="services start"):
-            return _services_start_locked(gobby_home)
-    except ManagedServicesLockError as exc:
-        return ServiceStartResult("failed", str(exc))
-
-
-def _services_start_locked(gobby_home: Path) -> ServiceStartResult:
-    import shutil
-
-    try:
-        bootstrap = load_bootstrap(str(gobby_home / "bootstrap.yaml"))
-    except BootstrapConfigError as exc:
-        return ServiceStartResult("failed", f"Invalid bootstrap.yaml: {exc}")
-    if bootstrap.datastore_mode == "remote":
-        target_host = urlparse(bootstrap.database_url or "").hostname or "configured hub"
-        return ServiceStartResult(
-            "skipped",
-            f"Remote datastore mode: using shared services at {target_host}",
-        )
-
-    if not shutil.which("docker"):
-        return ServiceStartResult(
-            "failed", "Docker executable is unavailable; install Docker and retry"
-        )
-
-    services_dir = gobby_home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-
-    if not compose_file.exists():
-        return ServiceStartResult(
-            "failed", f"Compose file is missing: {compose_file}; run `gobby install`"
-        )
-
-    compose_error = _validate_managed_compose_profiles(compose_file)
-    if compose_error:
-        return ServiceStartResult("failed", compose_error)
-
-    try:
-        postgres_runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
-    except ComposeEnvironmentError as exc:
-        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
-
-    postgres_result = _run_compose_up(compose_file, services_dir, postgres_runtime)
-    if postgres_result.outcome != "success":
-        return postgres_result
-
-    try:
-        runtime = resolve_compose_runtime(gobby_home)
-    except ComposeEnvironmentError as exc:
-        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
-
-    if runtime.profiles != MANAGED_SERVICE_PROFILES:
-        return ServiceStartResult(
-            "failed",
-            "Docker service config must enable postgres, qdrant, and falkordb profiles",
-        )
-
-    return _run_compose_up(compose_file, services_dir, runtime)
-
-
-def _run_compose_up(
-    compose_file: Path,
-    services_dir: Path,
-    runtime: ComposeRuntime,
-) -> ServiceStartResult:
-    cmd = ["docker", "compose", "-f", str(compose_file)]
-    for profile in runtime.profiles:
-        cmd.extend(["--profile", profile])
-    cmd.extend(["up", "-d", "--remove-orphans", "--wait"])
-
-    try:
-        result = subprocess.run(  # nosec B603 # hardcoded docker command
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,
-            env=runtime.environment,
-            cwd=str(services_dir),
-        )
-        if result.returncode != 0:
-            return ServiceStartResult(
-                "failed",
-                f"Docker compose up failed: {result.stderr or result.stdout}",
-            )
-    except subprocess.TimeoutExpired:
-        return ServiceStartResult("failed", "Docker compose up timed out after 120s")
-    except (OSError, subprocess.SubprocessError) as exc:
-        return ServiceStartResult("failed", f"Docker compose execution failed: {exc}")
-    return ServiceStartResult("success", "Docker services started")
-
-
-def _validate_managed_compose_profiles(compose_file: Path) -> str | None:
-    try:
-        payload = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as exc:
-        return f"Compose file is invalid: {exc}"
-    services = payload.get("services") if isinstance(payload, dict) else None
-    if not isinstance(services, dict):
-        return "Compose file must define a services mapping"
-    configured_profiles: set[str] = set()
-    for service in services.values():
-        service_profiles = service.get("profiles") if isinstance(service, dict) else None
-        if isinstance(service_profiles, list):
-            configured_profiles.update(
-                profile for profile in service_profiles if isinstance(profile, str)
-            )
-    missing = [
-        profile for profile in MANAGED_SERVICE_PROFILES if profile not in configured_profiles
-    ]
-    if missing:
-        return f"Compose file is missing required profiles: {', '.join(missing)}"
-    return None
+    return start_managed_services(gobby_home, resolve_runtime=resolve_compose_runtime)
 
 
 def _services_stop(gobby_home: Path) -> bool:
-    """Stop all Docker services via unified compose file."""
-    try:
-        with managed_services_lock(gobby_home, operation="services stop"):
-            return _services_stop_locked(gobby_home)
-    except ManagedServicesLockError as exc:
-        logger.warning("Could not acquire managed-services lock: %s", exc)
-        return False
-
-
-def _services_stop_locked(gobby_home: Path) -> bool:
-    import shutil
-
-    if not shutil.which("docker"):
-        return False
-
-    services_dir = gobby_home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-
-    if not compose_file.exists():
-        return False
-
-    try:
-        # Docker shutdown must still work when PostgreSQL is already unhealthy.
-        runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
-        command = ["docker", "compose", "-f", str(compose_file)]
-        for profile in MANAGED_SERVICE_PROFILES:
-            command.extend(["--profile", profile])
-        command.append("down")
-        result = subprocess.run(  # nosec B603 # hardcoded Docker command list
-            command,
-            capture_output=True,
-            text=True,
-            timeout=60,
-            env=runtime.environment,
-            cwd=str(services_dir),
-        )
-        if result.returncode != 0:
-            logger.warning("Failed to stop services: %s", result.stderr or result.stdout)
-            return False
-        return True
-    except ComposeEnvironmentError as exc:
-        logger.warning("Could not resolve config for services; skipping Docker shutdown: %s", exc)
-    except subprocess.TimeoutExpired:
-        logger.warning("Timed out stopping Docker services")
-    except Exception as e:
-        logger.warning("Failed to stop Docker services: %s", e)
-    return False
+    return stop_managed_services(gobby_home, resolve_runtime=resolve_compose_runtime)
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:

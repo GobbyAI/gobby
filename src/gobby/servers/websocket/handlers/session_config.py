@@ -428,7 +428,7 @@ async def handle_set_worktree(
         "worktree_id": "optional-db-uuid"
     }
     """
-    from gobby.servers.websocket.chat._session import _resolve_git_branch
+    from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 
     conversation_id = data.get("conversation_id")
     worktree_path = data.get("worktree_path")

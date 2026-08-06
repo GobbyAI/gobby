@@ -15,7 +15,6 @@ from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_policy_hash,
 )
-from gobby.config.feature_base import parse_feature_candidate
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_session import ChatSession
@@ -26,144 +25,22 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import get_machine_id
 
+from ._session_binding import (
+    _build_agent_identity_preamble,
+    _first_configured_chat_binding,
+    _normalize_runtime_chat_mode,
+    _normalize_web_chat_provider,
+)
+from ._session_runtime import (
+    _get_runtime_external_id,
+    _get_runtime_transcript_path,
+    _has_meaningful_web_chat_history,
+    _is_bootstrap_external_id,
+)
+
 logger = logging.getLogger(__name__)
 
 _CANCEL_YIELD_DELAY = 0.1
-
-
-def _normalize_runtime_chat_mode(mode: str | None) -> str | None:
-    if mode == "accept_edits":
-        return "normal"
-    return mode
-
-
-def _normalize_web_chat_provider(provider: Any) -> str | None:
-    """Normalize provider identifiers persisted on web-chat sessions."""
-    if not isinstance(provider, str):
-        return None
-
-    normalized = provider.strip().lower()
-    if normalized in {"", "inherit"}:
-        return None
-    if normalized in {"claude", "grok", "qwen", "codex", "droid", "agy"}:
-        return normalized
-    return None
-
-
-def _first_configured_chat_binding(
-    daemon_config: Any,
-) -> tuple[str, str, str | None] | None:
-    """Return the first usable provider/model/reasoning chat candidate."""
-    chat_config = getattr(daemon_config, "chat", None)
-    for candidate in getattr(chat_config, "candidates", ()) or ():
-        try:
-            candidate_provider, candidate_model = parse_feature_candidate(candidate)
-        except ValueError:
-            continue
-        normalized_provider = _normalize_web_chat_provider(candidate_provider)
-        if normalized_provider is None:
-            continue
-        reasoning_effort = getattr(candidate, "reasoning_effort", None)
-        if not isinstance(reasoning_effort, str):
-            reasoning_effort = None
-        return normalized_provider, candidate_model, reasoning_effort
-    return None
-
-
-def _build_agent_identity_preamble(agent_body: Any) -> str | None:
-    """Build the non-duplicated identity preamble for web-chat sessions.
-
-    Qwen/Grok web chat sends instructions through the first BEFORE_AGENT
-    lifecycle hook, so bootstrap only carries stable identity fields there.
-    """
-    parts: list[str] = []
-    if getattr(agent_body, "role", None):
-        parts.append(f"## Role\n{agent_body.role}")
-    if getattr(agent_body, "goal", None):
-        parts.append(f"## Goal\n{agent_body.goal}")
-    if getattr(agent_body, "personality", None):
-        parts.append(f"## Personality\n{agent_body.personality}")
-    return "\n\n".join(parts) if parts else None
-
-
-def _get_runtime_external_id(session: ChatSessionProtocol) -> str | None:
-    """Return the provider-native session/thread id discovered during start()."""
-    sdk_session_id = getattr(session, "sdk_session_id", None)
-    if isinstance(sdk_session_id, str) and sdk_session_id:
-        return sdk_session_id
-
-    thread_id = getattr(session, "_thread_id", None)
-    if isinstance(thread_id, str) and thread_id:
-        return thread_id
-
-    return None
-
-
-def _get_runtime_transcript_path(session: ChatSessionProtocol) -> str | None:
-    """Return the live transcript path discovered during start(), if available."""
-    transcript_path = getattr(session, "transcript_path", None)
-    if isinstance(transcript_path, str) and transcript_path:
-        return transcript_path
-
-    private_path = getattr(session, "_transcript_path", None)
-    if isinstance(private_path, str) and private_path:
-        return private_path
-
-    return None
-
-
-def _is_bootstrap_external_id(external_id: str | None) -> bool:
-    """Return True when external_id is still a temporary web-chat bootstrap value."""
-    return bool(external_id and external_id.startswith("web-chat-bootstrap:"))
-
-
-def _has_meaningful_web_chat_history(session: Any) -> bool:
-    """Return True when a web-chat row already has meaningful runtime history."""
-    return bool(
-        getattr(session, "message_count", 0)
-        or getattr(session, "turn_count", 0)
-        or getattr(session, "usage_output_tokens", 0)
-    )
-
-
-async def _resolve_git_branch(project_path: str | None) -> tuple[str | None, str | None]:
-    """Resolve the current git branch for a project directory.
-
-    Returns (branch_name, worktree_path). branch_name is None for detached HEAD
-    or non-git directories.
-    """
-    if not project_path:
-        return None, None
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "branch",
-            "--show-current",
-            cwd=project_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-        branch = stdout.decode().strip() or None
-        # For detached HEAD, show short SHA instead of nothing
-        if not branch:
-            proc2 = await asyncio.create_subprocess_exec(
-                "git",
-                "rev-parse",
-                "--short",
-                "HEAD",
-                cwd=project_path,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=5.0)
-            short_sha = stdout2.decode().strip()
-            if short_sha:
-                branch = f"detached:{short_sha}"
-        return branch, project_path
-    except Exception as e:
-        logger.debug("Failed to resolve git branch: %s", e)
-        return None, None
 
 
 class ChatSessionMixin:
