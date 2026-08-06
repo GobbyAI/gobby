@@ -24,7 +24,7 @@ import pytest
 from click.testing import CliRunner, Result
 
 from gobby.cli import cli as root_cli
-from gobby.cli.daemon import ServiceStartResult
+from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._manifest import (
     MANIFEST_FORMAT,

@@ -15,10 +15,8 @@ from gobby.providers.capabilities.apply import apply_speed
 from gobby.providers.capabilities.models import SpeedMode
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.chat_stream_transport import ChatStreamTransport
-from gobby.servers.websocket.chat._session import (
-    _normalize_runtime_chat_mode,
-    _resolve_git_branch,
-)
+from gobby.servers.websocket.chat._session_binding import _normalize_runtime_chat_mode
+from gobby.servers.websocket.chat._session_runtime import _resolve_git_branch
 from gobby.servers.websocket.chat._stream_events import (
     ChatStreamEventHandler,
     ChatStreamEventState,

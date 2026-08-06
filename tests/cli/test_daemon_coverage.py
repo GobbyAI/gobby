@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.daemon import (
-    ServiceStartResult,
     _services_start,
     _services_stop,
     health,

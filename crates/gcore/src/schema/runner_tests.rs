@@ -9,10 +9,11 @@ use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use super::assets::{BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
+use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{SchemaError, SchemaRunner};
+use super::runner::SchemaRunner;
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,

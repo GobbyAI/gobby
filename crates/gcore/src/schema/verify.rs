@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_VERSION, CATALOG_MANIFEST_JSON, MIGRATIONS, SEED_MANIFEST_JSON,
 };
-use super::runner::SchemaError;
+use super::error::SchemaError;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
