@@ -531,7 +531,7 @@ class HookManager:
 
             finalize_staged_memory_delivery(
                 event,
-                observer_response,
+                response if preserve_original else observer_response,
                 database=self._database,
                 logger=self.logger,
             )
