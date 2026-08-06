@@ -121,6 +121,7 @@ class _FakeDatabase:
 class _FakeExecutor:
     def __init__(self) -> None:
         self.queued = 1
+        self.oldest_queue_seconds = 3.0
 
     def stats(self) -> DatabaseExecutorStats:
         return DatabaseExecutorStats(
@@ -131,7 +132,7 @@ class _FakeExecutor:
             completed=0,
             cancelled=0,
             threads=16,
-            oldest_queue_seconds=3.0 if self.queued else 0.0,
+            oldest_queue_seconds=self.oldest_queue_seconds if self.queued else 0.0,
             shutdown=False,
         )
 
@@ -158,22 +159,60 @@ def test_watchdog_logs_sustained_saturation_and_recovery(caplog: pytest.LogCaptu
         cpu_count=8,
     )
     executor = _FakeExecutor()
+    executor.oldest_queue_seconds = 1.99
     watchdog = DatabaseSaturationWatchdog(
         _FakeDatabase(),  # type: ignore[arg-type]
         executor,  # type: ignore[arg-type]
         _FakeCoverage(),  # type: ignore[arg-type]
         resolution,
-        warning_after_seconds=0,
+        warning_after_seconds=2,
         repeat_seconds=10,
     )
 
     with caplog.at_level(logging.INFO):
         watchdog.sample()
+        assert "Database saturation boundary=executor" not in caplog.text
+        executor.oldest_queue_seconds = 2.0
+        watchdog.sample()
         executor.queued = 0
         watchdog.sample()
 
     assert "Database saturation boundary=executor phase=start" in caplog.text
+    assert "pool_stats={'pool_size': 64" in caplog.text
     assert "Database saturation recovered boundary=executor" in caplog.text
     snapshot: dict[str, Any] = watchdog.status_snapshot()
     assert snapshot["saturation"]["last"]["recovered"] is True
     assert snapshot["restart_required"] is True
+
+
+def test_watchdog_ignores_sustained_churn_of_fresh_waiters(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    resolution = resolve_database_concurrency(
+        DatabaseConcurrencyConfig(),
+        PostgresCapacity(max_connections=100, superuser_reserved_connections=3),
+        cpu_count=8,
+    )
+    executor = _FakeExecutor()
+    executor.oldest_queue_seconds = 0.01
+    watchdog = DatabaseSaturationWatchdog(
+        _FakeDatabase(),  # type: ignore[arg-type]
+        executor,  # type: ignore[arg-type]
+        _FakeCoverage(),  # type: ignore[arg-type]
+        resolution,
+        warning_after_seconds=2,
+        repeat_seconds=10,
+    )
+    clock = [0.0]
+    monkeypatch.setattr(
+        "gobby.storage.concurrency_watchdog.time.monotonic",
+        lambda: clock[0],
+    )
+
+    with caplog.at_level(logging.INFO):
+        for second in range(10):
+            clock[0] = float(second)
+            watchdog.sample()
+
+    assert "Database saturation" not in caplog.text

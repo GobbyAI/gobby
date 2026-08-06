@@ -232,7 +232,7 @@ def open_maintenance_epoch(
                     WHERE activity.datname = current_database()
                       AND activity.pid <> pg_backend_pid()
                       AND activity.backend_type = 'client backend'
-                      AND activity.application_name LIKE 'gobby%'
+                      AND activity.application_name LIKE 'gobby%%'
                     """
                 ).fetchall()
                 # PostgreSQL caches activity statistics until the transaction snapshot is cleared.
@@ -244,7 +244,7 @@ def open_maintenance_epoch(
                     WHERE activity.datname = current_database()
                       AND activity.pid <> pg_backend_pid()
                       AND activity.backend_type = 'client backend'
-                      AND activity.application_name LIKE 'gobby%'
+                      AND activity.application_name LIKE 'gobby%%'
                     """
                 ).fetchone()
                 foreign_connections = (

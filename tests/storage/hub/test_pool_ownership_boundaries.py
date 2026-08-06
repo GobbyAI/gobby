@@ -11,6 +11,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 CLI_ROOT = REPO_ROOT / "src" / "gobby" / "cli"
 CLI_COMPOSITION_ROOTS = {
     CLI_ROOT / "daemon.py",
+    CLI_ROOT / "datastores.py",
     CLI_ROOT / "install.py",
     CLI_ROOT / "install_setup.py",
     CLI_ROOT / "runtime.py",
