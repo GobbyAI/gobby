@@ -19,13 +19,107 @@ from gobby.mcp_proxy.tools.tasks._expansion_runtime import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.expansion_runs import LocalExpansionRunManager
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.storage.plans import LocalPlanManager, PlanRecord
+from gobby.storage.tasks import Task, TaskNotFoundError
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage as run_qa_coverage
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["create_expansion_registry"]
+
+
+def _task_ref(task: Task) -> str:
+    return f"#{task.seq_num}" if task.seq_num is not None else task.id
+
+
+def _task_ancestry(ctx: RegistryContext, task: Task) -> list[Task]:
+    ancestry: list[Task] = []
+    seen: set[str] = set()
+    current: Task | None = task
+    while current is not None:
+        if current.id in seen:
+            raise ValueError(f"Task hierarchy cycle detected at {_task_ref(current)}")
+        seen.add(current.id)
+        ancestry.append(current)
+        current = (
+            ctx.task_manager.get_task(current.parent_task_id)
+            if current.parent_task_id is not None
+            else None
+        )
+    return ancestry
+
+
+def _plan_root_matches_task(plan: PlanRecord, task: Task) -> bool:
+    root_ref = plan.root_task_ref.strip()
+    supported_refs = {task.id}
+    if task.seq_num is not None:
+        supported_refs.update({str(task.seq_num), f"#{task.seq_num}"})
+    if task.path_cache:
+        supported_refs.add(task.path_cache)
+    return root_ref in supported_refs
+
+
+def _same_plan_path(left: str, right: str, repo_path: str | None) -> bool:
+    def normalized(value: str) -> Path:
+        path = Path(value)
+        if not path.is_absolute() and repo_path is not None:
+            path = Path(repo_path) / path
+        return path.resolve(strict=False)
+
+    return normalized(left) == normalized(right)
+
+
+def _bind_registered_plan(
+    ctx: RegistryContext,
+    task_id: str,
+    plan_file: str | None,
+    *,
+    reset_output: bool,
+) -> tuple[str, str | None]:
+    requested_task = ctx.task_manager.get_task(task_id)
+    ancestry = _task_ancestry(ctx, requested_task)
+    active_plans = LocalPlanManager(ctx.task_manager.db).list_plans(
+        state="active",
+        project_id=requested_task.project_id,
+    )
+    matches = [
+        (plan, ancestor)
+        for plan in active_plans
+        for ancestor in ancestry
+        if _plan_root_matches_task(plan, ancestor)
+    ]
+    if not matches:
+        return requested_task.id, plan_file
+    if len(matches) > 1:
+        registered_paths = ", ".join(repr(plan.plan_path) for plan, _root in matches)
+        raise ValueError(
+            f"Task {_task_ref(requested_task)} is covered by multiple active registered plans: "
+            f"{registered_paths}. Archive the conflicting registration before expansion."
+        )
+
+    plan, root_task = matches[0]
+    if plan_file is None:
+        return root_task.id, plan.plan_path
+
+    repo_path = ctx.get_project_repo_path(requested_task.project_id)
+    if _same_plan_path(plan_file, plan.plan_path, repo_path):
+        return root_task.id, plan.plan_path
+    if reset_output:
+        logger.warning(
+            "Overriding registered expansion plan %s at %s for root %s via audited reset",
+            plan.plan_id,
+            plan.plan_path,
+            _task_ref(root_task),
+        )
+        return root_task.id, plan_file
+
+    raise ValueError(
+        f"Task {_task_ref(requested_task)} is bound to registered plan {plan.plan_id!r} at "
+        f"{plan.plan_path!r} on root {_task_ref(root_task)}; received conflicting plan path "
+        f"{plan_file!r}. Pass reset_output=true to reset the registered root output and audit "
+        "the override."
+    )
 
 
 def _subscribe_completion(ctx: RegistryContext, run_id: str, resolved_session_id: str) -> None:
@@ -133,6 +227,16 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
         except (TaskNotFoundError, ValueError) as e:
             return {"error": f"Task not found: {e}"}
 
+        try:
+            resolved_task_id, plan_file = _bind_registered_plan(
+                ctx,
+                resolved_task_id,
+                plan_file,
+                reset_output=reset_output,
+            )
+        except (TaskNotFoundError, ValueError) as exc:
+            return {"error": str(exc)}
+
         result = start_expansion_run_impl(
             task_manager=ctx.task_manager,
             llm_service=ctx.llm_service,
@@ -176,7 +280,10 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
                 },
                 "reset_output": {
                     "type": "boolean",
-                    "description": "Delete existing generated output before starting the run",
+                    "description": (
+                        "Delete existing generated output before starting the run; required to "
+                        "audit an explicit override of an active registered plan"
+                    ),
                     "default": False,
                 },
                 "provider": {
