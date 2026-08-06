@@ -21,13 +21,20 @@ class _TestRegistry(InternalToolRegistry):
         return tool.func if tool else None
 
 
+_LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000021"
+
+
 @pytest.mark.asyncio
-async def test_terminal_compact_self_schedules_codex_marker_watcher() -> None:
+@patch("gobby.sessions.machine_scope.get_machine_id", return_value=_LOCAL_MACHINE_ID)
+async def test_terminal_compact_self_schedules_codex_marker_watcher(
+    _get_machine_id: MagicMock,
+) -> None:
     registry = _TestRegistry(name="test", description="test")
     session = MagicMock()
     session.id = "s1"
     session.session_type = "terminal"
     session.source = "codex"
+    session.machine_id = _LOCAL_MACHINE_ID
     session.summary_markdown = """## Current State
 
 The compact handoff summary is ready, and the terminal session can proceed with compaction.
