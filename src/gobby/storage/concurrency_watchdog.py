@@ -96,6 +96,7 @@ class DatabaseSaturationWatchdog:
             executor.oldest_queue_seconds,
             executor.active,
             executor.max_workers,
+            pool=pool,
         )
         self._update_boundary(
             "pool", pool_waiting, 0.0, pool_size - pool_available, pool_size, pool=pool
@@ -106,6 +107,7 @@ class DatabaseSaturationWatchdog:
             coverage.oldest_wait_seconds,
             coverage.active,
             coverage.max_concurrency,
+            pool=pool,
         )
 
     def _update_boundary(
@@ -128,7 +130,7 @@ class DatabaseSaturationWatchdog:
             state.since = now
         state.peak_waiters = max(state.peak_waiters, waiting)
         duration = now - state.since
-        if duration < self.warning_after_seconds:
+        if oldest_wait < self.warning_after_seconds:
             return
         phase = "start" if state.last_warning is None else "repeat"
         if state.last_warning is not None and now - state.last_warning < self.repeat_seconds:
