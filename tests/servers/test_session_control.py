@@ -424,7 +424,7 @@ class TestContinueInChatTerminalKill:
             status="active",
             terminal_context={},
             project_id="proj-1",
-            sandbox_enabled=True,
+            sandbox_enabled=False,
             sandbox_policy_hash=ANY,
         )
         assert session_manager.update.call_count >= 1
@@ -779,7 +779,7 @@ class TestContinueInChatTerminalKill:
             status="active",
             terminal_context={},
             project_id="proj-1",
-            sandbox_enabled=True,
+            sandbox_enabled=False,
             sandbox_policy_hash=ANY,
         )
         session_manager.update_parent_session_id.assert_not_called()
@@ -885,7 +885,7 @@ class TestContinueInChatTerminalKill:
             status="active",
             terminal_context={},
             project_id="proj-1",
-            sandbox_enabled=True,
+            sandbox_enabled=False,
             sandbox_policy_hash=ANY,
         )
         assert mock_chat_session.chat_mode == "accept_edits"
@@ -1502,6 +1502,7 @@ class TestContinueInChatTerminalKill:
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
         session_manager.db = MagicMock()
+        session_manager.db.fetchone.return_value = None
 
         host = self._make_host()
         host.session_manager = session_manager
