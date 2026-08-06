@@ -257,6 +257,7 @@ async def ensure_isolation_code_index(
     config_probe_timeout: float = _CONFIG_PROBE_TIMEOUT,
     search_smoke_timeout: float = _SEARCH_SMOKE_TIMEOUT,
     api_token: str | None = None,
+    identity_env: Mapping[str, str] | None = None,
 ) -> CodeIndexPreflightResult:
     """Prepare and verify `gcode` access inside an isolated workspace.
 
@@ -265,6 +266,11 @@ async def ensure_isolation_code_index(
     the wrapper script and never returned in the agent env additions: the
     runtime home deliberately carries no ``local_cli_token`` (#19289), and the
     spawned agent authenticates with its own run-scoped capability instead.
+
+    ``identity_env`` carries the spawned run's managed-execution identity
+    (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) for the probes:
+    gcore's effective-config resolution requires exactly one execution owner
+    variable, which the daemon process env does not provide.
     """
 
     workspace = Path(isolated_path)
@@ -282,7 +288,10 @@ async def ensure_isolation_code_index(
         runtime_root=runtime_root,
     )
     gcode_command = result.wrapper_path or gcode_bin
-    probe_env = {GOBBY_AGENT_API_TOKEN_ENV: api_token} if api_token else None
+    merged_probe_env = dict(identity_env or {})
+    if api_token:
+        merged_probe_env[GOBBY_AGENT_API_TOKEN_ENV] = api_token
+    probe_env = merged_probe_env or None
 
     await _run_gcode(
         [gcode_command, "projects", "--quiet", "--format", "json"],

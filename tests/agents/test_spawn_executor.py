@@ -45,7 +45,12 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         project_id="project",
         workflow_name=None,
         agent_depth=1,
-        env_vars={},
+        env_vars={
+            "GOBBY_AGENT_RUN_ID": "run-id-env",
+            "GOBBY_PROJECT_ID": "project-id-env",
+            "GOBBY_SESSION_ID": "session-id-env",
+            "GOBBY_WORKFLOW_NAME": "planner",
+        },
         managed_credential=credential,
     )
     request = SpawnRequest(
@@ -65,10 +70,16 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         *,
         credential: object,
         api_token: str | None,
+        identity_env: dict[str, str] | None = None,
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
         assert credential is context.managed_credential
         assert api_token == "probe-token"
+        assert identity_env == {
+            "GOBBY_AGENT_RUN_ID": "run-id-env",
+            "GOBBY_PROJECT_ID": "project-id-env",
+            "GOBBY_SESSION_ID": "session-id-env",
+        }
         return SimpleNamespace(env={"PATH": "/scoped/bin"})
 
     monkeypatch.setattr("gobby.agents.spawn_executor.ensure_isolation_code_index", preflight)

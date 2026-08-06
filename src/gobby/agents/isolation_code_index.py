@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ async def ensure_isolation_code_index(
     config_probe_timeout: float = 5.0,
     search_smoke_timeout: float = 10.0,
     api_token: str | None = None,
+    identity_env: Mapping[str, str] | None = None,
 ) -> CodeIndexPreflightResult:
     """Run and verify gcode indexing inside an isolated workspace before spawn."""
     return await _ensure_isolation_code_index(
@@ -31,4 +33,5 @@ async def ensure_isolation_code_index(
         config_probe_timeout=config_probe_timeout,
         search_smoke_timeout=search_smoke_timeout,
         api_token=api_token,
+        identity_env=identity_env,
     )

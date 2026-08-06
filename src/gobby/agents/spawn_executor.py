@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from gobby.agents.constants import GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
@@ -127,10 +128,18 @@ async def _prepare_managed_code_index(
         credential = spawn_context.managed_credential
         if credential is None:
             raise RuntimeError("managed credential unavailable for code index preflight")
+        # gcore's effective-config resolution requires the spawned run's
+        # managed-execution identity; the daemon's own env carries none.
+        identity_env = {
+            name: value
+            for name, value in spawn_context.env_vars.items()
+            if name in (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) and value
+        }
         preflight = await ensure_isolation_code_index(
             request.cwd,
             credential=credential,
             api_token=request.code_index_api_token,
+            identity_env=identity_env,
         )
         spawn_context.env_vars.update(preflight.env)
         return None
