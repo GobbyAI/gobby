@@ -97,6 +97,22 @@ concrete file path appears in the body after a change-intent verb — `add`,
 `update`, `wire` — or in a `file:`/`behavior:` acceptance ref, and that path is
 not in the inventory.
 
+Each inventory entry uses one of these forms:
+
+- `path/to/file.py::qualified_name` targets one exact indexed symbol. The
+  qualified name must equal gcode's indexed value for that file. Parsing splits
+  only the first `::`, so Rust targets retain names such as `Type::method`.
+- `path/to/file.py::*` — `scope-reason: <non-empty explanation>` targets every
+  indexed symbol in one file. The reason stays on the same line and is valid only
+  for a `::*` target.
+- `path/to/file.py` targets a genuinely new file or a file whose fresh index has
+  no symbol-bearing records.
+
+Symbol-qualified scope is mandatory whenever the fresh index reports symbols,
+including for newly created files after indexing. A file may have multiple exact
+symbol targets. It may not mix exact targets with `::*`. Symbol UUIDs and line
+numbers are invalid target references.
+
 **Block format is load-bearing.** `iter_target_block_lines` reads the inventory
 as a contiguous block: the `Targets:` line itself, then every immediately
 following line. **A blank line ends the block**, as does the next heading, a
@@ -108,21 +124,26 @@ listed.
 
 ```markdown
 Targets:
-- `web/src/components/chat/styles.css`
-- `web/src/components/activity/ActivityPanel.tsx`
+- `src/gobby/plans/symbol_targets.py::validate_symbol_targets`
+- `src/gobby/plans/semantic_lint.py::*` — scope-reason: update every semantic lint
+- `docs/contracts/plan-coverage.md`
 
-Update `web/src/components/chat/styles.css` to drop the activity imports.
+Update `src/gobby/plans/symbol_targets.py` and
+`src/gobby/plans/semantic_lint.py`, then document the contract in
+`docs/contracts/plan-coverage.md`.
 ```
 
-The single-path form `Target: \`src/module.py\`` puts the path on the header
-line itself; both forms may appear in one section, and their entries merge.
+The single-entry form
+`Target: \`src/gobby/plans/symbol_targets.py::validate_symbol_targets\`` puts the
+target on the header line itself; both forms may appear in one section, and their
+entries merge.
 
 **Matching is basename-aware in one direction only** (`_path_covered_by_targets`):
 
-- A mentioned path containing `/` must match a target entry **exactly**.
-  `web/src/app.tsx` is not covered by a target of `app.tsx`.
-- A mentioned bare filename matches **any** target entry sharing that basename.
-  `stages.yaml` is covered by a target of
+- A mentioned path containing `/` must match a target's normalized file path
+  **exactly**. `web/src/app.tsx` is not covered by a target for `app.tsx`.
+- A mentioned bare filename matches **any** target file path sharing that
+  basename. `stages.yaml` is covered by a target for
   `src/gobby/install/shared/registry/stages.yaml`.
 
 A bare extension such as `.tsx` is not a path and never requires an entry.
