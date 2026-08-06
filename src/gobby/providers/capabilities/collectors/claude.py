@@ -262,9 +262,23 @@ def _parse_effort_docs(
     models: Sequence[_OverviewModel],
 ) -> dict[str, _EffortSupport]:
     compatibility = _required_heading_section(document, "Compatibility")
-    supported_models = _models_named_by_family_version(models, compatibility)
+    declarations = re.findall(
+        r"^[ \t]*-\s+Supported models:[ \t]*(.*?)[ \t]*$",
+        compatibility,
+        flags=re.MULTILINE,
+    )
+    if len(declarations) != 1:
+        raise ValueError(
+            "effort compatibility must contain exactly one Supported models declaration"
+        )
+    documented_model_ids = frozenset(re.findall(r"`(claude-[a-z0-9-]+)`", declarations[0]))
+    if not documented_model_ids:
+        raise ValueError("effort Supported models declaration lists no canonical model IDs")
+    supported_models = tuple(
+        model for model in models if model.canonical_model in documented_model_ids
+    )
     if not supported_models:
-        raise ValueError("effort compatibility section names no models from the overview")
+        raise ValueError("effort Supported models declaration overlaps no overview models")
 
     table = _find_table(document, ("level", "description", "typical use case"))
     levels_by_model: dict[str, set[str]] = {
@@ -422,24 +436,6 @@ def _models_named_in_text(
 ) -> tuple[_OverviewModel, ...]:
     normalized = _clean_cell(text).casefold()
     return tuple(model for model in models if model.display_name.casefold() in normalized)
-
-
-def _models_named_by_family_version(
-    models: Sequence[_OverviewModel],
-    text: str,
-) -> tuple[_OverviewModel, ...]:
-    lines = tuple(_normalize_cell(line) for line in text.splitlines())
-    supported: list[_OverviewModel] = []
-    for model in models:
-        label = model.display_name.removeprefix("Claude ")
-        family, separator, version = label.rpartition(" ")
-        if not separator:
-            continue
-        family_pattern = rf"(?<!\w){re.escape(family.casefold())}(?!\w)"
-        version_pattern = rf"(?<![\w.]){re.escape(version.casefold())}(?![\w.])"
-        if any(re.search(rf"{family_pattern}.*{version_pattern}", line) for line in lines):
-            supported.append(model)
-    return tuple(supported)
 
 
 def _required_heading_section(document: str, heading: str) -> str:

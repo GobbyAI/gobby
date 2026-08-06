@@ -14,8 +14,4 @@ The effort parameter is available on all supported models with no beta header re
 
 ## Compatibility
 
-Supported models
-
-- Fable 5
-- Opus 4.6 and 5
-- Sonnet 5
+- Supported models: `claude-fable-5`, `claude-mythos-5`, `claude-mythos-preview`, `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, `claude-sonnet-5`, `claude-sonnet-4-6`, `claude-opus-4-5-20251101`

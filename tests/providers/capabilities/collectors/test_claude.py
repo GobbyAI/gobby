@@ -113,10 +113,8 @@ async def test_current_and_legacy_models_emit_standard_routes() -> None:
     assert all(source.state is SourceState.OK for source in snapshot.sources)
 
 
-async def test_effort_compatibility_without_note_is_source_derived() -> None:
+async def test_effort_compatibility_uses_canonical_model_ids() -> None:
     documents = _documents()
-
-    assert "<Note>" not in documents["effort-docs"]
 
     snapshot = await _collector(documents).collect()
     models = {model.canonical_model: model for model in snapshot.models}
@@ -130,5 +128,50 @@ async def test_effort_compatibility_without_note_is_source_derived() -> None:
     )
     assert models["claude-opus-5"].default_effort == "high"
     assert models["claude-opus-4-6"].supported_efforts == ("low", "medium", "high", "max")
+    assert models["claude-fable-5"].supported_efforts == (
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
     assert models["claude-haiku-4-5-20251001"].supported_efforts is None
     assert models["claude-haiku-4-5-20251001"].reasoning is ReasoningSupport.KNOWN
+    assert "claude-mythos-5" not in models
+
+
+@pytest.mark.parametrize(
+    ("replacement", "detail"),
+    [
+        ("- Compatible models: `claude-opus-5`", "exactly one Supported models"),
+        ("- Supported models:", "lists no canonical model IDs"),
+        ("- Supported models: claude-opus-5", "lists no canonical model IDs"),
+        (
+            "- Supported models: `claude-mythos-5`, `claude-mythos-preview`",
+            "overlaps no overview models",
+        ),
+    ],
+)
+async def test_invalid_effort_supported_models_declaration_fails_snapshot(
+    replacement: str,
+    detail: str,
+) -> None:
+    documents = _documents()
+    declaration = next(
+        line for line in documents["effort-docs"].splitlines() if "Supported models:" in line
+    )
+    documents["effort-docs"] = documents["effort-docs"].replace(declaration, replacement)
+
+    with pytest.raises(ClaudeSourceError, match=detail):
+        await _collector(documents).collect()
+
+
+async def test_duplicate_effort_supported_models_declaration_fails_snapshot() -> None:
+    documents = _documents()
+    declaration = next(
+        line for line in documents["effort-docs"].splitlines() if "Supported models:" in line
+    )
+    documents["effort-docs"] += f"\n{declaration}\n"
+
+    with pytest.raises(ClaudeSourceError, match="exactly one Supported models"):
+        await _collector(documents).collect()
