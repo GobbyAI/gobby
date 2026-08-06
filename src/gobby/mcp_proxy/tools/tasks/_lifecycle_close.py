@@ -327,12 +327,15 @@ async def _evaluate_close(
     if evaluation.had_attributed_edits:
         commit_result = validate_commit_requirements(evaluation_task, reason, repo_path)
         if not commit_result.can_close:
+            commit_extra = dict(commit_result.extra)
+            if evaluation.response_detail == "diagnostic":
+                commit_extra["attributed_paths"] = sorted(evaluation.edited_paths)
             return evaluation.fail(
                 7,
                 "linked_commits",
                 commit_result.error_type or "commit_validation_failed",
                 commit_result.message or "Link a commit for the attributed task edits.",
-                extra=commit_result.extra,
+                extra=commit_extra,
             )
     evaluation.pass_gate(
         7,

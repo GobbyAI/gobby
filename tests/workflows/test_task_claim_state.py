@@ -142,7 +142,7 @@ class TestTargetTaskHasEdits:
             target_task_has_edits({"task_edited_files": {"task-1": "file.py"}}, "task-1") is False
         )
 
-    def test_empty_task_entry_means_mutation_paths_unavailable(self) -> None:
+    def test_empty_task_entry_means_no_mutation_observed(self) -> None:
         variables: dict[str, Any] = {"task_edited_files": {"task-1": []}}
 
-        assert target_task_has_edits(variables, "task-1") is True
+        assert target_task_has_edits(variables, "task-1") is False

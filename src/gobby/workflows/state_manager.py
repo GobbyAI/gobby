@@ -598,6 +598,8 @@ class SessionVariableManager:
     ) -> bool:
         """Atomically record one successful mutation observation and its paths."""
         normalized_paths = list(dict.fromkeys(path for path in repo_relative_paths if path))
+        if not normalized_paths:
+            return False
 
         from gobby.workflows.task_claim_state import (
             active_task_id_for_edit,
@@ -728,15 +730,25 @@ class SessionVariableManager:
                 return (released, remaining), False
 
             updated_task_files = dict(task_files)
-            updated_task_files[task_id] = remaining
+            if remaining:
+                updated_task_files[task_id] = remaining
+            else:
+                updated_task_files.pop(task_id, None)
             variables["task_edited_files"] = updated_task_files
             if has_scoped_attribution and normalized_checkout is not None:
                 updated_checkouts_for_task = dict(checkouts_for_task)
-                updated_checkouts_for_task[normalized_checkout] = [
+                remaining_checkout_paths = [
                     path for path in (scoped_paths or []) if path not in requested_set
                 ]
+                if remaining_checkout_paths:
+                    updated_checkouts_for_task[normalized_checkout] = remaining_checkout_paths
+                else:
+                    updated_checkouts_for_task.pop(normalized_checkout, None)
                 updated_task_checkouts = dict(task_checkouts)
-                updated_task_checkouts[task_id] = updated_checkouts_for_task
+                if updated_checkouts_for_task:
+                    updated_task_checkouts[task_id] = updated_checkouts_for_task
+                else:
+                    updated_task_checkouts.pop(task_id, None)
                 variables["task_edited_file_checkouts"] = updated_task_checkouts
             return (released, remaining), True
 

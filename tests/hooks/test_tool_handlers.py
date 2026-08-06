@@ -11,6 +11,7 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.hooks.normalization import normalize_tool_fields
 
 from ._event_handler_helpers import make_event
 
@@ -324,15 +325,15 @@ class TestToolHandlerEdgeCases:
             (
                 {
                     "tool_name": "Bash",
-                    "tool_input": {"command": "printf changed > ../outside.py"},
+                    "tool_input": {"command": "printf changed > ~/.gobby/bin/gcode"},
                     "canonical_tool_kind": "write",
                     "canonical_repo_mutation": True,
-                    "canonical_file_paths": ["../outside.py"],
+                    "canonical_file_paths": ["~/.gobby/bin/gcode"],
                 },
                 {"_platform_session_id": "sess-123"},
             ),
         ],
-        ids=["failed", "read-only", "out-of-repo"],
+        ids=["failed", "read-only", "external-home-path"],
     )
     def test_after_tool_shell_non_edits_skip_tracking(
         self,
@@ -353,6 +354,42 @@ class TestToolHandlerEdgeCases:
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "data",
+        [
+            {
+                "tool_name": "Grep",
+                "tool_input": {
+                    "pattern": "setup/|Textarea|@dagrejs/dagre",
+                    "path": "web/src/__tests__",
+                },
+            },
+            {"tool_name": "Read", "tool_input": {"file_path": ".gitattributes"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "db/schema.sql"}},
+        ],
+        ids=["search-pattern-and-directory", "dotfile", "sql-file"],
+    )
+    def test_read_only_path_like_arguments_skip_tracking(
+        self,
+        mock_dependencies: dict[str, Any],
+        data: dict[str, Any],
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data=normalize_tool_fields(data),
+            metadata={"_platform_session_id": "sess-123"},
+        )
+        event.cwd = "/tmp/project"
+
+        with patch(
+            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+        ) as record_files:
+            handlers.handle_after_tool(event)
+
+        record_files.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
+
     def test_after_tool_gitignored_edit_skips_tracking(
         self, mock_dependencies: dict, tmp_path: Path
     ) -> None:
@@ -363,7 +400,7 @@ class TestToolHandlerEdgeCases:
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": str(tmp_path / "wiki" / "page.md")},
+                "tool_input": {"file_path": str(tmp_path / "target" / "output.bin")},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
@@ -408,7 +445,11 @@ class TestToolHandlerEdgeCases:
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
-        record_files.assert_called_once_with("sess-123", ["src/main.py"])
+        record_files.assert_called_once_with(
+            "sess-123",
+            ["src/main.py"],
+            checkout_root=str(tmp_path),
+        )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
 
     def test_structured_multi_file_edit_is_recorded_atomically(
@@ -449,11 +490,12 @@ class TestToolHandlerEdgeCases:
         record_files.assert_called_once_with(
             "sess-123",
             ["src/first.py", "docs/plan.md"],
+            checkout_root=str(tmp_path),
         )
         assert response.decision == "allow"
         assert notify_code_index.call_count == 2
 
-    def test_structured_edit_without_paths_records_empty_sentinel_and_warns(
+    def test_structured_edit_without_paths_skips_tracking_and_warns(
         self,
         mock_dependencies: dict,
         caplog: pytest.LogCaptureFixture,
@@ -481,7 +523,8 @@ class TestToolHandlerEdgeCases:
         ):
             handlers.handle_after_tool(event)
 
-        record_files.assert_called_once_with("sess-123", [])
+        record_files.assert_not_called()
+        mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
         assert "no attributable file paths" in caplog.text
 
     def test_failed_structured_edit_does_not_change_attribution(
