@@ -133,7 +133,7 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) ->
     "--input",
     "input_path",
     type=click.Path(),
-    help="Input file path (default: .gobby/memories.jsonl)",
+    help="Input file path (default: ~/.gobby/backups/<project-uuid>/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 @click.pass_context
@@ -141,7 +141,7 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
     """Restore memories from a JSONL backup file.
 
     Imports memories from a JSONL file into the database. This runs synchronously
-    and is the explicit CLI path for reading .gobby/memories.jsonl.
+    and is the explicit CLI path for reading the machine-local project backup.
 
     Examples:
 

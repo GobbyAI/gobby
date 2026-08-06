@@ -165,7 +165,7 @@ in `src/gobby/install/shared/`.
 | `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN, stored directly in the owner-only (`0600`) bootstrap file (`database_url_ref` is unsupported) |
 | `~/.gobby/logs/` | Log files |
 | `.gobby/project.json` | Project metadata |
-| `.gobby/tasks.jsonl` | Local task backup written by `gobby tasks backup`; not checked in (removed from git in #19412, and `.gitignore` allows only `project.json`, `project.jsonl`, and `plans/` under `.gobby/`) |
+| `~/.gobby/backups/<project-uuid>/tasks.jsonl` | Machine-local task backup written by `gobby tasks backup`; never staged or committed |
 
 ### Templates vs Active Enforcement
 

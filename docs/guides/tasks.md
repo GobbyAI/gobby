@@ -410,7 +410,7 @@ use the artifact cleanup tools before retargeting when cleanup is intentional.
 The canonical task data lives in Gobby's PostgreSQL hub. Gobby writes a
 deterministic JSONL backup for recovery and migration:
 
-- Project task backup: `.gobby/tasks.jsonl`
+- Default project task backup: `~/.gobby/backups/<project-uuid>/tasks.jsonl`
 - Manual backup: `gobby tasks backup`
 - Explicit non-destructive restore: `gobby tasks restore`
 - Pre-push backup: installed by `gobby install`

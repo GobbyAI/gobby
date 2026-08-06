@@ -32,7 +32,10 @@ def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "properties": {
                 "output_path": {
                     "type": "string",
-                    "description": "Optional output path; defaults to .gobby/tasks.jsonl",
+                    "description": (
+                        "Optional output path; defaults to "
+                        "~/.gobby/backups/<project-uuid>/tasks.jsonl"
+                    ),
                 }
             },
         },
@@ -57,7 +60,10 @@ def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "properties": {
                 "input_path": {
                     "type": "string",
-                    "description": "Optional input path; defaults to .gobby/tasks.jsonl",
+                    "description": (
+                        "Optional input path; defaults to "
+                        "~/.gobby/backups/<project-uuid>/tasks.jsonl"
+                    ),
                 }
             },
         },

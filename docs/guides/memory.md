@@ -148,9 +148,10 @@ gobby memory backup [--output PATH] [--quiet]
 gobby memory restore [--input PATH] [--quiet]
 ```
 
-The default JSONL path is `.gobby/memories.jsonl`. Backup is a filesystem
-export for disaster recovery or migration. The PostgreSQL hub remains the
-source of truth.
+The default JSONL path is
+`~/.gobby/backups/<project-uuid>/memories.jsonl`. Backup is a machine-local
+filesystem export for disaster recovery or migration. The PostgreSQL hub
+remains the source of truth.
 
 ### Maintenance
 
@@ -187,8 +188,8 @@ for the authoritative signature before calling a tool.
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
 | `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
-| `restore_memories` | Restore `.gobby/memories.jsonl` into the hub database without deleting absent or newer rows. |
-| `backup_memories` | Back up current live project memories to `.gobby/memories.jsonl`. |
+| `restore_memories` | Restore the project memory backup into the hub database without deleting absent or newer rows. |
+| `backup_memories` | Back up current live project memories to the machine-local project backup path. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
@@ -266,7 +267,7 @@ flowchart LR
     Manager --> BM25[pg_search BM25]
     Manager --> Qdrant[Qdrant vectors]
     Manager --> FalkorDB[FalkorDB knowledge graph]
-    Manager --> JSONL[.gobby/memories.jsonl backup]
+    Manager --> JSONL[~/.gobby/backups/project-uuid/memories.jsonl]
 ```
 
 `MemoryManager` coordinates storage, keyword search, vector search,
@@ -354,15 +355,16 @@ databases:
 
 memory_backup:
   enabled: true
-  backup_path: .gobby/memories.jsonl
 ```
 
 Knowledge-graph extraction is enabled by FalkorDB being configured
 (`databases.falkordb.password`); `memory.kg` only selects the LLM profile and
 candidates for extraction — there is no `kg.enabled` flag.
 
-`memory_backup` configures the backup manager. Treat `.gobby/memories.jsonl` as a backup and migration
-artifact, not a live bidirectional source of truth.
+`memory_backup` configures the backup manager. With `backup_path` omitted, the
+manager uses `~/.gobby/backups/<project-uuid>/memories.jsonl`; setting
+`backup_path` selects an explicit override. Treat the file as a backup and
+migration artifact, not a live bidirectional source of truth.
 
 ## Lifecycle Rules
 
@@ -418,10 +420,10 @@ clear that tracking after compaction or selected resumes.
 
 ## Backup Format
 
-`.gobby/memories.jsonl` stores one JSON object per line. Backup writes exactly
-the current live scoped rows in deterministic order. Restore validates the
-complete file before writing, upserts by memory ID and updated timestamp, and
-preserves database-only and newer database rows.
+`~/.gobby/backups/<project-uuid>/memories.jsonl` stores one JSON object per line.
+Backup writes exactly the current live scoped rows in deterministic order.
+Restore validates the complete file before writing, upserts by memory ID and
+updated timestamp, and preserves database-only and newer database rows.
 
 ```jsonl
 {"id":"8de06cb8-99b8-4fc4-a16c-5af217132b81","type":"fact","content":"Use uv for local development","tags":["tooling"],"source":"agent","created_at":"2026-07-20T12:00:00Z","updated_at":"2026-07-20T12:00:00Z"}
@@ -477,7 +479,7 @@ gobby memory backup
 ```
 
 If the file exists but restored memories do not appear, check project scope and
-run `gobby memory restore --input .gobby/memories.jsonl`.
+run `gobby memory restore` to read the current project's default backup.
 
 ### Graph views are empty
 
@@ -494,7 +496,7 @@ gobby memory rebuild-graph --wait
 | --- | --- |
 | `~/.gobby/bootstrap.yaml` `database_url` | Runtime PostgreSQL hub DSN. |
 | `~/.gobby/bootstrap.yaml` | Bootstrap settings, including Postgres install metadata. |
-| `.gobby/memories.jsonl` | JSONL memory backup/export file. |
+| `~/.gobby/backups/<project-uuid>/memories.jsonl` | Machine-local JSONL memory backup/export file. |
 | `src/gobby/memory/` | Memory manager, search, graph, indexing, and maintenance code. |
 | `src/gobby/mcp_proxy/tools/memory.py` | `gobby-memory` MCP tool definitions. |
 | `src/gobby/cli/memory/` | CLI command package (crud, dream, export, graph, indices, maintenance). |

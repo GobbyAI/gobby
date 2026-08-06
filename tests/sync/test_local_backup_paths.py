@@ -9,7 +9,7 @@ from gobby.cli.memory.export import _default_backup_path
 from gobby.cli.tasks._utils.config import get_backup_manager
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.sync.memories import MemoryBackupManager
-from gobby.sync.tasks import TaskBackupManager
+from gobby.sync.tasks import TaskBackupError, TaskBackupManager
 
 pytestmark = pytest.mark.unit
 
@@ -24,6 +24,15 @@ def test_task_backup_defaults_to_project_scoped_gobby_home(tmp_path: Path) -> No
         path = backup_manager._get_backup_path("project-123")
 
     assert path == tmp_path / "backups" / "project-123" / "tasks.jsonl"
+
+
+def test_task_backup_default_requires_project_id() -> None:
+    task_manager = MagicMock()
+    task_manager.db = MagicMock()
+    backup_manager = TaskBackupManager(task_manager)
+
+    with pytest.raises(TaskBackupError, match="project_id is required"):
+        backup_manager._get_backup_path(None)
 
 
 def test_memory_backup_defaults_to_project_scoped_gobby_home(tmp_path: Path) -> None:
