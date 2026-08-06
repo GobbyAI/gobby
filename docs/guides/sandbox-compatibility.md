@@ -12,14 +12,20 @@ Operator configuration is documented in [sandboxing.md](./sandboxing.md).
   directory, outside the workspace.
 - The workspace and linked-worktree Git metadata are writable. The user's home
   and Gobby home are read-denied before narrow exceptions are applied.
-- Provider model APIs and Gobby loopback hosts are allowed explicitly. Git
-  network and package registry access are separate capabilities.
+- Provider model APIs and Gobby loopback hosts are allowed explicitly. Spawned
+  agents receive scoped package-registry egress so cold per-run caches can
+  resolve dependencies, including Cargo's crates.io endpoints. Git network
+  access remains an independent capability.
 - Provider credentials are masked and scoped to provider/API-base hosts.
 - Every supported terminal provider command is wrapped once after command
   construction and before tmux creation.
 - Daemon-stop resume creates a fresh policy and fails closed before spawning.
 - Agent-run serialization exposes backend, SRT version, effective policy hash,
   and trusted violation data.
+
+Run caches are isolated per sandbox run. A fresh Cargo cache is populated through
+scoped registry egress; `cargo test --offline` succeeds after its dependencies are
+present in that run cache.
 
 ## Runtime Matrix
 
