@@ -82,15 +82,16 @@ afterEach(() => {
 });
 
 describe("WikiTab shell", () => {
-  it("renders the four-mode segmented control and defaults to wiki mode", async () => {
+  it("renders the three-mode segmented control and defaults to wiki mode", async () => {
     stubWikiFetch();
     renderShell(<WikiTab projectId="p1" />);
 
     const group = await screen.findByRole("radiogroup", { name: /wiki mode/i });
     expect(group).toBeInTheDocument();
-    for (const label of ["Wiki", "Code", "Ask", "Research"]) {
+    for (const label of ["Wiki", "Code", "Ask"]) {
       expect(screen.getByRole("radio", { name: label })).toBeInTheDocument();
     }
+    expect(screen.queryByRole("radio", { name: "Research" })).not.toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
       "true",

@@ -4,7 +4,6 @@ import {
   fetchAsk,
   fetchGraph,
   fetchPages,
-  launchResearch,
   normalizeAskAnswer,
   normalizeBacklinks,
   normalizeGraph,
@@ -435,25 +434,5 @@ describe("savePage", () => {
   it("throws on non-conflict write failures", async () => {
     mockFetch({ detail: "boom" }, 502);
     await expect(savePage({}, { path: "a.md", content: "x" })).rejects.toThrow("boom");
-  });
-});
-
-describe("launchResearch", () => {
-  it("starts the wiki-research pipeline detached", async () => {
-    const mock = mockFetch({
-      status: "started",
-      execution_id: "exec-1",
-      pipeline_name: "wiki-research",
-    });
-    const launch = await launchResearch({ projectId: "p1" }, { query: "local-first sync" });
-    const [url, init] = mock.mock.calls[0] as [string, RequestInit];
-    expect(String(url)).toBe("/api/pipelines/run");
-    expect(JSON.parse(String(init.body))).toEqual({
-      name: "wiki-research",
-      inputs: { query: "local-first sync" },
-      project_id: "p1",
-      background: true,
-    });
-    expect(launch).toEqual({ executionId: "exec-1", status: "started" });
   });
 });

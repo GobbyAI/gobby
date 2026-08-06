@@ -20,7 +20,6 @@ import { useWiki } from "../../hooks/useWiki";
 import { useDirtyGuard } from "./dirtyGuard";
 import { WikiAskMode } from "./wiki/WikiAskMode";
 import { WikiBrowse } from "./wiki/WikiBrowse";
-import { WikiResearchMode } from "./wiki/WikiResearchMode";
 import { WikiGraphView } from "./wiki/WikiGraphView";
 import { WikiSourcesManager } from "./wiki/WikiSourcesManager";
 import { useWikiTabActions, type WikiTabActions } from "./wiki/WikiTabActions";
@@ -83,23 +82,11 @@ function ModeBody({
   onOpenGraph,
   onSearchVault,
 }: ModeBodyProps) {
-  // Loading counts as offline for composers: asks/launches stay disabled
-  // until the gateway's state is actually known.
+  // Loading counts as offline for the ask composer until the gateway's state is known.
   const offline = summary.state === "unavailable" || summary.state === "loading";
   if (mode === "ask") {
     return (
       <WikiAskMode scope={scope} nav={nav} offline={offline} onSearchVault={onSearchVault} />
-    );
-  }
-  if (mode === "research") {
-    return (
-      <WikiResearchMode
-        scope={scope}
-        nav={nav}
-        offline={offline}
-        actions={actions}
-        onOpenGraph={onOpenGraph}
-      />
     );
   }
   return (

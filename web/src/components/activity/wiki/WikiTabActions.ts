@@ -9,11 +9,9 @@ import { useCallback, useMemo, useState } from "react";
 
 import {
   deletePage,
-  launchResearch,
   requestCodewikiRefresh,
   savePage,
   type WikiFetchScope,
-  type WikiResearchLaunch,
   type WikiSaveRequest,
   type WikiSaveResult,
 } from "./WikiTabData";
@@ -56,7 +54,6 @@ export interface WikiTabActions {
   runAudit: () => Promise<void>;
   attachFile: (file: File) => Promise<void>;
   ingestUrl: (url: string) => Promise<void>;
-  launchResearchRun: (inputs: Record<string, unknown>) => Promise<WikiResearchLaunch | null>;
 }
 
 const IDLE_STATUS: WikiActionStatus = { busy: null, message: null, error: null };
@@ -192,12 +189,6 @@ export function useWikiTabActions({
     [run, wiki],
   );
 
-  const launchResearchRun = useCallback(
-    async (inputs: Record<string, unknown>): Promise<WikiResearchLaunch | null> =>
-      run("research", () => launchResearch(scope, inputs), "Research run launched"),
-    [run, scope],
-  );
-
   return useMemo(
     () => ({
       status,
@@ -210,14 +201,12 @@ export function useWikiTabActions({
       runAudit,
       attachFile,
       ingestUrl,
-      launchResearchRun,
     }),
     [
       attachFile,
       clearStatus,
       deletePageAndNavigateBack,
       ingestUrl,
-      launchResearchRun,
       refreshCodewiki,
       refreshIndex,
       runAudit,
