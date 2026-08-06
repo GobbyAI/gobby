@@ -24,6 +24,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
+from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.transcript_evidence import TranscriptEvidence, TranscriptValidationRun
 from gobby.workflows.state_manager import SessionVariableManager
@@ -92,7 +93,8 @@ def _ready_evaluation(
         children_state=children_state,
         attribution=attribution,
     )
-    evaluation.pass_gate(10, "criteria_review", "Passed.")
+    evaluation.scope_snapshot = ((), (), ())
+    evaluation.pass_gate(11, "criteria_review", "Passed.")
     return evaluation
 
 
@@ -240,15 +242,68 @@ async def test_ready_leaf_runs_criteria_review_exactly_once() -> None:
         )
 
     assert evaluation.ready is True
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 11))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
     review.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_scope_mismatch_stops_before_dirty_and_validation_gates() -> None:
+    task = _task()
+    ctx = _ctx(task, validator=object())
+    scope = TaskScopeEvaluation(
+        declared_paths=("tests/",),
+        actual_paths=("src/gobby/service.py",),
+        out_of_scope_paths=("src/gobby/service.py",),
+        justification_error="A scope_justification is required for out-of-scope paths.",
+    )
+    transcript = AsyncMock()
+    review = AsyncMock()
+
+    with (
+        patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
+        patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
+        patch.object(lifecycle, "_claimed_session_window_start", return_value=None),
+        patch.object(lifecycle, "_committable_task_paths", return_value={"src/gobby/service.py"}),
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch.object(
+            lifecycle,
+            "validate_commit_requirements",
+            return_value=ValidationResult(can_close=True),
+        ),
+        patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
+        patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
+        patch.object(lifecycle, "evaluate_criteria_review", review),
+        patch(
+            "gobby.workflows.task_claim_state.target_task_has_edits",
+            return_value=True,
+        ),
+        patch(
+            "gobby.workflows.task_claim_state.task_edited_file_set",
+            return_value={"src/gobby/service.py"},
+        ),
+    ):
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task.id,
+            reason="completed",
+            changes_summary="Implemented and tested.",
+            commit_sha="abc123",
+            project_path=None,
+            response_detail="diagnostic",
+        )
+
+    assert evaluation.error == "task_scope_mismatch"
+    assert evaluation.gates[-1].item == 8
+    assert evaluation.extra["out_of_scope_paths"] == ["src/gobby/service.py"]
+    transcript.assert_not_awaited()
+    review.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
     ctx = _ctx(_task())
     evaluation = CloseEvaluation("task", response_detail="diagnostic").fail(
-        8,
+        9,
         "uncommitted_task_edits",
         "uncommitted_task_edits",
         "Commit the task-attributed edits.",
@@ -274,7 +329,7 @@ async def test_blocked_preview_returns_diagnostics_without_commit() -> None:
 
     assert result["success"] is False
     assert result["closed"] is False
-    assert result["checklist"][0]["item"] == 8
+    assert result["checklist"][0]["item"] == 9
     evaluate.assert_awaited_once()
     commit.assert_not_awaited()
 
@@ -322,7 +377,7 @@ async def test_commit_set_change_returns_stale_without_close() -> None:
     evaluation.task_id = task.id
     evaluation.repo_path = "/repo"
     evaluation.commit_shas = ["before"]
-    evaluation.pass_gate(10, "criteria_review", "Passed.")
+    evaluation.pass_gate(11, "criteria_review", "Passed.")
 
     with patch.object(
         lifecycle,
@@ -527,6 +582,50 @@ async def test_benign_bookkeeping_change_does_not_stale_close() -> None:
     resolve_commits.assert_called_once()
     link_commits.assert_called_once()
     notify_parent.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scope_justification_is_rechecked_and_persisted_on_close() -> None:
+    task = _task()
+    ctx = _ctx(task)
+    evaluation = _ready_evaluation(task)
+    justification = "The shared implementation path is required by the scoped tests."
+    scope = TaskScopeEvaluation(
+        declared_paths=("tests/",),
+        actual_paths=("src/gobby/service.py",),
+        out_of_scope_paths=("src/gobby/service.py",),
+        scope_justification=justification,
+    )
+    evaluation.scope_snapshot = scope.snapshot()
+    evaluation.scope_justification = justification
+
+    with (
+        patch.object(lifecycle, "resolve_close_commit_shas", return_value=([], None)),
+        patch.object(lifecycle, "evaluate_task_scope", return_value=scope),
+        patch.object(lifecycle, "link_close_commit_shas", return_value=(task, None)),
+        patch.object(lifecycle, "notify_parent_on_task_state_change"),
+    ):
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason="completed",
+            skip_validation=False,
+            override_justification=None,
+            commit_sha=None,
+        )
+
+    assert result["closed"] is True
+    cast(MagicMock, ctx.task_manager.close_task).assert_called_once_with(
+        task.id,
+        reason="completed",
+        closed_in_session_id=task.claimed_by_session_id,
+        closed_commit_sha=None,
+        validation_override_reason=f"Task scope justification: {justification}",
+        expected_updated_at=task.updated_at,
+        reset_validation_fail_count=False,
+        validation_status="valid",
+        validation_feedback=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -787,7 +886,7 @@ async def test_dirty_attributed_edit_stops_before_transcript_and_llm() -> None:
         )
 
     assert evaluation.error == "uncommitted_task_edits"
-    assert evaluation.gates[-1].item == 8
+    assert evaluation.gates[-1].item == 9
     transcript.assert_not_awaited()
     review.assert_not_awaited()
 
@@ -815,7 +914,7 @@ async def test_epic_skips_leaf_gates_without_llm() -> None:
 
     assert evaluation.ready is True
     assert evaluation.commit_shas == ["abc123"]
-    assert [gate.item for gate in evaluation.gates] == list(range(1, 11))
+    assert [gate.item for gate in evaluation.gates] == list(range(1, 12))
     assert all(gate.status == "skipped" for gate in evaluation.gates[4:])
     review.assert_not_awaited()
 

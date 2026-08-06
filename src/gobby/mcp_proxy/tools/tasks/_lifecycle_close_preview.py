@@ -25,6 +25,8 @@ class CloseEvaluation:
     commit_shas: list[str] = field(default_factory=list)
     edited_paths: set[str] = field(default_factory=set)
     had_attributed_edits: bool = False
+    scope_snapshot: tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]] | None = None
+    scope_justification: str | None = None
     fingerprint: CloseEvaluationFingerprint | None = None
     skip_leaf_checks: bool = False
     is_epic: bool = False

@@ -14,6 +14,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
+from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
@@ -1539,8 +1540,74 @@ class TestMarkTaskNeedsReview:
             )
         assert "error" in result
         assert "Failed to submit" in result["error"]
-        auto_link.assert_not_called()
+        auto_link.assert_called_once()
         release.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mark_needs_review_blocks_scope_mismatch(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = _make_task(status="in_progress")
+        mock_task_manager.get_task.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager)
+        scope = TaskScopeEvaluation(
+            declared_paths=("tests/",),
+            actual_paths=("src/gobby/service.py",),
+            out_of_scope_paths=("src/gobby/service.py",),
+            justification_error="A scope_justification is required for out-of-scope paths.",
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.evaluate_task_scope",
+            return_value=scope,
+        ):
+            result = await registry.call(
+                "submit_for_review",
+                {"task_id": task.id, "stage_name": "planning"},
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "task_scope_mismatch"
+        assert result["out_of_scope_paths"] == ["src/gobby/service.py"]
+        mock_task_manager.submit_for_review.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mark_needs_review_records_scope_justification(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = _make_task(status="in_progress")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.submit_for_review.return_value = task
+        registry = _create_stage_ops_registry(mock_task_manager)
+        justification = "The shared implementation path is required by these scoped tests."
+        scope = TaskScopeEvaluation(
+            declared_paths=("tests/",),
+            actual_paths=("src/gobby/service.py",),
+            out_of_scope_paths=("src/gobby/service.py",),
+            scope_justification=justification,
+        )
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._stage_review.evaluate_task_scope",
+            return_value=scope,
+        ):
+            result = await registry.call(
+                "submit_for_review",
+                {
+                    "task_id": task.id,
+                    "stage_name": "planning",
+                    "review_notes": "Review implementation.",
+                    "scope_justification": justification,
+                },
+            )
+
+        assert "error" not in result
+        mock_task_manager.submit_for_review.assert_called_once_with(
+            task.id,
+            "planning",
+            review_notes=(f"Review implementation.\n\n[Task Scope Justification]\n{justification}"),
+            by_session_id=ANY,
+        )
 
     @pytest.mark.asyncio
     async def test_mark_needs_review_not_found(self, mock_task_manager: MagicMock) -> None:

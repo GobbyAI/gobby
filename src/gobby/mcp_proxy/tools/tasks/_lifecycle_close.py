@@ -45,6 +45,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import Task, TaskNotFoundError, TaskStaleStateError
 from gobby.tasks.close_checklist import evaluate_validation_commands
@@ -62,10 +63,10 @@ def _apply_escalated_close_gate(
     evaluation: CloseEvaluation,
     override_justification: str | None,
 ) -> None:
-    """Gate 10 for an escalated task: require justification, then skip review."""
+    """Gate 11 for an escalated task: require justification, then skip review."""
     if not (override_justification or "").strip():
         evaluation.fail(
-            10,
+            11,
             "criteria_review",
             "task_escalated",
             "Escalated tasks require override_justification for deliberate closure.",
@@ -78,7 +79,7 @@ def _apply_escalated_close_gate(
         return
     evaluation.validation_reset_reason = "escalated_deliberate_close"
     evaluation.pass_gate(
-        10,
+        11,
         "criteria_review",
         "Skipped for a justified deliberate close of an escalated task.",
         skipped=True,
@@ -147,6 +148,7 @@ async def _evaluate_close(
     project_path: str | None,
     response_detail: Literal["concise", "diagnostic"],
     override_justification: str | None = None,
+    scope_justification: str | None = None,
 ) -> CloseEvaluation:
     """Evaluate the checklist once without close or commit-link mutation."""
     evaluation = CloseEvaluation(task_id, response_detail=response_detail)
@@ -238,8 +240,9 @@ async def _evaluate_close(
             (5, "criteria_present"),
             (6, "changes_summary_present"),
             (7, "linked_commits"),
-            (8, "uncommitted_task_edits"),
-            (9, "validation_commands"),
+            (8, "task_scope"),
+            (9, "uncommitted_task_edits"),
+            (10, "validation_commands"),
         ):
             evaluation.pass_gate(
                 item,
@@ -251,7 +254,7 @@ async def _evaluate_close(
             _apply_escalated_close_gate(evaluation, override_justification)
             return evaluation
         evaluation.pass_gate(
-            10,
+            11,
             "criteria_review",
             "Skipped for an epic or structural parent.",
             skipped=True,
@@ -293,7 +296,7 @@ async def _evaluate_close(
     evaluation.edit_session_id = attribution.owner_session_id
     if attribution.attributed and not attribution.raw_paths:
         return evaluation.fail(
-            8,
+            9,
             "uncommitted_task_edits",
             "task_edit_paths_unavailable",
             "The task records edits but no attributed file paths. Restore task edit state and retry.",
@@ -346,28 +349,73 @@ async def _evaluate_close(
         skipped=not evaluation.had_attributed_edits,
     )
 
+    try:
+        scope = await asyncio.to_thread(
+            evaluate_task_scope,
+            db=ctx.task_manager.db,
+            task=task,
+            commit_shas=commit_shas,
+            attributed_paths=evaluation.edited_paths,
+            repo_path=repo_path,
+            scope_justification=scope_justification,
+        )
+    except RuntimeError as exc:
+        return evaluation.fail(
+            8,
+            "task_scope",
+            "task_scope_unavailable",
+            f"Task scope cannot be evaluated: {exc}",
+        )
+    evaluation.scope_snapshot = scope.snapshot()
+    evaluation.scope_justification = scope.scope_justification
+    if not scope.accepted:
+        return evaluation.fail(
+            8,
+            "task_scope",
+            "task_scope_mismatch",
+            scope.justification_error or "Task changes exceed the declared scope.",
+            action=(
+                "Pass a specific scope_justification between 20 and 1000 characters "
+                "that explains why the listed paths belong in this task."
+            ),
+            details=scope.details(),
+            extra=scope.details(),
+        )
+    evaluation.pass_gate(
+        8,
+        "task_scope",
+        "Out-of-scope paths have a recorded justification."
+        if scope.has_mismatch
+        else "Delivered paths stay within the declared task scope.",
+        details=scope.details(),
+        skipped=not scope.declared_paths,
+    )
+
     has_dirty_edits = bool(evaluation.edited_paths) and await asyncio.to_thread(
         _has_committable_edits, evaluation.edited_paths, repo_path
     )
     if has_dirty_edits:
         return evaluation.fail(
-            8,
+            9,
             "uncommitted_task_edits",
             "uncommitted_task_edits",
             "Task-attributed files still have uncommitted changes. Commit them and retry.",
         )
-    evaluation.pass_gate(8, "uncommitted_task_edits", "No task-attributed files are dirty.")
+    evaluation.pass_gate(9, "uncommitted_task_edits", "No task-attributed files are dirty.")
 
-    command_gate = evaluate_validation_commands(
-        task_category=task.category,
-        evidence=TranscriptEvidence(),
-        has_attributed_edits=evaluation.had_attributed_edits,
+    command_gate = replace(
+        evaluate_validation_commands(
+            task_category=task.category,
+            evidence=TranscriptEvidence(),
+            has_attributed_edits=evaluation.had_attributed_edits,
+        ),
+        item=10,
     )
     if command_gate.status != "skipped":
         backoff = active_validation_backoff(task, ctx)
         if backoff is not None:
             return evaluation.fail(
-                9,
+                10,
                 "validation_commands",
                 backoff.error_type or "validation_infrastructure_unavailable",
                 backoff.message or "Validation infrastructure is unavailable.",
@@ -395,17 +443,20 @@ async def _evaluate_close(
                 error_type="validation_evidence_unavailable",
             )
             return evaluation.fail(
-                9,
+                10,
                 "validation_commands",
                 infra.error_type or "validation_evidence_unavailable",
                 infra.message or str(exc),
                 extra=infra.extra,
             )
         evaluation.transcript_evidence = transcript.summary()
-        command_gate = evaluate_validation_commands(
-            task_category=task.category,
-            evidence=transcript,
-            has_attributed_edits=evaluation.had_attributed_edits,
+        command_gate = replace(
+            evaluate_validation_commands(
+                task_category=task.category,
+                evidence=transcript,
+                has_attributed_edits=evaluation.had_attributed_edits,
+            ),
+            item=10,
         )
     evaluation.gates.append(command_gate)
     if not command_gate.passed:
@@ -426,7 +477,7 @@ async def _evaluate_close(
             message="The bounded task-close criteria reviewer is not configured.",
         )
         return evaluation.fail(
-            10,
+            11,
             "criteria_review",
             "validation_provider_unavailable",
             infra.message or "The bounded task-close criteria reviewer is not configured.",
@@ -447,7 +498,7 @@ async def _evaluate_close(
             error_type="validation_diff_unavailable",
         )
         return evaluation.fail(
-            10,
+            11,
             "criteria_review",
             infra.error_type or "validation_diff_unavailable",
             infra.message or str(exc),
@@ -479,13 +530,13 @@ async def _evaluate_close(
             else llm_result.message or "Criteria review did not pass."
         )
         return evaluation.fail(
-            10,
+            11,
             "criteria_review",
             llm_result.error_type or "validation_failed",
             message,
             extra=llm_result.extra,
         )
-    evaluation.pass_gate(10, "criteria_review", "Bounded criteria review passed.")
+    evaluation.pass_gate(11, "criteria_review", "Bounded criteria review passed.")
     evaluation.extra.update(llm_result.extra)
     return evaluation
 
@@ -555,6 +606,29 @@ async def _commit_close(
             evaluation,
             "The prospective commit set changed after evaluation; retry close_task.",
         )
+    if not fresh_skip_leaf_checks:
+        try:
+            fresh_scope = await asyncio.to_thread(
+                evaluate_task_scope,
+                db=ctx.task_manager.db,
+                task=fresh,
+                commit_shas=commit_shas,
+                attributed_paths=(
+                    fresh_attribution.edited_paths if fresh_attribution is not None else ()
+                ),
+                repo_path=evaluation.repo_path,
+                scope_justification=evaluation.scope_justification,
+            )
+        except RuntimeError:
+            return _stale_close_response(
+                evaluation,
+                "Task scope inputs changed after evaluation; retry close_task.",
+            )
+        if fresh_scope.snapshot() != evaluation.scope_snapshot:
+            return _stale_close_response(
+                evaluation,
+                "Task scope inputs changed after evaluation; retry close_task.",
+            )
     fresh_edited_paths = (
         set(fresh_attribution.edited_paths) if fresh_attribution is not None else set()
     )
@@ -586,6 +660,16 @@ async def _commit_close(
         skip_validation and evaluation.skip_leaf_checks,
         override_justification,
     )
+    audit_reason = (
+        override_justification.strip() if store_override and override_justification else None
+    )
+    if evaluation.scope_justification:
+        scope_reason = f"Task scope justification: {evaluation.scope_justification}"
+        audit_reason = (
+            f"Validation override: {audit_reason}\n\n{scope_reason}"
+            if audit_reason
+            else scope_reason
+        )
     current_commit_sha = commit_shas[-1] if commit_shas else None
     try:
         ctx.task_manager.close_task(
@@ -593,7 +677,7 @@ async def _commit_close(
             reason=reason,
             closed_in_session_id=evaluation.resolved_session_id,
             closed_commit_sha=current_commit_sha,
-            validation_override_reason=override_justification if store_override else None,
+            validation_override_reason=audit_reason,
             expected_updated_at=linked.updated_at,
             reset_validation_fail_count=evaluation.validation_reset_reason is not None,
             validation_status=evaluation.validation_status or "valid",
@@ -635,6 +719,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         changes_summary: str | None = None,
         skip_validation: bool = False,
         override_justification: str | None = None,
+        scope_justification: str | None = None,
         commit_sha: str | None = None,
         project_path: str | None = None,
         preview: bool = False,
@@ -649,6 +734,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             project_path=project_path,
             response_detail=response_detail,
             override_justification=override_justification,
+            scope_justification=scope_justification,
         )
         if not evaluation.ready:
             return evaluation.response(preview=preview)
@@ -688,6 +774,15 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     "description": (
                         "Required to deliberately close an escalated task; persisted as "
                         "validation_override_reason and ignored for ordinary leaf closure."
+                    ),
+                },
+                "scope_justification": {
+                    "type": "string",
+                    "minLength": 20,
+                    "maxLength": 1000,
+                    "description": (
+                        "Required when linked or attributed paths exceed declared Targets or "
+                        "manual/expansion affected-file annotations; persisted with close audit."
                     ),
                 },
                 "commit_sha": {"type": "string"},
