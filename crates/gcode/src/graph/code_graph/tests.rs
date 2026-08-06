@@ -31,37 +31,43 @@ fn lifecycle_post_includes_bearer() {
     std::fs::write(home.path().join("local_cli_token"), "gcode-test-token\n")
         .expect("write local CLI token");
 
-    temp_env::with_var("GOBBY_HOME", Some(home.path()), || {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP listener");
-        let address = listener.local_addr().expect("read listener address");
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept lifecycle request");
-            let mut buffer = [0_u8; 4096];
-            let size = stream.read(&mut buffer).expect("read lifecycle request");
-            let request = String::from_utf8_lossy(&buffer[..size]).into_owned();
-            let body = r#"{"summary":"cleared"}"#;
-            write!(
+    let home_path = home.path().to_str().expect("temporary home path is UTF-8");
+    temp_env::with_vars(
+        [
+            ("GOBBY_HOME", Some(home_path)),
+            (gobby_core::local_token::AGENT_API_TOKEN_ENV, None::<&str>),
+        ],
+        || {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind test HTTP listener");
+            let address = listener.local_addr().expect("read listener address");
+            let handle = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().expect("accept lifecycle request");
+                let mut buffer = [0_u8; 4096];
+                let size = stream.read(&mut buffer).expect("read lifecycle request");
+                let request = String::from_utf8_lossy(&buffer[..size]).into_owned();
+                let body = r#"{"summary":"cleared"}"#;
+                write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
                 body.len()
             )
             .expect("write lifecycle response");
-            request
-        });
+                request
+            });
 
-        let request = GraphLifecycleRequest {
-            project_id: "project-auth-test".to_string(),
-            daemon_url: Some(format!("http://{address}")),
-            timeouts: GraphLifecycleTimeouts::default(),
-        };
-        run_lifecycle_action(&request, GraphLifecycleAction::Clear).expect("run lifecycle action");
-        let raw_request = handle.join().expect("join lifecycle listener");
-        assert!(
-            raw_request.lines().any(|line| {
+            let request = GraphLifecycleRequest {
+                project_id: "project-auth-test".to_string(),
+                daemon_url: Some(format!("http://{address}")),
+                timeouts: GraphLifecycleTimeouts::default(),
+            };
+            run_lifecycle_action(&request, GraphLifecycleAction::Clear)
+                .expect("run lifecycle action");
+            let raw_request = handle.join().expect("join lifecycle listener");
+            assert!(raw_request.lines().any(|line| {
                 line.eq_ignore_ascii_case("Authorization: Bearer gcode-test-token")
-            })
-        );
-    });
+            }));
+        },
+    );
 }
 
 #[test]

@@ -5,7 +5,7 @@ use super::*;
 use crate::models::IndexedProject;
 
 #[test]
-fn global_authority_does_not_classify_machine_local_roots_as_stale() {
+fn global_prune_discovery_keeps_machine_local_roots_authoritative() {
     let projects = vec![IndexedProject {
         id: "shared-project".to_string(),
         root_path: "/missing/on-this-machine".to_string(),
@@ -16,9 +16,14 @@ fn global_authority_does_not_classify_machine_local_roots_as_stale() {
         total_eligible_files: Some(1),
     }];
 
-    let authority = global_project_authority(&projects);
+    let discovery = discover_global_project_prune(&projects);
 
-    assert_eq!(authority, HashSet::from(["shared-project".to_string()]));
+    assert_eq!(
+        discovery.authority,
+        HashSet::from(["shared-project".to_string()])
+    );
+    assert!(discovery.stale_project_ids.is_empty());
+    assert!(discovery.stale_projects.is_empty());
 }
 
 #[test]

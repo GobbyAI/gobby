@@ -72,6 +72,8 @@
     {"path": "crates/gcore/src/ai/generation/tool_loop.rs", "calls": {"execute": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcore/src/falkor.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
     {"path": "crates/gcore/src/postgres.rs", "calls": {"execute": 1, "query_opt": 1}, "classification": "operator-only"},
+    {"path": "crates/gcore/src/schema/sweep.rs", "calls": {"batch_execute": 1, "query": 1, "query_one": 2, "query_opt": 1}, "classification": "operator-only"},
+    {"path": "crates/gcore/src/schema/verify.rs", "calls": {"query": 3}, "classification": "operator-only"},
     {"path": "crates/gcore/src/secrets.rs", "calls": {"query_one": 2}, "classification": "operator-only"}
   ]
 }
