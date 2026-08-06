@@ -58,7 +58,7 @@ export interface ProviderModelEntry {
   execution_provider?: string;
   available: boolean;
   models: ProviderModelOption[];
-  source: "static" | "live" | "cache" | "config" | "failed" | "unsupported";
+  source?: "static" | "live" | "cache" | "config" | "failed" | "unsupported";
   display_name?: string;
   /** Local endpoint protocol ("lmstudio", "ollama") used for icon resolution. */
   provider_type?: string;
@@ -283,9 +283,10 @@ function isProviderModelEntry(value: unknown): value is ProviderModelEntryPayloa
     typeof value.available === "boolean" &&
     Array.isArray(value.models) &&
     value.models.every(isProviderModelOption) &&
-    ["static", "live", "cache", "config", "failed", "unsupported"].includes(
-      value.source as string,
-    ) &&
+    (value.source === undefined ||
+      ["static", "live", "cache", "config", "failed", "unsupported"].includes(
+        value.source as string,
+      )) &&
     (value.display_name === undefined || typeof value.display_name === "string") &&
     (value.provider_type === undefined || typeof value.provider_type === "string") &&
     (value.installed === undefined || typeof value.installed === "boolean") &&

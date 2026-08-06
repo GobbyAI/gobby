@@ -1,13 +1,16 @@
-import { expect, test, type TestInfo } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  getModelsForProvider,
   getProviderDisplayName,
-  type ProviderModelEntry,
-  type ProviderModelOption,
 } from "../src/lib/providerModels";
 
 const LIVE_E2E_FLAG = "GOBBY_LIVE_PROVIDER_E2E";
@@ -33,6 +36,33 @@ interface SessionListEntry {
   agent_run_id?: string | null;
   can_proxy_attach?: boolean | null;
   can_resume?: boolean | null;
+}
+
+interface ProviderMatrixModel {
+  canonical_model: string;
+  display_name: string;
+  hidden?: boolean;
+  is_default?: boolean;
+}
+
+interface ProviderModelEntry {
+  provider: string;
+  available: boolean;
+  models: unknown[];
+}
+
+interface SelectedProviderModel {
+  value: string;
+  label: string;
+}
+
+function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
+  if (typeof value !== "object" || value === null) return false;
+  const model = value as Record<string, unknown>;
+  return (
+    typeof model.canonical_model === "string" &&
+    typeof model.display_name === "string"
+  );
 }
 
 function sanitizeToken(value: string): string {
@@ -85,7 +115,7 @@ async function removeFile(filePath: string): Promise<void> {
 }
 
 async function loadLiveCatalog(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
 ): Promise<Record<string, ProviderModelEntry>> {
   const authResponse = await request.get(getApiUrl("/api/auth/status"));
   expect(authResponse.ok()).toBeTruthy();
@@ -105,29 +135,37 @@ async function loadLiveCatalog(
   return Object.fromEntries(providers.map((entry) => [entry.provider, entry]));
 }
 
-function pickModel(provider: ProviderModelEntry): ProviderModelOption {
-  const candidates = getModelsForProvider([provider], provider.provider);
+function pickModel(provider: ProviderModelEntry): SelectedProviderModel {
+  const candidates = provider.models
+    .filter(isProviderMatrixModel)
+    .filter((entry) => !entry.hidden);
 
-  const findValue = (value: string): ProviderModelOption | undefined =>
-    candidates.find((entry) => entry.value === value);
+  const findValue = (value: string): ProviderMatrixModel | undefined =>
+    candidates.find((entry) => entry.canonical_model === value);
 
+  let selected: ProviderMatrixModel | undefined;
   switch (provider.provider) {
     case "claude":
-      return findValue("haiku") ?? candidates[0];
+      selected = findValue("haiku") ?? candidates[0];
+      break;
     case "codex":
-      return (
+      selected =
         findValue("gpt-5.4-mini") ??
         findValue("gpt-5.1-codex-mini") ??
         candidates.find((entry) => entry.is_default) ??
-        candidates[0]
-      );
+        candidates[0];
+      break;
     default:
-      return candidates[0];
+      selected = candidates[0];
   }
+  if (!selected) {
+    throw new Error(`Provider ${provider.provider} has no visible matrix models`);
+  }
+  return { value: selected.canonical_model, label: selected.display_name };
 }
 
 async function openFreshChat(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   conversationId: string,
 ): Promise<void> {
   await page.goto(getLiveChatUrl());
@@ -144,7 +182,7 @@ async function openFreshChat(
 }
 
 async function selectProviderAndModel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   provider: string,
   modelLabel: string,
 ): Promise<void> {
@@ -164,7 +202,7 @@ async function selectProviderAndModel(
 }
 
 async function selectMode(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   modeLabel: "Act" | "YOLO",
 ): Promise<void> {
   const radio = page.getByRole("radio", { name: modeLabel, exact: true });
@@ -173,7 +211,7 @@ async function selectMode(
 }
 
 async function waitForSessionSummary(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
   dbSessionId: string,
   provider: string,
   model: string,
@@ -201,7 +239,7 @@ async function waitForSessionSummary(
 }
 
 async function sendPrompt(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   prompt: string,
 ): Promise<string> {
   const input = page.getByRole("textbox", { name: /message input/i });
@@ -230,10 +268,10 @@ function buildCommandPrompt(filePath: string, token: string): string {
 }
 
 async function verifyActModeApproval(
-  page: Parameters<typeof test>[0]["page"],
-  request: Parameters<typeof test>[0]["request"],
+  page: Page,
+  request: APIRequestContext,
   provider: string,
-  model: ProviderModelEntry["models"][number],
+  model: SelectedProviderModel,
   runId: string,
 ): Promise<void> {
   const token = `act-${sanitizeToken(provider)}-${runId}`;
@@ -269,10 +307,10 @@ async function verifyActModeApproval(
 }
 
 async function verifyYoloModeSuppression(
-  page: Parameters<typeof test>[0]["page"],
-  request: Parameters<typeof test>[0]["request"],
+  page: Page,
+  request: APIRequestContext,
   provider: string,
-  model: ProviderModelEntry["models"][number],
+  model: SelectedProviderModel,
   runId: string,
 ): Promise<void> {
   const token = `yolo-${sanitizeToken(provider)}-${runId}`;
@@ -299,7 +337,7 @@ async function verifyYoloModeSuppression(
 }
 
 async function loadInteractiveTerminalSession(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
 ): Promise<SessionListEntry> {
   const response = await request.get(getApiUrl("/api/sessions?limit=50&offset=0"));
   expect(response.ok()).toBeTruthy();

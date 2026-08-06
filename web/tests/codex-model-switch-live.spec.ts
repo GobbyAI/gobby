@@ -1,15 +1,35 @@
-import { expect, test } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 
 const LIVE_E2E_FLAG = "GOBBY_LIVE_PROVIDER_E2E";
 const LIVE_E2E_URL = "GOBBY_LIVE_PROVIDER_E2E_URL";
 const DEFAULT_CHAT_ROUTE = "/#chat";
 const PROMPT_TIMEOUT_MS = 180_000;
 
+interface ProviderMatrixModel {
+  canonical_model: string;
+  display_name: string;
+  hidden?: boolean;
+}
+
 interface ProviderModelEntry {
   provider: string;
   available: boolean;
-  models: Array<{ value: string; label: string; hidden?: boolean }>;
-  source: string;
+  models: unknown[];
+}
+
+function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
+  if (typeof value !== "object" || value === null) return false;
+  const model = value as Record<string, unknown>;
+  return (
+    typeof model.canonical_model === "string" &&
+    typeof model.display_name === "string"
+  );
 }
 
 interface SessionSummary {
@@ -32,20 +52,16 @@ function getApiUrl(path: string): string {
   return new URL(path, origin).toString();
 }
 
-function pause(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function loadCodexModels(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
 ): Promise<Array<{ value: string; label: string }>> {
   const authResponse = await request.get(getApiUrl("/api/auth/status"));
   expect(authResponse.ok()).toBeTruthy();
   const authStatus = await authResponse.json();
-  test.skip(
+  expect(
     authStatus.auth_required && !authStatus.authenticated,
     "Live Codex verification requires an authenticated daemon session.",
-  );
+  ).toBe(false);
 
   const providersResponse = await request.get(getApiUrl("/api/providers/models"));
   expect(providersResponse.ok()).toBeTruthy();
@@ -58,17 +74,19 @@ async function loadCodexModels(
   expect(codex, "Codex must exist in /api/providers/models").toBeTruthy();
   expect(codex?.available, "Codex must be available").toBeTruthy();
 
-  const visibleModels = (codex?.models || []).filter((model) => !model.hidden);
+  const visibleModels = (codex?.models || [])
+    .filter(isProviderMatrixModel)
+    .filter((model) => !model.hidden);
   expect(visibleModels.length, "Codex must expose at least two visible models").toBeGreaterThan(1);
 
   return visibleModels.slice(0, 2).map((model) => ({
-    value: model.value,
-    label: model.label,
+    value: model.canonical_model,
+    label: model.display_name,
   }));
 }
 
 async function openFreshChat(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   conversationId: string,
 ): Promise<void> {
   await page.goto(getLiveChatUrl());
@@ -83,7 +101,7 @@ async function openFreshChat(
 }
 
 async function selectProviderModel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   modelLabel: string,
 ): Promise<void> {
   await page.getByLabel("Select provider and model").click();
@@ -94,74 +112,79 @@ async function selectProviderModel(
 }
 
 async function waitForSessionSummary(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
   dbSessionId: string,
   expectedModel: string,
 ): Promise<SessionSummary> {
-  const deadline = Date.now() + PROMPT_TIMEOUT_MS;
-
-  while (Date.now() < deadline) {
-    const response = await request.get(getApiUrl(`/api/sessions/${dbSessionId}`));
-    if (response.ok()) {
-      const body = await response.json();
-      const session = body?.session as SessionSummary | undefined;
-      if (
-        session?.id &&
-        session.ref &&
-        session.source === "codex" &&
-        session.model === expectedModel
-      ) {
-        return session;
+  let matchedSession: SessionSummary | undefined;
+  await expect
+    .poll(async () => {
+      const response = await request.get(getApiUrl(`/api/sessions/${dbSessionId}`));
+      if (response.ok()) {
+        const body = await response.json();
+        const session = body?.session as SessionSummary | undefined;
+        if (
+          session?.id &&
+          session.ref &&
+          session.source === "codex" &&
+          session.model === expectedModel
+        ) {
+          matchedSession = session;
+          return true;
+        }
       }
-    }
-    await pause(1000);
+      return false;
+    }, { timeout: PROMPT_TIMEOUT_MS })
+    .toBe(true);
+  if (!matchedSession) {
+    throw new Error(`Codex session metadata vanished for ${dbSessionId}`);
   }
-
-  throw new Error(`Timed out waiting for Codex session metadata for ${dbSessionId}`);
+  return matchedSession;
 }
 
 async function waitForAssistantToken(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
   dbSessionId: string,
   token: string,
 ): Promise<void> {
-  const deadline = Date.now() + PROMPT_TIMEOUT_MS;
+  await expect
+    .poll(
+      async () => {
+        const response = await request.get(
+          getApiUrl(`/api/sessions/${dbSessionId}/messages?limit=200&offset=0`),
+        );
+        if (!response.ok()) {
+          return false;
+        }
+        const body = await response.json();
+        const messages = Array.isArray(body?.messages) ? body.messages : [];
+        const assistantMessages = messages
+          .filter(
+            (message: { role?: string; content?: string | null }) =>
+              message.role === "assistant",
+          )
+          .map((message: { content?: string | null }) => (message.content || "").trim())
+          .filter(Boolean);
 
-  while (Date.now() < deadline) {
-    const response = await request.get(
-      getApiUrl(`/api/sessions/${dbSessionId}/messages?limit=200&offset=0`),
-    );
-    if (response.ok()) {
-      const body = await response.json();
-      const messages = Array.isArray(body?.messages) ? body.messages : [];
-      const assistantMessages = messages
-        .filter((message: { role?: string; content?: string | null }) => message.role === "assistant")
-        .map((message: { content?: string | null }) => (message.content || "").trim())
-        .filter(Boolean);
-
-      const failed = assistantMessages.find(
-        (content: string) =>
-          content.includes("Error:") ||
-          content.includes("Generation failed") ||
-          content.includes("missing field turnId"),
-      );
-      if (failed) {
-        throw new Error(`Codex returned an error instead of a response: ${failed}`);
-      }
-
-      if (assistantMessages.some((content: string) => content.includes(token))) {
-        return;
-      }
-    }
-    await pause(1000);
-  }
-
-  throw new Error(`Timed out waiting for assistant token ${token} in ${dbSessionId}`);
+        const failed = assistantMessages.find(
+          (content: string) =>
+            content.includes("Error:") ||
+            content.includes("Generation failed") ||
+            content.includes("missing field turnId"),
+        );
+        if (failed) {
+          throw new Error(`Codex returned an error instead of a response: ${failed}`);
+        }
+        return assistantMessages.some((content: string) => content.includes(token));
+      },
+      { timeout: PROMPT_TIMEOUT_MS },
+    )
+    .toBe(true);
 }
 
 async function sendPromptAndWait(
-  page: Parameters<typeof test>[0]["page"],
-  request: Parameters<typeof test>[0]["request"],
+  page: Page,
+  request: APIRequestContext,
   prompt: string,
   token: string,
   expectedModel: string,
@@ -198,6 +221,10 @@ async function sendPromptAndWait(
   };
 }
 
+function setLiveTestBudget(testInfo: TestInfo, timeoutMs: number): void {
+  testInfo.setTimeout(timeoutMs);
+}
+
 test.describe("Live Codex model switch verification", () => {
   test.skip(
     !process.env[LIVE_E2E_FLAG],
@@ -207,8 +234,8 @@ test.describe("Live Codex model switch verification", () => {
   test("can switch Codex models on the same web-chat session and continue responding", async ({
     page,
     request,
-  }) => {
-    test.setTimeout(8 * 60 * 1000);
+  }, testInfo) => {
+    setLiveTestBudget(testInfo, 8 * 60 * 1000);
 
     const [firstModel, secondModel] = await loadCodexModels(request);
     const runId = Date.now().toString(36);

@@ -464,7 +464,7 @@ describe("providerModels", () => {
     ).toBe(false);
   });
 
-  it("maps_matrix_response", async () => {
+  it("maps a source-less matrix response", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
@@ -473,8 +473,16 @@ describe("providerModels", () => {
           providers: [
             {
               provider: "codex",
+              execution_provider: "codex",
               available: true,
-              source: "live",
+              startup_error: null,
+              display_name: "Codex",
+              installed: true,
+              deprecated: false,
+              deprecation_message: null,
+              supports_web_chat: true,
+              supports_agent_spawn: true,
+              unavailable_reason: null,
               models: [
                 {
                   canonical_model: "gpt-5.4",
@@ -507,8 +515,16 @@ describe("providerModels", () => {
     await expect(fetchProviderModelCatalog()).resolves.toEqual([
       {
         provider: "codex",
+        execution_provider: "codex",
         available: true,
-        source: "live",
+        startup_error: null,
+        display_name: "Codex",
+        installed: true,
+        deprecated: false,
+        deprecation_message: null,
+        supports_web_chat: true,
+        supports_agent_spawn: true,
+        unavailable_reason: null,
         models: [
           {
             value: "gpt-5.4",
@@ -568,7 +584,6 @@ describe("providerModels", () => {
             {
               provider: "codex",
               available: true,
-              source: "live",
               models: [
                 {
                   canonical_model: "gpt-5.4",
