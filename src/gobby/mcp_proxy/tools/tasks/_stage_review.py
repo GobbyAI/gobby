@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_status import _lifecycle_value_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._plan_review_approval import complete_plan_review_mint
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.mcp_proxy.tools.tasks._task_scope import evaluate_task_scope
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_findings import FINDING_SEVERITIES
@@ -29,6 +30,7 @@ from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.session_context import get_current_session_id
+from gobby.workflows.task_claim_state import task_edited_file_set
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +217,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task_id: str,
         stage_name: str,
         review_notes: str | None = None,
+        scope_justification: str | None = None,
     ) -> dict[str, Any]:
         """Submit a stage for review."""
         session_or_error = _resolve_session(ctx)
@@ -232,6 +235,50 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not task:
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
+        _auto_link_session_commits(
+            ctx,
+            task_id=resolved_id,
+            project_id=task.project_id,
+            session_id=resolved_session_id,
+        )
+        task = ctx.task_manager.get_task(resolved_id) or task
+        edit_session_id = prior_owner_session_id or resolved_session_id
+        session_vars = ctx.session_var_manager.get_variables(edit_session_id)
+        attributed_paths = (
+            task_edited_file_set(session_vars, resolved_id)
+            if isinstance(session_vars, dict)
+            else set()
+        )
+        try:
+            scope = evaluate_task_scope(
+                db=ctx.task_manager.db,
+                task=task,
+                commit_shas=task.commits or (),
+                attributed_paths=attributed_paths,
+                repo_path=ctx.get_project_repo_path(task.project_id),
+                scope_justification=scope_justification,
+            )
+        except RuntimeError as exc:
+            return {
+                "success": False,
+                "error": "task_scope_unavailable",
+                "message": f"Task scope cannot be evaluated: {exc}",
+            }
+        if not scope.accepted:
+            return {
+                "success": False,
+                "error": "task_scope_mismatch",
+                "message": scope.justification_error,
+                **scope.details(),
+                "required_actions": [
+                    "Pass a specific scope_justification between 20 and 1000 characters."
+                ],
+            }
+        if scope.scope_justification:
+            scope_note = f"[Task Scope Justification]\n{scope.scope_justification}"
+            review_notes = (
+                f"{review_notes.rstrip()}\n\n{scope_note}" if review_notes else scope_note
+            )
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
         try:
             updated = ctx.task_manager.submit_for_review(
@@ -246,12 +293,6 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         if not updated:
             return {"error": f"Failed to submit stage {stage_name} on task {task_id} for review"}
 
-        _auto_link_session_commits(
-            ctx,
-            task_id=resolved_id,
-            project_id=task.project_id,
-            session_id=resolved_session_id,
-        )
         _release_current_agent_dispatch_mutex(
             ctx,
             task_id=resolved_id,
@@ -293,6 +334,15 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 "task_id": {"type": "string"},
                 "stage_name": {"type": "string"},
                 "review_notes": {"type": ["string", "null"]},
+                "scope_justification": {
+                    "type": ["string", "null"],
+                    "minLength": 20,
+                    "maxLength": 1000,
+                    "description": (
+                        "Required when linked or attributed paths exceed declared Targets or "
+                        "manual/expansion affected-file annotations; appended to review notes."
+                    ),
+                },
             },
             "required": ["task_id", "stage_name"],
         },

@@ -126,6 +126,7 @@ TASK_ENFORCEMENT_RULES = {
     "require-task-creation-skill-loaded",
     "require-task-transitions-skill-loaded",
     "require-task-before-edit",
+    "require-task-before-commit",
     "require-claimed-task-required-skills",
     "require-commit-before-status",
     "require-clean-tree-before-status",
@@ -185,6 +186,86 @@ class TestTaskEnforcementSync:
                     "mcp_call",
                     "rewrite_input",
                 }
+
+
+class TestRequireTaskBeforeCommit:
+    """Explicit repository commits require an active task mandate."""
+
+    @staticmethod
+    async def _evaluate(
+        db: HubDatabase,
+        command: str,
+        *,
+        task_claimed: bool = False,
+        source: SessionSource = SessionSource.CODEX,
+    ) -> HookResponse:
+        _sync_bundled(db)
+        data: dict[str, object] = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": command},
+        }
+        normalize_tool_fields(data)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=source,
+            timestamp=datetime.now(UTC),
+            data=data,
+            metadata={},
+        )
+        return await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={
+                "require_task_before_edit": True,
+                "task_claimed": task_claimed,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_blocks_taskless_commit_with_tracked_plan_artifact(self, db: HubDatabase) -> None:
+        response = await self._evaluate(db, "git commit -m 'record plan'")
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Claim the task" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_claimed_task_allows_commit(self, db: HubDatabase) -> None:
+        response = await self._evaluate(
+            db,
+            "git commit -m 'record plan'",
+            task_claimed=True,
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "git merge --no-edit topic-branch",
+            "git diff --cached -- .gobby/plans/implementation.md",
+        ],
+    )
+    async def test_merge_and_read_only_plan_paths_are_preserved(
+        self,
+        db: HubDatabase,
+        command: str,
+    ) -> None:
+        response = await self._evaluate(db, command)
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_backup_commit_is_preserved(self, db: HubDatabase) -> None:
+        response = await self._evaluate(
+            db,
+            "git commit -m 'chore: backup task state'",
+            source=SessionSource.PIPELINE,
+        )
+
+        assert response.decision == "allow"
 
 
 class TestBlockNativeTaskToolsUnclaimed:

@@ -224,7 +224,7 @@ class Task:
     validation_criteria: str | None = None
     validation_fail_count: int = 0
     dispatch_failure_count: int = 0
-    validation_override_reason: str | None = None  # Why agent bypassed validation
+    validation_override_reason: str | None = None  # Validation or task-scope override audit
     merge_in_progress: bool = False
     blocked_by_merge: bool = False
     # Commit linking

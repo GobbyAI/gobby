@@ -1,0 +1,18 @@
+tags: [task-enforcement, enforcement, tasks, git, default, guardrail]
+
+rules:
+  require-task-before-commit:
+    description: "Block explicit repository commits without a claimed task"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      variables.get('require_task_before_edit')
+      and source != 'pipeline'
+      and not variables.get('task_claimed')
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "\\bgit\\s+commit\\b"
+        reason: |
+          Claim the task that authorizes this repository commit, then retry.
