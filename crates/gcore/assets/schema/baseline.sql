@@ -629,7 +629,7 @@ CREATE TABLE destructive_batches (
     aborted_at timestamp with time zone,
     abort_disposition text,
     CONSTRAINT destructive_batches_backup_manifest_sha256_check CHECK (((backup_manifest_sha256 IS NULL) OR (backup_manifest_sha256 ~ '^[0-9a-f]{64}$'::text))),
-    CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'identity-cutover'::text, 'flatten'::text]))),
+    CONSTRAINT destructive_batches_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT destructive_batches_check CHECK ((((status = 'verified'::text) AND (verified_at IS NOT NULL)) OR ((status <> 'verified'::text) AND (verified_at IS NULL)))),
     CONSTRAINT destructive_batches_check1 CHECK ((((status = 'aborted'::text) AND (aborted_at IS NOT NULL) AND (abort_disposition IS NOT NULL)) OR ((status <> 'aborted'::text) AND (aborted_at IS NULL) AND (abort_disposition IS NULL)))),
     CONSTRAINT destructive_batches_intent_check CHECK ((jsonb_typeof(intent) = 'object'::text)),
@@ -751,23 +751,6 @@ CREATE TABLE gh_triage_deliveries (
     CONSTRAINT gh_triage_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'ignored'::text, 'duplicate'::text, 'error'::text])))
 );
 
-CREATE TABLE identity_cutover_journal (
-    old_id text NOT NULL,
-    new_id uuid,
-    disposition text NOT NULL,
-    phase text NOT NULL,
-    token uuid NOT NULL,
-    had_machine boolean NOT NULL,
-    session_count bigint NOT NULL,
-    machine_snapshot jsonb,
-    started_at timestamp with time zone DEFAULT now() NOT NULL,
-    db_committed_at timestamp with time zone,
-    file_committed_at timestamp with time zone,
-    CONSTRAINT identity_cutover_journal_check CHECK ((((disposition = 'rotated'::text) AND (new_id IS NOT NULL)) OR (disposition = 'retired'::text))),
-    CONSTRAINT identity_cutover_journal_disposition_check CHECK ((disposition = ANY (ARRAY['rotated'::text, 'retired'::text]))),
-    CONSTRAINT identity_cutover_journal_phase_check CHECK ((phase = ANY (ARRAY['started'::text, 'db_committed'::text, 'file_committed'::text])))
-);
-
 CREATE TABLE integration_workspace_mutex (
     integration_key text NOT NULL,
     lease_until timestamp with time zone,
@@ -825,7 +808,7 @@ CREATE TABLE maintenance_epochs (
     scope_note text NOT NULL,
     released_at timestamp with time zone,
     released_by_command text,
-    CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'identity-cutover'::text, 'flatten'::text]))),
+    CONSTRAINT maintenance_epochs_campaign_check CHECK ((campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))),
     CONSTRAINT maintenance_epochs_check CHECK ((((released_at IS NULL) AND (released_by_command IS NULL)) OR ((released_at IS NOT NULL) AND (released_by_command IS NOT NULL))))
 );
 
@@ -1388,12 +1371,6 @@ CREATE SEQUENCE recall_usefulness_id_seq
     CACHE 1;
 
 ALTER SEQUENCE recall_usefulness_id_seq OWNED BY recall_usefulness.id;
-
-CREATE TABLE retired_machine_identities (
-    old_id text NOT NULL,
-    retired_at timestamp with time zone DEFAULT now() NOT NULL,
-    disposition text NOT NULL
-);
 
 CREATE TABLE schema_migrations (
     version integer NOT NULL,
@@ -2306,12 +2283,6 @@ ALTER TABLE ONLY gh_triage_deliveries
 ALTER TABLE ONLY gh_triage_deliveries
     ADD CONSTRAINT gh_triage_deliveries_project_id_delivery_id_key UNIQUE (project_id, delivery_id);
 
-ALTER TABLE ONLY identity_cutover_journal
-    ADD CONSTRAINT identity_cutover_journal_pkey PRIMARY KEY (old_id);
-
-ALTER TABLE ONLY identity_cutover_journal
-    ADD CONSTRAINT identity_cutover_journal_token_key UNIQUE (token);
-
 ALTER TABLE ONLY prompts
     ADD CONSTRAINT idx_prompts_name_scope_project UNIQUE NULLS NOT DISTINCT (name, scope, project_id);
 
@@ -2449,9 +2420,6 @@ ALTER TABLE ONLY recall_usefulness
 
 ALTER TABLE ONLY recall_usefulness
     ADD CONSTRAINT recall_usefulness_recall_request_id_memory_id_label_source__key UNIQUE (recall_request_id, memory_id, label_source, judge_protocol_version);
-
-ALTER TABLE ONLY retired_machine_identities
-    ADD CONSTRAINT retired_machine_identities_pkey PRIMARY KEY (old_id);
 
 ALTER TABLE ONLY schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
@@ -3722,8 +3690,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE gh_triage_build_dispatches TO gobby_d
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE gh_triage_deliveries TO gobby_daemon_runtime;
 
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE identity_cutover_journal TO gobby_daemon_runtime;
-
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE integration_workspace_mutex TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE inter_session_messages TO gobby_daemon_runtime;
@@ -3829,8 +3795,6 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE recall_signal_requests TO gobby_daemo
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE recall_usefulness TO gobby_daemon_runtime;
 
 GRANT ALL ON SEQUENCE recall_usefulness_id_seq TO gobby_daemon_runtime;
-
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE retired_machine_identities TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE schema_migrations TO gobby_daemon_runtime;
 
@@ -4070,7 +4034,6 @@ CREATE TABLE IF NOT EXISTS maintenance_epochs (
                 'schema-apply',
                 'purge',
                 'reconcile',
-                'identity-cutover',
                 'flatten'
             )
         ),
@@ -4105,7 +4068,6 @@ CREATE TABLE IF NOT EXISTS destructive_batches (
                 'schema-apply',
                 'purge',
                 'reconcile',
-                'identity-cutover',
                 'flatten'
             )
         ),

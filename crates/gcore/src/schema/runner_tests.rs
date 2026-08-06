@@ -20,7 +20,7 @@ static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     checksum: "d63e14df78da3519a30caf2dac74341ab5f0c9aa05f7bec58174ec0adf383159",
     sql: "-- gobby:non-transactional\nCREATE UNIQUE INDEX CONCURRENTLY schema_recovery_idx ON recovery_values(id);\n",
 };
-static RECOVERY_MIGRATIONS: &[EmbeddedMigration] = &[MIGRATIONS[0], RECOVERY_MIGRATION];
+static RECOVERY_MIGRATIONS: &[EmbeddedMigration] = &[RECOVERY_MIGRATION];
 
 static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 377,
@@ -28,7 +28,7 @@ static DESTRUCTIVE_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     checksum: "c10820fc8be4c2bceab1610fd8372c8d864fd7c4a8985773cf903bae450b19e9",
     sql: "-- gobby:destructive\nCREATE TABLE gate_probe (id integer);\n",
 };
-static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[MIGRATIONS[0], DESTRUCTIVE_MIGRATION];
+static DESTRUCTIVE_MIGRATIONS: &[EmbeddedMigration] = &[DESTRUCTIVE_MIGRATION];
 
 static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 

@@ -237,7 +237,7 @@ def test_restored_epoch_fence_is_released_without_touching_origin_state(
     postgres_schema: str,
 ) -> None:
     connection, restored_dsn = epoch_admin
-    restored_epoch_id = _insert_epoch(connection, campaign="identity-cutover")
+    restored_epoch_id = _insert_epoch(connection, campaign="reconcile")
     origin_epoch_id = uuid.uuid4()
     origin_schema = f"{postgres_schema}_restore_origin"
     connection.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(origin_schema)))
@@ -254,8 +254,8 @@ def test_restored_epoch_fence_is_released_without_touching_origin_state(
             ).format(sql.Identifier(origin_schema)),
             (
                 origin_epoch_id,
-                "identity-cutover",
-                "hub-maintenance:identity-cutover",
+                "reconcile",
+                "hub-maintenance:reconcile",
                 "origin sentinel",
             ),
         )
@@ -286,7 +286,7 @@ def test_python_admission_probe_surfaces_actionable_epoch_error(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection, campaign="identity-cutover")
+    epoch_id = _insert_epoch(connection, campaign="reconcile")
 
     with pytest.raises(MaintenanceEpochActiveError) as exc_info:
         probe_maintenance_admission(scoped_dsn)
@@ -628,12 +628,12 @@ def test_release_requires_owning_orchestrator_and_verified_batch(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection, campaign="identity-cutover")
+    epoch_id = _insert_epoch(connection, campaign="reconcile")
     batch = create_destructive_batch(
         scoped_dsn,
         epoch_id,
-        campaign="identity-cutover",
-        intent={"operation": "identity-cutover"},
+        campaign="reconcile",
+        intent={"operation": "reconcile"},
     )
     connection.execute(
         """
@@ -655,11 +655,11 @@ def test_release_requires_owning_orchestrator_and_verified_batch(
     released = release_maintenance_epoch(
         scoped_dsn,
         epoch_id,
-        owner_command="hub-maintenance:identity-cutover",
-        released_by_command="hub-maintenance run identity-cutover",
+        owner_command="hub-maintenance:reconcile",
+        released_by_command="hub-maintenance run reconcile",
     )
     assert released.released_at is not None
-    assert released.released_by_command == "hub-maintenance run identity-cutover"
+    assert released.released_by_command == "hub-maintenance run reconcile"
 
 
 def test_abort_requires_confirmation_and_records_partial_state_disposition(
