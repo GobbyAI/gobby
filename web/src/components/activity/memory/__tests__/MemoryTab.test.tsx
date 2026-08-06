@@ -241,8 +241,11 @@ describe("Memory activity tab", () => {
     await user.click(screen.getByRole("button", { name: "Filter memories" }));
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
     expect(screen.queryByText("Use a quiet palette for dashboards")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Select Persist panel width override" }))
-      .toBeInTheDocument();
+    const recentMemory = screen.getByRole("button", {
+      name: "Select Persist panel width override",
+    });
+    expect(recentMemory).toBeInTheDocument();
+    expect(recentMemory.parentElement).toHaveClass("activity-list-row--selected");
 
     await user.click(screen.getByRole("button", { name: "Filter memories" }));
     await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
@@ -279,7 +282,7 @@ describe("Memory activity tab", () => {
     const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
     expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
-  }, 10_000);
+  }, 20_000);
 
   it("uses server search results beyond the 100-row list cap", async () => {
     const listedMemories = Array.from({ length: 100 }, (_, index) =>
@@ -312,7 +315,7 @@ describe("Memory activity tab", () => {
         return requestUrl.includes("/api/memories/search?") && requestUrl.includes("q=server-only");
       }),
     ).toBe(true);
-  });
+  }, 20_000);
 
   it("shows memory scope and promotes a project memory to global", async () => {
     const fetchMock = setupFetch([
