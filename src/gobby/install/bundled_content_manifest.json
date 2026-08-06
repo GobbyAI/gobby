@@ -347,7 +347,7 @@
     "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "6d76e9358a7a5630257da4c18329f18eb91decfe366f3b3b7927ead354e071db",
     "workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml": "1ff1260cf3ad45869377934cc10fd03397c9dbfe0c8e19810cb8b423316d8cd1",
     "workflows/rules/memory-lifecycle/reset-memory-tracking-on-start.yaml": "eeb0d4944ccdb850994137d3a4aa2fdfe49e4cdade0e8ad39e33efa9376ee2ff",
-    "workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml": "2d4a4965955ad3e9023f7b3d54c0af76a759fd195fc6ab3136b872d1e8ca8434",
+    "workflows/rules/monolith-enforcement/require-same-session-decomposition.yaml": "f80fe8316a8988026b1d92c82119fa2187edadc8964d861274442646ddbcc0f4",
     "workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml": "76622980982aa2e37fdbc9731ce3f4784f632bbe873e282ebf36f4dad4978f75",
     "workflows/rules/plan-mode/block-edits-plan-mode.yaml": "1dd8c88954ac4216a164ad359e7a977e4039a98a46cbf4c21d044afe9d97d03c",
     "workflows/rules/plan-mode/handle-plan-mode-entry.yaml": "e74f5ffc922b3d23c69e87835c81f305a8cdb758b73cd4f93e97f65311c97b0f",
@@ -430,7 +430,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "dd04d678ef9b23902a8fb6386b207691ad17b65a89f3124555b5b846cefc29a7"
+    "workflows/variables/gobby-default-variables.yaml": "1639eecdb989012ef801866fb7d5a8aa43c0c43c8ad0f9024bec8b17112f7d8b"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

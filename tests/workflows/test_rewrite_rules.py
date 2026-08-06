@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from gobby.adapters.claude_code import is_action_first_reason
+from gobby.adapters.claude_code import _ACTION_FIRST_PREFIXES, is_action_first_reason
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
@@ -119,6 +119,14 @@ def _load_bundled_rule(
 
 
 class TestBundledBlockReasonFraming:
+    def test_action_first_prefixes_match_frozen_contract(self) -> None:
+        assert _ACTION_FIRST_PREFIXES == ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
+
+    def test_continue_opener_uses_true_restriction_framing(self) -> None:
+        reason = "Continue only after a maintainer approves this restricted action."
+
+        assert is_action_first_reason(reason) is False
+
     def test_every_live_before_tool_block_is_classified_once(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
 
