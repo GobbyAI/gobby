@@ -1,8 +1,22 @@
 # Repository History Scrub Decision and Runbook
 
-Status: accepted. Owner task: `#19660`. Decision date: 2026-08-05.
+Status: rejected. Owner task: `#19660`. Decision date: 2026-08-05.
+Reversed: 2026-08-06 by operator decision (`#19721` closed `wont_fix`).
 
-## Decision
+## Final disposition (2026-08-06)
+
+The operator reversed the scrub decision below. The historical
+`.gobby/tasks.jsonl` and `.gobby/memories.jsonl` copies were intentional
+in-repo exports, and a content audit of the largest historical snapshots found
+no credentials (the only DSN present is the local `gobby_test` fixture).
+Published history is preserved as-is: no rewrite, no PostgreSQL SHA remap, no
+clone replacement. The machine-local backup retirement for the current tree
+stands. The one-time tooling (`src/gobby/cli/history_scrub.py`,
+`tests/cli/test_history_scrub.py`) was removed under `#19736`; this document
+remains as the decision record. The rejected procedure follows unchanged for
+historical reference.
+
+## Decision (superseded)
 
 Rewrite the `GobbyAI/gobby` Git history to remove every historical copy of:
 
