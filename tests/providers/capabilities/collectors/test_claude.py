@@ -83,9 +83,14 @@ async def test_fact_provenance() -> None:
             "| Level | Description | Typical use case |",
             "| Tier | Description | Use |",
         ),
+        ("effort-docs", "## Compatibility", "## Model support"),
     ],
 )
-async def test_malformed_table_fails_snapshot(source_key: str, old: str, new: str) -> None:
+async def test_malformed_required_source_fails_snapshot(
+    source_key: str,
+    old: str,
+    new: str,
+) -> None:
     documents = _documents()
     documents[source_key] = documents[source_key].replace(old, new)
 
@@ -108,8 +113,12 @@ async def test_current_and_legacy_models_emit_standard_routes() -> None:
     assert all(source.state is SourceState.OK for source in snapshot.sources)
 
 
-async def test_effort_and_thinking_capabilities_are_source_derived() -> None:
-    snapshot = await _collector(_documents()).collect()
+async def test_effort_compatibility_without_note_is_source_derived() -> None:
+    documents = _documents()
+
+    assert "<Note>" not in documents["effort-docs"]
+
+    snapshot = await _collector(documents).collect()
     models = {model.canonical_model: model for model in snapshot.models}
 
     assert models["claude-opus-5"].supported_efforts == (
