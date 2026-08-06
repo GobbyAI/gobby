@@ -1379,6 +1379,26 @@ class TestSandboxCacheProvisioning:
             assert cache_path.is_relative_to(session_root.parent), env_var
             assert str(cache_path) in config.extra_write_paths, env_var
 
+    def test_sandbox_spawn_enables_scoped_package_registry_egress(self, tmp_path: Path) -> None:
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        env_vars = {GOBBY_SESSION_ID: "registry-test-session", "PATH": ""}
+
+        config = sandbox_config_for_spawn(
+            SandboxConfig(enabled=True, backend="srt", allow_network=False), env_vars
+        )
+
+        assert config is not None
+        paths = compute_sandbox_paths(
+            config=config,
+            workspace_path=str(workspace),
+            provider="codex",
+            env=env_vars,
+        )
+        assert config.allow_package_registries is True
+        assert {"crates.io", "index.crates.io", "static.crates.io"} <= set(paths.allowed_domains)
+        assert "github.com" not in paths.allowed_domains
+
     def test_disabled_sandbox_skips_toolchain_cache_redirects(self) -> None:
         env_vars = {GOBBY_SESSION_ID: "provision-test-session", "PATH": ""}
 
@@ -1386,6 +1406,7 @@ class TestSandboxCacheProvisioning:
 
         assert config is not None
         assert config.extra_write_paths == []
+        assert config.allow_package_registries is False
         for env_var in SANDBOX_CACHE_ENV_VARS:
             assert env_var not in env_vars
 

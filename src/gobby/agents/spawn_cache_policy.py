@@ -117,7 +117,7 @@ def sandbox_config_for_spawn(
     sandbox_config: SandboxConfig | None,
     env_vars: dict[str, str],
 ) -> SandboxConfig | None:
-    """Include spawned validation caches and hook inbox in sandbox writable paths."""
+    """Include spawned validation caches, registry egress, and hook inbox."""
     if sandbox_config is None:
         return None
     if not sandbox_config.enabled:
@@ -130,7 +130,12 @@ def sandbox_config_for_spawn(
         if path and path not in extra_write_paths:
             extra_write_paths.append(path)
 
-    return sandbox_config.model_copy(update={"extra_write_paths": extra_write_paths})
+    return sandbox_config.model_copy(
+        update={
+            "extra_write_paths": extra_write_paths,
+            "allow_package_registries": True,
+        }
+    )
 
 
 def _apply_sandbox_cache_policy(env_vars: dict[str, str]) -> None:
