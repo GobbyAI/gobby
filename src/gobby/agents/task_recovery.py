@@ -360,7 +360,10 @@ class TaskRecoveryHandler:
                 raise
 
     async def _verify_agent_dead_before_recovery(self, db_run: _AgentRun, task_ref: str) -> bool:
-        if db_run.pid is None and db_run.tmux_session_name is None:
+        # Terminal spawners persist the tmux pane PID, not the provider child PID.
+        # Once the managed tmux target is cleared, that PID is stale and must not
+        # be treated as a safe signal target.
+        if db_run.tmux_session_name is None:
             return True
         if self._terminal_agent_killer is None:
             logger.warning(

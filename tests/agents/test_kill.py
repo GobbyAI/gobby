@@ -246,6 +246,26 @@ class TestPidMatchesAgentIdentity:
             else:
                 assert any(record.levelno == logging.WARNING for record in records)
 
+    async def test_liveness_mismatch_logs_at_debug(self, caplog: pytest.LogCaptureFixture):
+        process = MagicMock(spec=psutil.Process)
+        process.cmdline.return_value = ["python", "other-provider"]
+        process.environ.return_value = {}
+        caplog.set_level(logging.DEBUG, logger="gobby.agents.kill")
+
+        assert (
+            await pid_matches_agent_identity(
+                1234,
+                provider="codex",
+                session_id=self.SESSION_ID,
+                process_factory=MagicMock(return_value=process),
+                unverifiable_result=True,
+            )
+            is False
+        )
+        records = [record for record in caplog.records if record.name == "gobby.agents.kill"]
+        assert any("no longer matches provider identity" in record.message for record in records)
+        assert not [record for record in records if record.levelno >= logging.WARNING]
+
 
 class TestValidateTerminalValue:
     def test_valid_patterns(self):

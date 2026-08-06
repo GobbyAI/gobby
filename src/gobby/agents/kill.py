@@ -144,10 +144,16 @@ async def pid_matches_agent_identity(
         )
         return unverifiable_result
     if not matches:
-        logger.warning(
-            "Refusing to signal PID %s: cmdline does not match provider identity",
-            pid,
-        )
+        if unverifiable_result:
+            logger.debug(
+                "PID %s no longer matches provider identity during liveness check",
+                pid,
+            )
+        else:
+            logger.warning(
+                "Refusing to signal PID %s: cmdline does not match provider identity",
+                pid,
+            )
         return False
     return True
 
