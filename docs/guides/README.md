@@ -12,6 +12,7 @@ links to the guide that owns that topic.
 | [ai-configuration.md](ai-configuration.md) | AI capability routing, mixed backends, `--no-ai`, and local model budget |
 | [llm-features.md](llm-features.md) | Provider and model candidate routing for text-generation features |
 | [shared-stack.md](shared-stack.md) | Shared PostgreSQL/Qdrant/FalkorDB setup over Tailscale, client bootstrap, and M0 boundaries |
+| [remote-docker-acceptance.md](remote-docker-acceptance.md) | Physical remote-Docker M0 acceptance, evidence capture, and recovery procedure |
 
 ## Core Workflows
 

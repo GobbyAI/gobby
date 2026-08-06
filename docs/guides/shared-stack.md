@@ -92,6 +92,15 @@ Its preflight checks the copied key and token, runs a PostgreSQL query, reads sh
 configuration and secrets, checks Qdrant health, and authenticates a FalkorDB `PING`.
 Any failed check aborts installation with endpoint-specific diagnostics.
 
+## M0 acceptance checklist
+
+Use the [remote Docker stack live-test runbook](remote-docker-acceptance.md) for the
+physical M0 acceptance run. The runbook writes captured artifacts to
+`.gobby/acceptance/<UTC-run-id>/`. Record the completed checklist and its evidence
+filenames in this section before closing #19600.
+
+_Status: pending the operator-coordinated physical run._
+
 ## M0 operating boundary
 
 PostgreSQL task/session metadata, memories, vector data, graph data, and shared
