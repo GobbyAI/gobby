@@ -87,6 +87,45 @@ def test_registration_requires_local_machine_ownership(
     assert session_manager.get(foreign.id) == foreign
 
 
+def test_registration_blocks_foreign_owner_across_projects(
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """The ownership scan is project-agnostic: register may recover a
+    same-identity session across projects, so a foreign owner in another
+    project must block before that reuse path can run."""
+    other_project_id = (
+        LocalProjectManager(session_manager.db)
+        .create(
+            name="foreign-owner-project",
+            repo_path="/tmp/foreign-owner-project",
+        )
+        .id
+    )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=FOREIGN_MACHINE_ID):
+        foreign = session_manager.register(
+            external_id="cross-project-session",
+            machine_id=None,
+            source="codex",
+            project_id=other_project_id,
+        )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
+        with pytest.raises(MachineOwnershipMismatchError) as exc_info:
+            session_manager.register(
+                external_id="cross-project-session",
+                machine_id=None,
+                source="codex",
+                project_id=sample_project["id"],
+            )
+
+    assert exc_info.value.resource_id == foreign.id
+    assert exc_info.value.owner_machine_id == FOREIGN_MACHINE_ID
+    assert session_manager.get(foreign.id) == foreign
+    assert foreign.project_id == other_project_id
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -1192,7 +1231,7 @@ class TestSessionManagerRegistration:
     def test_create_web_chat_session_sets_model_and_chat_mode(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, Any],
     ) -> None:
         session = session_manager.create_web_chat_session(
             machine_id="20000000-0000-4000-8000-000000000001",

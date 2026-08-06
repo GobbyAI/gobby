@@ -133,6 +133,9 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             resource_kind="session",
             resource_id=external_id,
         )
+        # Deliberately project-agnostic, unlike idx_sessions_unique: register may
+        # recover and move a same-identity session across projects, so foreign
+        # ownership anywhere must block before that reuse path can run.
         existing_owners = self.db.fetchall(
             """
             SELECT id, machine_id
