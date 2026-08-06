@@ -124,7 +124,9 @@ class TestSpawnAgent:
         assert data["success"] is True
         assert "conversation_id" in data
         assert data["prompt"].startswith(f"## Task #{task.seq_num}: Chat task")
-        assert session_manager.get(data["conversation_id"]) is not None
+        session = session_manager.get(data["conversation_id"])
+        assert session is not None
+        assert session.sandbox_enabled is False
 
     def test_spawn_web_chat_returns_explicit_prompt(
         self,

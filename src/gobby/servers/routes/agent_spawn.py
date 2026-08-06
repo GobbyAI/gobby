@@ -15,7 +15,7 @@ from pydantic import BaseModel, field_validator
 
 from gobby.agents.launcher_session import aget_or_create_launcher_session
 from gobby.agents.reasoning import normalize_reasoning_effort
-from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
+from gobby.agents.sandbox import web_chat_sandbox_policy_hash
 from gobby.providers.capabilities.apply import SpeedResultData
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
@@ -234,10 +234,8 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
 
             runtime_manager = server.services.web_chat_runtime_manager
             if runtime_manager is not None:
-                sandbox_enabled = runtime_manager.sandbox_config.enabled
                 sandbox_policy_hash = runtime_manager.sandbox_policy_hash
             else:
-                sandbox_enabled = web_chat_sandbox_config(server.services.config).enabled
                 sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
 
             from gobby.llm.local_detection import is_local_agent_definition
@@ -249,7 +247,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 source=source,
                 model=req.model,
                 is_local=is_local_agent_definition(source, req.model),
-                sandbox_enabled=sandbox_enabled,
+                sandbox_enabled=False,
                 sandbox_policy_hash=sandbox_policy_hash,
             )
             conversation_id = conversation.id

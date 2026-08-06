@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.agents import kill as agent_kill
-from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
+from gobby.agents.sandbox import web_chat_sandbox_policy_hash
 from gobby.agents.terminal_delivery import (
     deliver_existing_terminal_run_in_scope,
     shielded_terminal_delivery,
@@ -182,13 +182,12 @@ async def handle_continue_in_chat(
         conversation_id = source_session_id
 
     runtime_manager = getattr(mixin, "web_chat_runtime_manager", None)
-    daemon_config = getattr(mixin, "daemon_config", None)
     if runtime_manager is not None:
-        current_web_chat_sandbox_enabled = bool(runtime_manager.sandbox_config.enabled)
         current_web_chat_policy_hash = runtime_manager.sandbox_policy_hash
     else:
-        current_web_chat_sandbox_enabled = bool(web_chat_sandbox_config(daemon_config).enabled)
-        current_web_chat_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+        current_web_chat_policy_hash = web_chat_sandbox_policy_hash(
+            getattr(mixin, "daemon_config", None)
+        )
 
     # --- Resume guard: reject if source session is actively in use ---
     if source_session:
@@ -290,7 +289,7 @@ async def handle_continue_in_chat(
                 status="active",
                 terminal_context={},
                 project_id=project_id,
-                sandbox_enabled=current_web_chat_sandbox_enabled,
+                sandbox_enabled=False,
                 sandbox_policy_hash=current_web_chat_policy_hash,
             )
         except Exception as e:
