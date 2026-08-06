@@ -43,6 +43,13 @@ function appendViolations(path, violations, start) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2))
+  // sandbox-runtime allocates its mux/TLS unix sockets under os.tmpdir(), and
+  // the per-run managed-execution TMPDIR is too deep for sun_path (104 bytes
+  // on macOS). Run the runner itself out of the short GOBBY_SRT_TMPDIR while
+  // the provider child keeps the policy-allowed per-run TMPDIR.
+  const providerTmpdir = process.env.TMPDIR
+  const muxTmpdir = process.env.GOBBY_SRT_TMPDIR
+  if (muxTmpdir) process.env.TMPDIR = muxTmpdir
   const rawSettings = JSON.parse(readFileSync(options.settingsPath, 'utf8'))
   const parsed = SandboxRuntimeConfigSchema.safeParse(rawSettings)
   if (!parsed.success) {
@@ -75,9 +82,15 @@ async function main() {
       undefined,
       process.cwd(),
     )
+    const childEnv = { ...process.env, ...wrapped.env }
+    delete childEnv.GOBBY_SRT_TMPDIR
+    if (muxTmpdir && !('TMPDIR' in wrapped.env)) {
+      if (providerTmpdir === undefined) delete childEnv.TMPDIR
+      else childEnv.TMPDIR = providerTmpdir
+    }
     const child = spawn(wrapped.argv[0], wrapped.argv.slice(1), {
       cwd: process.cwd(),
-      env: { ...process.env, ...wrapped.env },
+      env: childEnv,
       stdio: 'inherit',
     })
 

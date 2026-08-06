@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.srt_runtime import prepare_sandbox_launch
+from gobby.agents.srt_runtime import SandboxLaunch, prepare_sandbox_launch
 from gobby.cli.install_setup_srt import install_srt_runtime
 
 pytestmark = [
@@ -43,6 +43,18 @@ def _prepare_launch(workspace: Path, run_id: str):
             env=os.environ,
         )
     )
+
+
+def _runner_argv(launch: SandboxLaunch, command: list[str]) -> list[str]:
+    """Wrap a scripted child without the provider-executable argv[0] pin.
+
+    ``SandboxLaunch.wrap`` pins argv[0] to the resolved provider executable
+    (fa595efe8); these tests exercise runner mechanics with scripted children,
+    so restore the scripted argv[0] after wrapping.
+    """
+    argv = launch.wrap(command)
+    argv[argv.index("--") + 1] = command[0]
+    return argv
 
 
 def _wait_for(path: Path, text: str | None = None, *, timeout: float = 10.0) -> None:
@@ -91,7 +103,7 @@ def test_srt_allows_workspace_git_and_denies_sensitive_symlink_escape(tmp_path: 
     )
 
     result = subprocess.run(
-        launch.wrap(["/bin/sh", "-c", command]),
+        _runner_argv(launch, ["/bin/sh", "-c", command]),
         cwd=workspace,
         env=os.environ.copy(),
         capture_output=True,
@@ -138,6 +150,7 @@ try {
     stdout: process.stdout.isTTY,
     credential: process.env.OPENAI_API_KEY,
     tmpdir: process.env.TMPDIR,
+    srtTmp: process.env.GOBBY_SRT_TMPDIR ?? null,
   }));
 } catch (error) {
   fs.writeFileSync("startup-error.txt", error?.stack ?? String(error));
@@ -153,7 +166,7 @@ setInterval(() => {}, 1000);
     launch = _prepare_launch(workspace, "host-signals")
     master, slave = pty.openpty()
     process = subprocess.Popen(
-        launch.wrap([launch.node_path or "node", str(script)]),
+        _runner_argv(launch, [launch.node_path or "node", str(script)]),
         cwd=workspace,
         env={**os.environ, **launch.provider_env},
         stdin=slave,
@@ -191,7 +204,11 @@ setInterval(() => {}, 1000);
         assert ready_payload["stdin"] is True
         assert ready_payload["stdout"] is True
         assert ready_payload["credential"] != credential
+        # sandbox-runtime may pin the child TMPDIR itself (wrapped.env); the
+        # runner-internal socket dir must never leak into the child either way.
         assert ready_payload["tmpdir"]
+        assert ready_payload["tmpdir"] != launch.provider_env["GOBBY_SRT_TMPDIR"]
+        assert ready_payload["srtTmp"] is None
         for name in ("SIGWINCH", "SIGINT", "SIGHUP", "SIGTERM"):
             os.kill(process.pid, getattr(signal, name))
             _wait_for(events, name)

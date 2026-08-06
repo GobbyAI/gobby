@@ -376,6 +376,10 @@ async def test_prepare_srt_launch_writes_private_policy_outside_workspace(
     assert violation_path.parent == expected_parent / "logs"
     temp_path = expected_parent / "tmp"
     assert launch.provider_env[temp_env_name] == str(temp_path)
+    mux_dir = gobby_home / "runtime" / "srt-sock"
+    assert launch.provider_env["GOBBY_SRT_TMPDIR"] == str(mux_dir)
+    assert mux_dir.is_dir()
+    assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
     assert Path(launch.provider_env["CARGO_HOME"]).is_relative_to(expected_parent / "cache")
     for writable_name in ("tmp", "hooks", "logs", "cache"):

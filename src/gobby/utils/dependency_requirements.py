@@ -65,7 +65,7 @@ SRT_RELEASE = SrtRelease(
         "gAce6FzG3gx/4OjNFwIhDuHXnI0WWwA=="
     ),
     lockfile_sha256="aa0e24fece2864c9a561db55ac5d528af202b17107675be89c1bce65c289ee3f",
-    runner_sha256="01ce16f2852224d569ba84e9d9bf4f7e1867429eac3810daee596a1453fabcf4",
+    runner_sha256="389f2d49cabfc35100fb30939f37581edf2ab355a7586067a8c3de176dd890af",
 )
 
 

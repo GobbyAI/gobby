@@ -19,6 +19,7 @@ from gobby.agents.sandbox_policy import (
     canonical_path,
     prepare_sandbox_run_paths,
     previous_run_write_paths,
+    srt_mux_tmpdir,
 )
 from gobby.paths import get_gobby_home
 from gobby.sync.jsonl_io import export_file_lock
@@ -514,7 +515,7 @@ async def prepare_sandbox_launch(
         policy_hash=policy_hash,
         policy_path=str(policy_path),
         violation_path=str(violation_path),
-        provider_env=run_environment,
+        provider_env={**run_environment, "GOBBY_SRT_TMPDIR": str(srt_mux_tmpdir())},
         provider_executable=provider_executable,
         node_path=str(installation.node),
         runner_path=str(installation.runner),

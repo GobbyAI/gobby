@@ -538,6 +538,20 @@ def secure_policy_directory(run_id: str) -> Path:
     return directory
 
 
+def srt_mux_tmpdir() -> Path:
+    """Return the short shared directory for SRT runner-internal unix sockets.
+
+    sandbox-runtime allocates its mux/TLS sockets under ``os.tmpdir()``; the
+    per-run managed-execution TMPDIR is too deep for ``sun_path`` (104 bytes on
+    macOS), so the runner process gets this short root via GOBBY_SRT_TMPDIR
+    while the provider child keeps the policy-allowed per-run TMPDIR.
+    """
+    directory = get_gobby_home() / "runtime" / "srt-sock"
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(directory, 0o700)
+    return directory
+
+
 def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRunPaths:
     """Materialize one daemon-owned run root with four writable siblings."""
     managed_root = get_gobby_home() / "runtime" / "managed-executions"
