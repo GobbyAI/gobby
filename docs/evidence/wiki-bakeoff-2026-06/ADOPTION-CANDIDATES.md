@@ -1,5 +1,11 @@
 # Wiki bake-off — adoption candidates (running log)
 
+> **Addendum (2026-08-06):** Graphify was re-run at 0.9.34 (bakeoff pinned
+> 0.8.39) on the same frozen corpus and config. C5 stands (community naming
+> still fails on the fair local-model config); C6/C8 improved on their side in
+> ways gcode already adopted; C7 unchanged. Full procedure, metrics, and
+> verdicts: `graphify-revalidation-2026-08.md`.
+
 ## EVALUATION TRACKS (Josh, 2026-06-14) — the bake-off tests gobby's wiki/code surfaces; Track A has two sub-capabilities
 - **Track A1 — code intelligence / graph query for agents.** Gobby surface: `gcode` (search, outline, symbol, graph callers/callees, hybrid BM25+semantic+graph retrieval; FalkorDB code graph). Comparator: **Graphify** (tree-sitter AST → code knowledge graph w/ Leiden communities → `query/path/explain` CLI + MCP; agent-oriented, ships `skill-*.md`). Evaluate by whether `explain`/`path`/`query` give an agent grounded, navigable answers the way `gcode search`/`graph`/`symbol` do — NOT against codewiki's markdown. (Graphify's markdown export is a weak A2-adjacent side output, noted but not the main comparison.)
 - **Track A2 — code → documentation generation.** Gobby surface: `gcode codewiki` (460-page repo wiki, in `crates/gcode/src/commands/codewiki/`). Baseline: 460 pages (372 file + 67 module + 6 aggregate), 55 mermaid, frontmatter provenance ranges. Comparators: **DeepWiki-Open, CodeWiki, OpenDeepWiki** (repo→wiki generators).
