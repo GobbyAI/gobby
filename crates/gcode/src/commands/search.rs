@@ -131,15 +131,15 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     }
 
     // Resolve ALL results first so total reflects resolvable symbols only
-    let mut all_resolved: Vec<(Symbol, f64, Vec<String>)> = Vec::new();
-    for (sym_id, score, source_names) in &merged {
-        let Some(symbol) = symbol_cache.get(sym_id).cloned() else {
-            continue;
-        };
-        if prefiltered_symbol_matches(&symbol, options.kind, options.language, &path_patterns) {
-            all_resolved.push((symbol, *score, source_names.clone()));
-        }
-    }
+    let mut all_resolved = resolve_hybrid_symbols(
+        &mut conn,
+        ctx,
+        &merged,
+        &symbol_cache,
+        options.kind,
+        options.language,
+        &path_patterns,
+    );
 
     all_resolved.sort_by(|a, b| {
         exact_tier(query, &a.0)
@@ -639,15 +639,23 @@ fn symbol_matches_filters(
         && scope::current_indexed_path_is_valid(conn, ctx, &symbol.file_path)
 }
 
-fn prefiltered_symbol_matches(
-    symbol: &Symbol,
+fn resolve_hybrid_symbols(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    merged: &[(String, f64, Vec<String>)],
+    symbol_cache: &HashMap<String, Symbol>,
     kind: Option<&str>,
     language: Option<&str>,
     path_patterns: &[glob::Pattern],
-) -> bool {
-    kind.is_none_or(|requested| symbol.kind == requested)
-        && language.is_none_or(|requested| symbol.language == requested)
-        && path_matches_filters(path_patterns, &symbol.file_path)
+) -> Vec<(Symbol, f64, Vec<String>)> {
+    merged
+        .iter()
+        .filter_map(|(symbol_id, score, sources)| {
+            let symbol = symbol_cache.get(symbol_id)?.clone();
+            symbol_matches_filters(conn, ctx, &symbol, kind, language, path_patterns)
+                .then(|| (symbol, *score, sources.clone()))
+        })
+        .collect()
 }
 
 fn search_result_matches_filters(
@@ -806,6 +814,10 @@ fn print_pagination_hint(total: usize, offset: usize, result_count: usize) {
 }
 
 #[cfg(test)]
+#[path = "search_regression_tests.rs"]
+mod regression_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -937,24 +949,5 @@ mod tests {
             compact_snippet("  first line\n    second\tline\r\nthird  "),
             "first line second line third"
         );
-    }
-
-    #[test]
-    fn prefiltered_symbol_uses_only_requested_static_filters() {
-        let symbol = symbol("src/lib.rs", "function", "rust");
-        let matching_path = glob::Pattern::new("src/**").expect("path pattern");
-
-        assert!(prefiltered_symbol_matches(
-            &symbol,
-            Some("function"),
-            Some("rust"),
-            &[matching_path]
-        ));
-        assert!(!prefiltered_symbol_matches(
-            &symbol,
-            Some("class"),
-            None,
-            &[]
-        ));
     }
 }
