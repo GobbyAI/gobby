@@ -34,8 +34,20 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("run_token_env", "expected_probe_token"),
+    [
+        # The run-scoped capability must win: the service-capabilities route
+        # rejects the operator token for managed probes (#19709).
+        ({"GOBBY_AGENT_API_TOKEN": "run-scoped-token"}, "run-scoped-token"),
+        # Tokenless-dev fallback: no minted capability -> operator token.
+        ({}, "probe-token"),
+    ],
+)
 async def test_managed_code_index_preflight_uses_issued_credential(
     monkeypatch: pytest.MonkeyPatch,
+    run_token_env: dict[str, str],
+    expected_probe_token: str,
 ) -> None:
     credential = MagicMock()
     context = PreparedSpawn(
@@ -50,6 +62,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
             "GOBBY_PROJECT_ID": "project-id-env",
             "GOBBY_SESSION_ID": "session-id-env",
             "GOBBY_WORKFLOW_NAME": "planner",
+            **run_token_env,
         },
         managed_credential=credential,
     )
@@ -74,7 +87,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
     ) -> SimpleNamespace:
         assert cwd == "/isolated"
         assert credential is context.managed_credential
-        assert api_token == "probe-token"
+        assert api_token == expected_probe_token
         assert identity_env == {
             "GOBBY_AGENT_RUN_ID": "run-id-env",
             "GOBBY_PROJECT_ID": "project-id-env",

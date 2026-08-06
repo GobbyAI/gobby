@@ -11,7 +11,12 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from gobby.agents.constants import GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID
+from gobby.agents.constants import (
+    GOBBY_AGENT_API_TOKEN,
+    GOBBY_AGENT_RUN_ID,
+    GOBBY_PROJECT_ID,
+    GOBBY_SESSION_ID,
+)
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
 from gobby.agents.sandbox import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
@@ -135,10 +140,13 @@ async def _prepare_managed_code_index(
             for name, value in spawn_context.env_vars.items()
             if name in (GOBBY_AGENT_RUN_ID, GOBBY_PROJECT_ID, GOBBY_SESSION_ID) and value
         }
+        # The service-capabilities route only accepts the run-scoped capability
+        # minted for this spawn; the operator token is a tokenless-dev fallback.
+        run_api_token = spawn_context.env_vars.get(GOBBY_AGENT_API_TOKEN)
         preflight = await ensure_isolation_code_index(
             request.cwd,
             credential=credential,
-            api_token=request.code_index_api_token,
+            api_token=run_api_token or request.code_index_api_token,
             identity_env=identity_env,
         )
         spawn_context.env_vars.update(preflight.env)
