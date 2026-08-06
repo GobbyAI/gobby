@@ -306,6 +306,47 @@ class TestStartCommand:
         assert result.exit_code == 2
         assert "No such option '--docker'" in result.output
 
+    @pytest.mark.parametrize(
+        ("contents", "mode", "expected_error"),
+        [
+            (
+                "datastore_mode: invalid\n",
+                0o600,
+                "datastore_mode must be one of: local, remote",
+            ),
+            pytest.param(
+                "datastore_mode: local\n",
+                0o644,
+                "permissions must be 0600",
+                marks=pytest.mark.skipif(os.name == "nt", reason="Unix permissions only"),
+            ),
+        ],
+    )
+    def test_start_reports_invalid_bootstrap_without_traceback(
+        self,
+        tmp_path: Path,
+        runner: CliRunner,
+        contents: str,
+        mode: int,
+        expected_error: str,
+    ) -> None:
+        bootstrap_path = tmp_path / "bootstrap.yaml"
+        bootstrap_path.write_text(contents)
+        bootstrap_path.chmod(mode)
+
+        with (
+            patch("gobby.cli.daemon._start_dependency_errors", _start_dependency_errors),
+            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+        ):
+            result = runner.invoke(cli, ["start"])
+
+        output_lines = result.output.strip().splitlines()
+        assert result.exit_code == 1
+        assert len(output_lines) == 1
+        assert "Invalid bootstrap.yaml:" in output_lines[0]
+        assert expected_error in output_lines[0]
+        assert "Traceback" not in result.output
+
     def test_start_rejects_unhealthy_dependency_before_services(
         self,
         monkeypatch: pytest.MonkeyPatch,
