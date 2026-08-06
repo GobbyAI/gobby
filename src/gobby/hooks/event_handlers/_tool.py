@@ -247,6 +247,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             file_paths = [legacy_file_path] if isinstance(legacy_file_path, str) else []
 
         committable_paths: list[str] = []
+        paths_by_checkout: dict[str, list[str]] = {}
         for file_path in file_paths:
             repo_edit = self._resolve_repo_edit_paths(file_path, event.cwd)
             if repo_edit is None:
@@ -260,6 +261,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             if repo_relative_path not in committable_paths:
                 committable_paths.append(repo_relative_path)
                 self._notify_code_index(repo_root, repo_relative_path)
+            checkout_paths = paths_by_checkout.setdefault(os.fspath(repo_root), [])
+            if repo_relative_path not in checkout_paths:
+                checkout_paths.append(repo_relative_path)
 
         structured_mutation = input_data.get("canonical_structured_mutation") is True
         mutation_observed = bool(committable_paths) or (structured_mutation and not file_paths)
@@ -268,7 +272,16 @@ class ToolEventHandlerMixin(EventHandlersBase):
 
         db = getattr(self._session_manager, "db", None)
         if db is not None:
-            SessionVariableManager(db).record_edited_files(session_id, committable_paths)
+            variable_manager = SessionVariableManager(db)
+            if paths_by_checkout:
+                for checkout_root, paths in paths_by_checkout.items():
+                    variable_manager.record_edited_files(
+                        session_id,
+                        paths,
+                        checkout_root=checkout_root,
+                    )
+            else:
+                variable_manager.record_edited_files(session_id, committable_paths)
 
         if structured_mutation and not file_paths:
             self.logger.warning(

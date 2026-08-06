@@ -13,7 +13,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
-from gobby.workflows.task_claim_state import normalize_task_edited_path
+from gobby.workflows.task_claim_state import (
+    normalize_task_edited_path,
+    task_edited_file_set_for_checkout,
+)
 
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
@@ -126,6 +129,7 @@ def foreign_staged_commit_conflict(
             db,
             session_id=session_id,
             project_id=project_id,
+            checkout_root=project_path,
         )
         if not owners:
             return ""
@@ -179,6 +183,7 @@ def _active_foreign_path_owners(
     *,
     session_id: str,
     project_id: str,
+    checkout_root: str,
 ) -> dict[str, tuple[ForeignPathOwner, ...]]:
     rows = db.fetchall(
         """
@@ -208,20 +213,12 @@ def _active_foreign_path_owners(
         if variables is None:
             variables = variable_manager.get_variables(owner_session_id)
             variables_by_session[owner_session_id] = variables
-        task_files = variables.get("task_edited_files")
-        if not isinstance(task_files, dict):
-            continue
-        raw_paths = task_files.get(str(row["task_id"]))
-        if not isinstance(raw_paths, list):
-            continue
+        task_id = str(row["task_id"])
+        paths = task_edited_file_set_for_checkout(variables, task_id, checkout_root)
 
         session_ref = _format_ref(row["session_seq_num"], owner_session_id)
-        task_id = str(row["task_id"])
         task_ref = _format_ref(row["task_seq_num"], task_id)
-        for raw_path in raw_paths:
-            path = normalize_task_edited_path(raw_path)
-            if path is None:
-                continue
+        for path in paths:
             owners.setdefault(path, []).append(
                 ForeignPathOwner(
                     path=path,

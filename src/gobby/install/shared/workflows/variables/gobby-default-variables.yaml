@@ -31,6 +31,9 @@ variables:
   task_edited_files:
     value: {}
     description: "Map of claimed task UUIDs to repo-relative files edited by this session"
+  task_edited_file_checkouts:
+    value: {}
+    description: "Map of claimed task UUIDs and absolute checkout roots to edited files"
   require_task_before_edit:
     value: true
     description: Default require_task_before_edit to true

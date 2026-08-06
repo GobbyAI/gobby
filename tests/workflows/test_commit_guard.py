@@ -73,21 +73,33 @@ class GuardHarness:
     foreign_task: Task
     repo: Path
 
-    def event(self, command: str) -> HookEvent:
+    def event(
+        self,
+        command: str,
+        *,
+        session: Session | None = None,
+        checkout: Path | None = None,
+    ) -> HookEvent:
+        selected_session = session or self.current_session
+        selected_checkout = checkout or self.repo
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
-            session_id=self.current_session.external_id,
-            source=SessionSource.CODEX,
+            session_id=selected_session.external_id,
+            source=(
+                SessionSource.CODEX
+                if selected_session.id == self.current_session.id
+                else SessionSource.CLAUDE
+            ),
             timestamp=datetime.now(UTC),
-            cwd=str(self.repo),
+            cwd=str(selected_checkout),
             project_id=self.project.id,
             data={
                 "tool_name": "functions.exec_command",
                 "tool_input": {"cmd": command},
             },
             metadata={
-                "_platform_session_id": self.current_session.id,
-                "project_path": str(self.repo),
+                "_platform_session_id": selected_session.id,
+                "project_path": str(selected_checkout),
             },
         )
 
@@ -162,6 +174,9 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
             "claimed_tasks": {current_task.id: f"#{current_task.seq_num}"},
             "active_task_id": current_task.id,
             "task_edited_files": {current_task.id: ["owned.txt"]},
+            "task_edited_file_checkouts": {
+                current_task.id: {str(repo): ["owned.txt"]},
+            },
         },
     )
     variables.merge_variables(
@@ -173,6 +188,9 @@ def guard_harness(temp_db: HubDatabase, repo: Path) -> GuardHarness:
             "claimed_tasks": {foreign_task.id: f"#{foreign_task.seq_num}"},
             "active_task_id": foreign_task.id,
             "task_edited_files": {foreign_task.id: ["foreign.txt"]},
+            "task_edited_file_checkouts": {
+                foreign_task.id: {str(repo): ["foreign.txt"]},
+            },
             "task_has_commits": True,
         },
     )
@@ -234,6 +252,69 @@ async def test_unscoped_commit_blocks_foreign_staged_path_with_owner_diagnostic(
         "foreign.txt",
         "owned.txt",
     }
+
+
+@pytest.mark.asyncio
+async def test_same_relative_path_commits_from_separate_worktrees(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    foreign_checkout = tmp_path / "foreign-checkout"
+    _git(
+        guard_harness.repo,
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "foreign-checkout",
+        str(foreign_checkout),
+    )
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.current_session.id,
+        {
+            "task_edited_files": {guard_harness.current_task.id: ["foreign.txt"]},
+            "task_edited_file_checkouts": {
+                guard_harness.current_task.id: {
+                    str(guard_harness.repo): ["foreign.txt"],
+                }
+            },
+        },
+    )
+    variables.merge_variables(
+        guard_harness.foreign_session.id,
+        {
+            "task_edited_files": {guard_harness.foreign_task.id: ["foreign.txt"]},
+            "task_edited_file_checkouts": {
+                guard_harness.foreign_task.id: {
+                    str(foreign_checkout): ["foreign.txt"],
+                }
+            },
+        },
+    )
+
+    (guard_harness.repo / "foreign.txt").write_text("current checkout\n", encoding="utf-8")
+    (foreign_checkout / "foreign.txt").write_text("foreign checkout\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+    _git(foreign_checkout, "add", "--", "foreign.txt")
+
+    current_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event("git commit -m 'current checkout'")
+    )
+    foreign_response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(
+            "git commit -m 'foreign checkout'",
+            session=guard_harness.foreign_session,
+            checkout=foreign_checkout,
+        )
+    )
+
+    assert current_response.decision == "allow"
+    assert foreign_response.decision == "allow"
+    _git(guard_harness.repo, "commit", "-q", "-m", "current checkout")
+    _git(foreign_checkout, "commit", "-q", "-m", "foreign checkout")
+    assert _git(guard_harness.repo, "show", "HEAD:foreign.txt") == "current checkout"
+    assert _git(foreign_checkout, "show", "HEAD:foreign.txt") == "foreign checkout"
 
 
 @pytest.mark.asyncio
@@ -304,6 +385,7 @@ async def test_owner_path_release_breaks_commit_and_close_cycle(
         guard_harness.foreign_session.id,
         guard_harness.foreign_task.id,
         ["foreign.txt"],
+        checkout_root=str(guard_harness.repo),
     )
 
     assert released == ["foreign.txt"]
