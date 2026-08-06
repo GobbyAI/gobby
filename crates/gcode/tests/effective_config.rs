@@ -16,6 +16,8 @@ struct EnvGuard {
     gobby_home: Option<OsString>,
     daemon_url: Option<OsString>,
     gobby_port: Option<OsString>,
+    managed_execution_bootstrap: Option<OsString>,
+    agent_api_token: Option<OsString>,
 }
 
 impl EnvGuard {
@@ -24,6 +26,8 @@ impl EnvGuard {
             gobby_home: std::env::var_os("GOBBY_HOME"),
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             gobby_port: std::env::var_os("GOBBY_PORT"),
+            managed_execution_bootstrap: std::env::var_os("GOBBY_MANAGED_EXECUTION_BOOTSTRAP"),
+            agent_api_token: std::env::var_os("GOBBY_AGENT_API_TOKEN"),
         };
         std::fs::write(home.join("local_cli_token"), "effective-token\n")
             .expect("write local token");
@@ -33,6 +37,8 @@ impl EnvGuard {
             std::env::set_var("GOBBY_HOME", home);
             std::env::set_var("GOBBY_DAEMON_URL", daemon_url);
             std::env::remove_var("GOBBY_PORT");
+            std::env::remove_var("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
+            std::env::remove_var("GOBBY_AGENT_API_TOKEN");
         }
         guard
     }
@@ -45,6 +51,11 @@ impl Drop for EnvGuard {
             restore_var("GOBBY_HOME", &self.gobby_home);
             restore_var("GOBBY_DAEMON_URL", &self.daemon_url);
             restore_var("GOBBY_PORT", &self.gobby_port);
+            restore_var(
+                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+                &self.managed_execution_bootstrap,
+            );
+            restore_var("GOBBY_AGENT_API_TOKEN", &self.agent_api_token);
         }
     }
 }

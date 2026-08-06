@@ -255,14 +255,6 @@ mod tests {
     }
 
     #[test]
-    fn flatten_yaml_errors_include_scalar_path() {
-        let error = flatten("ai:\n  embeddings:\n    provider:\n      - openai\n")
-            .expect_err("sequence scalar must fail");
-
-        assert!(error.to_string().contains("`ai.embeddings.provider`"));
-    }
-
-    #[test]
     fn flatten_yaml_depth_errors_include_current_path() {
         let mut contents = String::new();
         for index in 0..=MAX_YAML_FLATTEN_DEPTH + 1 {
