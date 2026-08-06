@@ -132,16 +132,25 @@ def test_interactive_destructive_git_guard_is_restored() -> None:
     path = RULES_DIR / "worker-safety/no-destructive-git-interactive.yaml"
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     rule = data["rules"]["no-destructive-git-interactive"]
+    autonomous_path = RULES_DIR / "worker-safety/no-destructive-git.yaml"
+    autonomous_data = yaml.safe_load(autonomous_path.read_text(encoding="utf-8"))
+    autonomous_rule = autonomous_data["rules"]["no-destructive-git"]
 
     assert rule["enabled"] is True
     assert rule["when"] == "not variables.get('is_spawned_agent')"
     pattern = rule["effects"][0]["command_pattern"]
+    assert pattern == autonomous_rule["effects"][0]["command_pattern"]
     for command in (
         "git reset --hard",
         "git clean -fdx",
         "git checkout .",
         "git restore .",
         "git branch -D obsolete",
+        "git -C /repo reset --hard",
+        "git -c core.hooksPath=/tmp checkout .",
+        "git --git-dir=/repo/.git clean -fdx",
+        "git --work-tree /repo restore .",
+        "git --no-pager branch -D obsolete",
     ):
         assert re.search(pattern, command), command
     assert re.search(pattern, "git reset HEAD~1") is None
