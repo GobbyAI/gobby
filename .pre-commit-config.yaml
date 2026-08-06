@@ -60,6 +60,19 @@ repos:
   # Uses `uv run` so mypy sees the full project environment and module graph.
   - repo: local
     hooks:
+      - id: bundled-content-manifest-freshness
+        name: >-
+          bundled manifest freshness (regenerate: uv run python -c
+          "import pathlib, gobby.install.manifest;
+          gobby.install.manifest.write_bundled_content_manifest(
+          pathlib.Path('src/gobby/install'))")
+        entry: >-
+          bash -c 'GOBBY_TEST_PROTECT=1 uv run pytest
+          tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree
+          -q'
+        language: system
+        pass_filenames: false
+        files: ^src/gobby/install/(shared/|bundled_content_manifest\.json$)
       - id: gobby-plan-snapshots-refresh
         name: gobby plan snapshots refresh check
         entry: >-
