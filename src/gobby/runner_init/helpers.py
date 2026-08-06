@@ -10,7 +10,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
-from uuid import UUID
 
 import psycopg
 from psycopg_pool import PoolTimeout
@@ -23,8 +22,6 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.maintenance_epoch import admitted_database_url
-from gobby.utils.durable_file import durable_replace_text, exclusive_file_lock
-from gobby.utils.machine_id import _generate_machine_id, clear_cache, get_machine_id_file
 
 logger = logging.getLogger(__name__)
 
@@ -118,27 +115,10 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 def ensure_machine_identity(
     database: Any,
     machine_id: str,
-    *,
-    identity_file: Path | None = None,
 ) -> str:
-    """Re-key stale identities and canonically register this daemon's machine."""
-    path = identity_file if identity_file is not None else get_machine_id_file()
-    tombstone = database.fetchone(
-        "SELECT old_id FROM retired_machine_identities WHERE old_id = %s",
-        (machine_id,),
-    )
-    try:
-        canonical_id = str(UUID(machine_id.strip()))
-    except ValueError:
-        canonical_id = None
-    if tombstone is not None or canonical_id is None:
-        canonical_id = _generate_machine_id()
-        with exclusive_file_lock(path):
-            durable_replace_text(path, canonical_id)
-        clear_cache()
-
+    """Canonically register this daemon's machine identity."""
     registered = LocalMachineManager(database).upsert_seen(
-        canonical_id,
+        machine_id,
         hostname=socket.gethostname(),
         os=platform.system(),
     )

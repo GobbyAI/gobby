@@ -8,7 +8,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -269,7 +268,7 @@ def test_interrupted_run_keeps_epoch_open_and_daemon_stopped(
 def test_status_reports_open_epoch_and_batch_as_json(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    epoch = _epoch("identity-cutover")
+    epoch = _epoch("reconcile")
     batch = _batch(epoch, status="applied")
     monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
     monkeypatch.setattr(command, "discover_active_maintenance_epoch", lambda _dsn: epoch)
@@ -279,14 +278,14 @@ def test_status_reports_open_epoch_and_batch_as_json(
 
     assert result.exit_code == 0, result.output
     assert f'"id": "{epoch.id}"' in result.output
-    assert '"campaign": "identity-cutover"' in result.output
+    assert '"campaign": "reconcile"' in result.output
     assert '"status": "applied"' in result.output
 
 
 def test_abort_requires_confirmation_and_records_disposition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    epoch = _epoch("identity-cutover")
+    epoch = _epoch("reconcile")
     batch = _batch(epoch, status="applied")
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(command, "_resolve_database_url", lambda: "postgresql://example/gobby")
@@ -367,66 +366,10 @@ def test_epoch_backup_failure_surfaces_child_error_after_config_warnings(
     )
 
 
-def test_identity_cutover_campaign_runs_journal_before_destructive_batch(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    epoch = _epoch("identity-cutover")
-    batch = _batch(epoch)
-    events: list[str] = []
-    cutover_calls: list[tuple[str, Path]] = []
-    migration_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-    config_module = import_module("gobby.config.app")
-    cutover_module = import_module("gobby.storage.identity_cutover")
-    epoch_module = import_module("gobby.storage.maintenance_epoch")
-    schema_module = import_module("gobby.cli.schema")
-    pool_config = object()
+def test_identity_cutover_campaign_is_retired() -> None:
+    result = CliRunner().invoke(cli, ["hub-maintenance", "run", "identity-cutover"])
 
-    def run_cutover(database_url: str, identity_file: Path) -> None:
-        events.append("cutover")
-        cutover_calls.append((database_url, identity_file))
-
-    def apply_batch(*args: Any, **kwargs: Any) -> None:
-        events.append("migration-365")
-        migration_calls.append((args, kwargs))
-
-    monkeypatch.setattr(
-        config_module,
-        "load_config",
-        lambda **_kwargs: SimpleNamespace(
-            database_url="postgresql://example/gobby",
-            postgres_pool=pool_config,
-        ),
-    )
-    monkeypatch.setattr(
-        epoch_module,
-        "bind_maintenance_epoch",
-        lambda database_url, _epoch_id: f"{database_url}?maintenance=bound",
-    )
-    monkeypatch.setattr(command, "get_gobby_home", lambda: tmp_path)
-    monkeypatch.setattr(
-        cutover_module,
-        "run_identity_cutover",
-        run_cutover,
-    )
-    monkeypatch.setattr(
-        schema_module,
-        "_apply_verified_batch",
-        apply_batch,
-    )
-
-    command._load_campaign_executor("identity-cutover").apply(epoch, batch)
-
-    assert events == ["cutover", "migration-365"]
-    assert cutover_calls == [
-        ("postgresql://example/gobby?maintenance=bound", tmp_path / "machine_id")
-    ]
-    assert len(migration_calls) == 1
-    migration_args, migration_kwargs = migration_calls[0]
-    assert migration_args[:4] == (
-        "postgresql://example/gobby",
-        pool_config,
-        epoch,
-        batch,
-    )
-    assert migration_kwargs["max_age_hours"] > 0
+    assert result.exit_code == 2
+    assert "'identity-cutover' is not one of" in result.output
+    assert "identity-cutover" not in command.CAMPAIGNS
+    assert "identity-cutover" not in command._CAMPAIGN_EXECUTORS

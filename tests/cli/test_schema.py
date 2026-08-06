@@ -110,7 +110,7 @@ def test_destructive_manifest_gate_accepts_all_bound_evidence(tmp_path: Path) ->
     )
 
 
-def test_destructive_manifest_gate_accepts_identity_cutover_campaign(tmp_path: Path) -> None:
+def test_destructive_manifest_gate_accepts_reconcile_campaign(tmp_path: Path) -> None:
     epoch_id = uuid.uuid4()
     digest = "a" * 64
 
@@ -121,8 +121,8 @@ def test_destructive_manifest_gate_accepts_identity_cutover_campaign(tmp_path: P
             backup_root=tmp_path,
             manifest_sha256=digest,
             current_identity=IDENTITY,
-            epoch=_epoch(epoch_id, campaign="identity-cutover"),
-            batch=_batch(epoch_id, digest, campaign="identity-cutover"),
+            epoch=_epoch(epoch_id, campaign="reconcile"),
+            batch=_batch(epoch_id, digest, campaign="reconcile"),
             now=NOW,
             max_age_hours=24,
         )
@@ -142,7 +142,7 @@ def test_destructive_manifest_gate_refuses_epoch_batch_campaign_mismatch(
             backup_root=tmp_path,
             manifest_sha256=digest,
             current_identity=IDENTITY,
-            epoch=_epoch(epoch_id, campaign="identity-cutover"),
+            epoch=_epoch(epoch_id, campaign="reconcile"),
             batch=_batch(epoch_id, digest),
             now=NOW,
             max_age_hours=24,
@@ -153,18 +153,18 @@ def test_destructive_manifest_gate_refuses_foreign_epoch_owner(tmp_path: Path) -
     epoch_id = uuid.uuid4()
     digest = "a" * 64
     epoch = replace(
-        _epoch(epoch_id, campaign="identity-cutover"),
+        _epoch(epoch_id, campaign="reconcile"),
         opened_by="hub-maintenance:schema-apply",
     )
 
-    with pytest.raises(SchemaGateError, match="not owned by hub-maintenance:identity-cutover"):
+    with pytest.raises(SchemaGateError, match="not owned by hub-maintenance:reconcile"):
         validate_destructive_manifest(
             _manifest(epoch_id),
             backup_root=tmp_path,
             manifest_sha256=digest,
             current_identity=IDENTITY,
             epoch=epoch,
-            batch=_batch(epoch_id, digest, campaign="identity-cutover"),
+            batch=_batch(epoch_id, digest, campaign="reconcile"),
             now=NOW,
             max_age_hours=24,
         )

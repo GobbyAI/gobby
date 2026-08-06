@@ -1677,50 +1677,6 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
-      "name": "identity_cutover_journal.db_committed_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.disposition",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.file_committed_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.had_machine",
-      "definition": "boolean|bool|NO||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.machine_snapshot",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.new_id",
-      "definition": "uuid|uuid|YES||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.old_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.phase",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.session_count",
-      "definition": "bigint|int8|NO||NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.started_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "identity_cutover_journal.token",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
       "name": "integration_workspace_mutex.integration_key",
       "definition": "text|text|NO||NEVER"
     },
@@ -3295,18 +3251,6 @@
     {
       "name": "recall_usefulness.session_id",
       "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "retired_machine_identities.disposition",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "retired_machine_identities.old_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "retired_machine_identities.retired_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
       "name": "schema_migrations.applied_at",
@@ -5708,7 +5652,7 @@
     },
     {
       "name": "destructive_batches.destructive_batches_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'identity-cutover'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "destructive_batches.destructive_batches_check",
@@ -5867,26 +5811,6 @@
       "definition": "CHECK (status = ANY (ARRAY['pending'::text, 'processing'::text, 'processed'::text, 'ignored'::text, 'duplicate'::text, 'error'::text]))"
     },
     {
-      "name": "identity_cutover_journal.identity_cutover_journal_check",
-      "definition": "CHECK (disposition = 'rotated'::text AND new_id IS NOT NULL OR disposition = 'retired'::text)"
-    },
-    {
-      "name": "identity_cutover_journal.identity_cutover_journal_disposition_check",
-      "definition": "CHECK (disposition = ANY (ARRAY['rotated'::text, 'retired'::text]))"
-    },
-    {
-      "name": "identity_cutover_journal.identity_cutover_journal_phase_check",
-      "definition": "CHECK (phase = ANY (ARRAY['started'::text, 'db_committed'::text, 'file_committed'::text]))"
-    },
-    {
-      "name": "identity_cutover_journal.identity_cutover_journal_pkey",
-      "definition": "PRIMARY KEY (old_id)"
-    },
-    {
-      "name": "identity_cutover_journal.identity_cutover_journal_token_key",
-      "definition": "UNIQUE (token)"
-    },
-    {
       "name": "integration_workspace_mutex.integration_workspace_mutex_pkey",
       "definition": "PRIMARY KEY (integration_key)"
     },
@@ -5916,7 +5840,7 @@
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_campaign_check",
-      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'identity-cutover'::text, 'flatten'::text]))"
+      "definition": "CHECK (campaign = ANY (ARRAY['schema-apply'::text, 'purge'::text, 'reconcile'::text, 'flatten'::text]))"
     },
     {
       "name": "maintenance_epochs.maintenance_epochs_check",
@@ -6297,10 +6221,6 @@
     {
       "name": "recall_usefulness.recall_usefulness_recall_request_id_memory_id_label_source__key",
       "definition": "UNIQUE (recall_request_id, memory_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "retired_machine_identities.retired_machine_identities_pkey",
-      "definition": "PRIMARY KEY (old_id)"
     },
     {
       "name": "schema_migrations.schema_migrations_pkey",
@@ -7093,14 +7013,6 @@
     {
       "name": "gh_triage_deliveries_project_id_delivery_id_key",
       "definition": "CREATE UNIQUE INDEX gh_triage_deliveries_project_id_delivery_id_key ON $schema.gh_triage_deliveries USING btree (project_id, delivery_id)"
-    },
-    {
-      "name": "identity_cutover_journal_pkey",
-      "definition": "CREATE UNIQUE INDEX identity_cutover_journal_pkey ON $schema.identity_cutover_journal USING btree (old_id)"
-    },
-    {
-      "name": "identity_cutover_journal_token_key",
-      "definition": "CREATE UNIQUE INDEX identity_cutover_journal_token_key ON $schema.identity_cutover_journal USING btree (token)"
     },
     {
       "name": "idx_agent_runs_child_session",
@@ -8305,10 +8217,6 @@
     {
       "name": "recall_usefulness_recall_request_id_memory_id_label_source__key",
       "definition": "CREATE UNIQUE INDEX recall_usefulness_recall_request_id_memory_id_label_source__key ON $schema.recall_usefulness USING btree (recall_request_id, memory_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "retired_machine_identities_pkey",
-      "definition": "CREATE UNIQUE INDEX retired_machine_identities_pkey ON $schema.retired_machine_identities USING btree (old_id)"
     },
     {
       "name": "schema_migrations_pkey",
