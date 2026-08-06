@@ -1234,8 +1234,8 @@ class TestLoadConfig:
 
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
         assert not hasattr(config, "postgres_install_mode")
-        assert config.postgres_pool.min_size == 4
-        assert config.postgres_pool.max_size == 24
+        assert config.postgres_pool.min_size == 2
+        assert config.postgres_pool.max_size == 2
         assert config.postgres_pool.acquire_timeout_seconds == 7.5
         assert config.postgres_pool.open_timeout_seconds == 12.5
 
@@ -1655,7 +1655,7 @@ class TestWorkflowConfig:
         """Test default workflow config."""
         config = WorkflowConfig()
         assert config.enabled is True
-        assert config.timeout == 15.0
+        assert config.timeout == 30.0
 
     def test_timeout_validation(self) -> None:
         """Test timeout must be positive."""

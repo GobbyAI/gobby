@@ -33,9 +33,9 @@ _EXCLUDED_KEYS = {EMBEDDING_SWITCH_JOURNAL_KEY}
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^{}]*\}")
 _MANAGED_CONFIG_KEYS = frozenset(
     {
-        "ai.embeddings.dim",
-        "ai.embeddings.model",
-        "ai.embeddings.query_prefix",
+        AI_EMBEDDING_DIM_KEY,
+        AI_EMBEDDING_MODEL_KEY,
+        AI_EMBEDDING_QUERY_PREFIX_KEY,
         "ai.embeddings.routing",
         "ai.embeddings.timeout_seconds",
         "databases.falkordb.host",
@@ -213,12 +213,12 @@ def _managed_config_values(
 
     embeddings = config.embeddings
     values["ai.embeddings.routing"] = "daemon"
-    include("ai.embeddings.model", embeddings.model)
-    include("ai.embeddings.dim", embeddings.dim)
+    include(AI_EMBEDDING_MODEL_KEY, embeddings.model)
+    include(AI_EMBEDDING_DIM_KEY, embeddings.dim)
     if embeddings.query_prefix is None:
-        values.pop("ai.embeddings.query_prefix", None)
+        values.pop(AI_EMBEDDING_QUERY_PREFIX_KEY, None)
     else:
-        include("ai.embeddings.query_prefix", embeddings.query_prefix)
+        include(AI_EMBEDDING_QUERY_PREFIX_KEY, embeddings.query_prefix)
 
     falkordb = config.databases.falkordb
     if falkordb.password:
