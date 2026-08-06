@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any, NoReturn
 
 from gobby.agents.provider_capabilities import provider_capabilities
 from gobby.agents.sandbox_policy import (
+    SRT_SETTINGS_RELATIVE_PATH,
+    SRT_VIOLATIONS_RELATIVE_PATH,
     assert_sensitive_path_contract,
     canonical_path,
     prepare_sandbox_run_paths,
@@ -504,8 +506,8 @@ async def prepare_sandbox_launch(
         provider=provider,
         policy_hash=policy_hash,
     )
-    policy_path = run_paths.assets / "settings.json"
-    violation_path = run_paths.logs / "violations.jsonl"
+    policy_path = run_paths.root / SRT_SETTINGS_RELATIVE_PATH
+    violation_path = run_paths.root / SRT_VIOLATIONS_RELATIVE_PATH
     _write_private_file(policy_path, policy_bytes)
     _write_private_file(violation_path, b"")
     launch = SandboxLaunch(

@@ -69,6 +69,9 @@ _RUN_CACHE_ENV_VARS = (
     "XDG_CACHE_HOME",
 )
 
+SRT_SETTINGS_RELATIVE_PATH = Path("assets") / "settings.json"
+SRT_VIOLATIONS_RELATIVE_PATH = Path("logs") / "violations.jsonl"
+
 
 @dataclass(frozen=True)
 class SandboxRunPaths:
@@ -538,6 +541,11 @@ def secure_policy_directory(run_id: str) -> Path:
     return directory
 
 
+def managed_execution_root() -> Path:
+    """Return the daemon-owned root for credential-scoped executions."""
+    return get_gobby_home() / "runtime" / "managed-executions"
+
+
 def srt_mux_tmpdir() -> Path:
     """Return the short shared directory for SRT runner-internal unix sockets.
 
@@ -554,7 +562,7 @@ def srt_mux_tmpdir() -> Path:
 
 def prepare_sandbox_run_paths(run_id: str, env: Mapping[str, str]) -> SandboxRunPaths:
     """Materialize one daemon-owned run root with four writable siblings."""
-    managed_root = get_gobby_home() / "runtime" / "managed-executions"
+    managed_root = managed_execution_root()
     bootstrap = env.get("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
     bootstrap_path = Path(bootstrap).resolve(strict=False) if bootstrap else None
     if bootstrap_path is not None and bootstrap_path.parent.is_relative_to(
