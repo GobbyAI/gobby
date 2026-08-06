@@ -1,4 +1,10 @@
-import { expect, test, type TestInfo } from "@playwright/test";
+import {
+  expect,
+  test,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from "@playwright/test";
 
 import { getProviderDisplayName } from "../src/lib/providerModels";
 
@@ -7,16 +13,26 @@ const LIVE_E2E_URL = "GOBBY_LIVE_PROVIDER_E2E_URL";
 const DEFAULT_CHAT_ROUTE = "/#chat";
 const PROMPT_TIMEOUT_MS = 120_000;
 
+interface ProviderMatrixModel {
+  canonical_model: string;
+  display_name: string;
+  hidden?: boolean;
+  is_default?: boolean;
+}
+
 interface ProviderModelEntry {
   provider: string;
   available: boolean;
-  models: Array<{
-    value: string;
-    label: string;
-    hidden?: boolean;
-    is_default?: boolean;
-  }>;
-  source: string;
+  models: unknown[];
+}
+
+function isProviderMatrixModel(value: unknown): value is ProviderMatrixModel {
+  if (typeof value !== "object" || value === null) return false;
+  const model = value as Record<string, unknown>;
+  return (
+    typeof model.canonical_model === "string" &&
+    typeof model.display_name === "string"
+  );
 }
 
 function sanitizeToken(value: string): string {
@@ -53,7 +69,7 @@ function getApiUrl(path: string): string {
 }
 
 async function loadLiveCatalog(
-  request: Parameters<typeof test>[0]["request"],
+  request: APIRequestContext,
 ): Promise<Record<string, ProviderModelEntry>> {
   const authResponse = await request.get(getApiUrl("/api/auth/status"));
   expect(authResponse.ok()).toBeTruthy();
@@ -74,7 +90,7 @@ async function loadLiveCatalog(
 }
 
 async function openFreshChat(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   conversationId: string,
 ): Promise<void> {
   await page.goto(getLiveChatUrl());
@@ -89,7 +105,7 @@ async function openFreshChat(
 }
 
 async function selectProviderModel(
-  page: Parameters<typeof test>[0]["page"],
+  page: Page,
   provider: string,
   modelLabel: string,
 ): Promise<void> {
@@ -109,12 +125,12 @@ async function selectProviderModel(
 }
 
 async function sendProbePrompt(
-  page: Parameters<typeof test>[0]["page"],
-  request: Parameters<typeof test>[0]["request"],
+  page: Page,
+  request: APIRequestContext,
   provider: string,
-  model: { value: string; label: string },
+  model: ProviderMatrixModel,
 ): Promise<void> {
-  const token = `live-${sanitizeToken(provider)}-${sanitizeToken(model.value)}`;
+  const token = `live-${sanitizeToken(provider)}-${sanitizeToken(model.canonical_model)}`;
   const prompt = `Reply with exactly ${token} and nothing else.`;
 
   const input = page.getByRole("textbox", { name: /message input/i });
@@ -146,7 +162,7 @@ async function sendProbePrompt(
       },
       { timeout: PROMPT_TIMEOUT_MS },
     )
-    .toBe(`${provider}:${model.value}`);
+    .toBe(`${provider}:${model.canonical_model}`);
 
   await expect
     .poll(
@@ -188,19 +204,18 @@ test.describe("Live provider picker verification", () => {
       const provider = catalog[providerName];
       expect(provider, `Provider ${providerName} must exist in /api/providers/models`).toBeTruthy();
       expect(provider.available, `Provider ${providerName} must be available`).toBeTruthy();
-      expect(provider.models.length, `Provider ${providerName} must expose models`).toBeGreaterThan(
-        0,
-      );
+      const models = provider.models.filter(isProviderMatrixModel);
+      expect(models.length, `Provider ${providerName} must expose matrix models`).toBeGreaterThan(0);
       const model =
-        provider.models.find((entry) => entry.is_default) ||
-        provider.models.find((entry) => !entry.hidden) ||
-        provider.models[0];
+        models.find((entry) => entry.is_default) ||
+        models.find((entry) => !entry.hidden) ||
+        models[0];
 
       await openFreshChat(
         page,
-        `${runId}-${providerName}-${sanitizeToken(model.value)}`,
+        `${runId}-${providerName}-${sanitizeToken(model.canonical_model)}`,
       );
-      await selectProviderModel(page, providerName, model.label);
+      await selectProviderModel(page, providerName, model.display_name);
       await sendProbePrompt(page, request, providerName, model);
     }
   });
