@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
+from gobby.tasks.close_checklist import CloseGateResult
 from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.utils.session_context import session_context_for_test
 
@@ -528,7 +529,12 @@ class TestCloseTask:
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
-                return_value=MagicMock(status="skipped", passed=True, details={}),
+                return_value=CloseGateResult(
+                    item=10,
+                    name="validation_commands",
+                    status="skipped",
+                    message="Validation commands skipped for this test.",
+                ),
             ),
             patch(
                 "gobby.utils.git.normalize_commit_sha",
@@ -602,7 +608,12 @@ class TestCloseTask:
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
-                return_value=MagicMock(status="skipped", passed=True, details={}),
+                return_value=CloseGateResult(
+                    item=10,
+                    name="validation_commands",
+                    status="skipped",
+                    message="Validation commands skipped for this test.",
+                ),
             ),
             patch(
                 "gobby.utils.git.normalize_commit_sha",
