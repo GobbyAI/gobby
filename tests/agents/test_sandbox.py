@@ -865,7 +865,10 @@ class TestComputeSandboxPaths:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
+        real_gobby_home = tmp_path / "real-gobby-home"
+        real_gobby_home.mkdir()
         gobby_home = tmp_path / "gobby-home"
+        gobby_home.symlink_to(real_gobby_home, target_is_directory=True)
         runtime_home = gobby_home / "gcode-runtime" / "current"
         workspace = tmp_path / "workspace"
         workspace.mkdir()
@@ -878,7 +881,17 @@ class TestComputeSandboxPaths:
             env={"PATH": "", "GOBBY_CODE_INDEX_RUNTIME_HOME": str(runtime_home)},
         )
 
-        protected = {
+        literal_protected = {
+            str(gobby_home / name)
+            for name in (
+                "bootstrap.yaml",
+                ".secret_kek",
+                "local_cli_token",
+                "gcode-runtime",
+                "tools/srt",
+            )
+        }
+        resolved_protected = {
             str((gobby_home / name).resolve())
             for name in (
                 "bootstrap.yaml",
@@ -888,13 +901,15 @@ class TestComputeSandboxPaths:
                 "tools/srt",
             )
         }
-        assert protected <= set(paths.deny_read_paths)
-        assert protected <= set(paths.deny_write_paths)
+        assert literal_protected <= set(paths.deny_read_paths)
+        assert resolved_protected <= set(paths.deny_read_paths)
+        assert literal_protected <= set(paths.deny_write_paths)
+        assert resolved_protected <= set(paths.deny_write_paths)
         for allowed in (*paths.read_paths, *paths.write_paths):
             allowed_path = Path(allowed)
             assert all(
                 sensitive != allowed_path and not sensitive.is_relative_to(allowed_path)
-                for sensitive in map(Path, protected)
+                for sensitive in map(Path, resolved_protected)
             )
         assert str(runtime_home.resolve()) in paths.read_paths
         assert str(workspace.resolve()) in paths.write_paths

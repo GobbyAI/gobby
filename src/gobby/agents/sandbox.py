@@ -700,6 +700,7 @@ def compute_sandbox_paths(
         canonical_paths,
         credential_env_vars,
         default_write_paths,
+        deny_paths,
         gobby_read_exceptions,
         gobby_write_exceptions,
         mcp_config_read_exceptions,
@@ -743,7 +744,7 @@ def compute_sandbox_paths(
         ],
         base=workspace,
     )
-    deny_read_paths = canonical_paths(
+    deny_read_paths = deny_paths(
         [
             *sensitive_roots(),
             *toolchain_credential_paths(),
@@ -751,7 +752,7 @@ def compute_sandbox_paths(
         ],
         base=workspace,
     )
-    deny_write_paths = canonical_paths(
+    deny_write_paths = deny_paths(
         [
             *sensitive_write_roots(),
             *toolchain_credential_paths(),
