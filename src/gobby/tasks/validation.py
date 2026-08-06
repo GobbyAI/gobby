@@ -19,6 +19,12 @@ logger = logging.getLogger(__name__)
 CHANGES_SUMMARY_MAX_CHARS = 2_000
 CHECKLIST_FACTS_MAX_CHARS = 500
 
+# Closure reasons that require no repository change: the criteria review judges
+# the disposition justification instead of literal criterion satisfaction.
+NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
+    {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
+)
+
 
 class ValidationPromptTooLarge(ValueError):
     """The full criteria and complete manifest cannot fit in the prompt contract."""
@@ -46,6 +52,7 @@ class TaskValidator:
         validation_criteria: str,
         diff_text: str | None,
         checklist_facts: Mapping[str, object],
+        closure_reason: str = "completed",
     ) -> CloseVerdict:
         """Review all criteria once against a bounded work summary and linked diff."""
         if not self.config.enabled:
@@ -73,6 +80,7 @@ class TaskValidator:
             self.config.prompt_path or "validation/validate",
             {
                 "title": title,
+                "closure_reason": closure_reason.strip() or "completed",
                 "criteria_text": criteria_text,
                 "changes_summary": _bound_text(
                     changes_summary.strip(),

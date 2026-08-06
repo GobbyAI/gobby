@@ -193,6 +193,7 @@ async def evaluate_criteria_review(
     diff_text: str | None,
     checklist_facts: Mapping[str, object],
     validation_config: TaskValidationConfig | None,
+    reason: str = "completed",
 ) -> ValidationResult:
     """Run and account for exactly one bounded LLM criteria review."""
     backoff = active_validation_backoff(task, ctx)
@@ -206,6 +207,7 @@ async def evaluate_criteria_review(
             validation_criteria=task.validation_criteria or "",
             diff_text=diff_text,
             checklist_facts=checklist_facts,
+            closure_reason=reason,
         )
     except ValidationPromptTooLarge as exc:
         return ValidationResult(

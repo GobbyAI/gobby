@@ -787,6 +787,7 @@ class TestCloseTask:
         task_validator.validate_task.assert_awaited_once()
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
+        assert validation_kwargs["closure_reason"] == "completed"
         assert "Implemented and verified" in validation_kwargs["changes_summary"]
         mock_task_manager.update_task.assert_not_called()
         mock_task_manager.close_task.assert_called_once()
@@ -796,6 +797,50 @@ class TestCloseTask:
         assert close_kwargs["validation_feedback"] == (
             "All criteria satisfied. Strict mypy and focused tests are clean."
         )
+
+    @pytest.mark.asyncio
+    async def test_close_task_obsolete_reason_reaches_criteria_review(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        """A no-work closure reason is forwarded to the criteria reviewer."""
+        task = _make_task(validation_criteria="The wiki gap is corrected")
+        mock_task_manager.get_task.return_value = task
+        mock_task_manager.list_tasks.return_value = []
+        mock_task_manager.close_task.return_value = task
+        task_validator = AsyncMock()
+        task_validator.validate_task.return_value = CloseVerdict(
+            status="valid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "The wiki gap is corrected",
+                    True,
+                    None,
+                ),
+            ),
+            feedback="Obsolescence justification is coherent.",
+        )
+
+        registry = _create_registry(mock_task_manager, task_validator)
+
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+        ) as mock_vcr:
+            mock_vcr.return_value = MagicMock(can_close=True)
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task.id,
+                    "reason": "obsolete",
+                    "changes_summary": "Superseded by the vault cutover.",
+                },
+            )
+
+        assert result["success"] is True
+        task_validator.validate_task.assert_awaited_once()
+        validation_kwargs = task_validator.validate_task.await_args.kwargs
+        assert validation_kwargs["closure_reason"] == "obsolete"
+        mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_task_normalized_valid_result_closes(

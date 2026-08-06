@@ -6,6 +6,8 @@ for task operations.
 
 import uuid
 
+from gobby.tasks.validation import NO_WORK_CLOSE_REASONS
+
 
 def _is_uuid(value: str) -> bool:
     """Check if a string is a valid UUID (not a ref like #123)."""
@@ -17,9 +19,7 @@ def _is_uuid(value: str) -> bool:
 
 
 # Reasons for which commit linking and validation are skipped when closing tasks
-SKIP_REASONS: frozenset[str] = frozenset(
-    {"duplicate", "already_implemented", "wont_fix", "obsolete", "out_of_repo"}
-)
+SKIP_REASONS: frozenset[str] = NO_WORK_CLOSE_REASONS
 
 
 def _is_path_format(ref: str) -> bool:

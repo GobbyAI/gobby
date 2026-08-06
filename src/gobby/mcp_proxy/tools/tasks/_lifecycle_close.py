@@ -517,6 +517,7 @@ async def _evaluate_close(
             "validation_commands": command_gate.details,
         },
         validation_config=ctx.validation_config,
+        reason=reason,
     )
     evaluation.validation_status = llm_result.validation_status
     evaluation.validation_feedback = llm_result.validation_feedback

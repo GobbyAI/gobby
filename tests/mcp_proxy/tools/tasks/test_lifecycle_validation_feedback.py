@@ -22,9 +22,11 @@ class _Validator:
     def __init__(self, outcome: CloseVerdict | Exception) -> None:
         self.outcome = outcome
         self.calls = 0
+        self.last_kwargs: dict[str, object] = {}
 
-    async def validate_task(self, **_kwargs: object) -> CloseVerdict:
+    async def validate_task(self, **kwargs: object) -> CloseVerdict:
         self.calls += 1
+        self.last_kwargs = kwargs
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
@@ -43,6 +45,7 @@ async def _evaluate(
     task: Task,
     manager: LocalTaskManager,
     validator: _Validator,
+    reason: str = "completed",
 ) -> Any:
     ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
     return await evaluate_criteria_review(
@@ -54,6 +57,7 @@ async def _evaluate(
         diff_text="diff --git a/docs/guide.md b/docs/guide.md",
         checklist_facts={"validation_commands": "skipped:category"},
         validation_config=None,
+        reason=reason,
     )
 
 
@@ -85,8 +89,37 @@ async def test_valid_verdict_preserves_feedback_without_mutating_task(
     assert result.validation_feedback == "Documentation criterion is satisfied."
     assert result.reset_reason == "llm_valid"
     assert validator.calls == 1
+    assert validator.last_kwargs["closure_reason"] == "completed"
     refreshed = manager.get_task(task.id)
     assert refreshed is not None and refreshed.validation_status == task.validation_status
+
+
+@pytest.mark.asyncio
+async def test_no_work_reason_threads_through_to_the_validator(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator = _Validator(
+        CloseVerdict(
+            status="valid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "The guide documents the checklist.",
+                    True,
+                    None,
+                ),
+            ),
+            feedback="Obsolescence justification is coherent.",
+        )
+    )
+
+    result = await _evaluate(task, manager, validator, reason="obsolete")
+
+    assert result.can_close is True
+    assert validator.last_kwargs["closure_reason"] == "obsolete"
 
 
 @pytest.mark.asyncio
