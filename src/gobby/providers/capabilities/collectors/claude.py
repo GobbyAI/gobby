@@ -261,19 +261,10 @@ def _parse_effort_docs(
     document: str,
     models: Sequence[_OverviewModel],
 ) -> dict[str, _EffortSupport]:
-    support_note = next(
-        (
-            match.group(1)
-            for match in re.finditer(r"<Note>(.*?)</Note>", document, flags=re.DOTALL)
-            if "effort parameter is supported by" in _clean_cell(match.group(1)).casefold()
-        ),
-        None,
-    )
-    if support_note is None:
-        raise ValueError("effort support note is missing")
-    supported_models = _models_named_in_text(models, support_note)
+    compatibility = _required_heading_section(document, "Compatibility")
+    supported_models = _models_named_by_family_version(models, compatibility)
     if not supported_models:
-        raise ValueError("effort support note names no models from the overview")
+        raise ValueError("effort compatibility section names no models from the overview")
 
     table = _find_table(document, ("level", "description", "typical use case"))
     levels_by_model: dict[str, set[str]] = {
@@ -431,6 +422,38 @@ def _models_named_in_text(
 ) -> tuple[_OverviewModel, ...]:
     normalized = _clean_cell(text).casefold()
     return tuple(model for model in models if model.display_name.casefold() in normalized)
+
+
+def _models_named_by_family_version(
+    models: Sequence[_OverviewModel],
+    text: str,
+) -> tuple[_OverviewModel, ...]:
+    lines = tuple(_normalize_cell(line) for line in text.splitlines())
+    supported: list[_OverviewModel] = []
+    for model in models:
+        label = model.display_name.removeprefix("Claude ")
+        family, separator, version = label.rpartition(" ")
+        if not separator:
+            continue
+        family_pattern = rf"(?<!\w){re.escape(family.casefold())}(?!\w)"
+        version_pattern = rf"(?<![\w.]){re.escape(version.casefold())}(?![\w.])"
+        if any(re.search(rf"{family_pattern}.*{version_pattern}", line) for line in lines):
+            supported.append(model)
+    return tuple(supported)
+
+
+def _required_heading_section(document: str, heading: str) -> str:
+    heading_match = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$",
+        document,
+        flags=re.IGNORECASE | re.MULTILINE,
+    )
+    if heading_match is None:
+        raise ValueError(f"required section {heading!r} is missing")
+    body_start = heading_match.end()
+    next_heading = re.search(r"^##\s+", document[body_start:], flags=re.MULTILINE)
+    body_end = body_start + next_heading.start() if next_heading else len(document)
+    return document[body_start:body_end]
 
 
 def _bounded_section(document: str, start: str, end: str) -> str:

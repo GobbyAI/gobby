@@ -6,10 +6,18 @@ from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
+from typing import cast
 
 import pytest
 
-from gobby.providers.capabilities.collectors import SourceSpec
+from gobby.providers.capabilities.collectors import CapabilityCollector, SourceSpec
+from gobby.providers.capabilities.collectors.claude import (
+    EFFORT_DOCS_URL,
+    MODEL_CONFIG_URL,
+    MODELS_OVERVIEW_URL,
+    ClaudeCollector,
+)
 from gobby.providers.capabilities.coverage import ModelMetadataCoverageAuditor
 from gobby.providers.capabilities.models import (
     FactProvenance,
@@ -246,6 +254,48 @@ async def test_startup_and_successful_refresh_run_coverage_audits() -> None:
 
     assert auditor.sync_calls == 1
     assert auditor.async_calls == 1
+
+
+async def test_claude_refresh_with_compatibility_effort_docs_emits_no_warnings(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fixtures = Path(__file__).parent / "collectors" / "fixtures" / "claude"
+    source_keys = {
+        MODELS_OVERVIEW_URL: "models-overview",
+        MODEL_CONFIG_URL: "model-config",
+        EFFORT_DOCS_URL: "effort-docs",
+    }
+    documents = {
+        source_key: (fixtures / f"{source_key}.md").read_text()
+        for source_key in source_keys.values()
+    }
+
+    async def fetch_text(url: str) -> str:
+        return documents[source_keys[url]]
+
+    collector = ClaudeCollector(
+        fetch_text=fetch_text,
+        clock=lambda: datetime(2026, 8, 6, 12, 0, tzinfo=UTC),
+    )
+    store = _MemoryStore(_snapshot("claude", "claude-opus-5"))
+    coordinator = CapabilityRefreshCoordinator(
+        store,
+        provider_collectors={"claude": cast(CapabilityCollector, collector)},
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await coordinator.refresh_all()
+
+    models = {model.canonical_model: model for model in store.snapshot.models}
+    assert models["claude-opus-5"].supported_efforts == (
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+    )
+    assert store.failures == []
+    assert caplog.records == []
 
 
 async def _async_snapshot(provider: str, model: str) -> ProviderSnapshot:

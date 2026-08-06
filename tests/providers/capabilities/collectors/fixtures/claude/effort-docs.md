@@ -1,8 +1,6 @@
 # Effort
 
-<Note>
-The effort parameter is supported by Claude Fable 5, Claude Opus 5, Claude Opus 4.6, and Claude Sonnet 5.
-</Note>
+The effort parameter is available on all supported models with no beta header required.
 
 ### Effort levels
 
@@ -13,3 +11,11 @@ The effort parameter is supported by Claude Fable 5, Claude Opus 5, Claude Opus 
 | `high` | Equivalent to omitting the effort parameter. | Complex tasks |
 | `medium` | Balanced token savings. | Agentic tasks |
 | `low` | Most efficient. | Simple tasks |
+
+## Compatibility
+
+Supported models
+
+- Fable 5
+- Opus 4.6 and 5
+- Sonnet 5
