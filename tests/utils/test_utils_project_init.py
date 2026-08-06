@@ -14,7 +14,7 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.utils.project_context import get_project_context
+from gobby.utils.project_context import ensure_project_json_for_isolation, get_project_context
 from gobby.utils.project_init import (
     InitResult,
     VerificationCommands,
@@ -866,6 +866,30 @@ class TestInitializeProject:
                 "parent_project_path",
             }
         )
+
+    def test_reinit_preserves_generated_isolation_parent_metadata(
+        self, tmp_path: Path, hub_db: HubDatabase
+    ) -> None:
+        parent_root = tmp_path / "parent"
+        worktree_root = tmp_path / "worktree"
+        parent_root.mkdir()
+        worktree_root.mkdir()
+        project_id = str(uuid.uuid4())
+        _write_project_json(
+            parent_root,
+            project_id,
+            "parent-project",
+            "2024-01-01T00:00:00Z",
+        )
+        ensure_project_json_for_isolation(parent_root, worktree_root)
+
+        result = initialize_project(worktree_root, db=hub_db)
+
+        project_file = worktree_root / ".gobby" / "project.json"
+        content = json.loads(project_file.read_text(encoding="utf-8"))
+        assert result.already_existed is True
+        assert content["parent_project_path"] == str(parent_root.resolve())
+        assert content["parent_project_id"] == project_id
 
     def test_reinit_from_subdirectory_refreshes_project_root(
         self, tmp_path: Path, hub_db: HubDatabase

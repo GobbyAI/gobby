@@ -18,6 +18,7 @@ from typing import Any
 
 from psycopg.errors import UniqueViolation
 
+from gobby.agents.isolation_git_hygiene import is_generated_isolation_project_json
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import datetime_to_required_iso
 
@@ -367,11 +368,19 @@ def update_project_json_fields(cwd: Path, **fields: Any) -> None:
         logger.warning("Failed to read project.json for field update: %s", e)
         return
 
-    for key in NONPORTABLE_PROJECT_KEYS:
+    nonportable_keys = NONPORTABLE_PROJECT_KEYS
+    parent_project_path = project_data.get("parent_project_path")
+    if isinstance(parent_project_path, str) and is_generated_isolation_project_json(
+        project_file,
+        main_repo_path=parent_project_path,
+    ):
+        nonportable_keys -= WORKTREE_LOCAL_PROJECT_KEYS
+
+    for key in nonportable_keys:
         project_data.pop(key, None)
 
     for key, value in fields.items():
-        if key in NONPORTABLE_PROJECT_KEYS:
+        if key in nonportable_keys:
             continue
         project_data[key] = value
 
