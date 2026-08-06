@@ -176,6 +176,16 @@ class CodeIndexPruner:
 
             detail = result.stderr.strip() or result.stdout.strip() or "gcode prune failed"
             dirty_projects = await self._list_dirty_projects()
+            indexed_projects = await self._context.run_db(
+                self._context.storage.list_indexed_projects
+            )
+            for project in _failed_indexed_projects(indexed_projects, result):
+                await self._context.run_db(
+                    self._context.storage.mark_prune_dirty,
+                    str(project.id),
+                    str(project.root_path),
+                    "global_prune_failed",
+                )
             retry_projects = _retry_dirty_projects(dirty_projects, result)
             outcomes: list[str] = []
             for project in retry_projects:
@@ -389,6 +399,14 @@ def _retry_dirty_projects(projects: list[Any], result: GcodeCommandResult) -> li
     if not failed_ids:
         return projects_with_roots
     return [project for project in projects_with_roots if str(project.project_id) in failed_ids]
+
+
+def _failed_indexed_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any]:
+    failed_ids = _failed_project_ids(result.stdout) | _failed_project_ids(result.stderr)
+    projects_with_roots = [project for project in projects if getattr(project, "root_path", None)]
+    if not failed_ids:
+        return projects_with_roots
+    return [project for project in projects_with_roots if str(project.id) in failed_ids]
 
 
 def _dirty_prune_cursor(dirty: Any) -> tuple[Any, Any, str]:

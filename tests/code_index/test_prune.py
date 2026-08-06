@@ -48,6 +48,7 @@ def _gcode_result(
 
 class PruneStorage:
     def __init__(self) -> None:
+        self.projects: list[Any] = []
         self.dirty_projects: list[Any] = []
         self.pending_by_project: dict[str, list[Any]] = {}
         self.marked_dirty: list[tuple[str, str, str]] = []
@@ -70,6 +71,9 @@ class PruneStorage:
                 if (dirty.updated_at, dirty.created_at, dirty.project_id) > after
             ]
         return dirty_projects[:limit]
+
+    def list_indexed_projects(self) -> list[Any]:
+        return self.projects
 
     def get_pending_sync_files(
         self,
@@ -156,6 +160,23 @@ def _dirty(
     )
 
 
+class PersistingPruneStorage(PruneStorage):
+    def mark_prune_dirty(self, project_id: str, root_path: str, reason: str) -> None:
+        super().mark_prune_dirty(project_id, root_path, reason)
+        for dirty in self.dirty_projects:
+            if dirty.project_id == project_id:
+                dirty.root_path = root_path
+                dirty.reason = reason
+                return
+        self.dirty_projects.append(_dirty(project_id, Path(root_path), reason))
+
+    def clear_prune_dirty(self, project_id: str) -> bool:
+        self.dirty_projects = [
+            dirty for dirty in self.dirty_projects if dirty.project_id != project_id
+        ]
+        return super().clear_prune_dirty(project_id)
+
+
 @pytest.mark.asyncio
 async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) -> None:
     storage = PruneStorage()
@@ -223,6 +244,36 @@ async def test_global_prune_failure_retries_only_machine_owned_dirty_roots(
     ]
     assert gateway.targeted_roots == [root_one, root_two]
     assert storage.cleared_dirty == ["proj-1", "proj-2"]
+
+
+@pytest.mark.asyncio
+async def test_global_prune_failure_marks_clean_project_for_next_cycle(tmp_path: Path) -> None:
+    project_root = tmp_path / "clean-project"
+    storage = PersistingPruneStorage()
+    storage.projects = [SimpleNamespace(id="proj-clean", root_path=str(project_root))]
+    gateway = PruneGateway(
+        global_result=_gcode_result(
+            ("/tmp/gcode", "prune", "--force"),
+            returncode=1,
+            stderr="projection prune failed",
+        )
+    )
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    first_result = await pruner.prune_all_projects()
+
+    assert first_result["retried_projects"] == 0
+    assert [(dirty.project_id, dirty.reason) for dirty in storage.dirty_projects] == [
+        ("proj-clean", "global_prune_failed")
+    ]
+    assert gateway.targeted_roots == []
+
+    second_result = await pruner.prune_all_projects()
+
+    assert second_result["retried_projects"] == 1
+    assert gateway.targeted_roots == [project_root]
+    assert storage.dirty_projects == []
 
 
 @pytest.mark.asyncio
