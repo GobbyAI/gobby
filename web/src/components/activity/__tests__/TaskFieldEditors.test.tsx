@@ -55,6 +55,23 @@ describe("TaskTextField (#14771 / D4)", () => {
     expect(input.value).toBe("Same");
     expect(onCommit).not.toHaveBeenCalled();
   });
+
+  it("replaces a local draft when the value prop changes", () => {
+    const onCommit = vi.fn();
+    const view = render(
+      <TaskTextField value="Old" onCommit={onCommit} ariaLabel="Title" />,
+    );
+    const input = screen.getByLabelText("Title") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Local draft" } });
+
+    view.rerender(
+      <TaskTextField value="Server value" onCommit={onCommit} ariaLabel="Title" />,
+    );
+
+    expect(input).toHaveValue("Server value");
+    fireEvent.blur(input);
+    expect(onCommit).not.toHaveBeenCalled();
+  });
 });
 
 describe("TaskTextAreaField (#14771 / D4)", () => {
@@ -103,6 +120,36 @@ describe("TaskTextAreaField (#14771 / D4)", () => {
       vi.advanceTimersByTime(500);
     });
     expect(area.value).toBe("kept");
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("replaces a pending draft and cancels its debounce when the value prop changes", () => {
+    vi.useFakeTimers();
+    const onCommit = vi.fn();
+    const view = render(
+      <TaskTextAreaField
+        value="Old"
+        onCommit={onCommit}
+        ariaLabel="Description"
+        debounceMs={500}
+      />,
+    );
+    const area = screen.getByLabelText("Description") as HTMLTextAreaElement;
+    fireEvent.change(area, { target: { value: "Local draft" } });
+
+    view.rerender(
+      <TaskTextAreaField
+        value="Server value"
+        onCommit={onCommit}
+        ariaLabel="Description"
+        debounceMs={500}
+      />,
+    );
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    expect(area).toHaveValue("Server value");
     expect(onCommit).not.toHaveBeenCalled();
   });
 });
@@ -163,6 +210,21 @@ describe("TaskTagsField (#14771 / D4)", () => {
     const input = screen.getByLabelText("Add label");
     fireEvent.change(input, { target: { value: "extra" } });
     fireEvent.keyDown(input, { key: "Escape" });
+    expect(onCommit).not.toHaveBeenCalled();
+  });
+
+  it("replaces local tags when the value prop changes", () => {
+    const onCommit = vi.fn();
+    const view = render(
+      <TaskTagsField value={["web"]} onCommit={onCommit} ariaLabel="Labels" />,
+    );
+
+    view.rerender(
+      <TaskTagsField value={["api"]} onCommit={onCommit} ariaLabel="Labels" />,
+    );
+
+    expect(screen.getByRole("button", { name: "Remove label api" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remove label web" })).toBeNull();
     expect(onCommit).not.toHaveBeenCalled();
   });
 });

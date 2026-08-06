@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useMcp, type McpServer, type McpTool, type McpToolSchema } from '../../hooks/useMcp'
 import { ToolArgumentForm } from './ToolArgumentForm'
 import { Input } from '../ui/Input'
@@ -19,15 +19,18 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   const [search, setSearch] = useState('')
   const [selectedServer, setSelectedServer] = useState<string | null>(null)
   const [selectedTool, setSelectedTool] = useState<string | null>(null)
-  const [schema, setSchema] = useState<McpToolSchema | null>(null)
-  const [schemaLoading, setSchemaLoading] = useState(false)
+  const [schemaState, setSchemaState] = useState<{
+    request: object | null
+    schema: McpToolSchema | null
+    isLoading: boolean
+  }>({ request: null, schema: null, isLoading: false })
+  const { schema, isLoading: schemaLoading } = schemaState
   const [formValues, setFormValues] = useState<Record<string, unknown>>({})
   const [formValid, setFormValid] = useState(true)
   const [executing, setExecuting] = useState(false)
   const [result, setResult] = useState<{ success: boolean; data?: unknown; error?: string } | null>(null)
   const [collapsedServers, setCollapsedServers] = useState<Set<string>>(new Set())
   const [hasFetched, setHasFetched] = useState(false)
-  const schemaRequestIdRef = useRef(0)
 
   // Lazy fetch on modal open
   useEffect(() => {
@@ -73,18 +76,19 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   }, [])
 
   const handleSelectTool = useCallback(async (serverName: string, toolName: string) => {
-    const requestId = ++schemaRequestIdRef.current
+    const request = {}
     setSelectedServer(serverName)
     setSelectedTool(toolName)
-    setSchema(null)
+    setSchemaState({ request, schema: null, isLoading: true })
     setFormValues({})
     setFormValid(true)
     setResult(null)
-    setSchemaLoading(true)
     const fetched = await fetchToolSchema(serverName, toolName)
-    if (requestId !== schemaRequestIdRef.current) return
-    setSchema(fetched)
-    setSchemaLoading(false)
+    setSchemaState((current) =>
+      current.request === request
+        ? { request: null, schema: fetched, isLoading: false }
+        : current,
+    )
   }, [fetchToolSchema])
 
   const handleExecute = useCallback(async () => {
@@ -109,10 +113,9 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
   }, [selectedServer, selectedTool, formValues, callTool, onSendMessage])
 
   const handleBack = useCallback(() => {
-    schemaRequestIdRef.current += 1
     setSelectedServer(null)
     setSelectedTool(null)
-    setSchema(null)
+    setSchemaState({ request: null, schema: null, isLoading: false })
     setFormValues({})
     setFormValid(true)
     setResult(null)
@@ -188,7 +191,6 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                           ? 'bg-accent/15 text-foreground'
                           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                       )}
-                      // Ref access occurs inside the click handler, after render.
                       onClick={() => handleSelectTool(serverName, tool.name)}
                     >
                       <div className="font-medium text-foreground text-xs">{tool.name}</div>

@@ -54,22 +54,23 @@ export function TaskTextField({
   ariaLabel,
   placeholder,
 }: TaskTextFieldProps) {
-  const [committed, setCommitted] = useState(value);
-  const [draft, setDraft] = useState(value);
+  const [editorState, setEditorState] = useState(() => ({
+    sourceValue: value,
+    committed: value,
+    draft: value,
+  }));
+  const { committed, draft } =
+    editorState.sourceValue === value
+      ? editorState
+      : { committed: value, draft: value };
   const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
-
-  useEffect(() => {
-    setCommitted(value);
-    setDraft(value);
-  }, [value]);
 
   const commit = useCallback(() => {
     const next = draft.trim();
-    setDraft(next);
+    setEditorState({ sourceValue: value, committed: next, draft: next });
     if (next === committed) return;
-    setCommitted(next);
     onCommit(next);
-  }, [committed, draft, onCommit]);
+  }, [committed, draft, onCommit, value]);
 
   const onKeyDown = useCallback((event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -78,10 +79,10 @@ export function TaskTextField({
     } else if (event.key === "Escape") {
       event.preventDefault();
       skipNextBlurCommit();
-      setDraft(committed);
+      setEditorState({ sourceValue: value, committed, draft: committed });
       event.currentTarget.blur();
     }
-  }, [committed, skipNextBlurCommit]);
+  }, [committed, skipNextBlurCommit, value]);
 
   return (
     <input
@@ -91,7 +92,9 @@ export function TaskTextField({
       placeholder={placeholder}
       value={draft}
       disabled={disabled}
-      onChange={(event) => setDraft(event.target.value)}
+      onChange={(event) =>
+        setEditorState({ sourceValue: value, committed, draft: event.target.value })
+      }
       onKeyDown={onKeyDown}
       onBlur={() => {
         if (shouldSkipBlurCommit()) return;
@@ -118,8 +121,15 @@ export function TaskTextAreaField({
   debounceMs = 600,
   placeholder,
 }: TaskTextAreaFieldProps) {
-  const [committed, setCommitted] = useState(value);
-  const [draft, setDraft] = useState(value);
+  const [editorState, setEditorState] = useState(() => ({
+    sourceValue: value,
+    committed: value,
+    draft: value,
+  }));
+  const { committed, draft } =
+    editorState.sourceValue === value
+      ? editorState
+      : { committed: value, draft: value };
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
@@ -132,8 +142,6 @@ export function TaskTextAreaField({
 
   useEffect(() => {
     clearTimer();
-    setCommitted(value);
-    setDraft(value);
   }, [clearTimer, value]);
 
   useEffect(() => clearTimer, [clearTimer]);
@@ -141,24 +149,27 @@ export function TaskTextAreaField({
   const commit = useCallback(
     (next: string) => {
       const committedNext = next.trim();
-      setDraft(committedNext);
+      setEditorState({
+        sourceValue: value,
+        committed: committedNext,
+        draft: committedNext,
+      });
       if (committedNext === committed) return;
-      setCommitted(committedNext);
       onCommit(committedNext);
     },
-    [committed, onCommit],
+    [committed, onCommit, value],
   );
 
   const onChange = useCallback(
     (next: string) => {
-      setDraft(next);
+      setEditorState({ sourceValue: value, committed, draft: next });
       clearTimer();
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         commit(next);
       }, debounceMs);
     },
-    [clearTimer, commit, debounceMs],
+    [clearTimer, commit, committed, debounceMs, value],
   );
 
   const onKeyDown = useCallback(
@@ -167,11 +178,11 @@ export function TaskTextAreaField({
         event.preventDefault();
         clearTimer();
         skipNextBlurCommit();
-        setDraft(committed);
+        setEditorState({ sourceValue: value, committed, draft: committed });
         event.currentTarget.blur();
       }
     },
-    [clearTimer, committed, skipNextBlurCommit],
+    [clearTimer, committed, skipNextBlurCommit, value],
   );
 
   return (
@@ -246,23 +257,24 @@ export function TaskTagsField({
   disabled,
   ariaLabel,
 }: TaskTagsFieldProps) {
-  const [committed, setCommitted] = useState<string[]>(value);
-  const [tags, setTags] = useState<string[]>(value);
+  const [editorState, setEditorState] = useState(() => ({
+    sourceValue: value,
+    committed: value,
+    tags: value,
+  }));
+  const { committed, tags } = sameTags(editorState.sourceValue, value)
+    ? editorState
+    : { committed: value, tags: value };
   const [entry, setEntry] = useState("");
   const { shouldSkipBlurCommit, skipNextBlurCommit } = useSkipNextBlurCommit();
 
-  useEffect(() => {
-    setCommitted(value);
-    setTags(value);
-  }, [value]);
-
   const commit = useCallback(
     (next: string[]) => {
+      setEditorState({ sourceValue: value, committed: next, tags: next });
       if (sameTags(next, committed)) return;
-      setCommitted(next);
       onCommit(next);
     },
-    [committed, onCommit],
+    [committed, onCommit, value],
   );
 
   const addTag = useCallback(() => {
@@ -272,14 +284,12 @@ export function TaskTagsField({
       return;
     }
     const next = [...tags, tag];
-    setTags(next);
     setEntry("");
     commit(next);
   }, [commit, entry, tags]);
 
   const removeTag = useCallback((tag: string) => {
     const next = tags.filter((existing) => existing !== tag);
-    setTags(next);
     commit(next);
   }, [commit, tags]);
 
@@ -291,17 +301,16 @@ export function TaskTagsField({
       } else if (event.key === "Backspace" && entry === "" && tags.length > 0) {
         event.preventDefault();
         const next = tags.slice(0, -1);
-        setTags(next);
         commit(next);
       } else if (event.key === "Escape") {
         event.preventDefault();
         skipNextBlurCommit();
-        setTags(committed);
+        setEditorState({ sourceValue: value, committed, tags: committed });
         setEntry("");
         event.currentTarget.blur();
       }
     },
-    [addTag, commit, committed, entry, skipNextBlurCommit, tags],
+    [addTag, commit, committed, entry, skipNextBlurCommit, tags, value],
   );
 
   return (

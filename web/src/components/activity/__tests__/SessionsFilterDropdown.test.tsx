@@ -23,15 +23,22 @@ function renderDropdown(overrides: Partial<{
 }> = {}) {
   const onChange = vi.fn();
   const onClose = vi.fn();
-  const view = render(
+  const providerOptions = overrides.providerOptions ?? ["claude", "codex", "unknown"];
+  const element = (filters: SessionsFilters) => (
     <SessionsFilterDropdown
-      filters={overrides.filters ?? defaultSessionsFilters()}
+      filters={filters}
       onChange={onChange}
-      providerOptions={overrides.providerOptions ?? ["claude", "codex", "unknown"]}
+      providerOptions={providerOptions}
       onClose={onClose}
-    />,
+    />
   );
-  return { onChange, onClose, ...view };
+  const view = render(element(overrides.filters ?? defaultSessionsFilters()));
+  return {
+    onChange,
+    onClose,
+    rerenderFilters: (filters: SessionsFilters) => view.rerender(element(filters)),
+    ...view,
+  };
 }
 
 describe("SessionsFilterDropdown", () => {
@@ -134,6 +141,19 @@ describe("SessionsFilterDropdown", () => {
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
     expect(next.datePreset).toBe("7d");
+    expect(container.querySelectorAll("input[type='date']").length).toBe(0);
+  });
+
+  it("syncs custom-range disclosure when filters change externally", () => {
+    const { container, rerenderFilters } = renderDropdown();
+    expect(container.querySelectorAll("input[type='date']").length).toBe(0);
+
+    const customFilters = defaultSessionsFilters();
+    customFilters.datePreset = "custom";
+    rerenderFilters(customFilters);
+    expect(container.querySelectorAll("input[type='date']").length).toBe(2);
+
+    rerenderFilters(defaultSessionsFilters());
     expect(container.querySelectorAll("input[type='date']").length).toBe(0);
   });
 

@@ -91,7 +91,7 @@ export const MemoryTab = memo(function MemoryTab({
   const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [requestedSelectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
@@ -120,6 +120,11 @@ export const MemoryTab = memo(function MemoryTab({
       ),
     [displayedMemories, scope, tabFilters],
   );
+  const selectedId =
+    requestedSelectedId !== null &&
+    filteredMemories.some((memory) => memory.id === requestedSelectedId)
+      ? requestedSelectedId
+      : (filteredMemories[0]?.id ?? null);
   const selectedMemory = useMemo(
     () => displayedMemories.find((memory) => memory.id === selectedId) ?? null,
     [displayedMemories, selectedId],
@@ -128,14 +133,6 @@ export const MemoryTab = memo(function MemoryTab({
   useEffect(() => {
     searchMemories(search);
   }, [search, searchMemories]);
-
-  useEffect(() => {
-    const keep =
-      selectedId !== null &&
-      filteredMemories.some((memory) => memory.id === selectedId);
-    const next = keep ? selectedId : filteredMemories[0]?.id ?? null;
-    if (next !== selectedId) setSelectedId(next);
-  }, [filteredMemories, selectedId]);
 
   useEffect(() => {
     const controller = new AbortController();

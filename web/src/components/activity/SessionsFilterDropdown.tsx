@@ -82,7 +82,12 @@ export function SessionsFilterDropdown({
   providerOptions,
   onClose,
 }: SessionsFilterDropdownProps) {
+  const [previousDatePreset, setPreviousDatePreset] = useState(filters.datePreset);
   const [showCustomDate, setShowCustomDate] = useState(filters.datePreset === "custom");
+  if (previousDatePreset !== filters.datePreset) {
+    setPreviousDatePreset(filters.datePreset);
+    setShowCustomDate(filters.datePreset === "custom");
+  }
   const panelRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
   useDialogFocus({ ref: panelRef, isOpen: isMobile, onClose });
@@ -103,10 +108,6 @@ export function SessionsFilterDropdown({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
-
-  useEffect(() => {
-    setShowCustomDate(filters.datePreset === "custom");
-  }, [filters.datePreset]);
 
   function update(patch: Partial<SessionsFilters>): void {
     onChange({ ...filters, ...patch });

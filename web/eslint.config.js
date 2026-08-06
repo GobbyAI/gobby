@@ -45,7 +45,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/components/workflows/ReportsPage.tsx",
   "src/components/workflows/RulesTab.tsx",
   "src/hooks/useAgentDefinitions.ts",
-  "src/hooks/useAgentRuns.ts",
   "src/hooks/useAuth.ts",
   "src/hooks/useCronJobs.ts",
   "src/hooks/useDashboard.ts",
