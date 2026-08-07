@@ -83,9 +83,11 @@ mechanics absorbed by reference).
   absorbed by this plan (normalizer/prose/retrieval-preference → 6.1 and the prose
   contracts above; at-a-glance facts → 3.1; layers and tour metadata → 3.2 and 4.3;
   reference-row quality → 3.3; render versions and deterministic regeneration →
-  2.1 and the 7.1 end-to-end acceptance). At expansion, #18871 either becomes the anchor
-  for the corresponding leaves or is closed as superseded — it must not run as a
-  parallel second implementation.
+  2.1 and the 7.1 end-to-end acceptance). #18871 is closed as superseded by this
+  plan, so the disposition is settled before expansion rather than deferred to it:
+  the six sections named above are the sole implementation owners, and no open
+  task can start the same normalizer, prose, facts, layers, tours, retrieval, or
+  regeneration work in parallel with this plan's leaves.
 - **Module-root ownership:** 2.1 creates `code_wiki/mod.rs` and
   `code_wiki/render/mod.rs` declaring only the files 2.1 itself delivers. Every
   later leaf that introduces a new file under `code_wiki/` (or `code_wiki/render/`)
@@ -353,6 +355,16 @@ attempted. Include orphan detection: any
 `code/**` page not present in the manifest (excluding gwiki-catalog-owned
 `code/INDEX.md` and `_context.md`) is reported and removed on regeneration.
 
+That ownership test is exported as one predicate, `is_engine_owned_generated_path`,
+defined here rather than at either call site: 3.4's catalog reconciliation and
+6.1's search filter must both answer the question identically, and neither can own
+a symbol the other compiles against — 3.4 would have to depend on a later leaf.
+2.1 precedes both, so the predicate lands with the manifest that defines
+ownership. It answers exactly one question — whether a vault-relative path is an
+engine-owned generated page described by the build manifest. Manifest-tracked
+pages and `code/_meta/**` are engine-owned; `code/INDEX.md`, `_context.md`, the
+vault-root `_index.md`, `knowledge/**`, and rendered source pages are not.
+
 `publication.rs`: transactional publication for the whole generation. Semantics
 are adapted from the legacy staged/journaled `CodewikiPublication` mechanics
 (staging area, journaled replacement and pruning, recovery on restart), but the
@@ -428,7 +440,11 @@ orchestration and stays deferred to #19665 (D2).
   and regenerating identical inputs yields byte-identical bytes.
   test: `crates/gwiki/tests/code_wiki_manifest.rs::build_json_roundtrip_and_byte_identical`.
 - 2.1.3 - Orphaned generated pages are detected and pruned; catalog-owned files
-  are never touched. test: `crates/gwiki/tests/code_wiki_manifest.rs::orphan_prune_spares_catalog_files`.
+  are never touched; and `is_engine_owned_generated_path` classifies every path
+  class exactly once — manifest-tracked pages and `code/_meta/**` engine-owned,
+  `code/INDEX.md`, `_context.md`, the vault-root `_index.md`, `knowledge/**`, and
+  rendered source pages not — so 3.4 and 6.1 share one answer.
+  test: `crates/gwiki/tests/code_wiki_manifest.rs::orphan_prune_spares_catalog_files`.
 - 2.1.4 - A slug-changing rename preserves `page_id` while updating path,
   inbound wikilinks, tour metadata, and graph references; lineage is recorded.
   test: `crates/gwiki/tests/code_wiki_manifest.rs::rename_preserves_page_id`.
@@ -476,8 +492,8 @@ vault-free and unit-testable. Classify a change set into
   rationale comments changed, also re-render the insights rationale section.
 - `PARTIAL`: symbol changes confined to existing modules — regenerate those module
   pages, plus landing facts and any concept/tour/insights page whose
-  `source_files` intersect the change set; when the graph-projection input digest
-  changed, also regenerate the graph projection.
+  `source_files` intersect the change set. The graph projection is decided by the
+  late projection check defined below, never at this selection point.
 - `ARCHITECTURE`: module membership or layer assignment changed — detected by
   comparing the prior and current membership fingerprints, so a pure membership
   shift with no file edits still classifies — additionally regenerate the
@@ -489,14 +505,30 @@ vault-free and unit-testable. Classify a change set into
   regenerate the graph projection, insights, and catalog cross-namespace
   aliasing; code pages are untouched.
 
-The graph projection is invalidated by a digest of its own serialized surface
-rather than by edges alone: the **graph-projection input digest** covers every
-field 5.1 emits — node identity, kind, slug, layer assignment, node summary,
+The graph projection cannot be selected at this point, and the model says so
+rather than pretending otherwise. Its inputs include values that do not exist
+until upstream rendering, naming, layer assignment, and the AI passes finish —
+final node summaries, key-symbol membership, layer assignment, and
+cross-namespace alias pairs — so a selector running before P3–P5 has nothing to
+hash. Selection is therefore split by responsibility: this leaf defines the
+**graph-projection input digest** and the comparison rule, and 5.1 performs the
+check at its own point in the composition order (6.2). The digest covers every
+field 5.1 serializes — node identity, kind, slug, layer assignment, node summary,
 key-symbol membership, cross-namespace alias pairs, and the edge set with its
-evidence spans — and is persisted in the build manifest. A change that leaves
-call/import edges identical while moving a symbol summary, a key-symbol set, a
-layer assignment, or an alias pair therefore still regenerates
-`outputs/graph.json`.
+evidence spans — and its prior value is persisted in the build manifest. Once
+every upstream producer has materialized its final values, 5.1 builds the
+complete projection input without writing, digests it, compares against the
+persisted prior, and writes `outputs/graph.json` plus the new digest only on a
+mismatch. A change leaving call/import edges identical while moving a symbol
+summary, a key-symbol set, a layer assignment, or an alias pair therefore still
+regenerates the projection, and an unchanged projection is never rewritten.
+
+Every change class reaches that same late check instead of predicting its
+outcome. Naming the graph projection in the `ARCHITECTURE` set below states which
+class marks it stale, not that a different code path regenerates it: a membership
+change necessarily moves layer assignment, which is a digest field, so an
+`ARCHITECTURE` run always mismatches and always regenerates. Knowledge-only runs
+reach it through changed alias pairs.
 
 The complete artifact-by-input dependency matrix (which inputs invalidate each
 page class, `layers.json`, the graph projection, and insights) is documented in
@@ -568,11 +600,12 @@ defined in terms of these keys.
   run with unchanged inputs; the outcome survives a second failure and clears
   only after verified output; the unavailable→available capability transition
   is covered. test: `crates/gwiki/tests/code_wiki_invalidation.rs::degraded_artifacts_reselected_until_repaired`.
-- 2.2.5 - The artifact-by-input matrix is enforced: PARTIAL edge changes
-  regenerate the graph projection, a node-field change with identical
-  call/import edges (symbol summary, key-symbol membership, layer assignment,
-  alias pair) moves the graph-projection input digest and regenerates it too,
-  COSMETIC tagged-comment changes re-render insights rationale, knowledge-only
+- 2.2.5 - The artifact-by-input matrix is enforced: the late projection check
+  regenerates the graph on a PARTIAL edge change, a node-field change with
+  identical call/import edges (symbol summary, key-symbol membership, layer
+  assignment, alias pair) moves the graph-projection input digest and regenerates
+  it too, an input whose digest is unchanged leaves `outputs/graph.json`
+  unwritten, COSMETIC tagged-comment changes re-render insights rationale, knowledge-only
   changes regenerate graph, insights, and aliasing, and a membership-fingerprint
   change with no file edits classifies ARCHITECTURE and selects exactly the
   architecture set named in 2.2.
@@ -657,8 +690,22 @@ Targets:
 - `crates/gwiki/src/sources/manifest.rs::*` — scope-reason: segment persistence and tombstoning span `SourceManifest::read`, the `register*` constructors, and `SourceManifest::remove`
 - `crates/gwiki/src/sources/render.rs::*` — scope-reason: rendered source pages gain stable segment anchors so segment citations resolve on the existing read surface
 - `crates/gwiki/src/citations.rs::*` — scope-reason: the unified citation shape spans `render_citations`, `source_records_for_paths`, and every `render_source_citation*` helper
-- `crates/gwiki/src/commands/sources.rs::execute_remove`
-- `crates/gwiki/src/ingest/session_archive.rs::remove_session_page`
+- `crates/gwiki/src/commands/sources.rs::*` — scope-reason: tombstone removal spans `execute_remove`, `rollback_removed_source_state`, `rollback_removed_source`, and this file's manifest test fixtures
+- `crates/gwiki/src/ingest/session_archive.rs::*` — scope-reason: latest-wins replacement spans `remove_session_page` and `supersede_session_page`, which must skip tombstones
+- `crates/gwiki/src/commands/citation_quality.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/commands/compile.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/commands/refresh/selection.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/commands/refresh/tests.rs::*` — scope-reason: five `SourceRecord` seed helpers migrated to the canonical constructor
+- `crates/gwiki/src/compile/select.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/health/tests.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/ingest/mod.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/paths.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/recap.rs::*` — scope-reason: two `SourceRecord` literals migrated to the canonical constructor
+- `crates/gwiki/src/transcribe.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/upkeep/tests.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/video/tests.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/src/vision.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
+- `crates/gwiki/tests/cli_sources.rs::*` — scope-reason: `SourceRecord` literal migrated to the canonical constructor
 - `crates/gwiki/tests/wiki_sources.rs`
 
 Epic #19664 owns stable identities for external sources and extracted
@@ -695,14 +742,37 @@ what they observe: `commands/sources.rs::execute_remove` deletes the raw source
 and asset files and rolls back the manifest when indexing fails, and
 `ingest/session_archive.rs::remove_session_page` performs latest-wins
 replacement of a session's page through `SourceManifest::remove_with_cleanup`.
-A tombstone is manifest state only — rendered pages, raw sources, and assets are
-still deleted; tombstoned entries are excluded from listing, compile selection,
-reindexing, and the latest-wins presence check, so replacement never accumulates
-duplicate live entries; and rollback restores the pre-removal record by clearing
-the tombstone. Identity fields are populated through one canonical
-`SourceRecord` constructor, and every struct literal in the crate — production
-and test fixture alike — moves to it in this leaf rather than hand-initializing
-identity.
+A tombstone keeps exactly enough on the retrieval surface for a citation to land
+somewhere real. Raw sources and assets are deleted outright. The rendered source
+page is replaced by a content-free tombstone document at the same stable path,
+carrying only the source and segment identities, the per-segment anchors, and the
+removal cause — so a retained segment citation resolves through the existing
+`wiki_read` path to a tombstone instead of a not-found, without adding a second
+retrieval path or a read-path special case. Tombstone documents are excluded from
+listing, `wiki_search`, compile selection, reindexing, and the latest-wins
+presence check, so nothing surfaces them as live content and replacement never
+accumulates duplicate live entries.
+
+Both live removal callers change, because retaining the id changes what they
+observe. `rollback_removed_source` today refuses to restore whenever the manifest
+already contains the record's id; with a tombstone that condition is now always
+true, so index-failure rollback would fail permanently. It becomes a
+tombstone-to-live transition: a tombstoned entry with the same id is the expected
+precondition and is promoted back to live, while a *live* duplicate remains the
+error it always was. `supersede_session_page` matches every manifest entry by
+kind and canonical location; it gains a tombstone exclusion so latest-wins
+replacement never re-removes an already-tombstoned page. `SourceManifest`'s
+remove and supersede helpers carry the same exclusion.
+
+Identity fields are populated through one canonical `SourceRecord` constructor.
+Adding identity fields to the struct breaks every existing literal, so the
+migration is crate-wide by necessity and every literal site is an exact target
+above — production (`sources/manifest.rs`, `paths.rs`, `recap.rs`,
+`transcribe.rs`, `vision.rs`, `ingest/mod.rs`, `citations.rs`) and test fixture
+(`compile/select.rs`, `commands/refresh/`, `commands/compile.rs`,
+`commands/citation_quality.rs`, `health/`, `upkeep/`, `video/`,
+`tests/cli_sources.rs`) alike. The leaf compiles the crate as part of its own
+acceptance rather than leaving literals stranded.
 
 Boundary: extraction execution, retries, progress, daemon/UI ingestion, and
 surfacing segments as independent `wiki_search` hits stay with #19671 (D1) —
@@ -720,14 +790,21 @@ the tombstone contract, and the degradation derivation to wire into.
   tombstone instead of dropping the entry, and the derivation returns exactly
   the dependent artifacts plus their `degraded_sources` attribution; no citation
   into a removed source dangles. Both live callers keep their contracts: the CLI
-  removal path still deletes files and its index-failure rollback restores the
-  live record, and latest-wins session replacement leaves exactly one live entry
-  with the tombstone excluded from listing, selection, and reindexing.
+  removal path still deletes raw sources and assets, and its index-failure
+  rollback promotes the tombstoned entry back to live rather than failing on the
+  retained id, while a live duplicate id still errors; repeated latest-wins
+  session replacement leaves exactly one live entry, skips already-tombstoned
+  pages instead of re-removing them, and keeps tombstones out of listing,
+  selection, and reindexing. The crate compiles with every `SourceRecord` literal
+  migrated to the canonical constructor.
   test: `crates/gwiki/tests/wiki_sources.rs::deletion_tombstones_and_degrades`.
 - 2.5.3 - A segment citation rendered through the unified `Citation` shape
   resolves to its anchor on the rendered source page via the existing read
-  surface, and a citation into a tombstoned segment resolves to the tombstone
-  rather than a missing target.
+  surface, and a citation into a tombstoned segment resolves through that same
+  `wiki_read` path to the content-free tombstone document at the stable rendered
+  path — carrying source and segment identities, anchors, and removal cause —
+  rather than a missing target, after both CLI removal and latest-wins
+  replacement; the tombstone document stays absent from listing and search.
   test: `crates/gwiki/tests/wiki_sources.rs::segment_citations_resolve`.
 
 ## P3: Orientation spine (deterministic renderers)
@@ -776,8 +853,9 @@ is deterministic (from 2.4 clustering); layer *names* come from the naming pass
 in 4.1 and are cached in the build manifest's `layer_names` state and
 `layers.json`. Cold start (no cached names): render deterministic slug-derived
 provisional names with `named: false` in `layers.json`; the 4.1 naming pass
-rewrites them. Warm runs reuse cached names whenever the membership fingerprint
-is unchanged. Page contains: layer table (Layer | Modules | Purpose), a
+rewrites them. Warm runs reuse cached names on an exact match of 4.1's complete
+naming cache key (membership fingerprint plus prompt/schema and model-lane
+versions), never on membership alone. Page contains: layer table (Layer | Modules | Purpose), a
 validated mermaid architecture map of layers and their coupling edges (bounded
 via the 5.3 primitive), and per-layer module lists with wikilinks.
 `layers.json` carries `{layer, modules[], summary, named}` for UI consumption
@@ -845,7 +923,10 @@ dissolve `catalog.rs` into the `catalog/` module tree (`mod.rs` public surface,
 The gwiki catalog owns `code/INDEX.md`, `_context.md` files, and the vault root
 `_index.md`; the new engine owns `code/_index.md`. Update the catalog so the two
 never fight: `regenerate` treats `code/_index.md`, `code/_meta/**`, and
-manifest-tracked pages as engine-owned (listed, never rewritten); `render_wiki_index`
+manifest-tracked pages as engine-owned (listed, never rewritten), deciding
+ownership through 2.1's shared `is_engine_owned_generated_path` predicate rather
+than a second local rule, so the catalog and 6.1's search filter can never
+disagree about which paths the engine owns; `render_wiki_index`
 groups the code section by the new taxonomy (Landing / Layers / Modules / Concepts /
 Tours / Insights / Projections) instead of the legacy Handbook/files split;
 `render_overview` sources its code totals from `code/_meta/build.json` when present
@@ -942,17 +1023,24 @@ The LLM naming pass over 2.4's deterministic membership (bakeoff C5/C9 —
 confirmed across two competitors): daemon-routed, labels each cluster from
 member purposes (e.g., `monitoring-and-detection`, not `src/agents/tmux`).
 Names cache in the build manifest's `layer_names` state and `layers.json` so
-regeneration without AI reuses them; cached names are reused whenever the 2.4
-membership fingerprint is unchanged and regenerate exactly when it changes (the
-ARCHITECTURE class) — the fingerprint is the only naming invalidator, and no
-threshold or similarity test sits between them. Naming rewrites the 3.2
+regeneration without AI reuses them. Reuse is keyed on the complete naming
+`ArtifactId` cache key 2.2 defines — the 2.4 membership fingerprint plus the
+prompt/schema and model-lane versions read from the resolved execution snapshot —
+and names regenerate on any exact-match miss of that key, so a prompt, schema,
+route-model, or daemon-lane change renames a stable membership. No threshold or
+similarity test sits between the key and the decision. Membership change stays the
+ARCHITECTURE classifier in 2.2; it is one component of the naming key rather than
+the whole of it. Naming rewrites the 3.2
 provisional cold-start names. Output feeds concept pages (4.2), layer names
 (3.2), and tours (4.3).
 
 **Acceptance:**
 
-- 4.1.1 - Cached names survive regeneration when membership is stable, and the
-  naming pass replaces provisional cold-start names. test: `crates/gwiki/tests/code_wiki_naming.rs::names_cached_across_runs`.
+- 4.1.1 - Cached names survive regeneration when membership is stable and the
+  full naming key matches, and the naming pass replaces provisional cold-start
+  names; with membership held stable, a prompt/schema version change and a
+  model-lane change each independently miss the key and regenerate names.
+  test: `crates/gwiki/tests/code_wiki_naming.rs::names_cached_across_runs`.
 
 ### 4.2 Generate grounded narrative prose and concept pages [category: code] (depends: 4.1)
 `kind: deliverable`
@@ -1059,9 +1147,15 @@ at `crates/gwiki/tests/fixtures/graph_export_schema.json` — regenerated
 byte-identically by the `GraphExport` serializer from a representative
 cross-namespace graph and carrying the schema version #18869 consumes.
 
-This leaf also emits the graph-projection input digest 2.2 keys invalidation on:
-the digest covers exactly the fields serialized below, so the producer and the
-selector cannot drift apart.
+This leaf also owns the late projection check 2.2 defers to it. Running after
+every upstream producer has materialized its final values, it builds the complete
+projection input in memory without writing, computes the graph-projection input
+digest over exactly the fields serialized below, and compares it against the
+prior digest persisted in the build manifest. On a match it writes nothing and
+leaves the committed `outputs/graph.json` in place; on a mismatch it emits the
+projection and persists the new digest in the same publication. Producer and
+digest are the same code path over the same struct, so they cannot drift apart,
+and no earlier selector has to predict values that do not exist yet.
 
 Extended schema: nodes `{id, kind: module|concept|layer|page|symbol, slug,
 layer, summary}` spanning both namespaces (code pages from the build manifest,
@@ -1085,9 +1179,11 @@ whole-project graph query at request time.
 - 5.1.2 - `outputs/graph.json` has exactly one semantic producer — the
   `gwiki graph` command re-exports the committed projection; existing export
   consumers (JSON-LD, llms indexes, export tests) render from the extended
-  schema; every file this leaf touches is below 1,000 lines; and
+  schema; every file this leaf touches is below 1,000 lines;
   `crates/gwiki/tests/fixtures/graph_export_schema.json` is committed and
-  regenerated byte-identically by the serializer.
+  regenerated byte-identically by the serializer; and the late projection check
+  writes the projection and its digest exactly on a digest mismatch, leaving the
+  committed output untouched when the digest matches.
   test: `crates/gwiki/src/exports/tests.rs::extended_schema_serves_all_consumers`.
 
 ### 5.2 Render the insight report [category: code] (depends: 5.1)
@@ -1201,7 +1297,9 @@ engine-owned generated paths, decided by one `is_engine_owned_generated_path`
 predicate this leaf defines and 3.4's catalog ownership check shares — a stale
 generated hit is dropped, while curated `knowledge/**`, rendered source pages,
 `code/INDEX.md`, and `_context.md` files stay visible under their own
-lifecycles, since the build manifest never described them. Missing-until-reindex
+lifecycles, since the build manifest never described them. The predicate is 2.1's
+(`build_manifest.rs`), shared verbatim with 3.4's catalog ownership check; this
+leaf calls it and defines nothing. Missing-until-reindex
 staleness for generated pages is the accepted, documented behavior; scheduling
 the refresh is #19665's (D2).
 
@@ -1252,9 +1350,15 @@ generation lock and journal recovery (2.1), deterministic clustering membership
 and its fingerprint (2.4), capability capture as a resolved execution snapshot
 (2.2), invalidation and selection over the prior manifest, the prior and current
 membership fingerprints, and that snapshot (2.2), deterministic renderers (P3),
-AI passes (P4/P5), the final landing refresh (the landing page renders last,
-after every other page class has registered its build record), and transactional
-publication (2.1). Membership precedes selection deliberately: the classifier
+AI passes (P4/P5), the late graph-projection check (5.1 — it runs here, after
+every producer of a digest field has materialized its final values, and writes
+`outputs/graph.json` only on a digest mismatch), the final landing refresh (the
+landing page renders last, after every other page class has registered its build
+record), and transactional publication (2.1). The graph projection is
+deliberately the one artifact not selected in the invalidation step: its digest
+covers node summaries, key-symbol membership, layer assignment, and alias pairs,
+none of which exist before P3–P5 finish, so deciding it earlier would mean
+hashing values the run has not produced. Membership precedes selection deliberately: the classifier
 cannot detect an `ARCHITECTURE` change without the current fingerprint, so
 computing membership after selection would silently skip layer, concept, tour,
 and graph regeneration. Daemon and CLI adapter wiring stays deferred to #19665
@@ -1270,7 +1374,10 @@ and graph regeneration. Daemon and CLI adapter wiring stays deferred to #19665
 - 6.2.3 - A run whose only change is cluster membership (no file edits)
   classifies ARCHITECTURE through the engine and regenerates the architecture
   set named in 2.2 — `layers.md`, `layers.json`, affected concept pages, tours,
-  and the graph projection — proving membership is computed before selection.
+  and the graph projection — proving membership is computed before selection; the
+  graph projection is reached through the late check, whose digest mismatches
+  because layer assignment moved, and a run with unchanged upstream values leaves
+  `outputs/graph.json` unwritten while the rest of the pipeline still runs.
   test: `crates/gwiki/tests/code_wiki_engine.rs::membership_change_selects_architecture_set`.
 
 ## P7: End-to-end acceptance
@@ -1423,6 +1530,70 @@ deferral:
 `kind: verification`
 
 <!-- Rounds appended by enhancement/adversary phases. -->
+
+**Round 5** `kind: verification`
+
+- reviewer_run: e4f421a7-2598-4c8f-9a92-5acaf5cb881f
+- reviewer_session: #10276
+- verdict: needs_review
+- findings:
+- F56 blocking bad-sequencing 2.2 graph-projection-digest-before-selection — accepted (regression, introduced_in_round 4 via F52)
+- F57 blocking unhandled-edge 4.1 layer-name-cache-invalidator-parity — accepted (regression, introduced_in_round 4 via F50)
+- F58 blocking bad-sequencing 6.1 shared-generated-path-predicate-owner-order — accepted (regression, introduced_in_round 4 via F48)
+- F59 blocking unhandled-edge 2.5 tombstoned-segment-read-resolution — accepted (regression, introduced_in_round 4 via F54)
+- F60 blocking traceability 2.5 tombstone-constructor-and-state-machine-target-closure — accepted (regression, introduced_in_round 4 via F54)
+- F61 blocking bad-sequencing 6.1 absorbed-task-anchor-reconciled-before-expansion — accepted
+- resolution_notes: All six accepted; none refuted. Five are self-inflicted
+  regressions from the round-4 repairs, each verified by re-reading the sections
+  round 4 edited; F59, F60, and F61 were additionally verified against the live
+  repository and task graph before acceptance. F56 — the round-4 F52 repair
+  assigned the graph-projection input digest to 5.1 while 6.2 still ran
+  invalidation before P5, so the selector was required to compare a digest whose
+  fields (final node summaries, key-symbol membership, layer assignment, alias
+  pairs) do not exist until P3–P5 finish. Graph selection is now split into a
+  late projection check: 2.2 defines the digest and comparison rule, 5.1 builds
+  the complete projection input in memory after every upstream producer has
+  materialized, digests it, and writes `outputs/graph.json` plus the new digest
+  only on a mismatch; 6.2's composition order places that check explicitly, and
+  2.2.5, 5.1.2, and 6.2.3 assert both the mismatch and the unchanged-digest
+  no-write case. F57 — the round-4 F50 repair made the membership fingerprint the
+  sole naming invalidator in 4.1 while 2.2 kept prompt/schema and model-lane
+  versions in the naming cache key, so a stable-membership prompt change had to
+  both reuse and regenerate the same names; 4.1 and 3.2 now key reuse on the
+  complete naming `ArtifactId` key from 2.2, membership stays the ARCHITECTURE
+  classifier as one component of it, and 4.1.1 covers independent prompt/schema
+  and model-lane transitions under stable membership. F58 — the round-4 F48
+  repair had 6.1 define `is_engine_owned_generated_path` while 3.4, an earlier
+  leaf 6.1 depends on through P3, had to call it; the predicate moves to 2.1's
+  `build_manifest.rs`, which precedes both consumers, and 2.1.3 asserts its
+  classification parity across manifest-tracked pages, `code/_meta/**`,
+  `code/INDEX.md`, `_context.md`, the vault-root `_index.md`, `knowledge/**`, and
+  rendered source pages. F59 — the round-4 F54 repair made tombstones
+  manifest-only and deleted the rendered page, leaving 2.5.3's requirement that a
+  segment citation resolve through `wiki_read` to a tombstone unsatisfiable; a
+  content-free tombstone document is now retained at the stable rendered path
+  with identities, anchors, and removal cause, excluded from listing, search,
+  compile selection, and reindexing, while raw sources and assets are still
+  deleted. F60 — verified directly against the crate: `rollback_removed_source`
+  (`commands/sources.rs:464`) errors whenever the manifest already holds the
+  record's id, which a retained tombstone makes permanently true, and
+  `supersede_session_page` (`ingest/session_archive.rs:574`) matches entries by
+  kind and canonical location with no tombstone exclusion; rollback becomes an
+  explicit tombstone-to-live promotion with live duplicates still erroring,
+  supersede gains the exclusion, and 2.5 Targets expand to both rollback helpers,
+  `supersede_session_page`, and the full crate-wide `SourceRecord` literal
+  inventory, since adding identity fields breaks every literal. F61 — verified in
+  the task graph: #18871 was open, unclaimed, and `blocked_by: []` under the same
+  epic, so it could have run the absorbed work in parallel with the manifest
+  leaves; it is now closed as a duplicate superseded by this plan
+  (`validation_status: valid`) and the Constraints entry records the settled
+  disposition instead of deferring it to expansion. No new acceptance items were
+  created — eight existing items were tightened — so the coverage ledger changes
+  only its `plan_hash`.
+
+```json plan-review-round
+{"evidence_id":"9ed18bbe-4aa1-496d-8af1-db061f30bdaa","plan_hash":"495f1086ea49c811b833a8ebc1723e27b3eadc5787c7099a2dfeb45bc67a6aa4","round_number":5,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"722b897362f16af14203f8fa633ae650438c2e4f60a5e86a5705b23758a6a3b1","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":6,"emitted_findings":6,"total":12},"evidence_id":"9ed18bbe-4aa1-496d-8af1-db061f30bdaa","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":21,"manifest_digest":"12256527fd7d0437b27bb77c931110a0a62f52e54c455d051c1c3a682bf88cda","status":"valid"},"source_digest":"32c59da6964394d89c753e75c48e4da806c939a520e2a06be20c123c71761205","version":1},"findings":[{"category":"bad-sequencing","causal_finding_id":"F52","causal_section_ids":["2.2","5.1"],"check_key":"graph-projection-digest-before-selection","description":"Section 2.2 must compare the prior and current graph-projection input digests to select graph regeneration, but 5.1 says it emits that digest and 6.2 runs invalidation before P5. Fields such as final node summaries may not exist until upstream rendering and AI finish, so the selector cannot compute the promised current digest; unchanged call/import edges with a changed serialized node field can still skip graph regeneration.","finding_id":"F56","fix":"Split graph selection into a late projection check: after upstream page, naming, layer, and alias producers materialize their final values, build the complete projection input without writing, compute and compare its digest, then invoke 5.1 only when changed and persist the same digest. Amend 2.2, 5.1, and 6.2 and add an engine test where edges stay identical while a serialized node summary, key-symbol set, layer, or alias changes.","introduced_in_round":4,"location":"P2 §2.2, P5 §5.1, and P6 §6.2","prevention":"For every persisted invalidation digest, verify that its current-state producer runs before selection and that output-derived fields have a specified late-selection stage.","principle":"An invalidation decision must receive the current value of every digest it compares before deciding whether the digest producer runs.","root_cause":"The F52 repair assigned graph-projection input-digest emission to downstream leaf 5.1 while 6.2 retained invalidation before P5, creating a producer-selector cycle.","section_id":"2.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F50","causal_section_ids":["2.2","3.2","4.1"],"check_key":"layer-name-cache-invalidator-parity","description":"Section 2.2 defines the exact layer-name cache key as membership fingerprint plus prompt/schema and model-lane versions and requires those fields to invalidate independently. Section 4.1 simultaneously says stable membership always reuses cached names and membership is the only naming invalidator. A prompt, schema, route-model, or daemon-lane change with stable membership must therefore both regenerate and reuse the same name set.","finding_id":"F57","fix":"Make 4.1 reuse names only when the complete naming ArtifactId cache key from 2.2 matches; regenerate on membership, prompt/schema, or model-lane changes. Keep membership change as the ARCHITECTURE classifier and add stable-membership prompt/schema/model transition coverage to 4.1.1.","introduced_in_round":4,"location":"P2 §2.2 and P4 §4.1","prevention":"Compare every artifact producer's reuse rule with its ArtifactId cache-key definition and test each key component changing independently.","principle":"One cached artifact must have one consistent invalidation key across selection, production, and acceptance tests.","root_cause":"The F50 repair made membership fingerprint the sole naming invalidator in 4.1 without reconciling 2.2's existing prompt/schema and model-lane key components.","section_id":"4.1","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"F48","causal_section_ids":["2.1","3.4","6.1","7.1"],"check_key":"shared-generated-path-predicate-owner-order","description":"Section 6.1 depends on P3 yet claims to define the single is_engine_owned_generated_path predicate shared by 3.4. Live ownership traversal is in catalog regeneration while search filtering is in commands/search.rs; 3.4 cannot compile against a symbol created by a later dependent leaf, and 6.1 does not target catalog/regenerate.rs or another shared owner.","finding_id":"F58","fix":"Move is_engine_owned_generated_path into an existing P2-owned shared target such as 2.1 build_manifest.rs, export it there, and require both 3.4 catalog reconciliation and 6.1 search filtering to call it. Add parity tests covering manifest-tracked pages, code/_index.md, code/_meta, code/INDEX.md, _context.md, knowledge pages, and rendered source pages.","introduced_in_round":4,"location":"P2 §2.1, P3 §3.4, and P6 §6.1","prevention":"For every cross-leaf shared symbol, verify target ownership, dependency direction, and independent compile closure for its earliest consumer.","principle":"A shared primitive must be owned by a prerequisite that exists before every independently closing consumer.","root_cause":"The F48 repair says later leaf 6.1 defines is_engine_owned_generated_path even though earlier leaf 3.4 must already use it for catalog ownership checks.","section_id":"6.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F54","causal_section_ids":["2.5"],"check_key":"tombstoned-segment-read-resolution","description":"The live wiki_read path returns not found when its document is absent. Section 2.5 deletes the rendered source page and keeps only manifest tombstone state, yet 2.5.3 requires the old segment citation to resolve through wiki_read to its tombstone. No targeted read-path branch or remaining anchor can satisfy that acceptance.","finding_id":"F59","fix":"Retain a minimal content-free tombstone document at the stable rendered source path with source and segment identities, anchors, and removal cause; continue deleting raw source and assets and exclude tombstone documents from listing, search, compile selection, and reindexing. Amend 2.5.2/2.5.3 and test exact reads after both CLI removal and latest-wins replacement.","introduced_in_round":4,"location":"P2 §2.5","prevention":"For each deletion state, trace citation rendering through path resolution and storage lookup to a concrete live or tombstone response.","principle":"A retained citation target needs a concrete addressable representation on the retrieval surface that acceptance uses.","root_cause":"The F54 repair made tombstones manifest-only and required rendered source pages to be deleted while retaining an acceptance that resolves tombstoned segment anchors through the existing filesystem-backed wiki_read path.","section_id":"2.5","severity":"blocking"},{"category":"traceability","causal_finding_id":"F54","causal_section_ids":["2.5"],"check_key":"tombstone-constructor-and-state-machine-target-closure","description":"Live rollback_removed_source rejects restoration whenever the manifest already contains the same id, which becomes guaranteed once remove retains that id as a tombstone; supersede_session_page iterates every matching manifest entry without a tombstone exclusion. Direct SourceRecord literals also remain in production and test files outside 2.5 Targets, including compile, refresh selection, recap, paths, transcribe, and vision sites. The promised repair therefore requires edits the leaf does not target and can fail compilation or preserve wrong state transitions.","finding_id":"F60","fix":"Expand 2.5 Targets to rollback_removed_source_state, rollback_removed_source, supersede_session_page, every affected SourceManifest supersede/remove helper, and the full crate-wide SourceRecord literal inventory. Define tombstone-to-live rollback and tombstone-excluding latest-wins matching, migrate all literals to the constructor, and add crate-compile plus index-failure rollback, repeated replacement, and previously tombstoned-session tests.","introduced_in_round":4,"location":"P2 §2.5 Targets and removal contract","prevention":"After changing a public Rust struct or remove semantics, inventory all direct literals, rollback helpers, presence checks, supersede paths, fakes, and fixtures and reconcile each with exact Targets.","principle":"Exact Targets must include every constructor and state-transition owner whose code necessarily changes under a data-shape or deletion-semantic change.","root_cause":"The F54 repair added crate-wide constructor migration and tombstone rollback/latest-wins promises in prose but targeted only execute_remove and remove_session_page at those call sites.","section_id":"2.5","severity":"blocking"},{"category":"bad-sequencing","check_key":"absorbed-task-anchor-reconciled-before-expansion","description":"The constraint says #18871 either becomes an anchor or is closed as superseded at expansion. The live task remains open and unblocked, so it can begin the same normalizer, prose, facts, layers, tours, retrieval, and regeneration work while #19664 is still blocked. The valid shadow manifest does not encode an existing-task anchor, leaving the prohibited parallel implementation path live.","finding_id":"F61","fix":"Close #18871 as superseded by wiki-output-design before manifest expansion and amend the constraint to record that completed disposition; keep the six plan sections as the sole implementation owners.","location":"Constraints task-graph reconciliation and absorbed work in §6.1","prevention":"Before approving an absorbed-task plan, verify every overlapping open task has one recorded disposition and cannot start independently of the manifest leaves.","principle":"Absorbed implementation work must have one task-graph owner before expansion so an unblocked duplicate cannot execute in parallel.","root_cause":"The plan leaves #18871 as an anchor-or-supersede choice deferred to expansion, while the live task is open and unblocked and the derived shadow manifest creates 21 new leaves without resolving that choice.","section_id":"6.1","severity":"blocking"}],"reviewer_session":"#10276","round":5,"round_number":5,"verdict":"needs_review"},"session_id":"b8f54985-47f1-493d-a08a-8b37e5211bd7"}
+```
 
 **Round 4** `kind: verification`
 
