@@ -1,0 +1,57 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: account-identity-machine-ownership
+plan_hash: "8fd76e97c3c0c8ede57d81f100cc05d0dbe066e5daa8a37dc131a31f9cf039c4"
+root_task_ref: "19650"
+
+sections:
+  "1.1":
+    acceptance_items:
+      "1.1.1": {expected_leaves: [{title: Add canonical user persistence, owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: Add canonical user persistence, owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: Add canonical user persistence, owner_agent: backend-developer}]}
+      "1.1.4": {expected_leaves: [{title: Add canonical user persistence, owner_agent: backend-developer}]}
+  "1.2":
+    acceptance_items:
+      "1.2.1": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+      "1.2.5": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+      "1.2.6": {expected_leaves: [{title: Enforce ownership and separate registration from refresh, owner_agent: backend-developer}]}
+  "1.3":
+    acceptance_items:
+      "1.3.1": {expected_leaves: [{title: Update shared PostgreSQL test identity fixtures, owner_agent: qa-dev}]}
+      "1.3.2": {expected_leaves: [{title: Update shared PostgreSQL test identity fixtures, owner_agent: qa-dev}]}
+      "1.3.3": {expected_leaves: [{title: Update shared PostgreSQL test identity fixtures, owner_agent: qa-dev}]}
+  "2.1":
+    acceptance_items:
+      "2.1.1": {expected_leaves: [{title: Bootstrap the initial user and machine, owner_agent: backend-developer}]}
+      "2.1.2": {expected_leaves: [{title: Bootstrap the initial user and machine, owner_agent: backend-developer}]}
+      "2.1.3": {expected_leaves: [{title: Bootstrap the initial user and machine, owner_agent: backend-developer}]}
+      "2.1.4": {expected_leaves: [{title: Bootstrap the initial user and machine, owner_agent: backend-developer}]}
+      "2.1.5": {expected_leaves: [{title: Bootstrap the initial user and machine, owner_agent: backend-developer}]}
+  "2.2":
+    acceptance_items:
+      "2.2.1": {expected_leaves: [{title: Remove the authentication mode switch, owner_agent: backend-developer}]}
+      "2.2.2": {expected_leaves: [{title: Remove the authentication mode switch, owner_agent: backend-developer}]}
+      "2.2.3": {expected_leaves: [{title: Remove the authentication mode switch, owner_agent: backend-developer}]}
+      "2.2.4": {expected_leaves: [{title: Remove the authentication mode switch, owner_agent: backend-developer}]}
+  "2.3":
+    acceptance_items:
+      "2.3.1": {expected_leaves: [{title: Convert server and E2E tests to authenticated fixtures, owner_agent: qa-dev}]}
+      "2.3.2": {expected_leaves: [{title: Convert server and E2E tests to authenticated fixtures, owner_agent: qa-dev}]}
+      "2.3.3": {expected_leaves: [{title: Convert server and E2E tests to authenticated fixtures, owner_agent: qa-dev}]}
+      "2.3.4": {expected_leaves: [{title: Convert server and E2E tests to authenticated fixtures, owner_agent: qa-dev}]}
+  "3.1":
+    acceptance_items:
+      "3.1.1": {expected_leaves: [{title: Switch login to user email/password, owner_agent: fullstack-developer}]}
+      "3.1.2": {expected_leaves: [{title: Switch login to user email/password, owner_agent: fullstack-developer}]}
+      "3.1.3": {expected_leaves: [{title: Switch login to user email/password, owner_agent: fullstack-developer}]}
+      "3.1.4": {expected_leaves: [{title: Switch login to user email/password, owner_agent: fullstack-developer}]}
+      "3.1.5": {expected_leaves: [{title: Switch login to user email/password, owner_agent: fullstack-developer}]}
+  "3.2":
+    acceptance_items:
+      "3.2.1": {expected_leaves: [{title: Update operator-facing contracts, owner_agent: backend-developer}]}
+      "3.2.2": {expected_leaves: [{title: Update operator-facing contracts, owner_agent: backend-developer}]}
+      "3.2.3": {expected_leaves: [{title: Update operator-facing contracts, owner_agent: backend-developer}]}
+      "3.2.4": {expected_leaves: [{title: Update operator-facing contracts, owner_agent: backend-developer}]}
