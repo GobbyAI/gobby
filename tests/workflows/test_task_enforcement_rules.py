@@ -228,7 +228,7 @@ class TestRequireTaskBeforeCommit:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Claim the task" in response.reason
+        assert "claim the task that authorizes this repository commit" in response.reason
 
     @pytest.mark.asyncio
     async def test_claimed_task_allows_commit(self, db: HubDatabase) -> None:

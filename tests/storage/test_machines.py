@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -11,6 +10,8 @@ from gobby.runner_init.helpers import ensure_machine_identity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
@@ -84,16 +85,31 @@ class TestLocalMachineManager:
 def test_session_registration_upserts_machine(
     session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
+    # Registration is machine-scoped: an explicit foreign id is rejected, so the
+    # registry row this upserts is always the current machine's.
+    local_machine_id = require_machine_id()
     session_manager.register(
         external_id="session-machine-registration",
-        machine_id=MACHINE_B,
+        machine_id=local_machine_id,
         source="claude",
         project_id=sample_project["id"],
     )
 
-    machine = LocalMachineManager(session_manager.db).get(MACHINE_B)
+    machine = LocalMachineManager(session_manager.db).get(local_machine_id)
     assert machine is not None
-    assert machine.id == MACHINE_B
+    assert machine.id == local_machine_id
+
+
+def test_session_registration_rejects_foreign_machine(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    with pytest.raises(MachineOwnershipMismatchError):
+        session_manager.register(
+            external_id="session-machine-registration-foreign",
+            machine_id=MACHINE_B,
+            source="claude",
+            project_id=sample_project["id"],
+        )
 
 
 def test_fresh_boot_registers_identity(temp_db: HubDatabase) -> None:

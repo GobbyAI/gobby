@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -63,6 +64,21 @@ def _skill_tool_error_record(skill_name: str) -> dict[str, Any]:
     }
 
 
+def _bundled_rule_condition(relative_path: str, rule_name: str) -> str:
+    """Read a rule's `when` straight from its bundled template.
+
+    Condition tests that hardcode a copy of the expression silently keep
+    passing when the template drifts; reading the template keeps the
+    evaluated expression and the shipped rule the same string.
+    """
+    from gobby.workflows.sync_rules import get_bundled_rules_path
+
+    data = yaml.safe_load((get_bundled_rules_path() / relative_path).read_text(encoding="utf-8"))
+    condition = data["rules"][rule_name]["when"]
+    assert isinstance(condition, str)
+    return condition
+
+
 def _sync_bundled(db: HubDatabase) -> object:
     """Sync bundled rules and coerce source to 'installed' for test evaluation.
 
@@ -93,6 +109,7 @@ SKILL_DISCOVERY_RULES = {
     "require-kotlin-skill",
     "require-lua-skill",
     "require-php-skill",
+    "require-plan-skill",
     "require-python-skill",
     "require-ruby-skill",
     "require-rust-skill",
@@ -2699,6 +2716,120 @@ class TestRequireYamlSkillCondition:
         assert self._eval("") is False
 
 
+# --- require-plan-skill structure ---
+
+
+class TestRequirePlanSkillStructure:
+    """Verify require-plan-skill rule structure."""
+
+    def test_is_before_tool_event(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-plan-skill")
+        assert row is not None
+
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "before_tool"
+        assert body.when is not None
+        for skill in ("plan", "plan-draft", "plan-review", "plan-enhance"):
+            assert f"not skill_loaded('{skill}')" in body.when
+        assert "event.data.get('canonical_tool_kind') == 'write'" in body.when
+        assert "'.gobby/plans/' in" in body.when
+
+    def test_has_block_effect_with_canonical_directive(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-plan-skill")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+
+        assert body.effects is not None
+        assert len(body.effects) == 1
+        assert body.effects[0].type == "block"
+        assert body.effects[0].reason == skill_fetch_directive("plan")
+
+
+class TestRequirePlanSkillCondition:
+    """Test the require-plan-skill condition evaluates correctly."""
+
+    CONDITION = _bundled_rule_condition(
+        "skill-discovery/require-plan-skill.yaml", "require-plan-skill"
+    )
+
+    def _eval(
+        self,
+        file_path: str,
+        *,
+        canonical_tool_kind: str = "write",
+        loaded_skills: list[str] | None = None,
+        injected_skills: list[str] | None = None,
+    ) -> bool:
+        variables = {"loaded_skills": loaded_skills or []}
+        if injected_skills is not None:
+            variables["injected_skills"] = injected_skills
+        context = {
+            "variables": variables,
+            "event": SimpleNamespace(
+                data={
+                    "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_file_path": file_path,
+                }
+            ),
+            "tool_input": {},
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        return evaluator.evaluate(self.CONDITION)
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/.gobby/plans/wiki-output-design.md",
+            "/project/.gobby/plans/wiki-output-design.coverage-ledger.yaml",
+            "/project/.gobby/plans/completed/coderabbit-fixes.md",
+            ".gobby/plans/wiki-output-design.md",
+            "C:\\project\\.gobby\\plans\\wiki-output-design.md",
+        ],
+    )
+    def test_matches_plan_artifact_writes(self, file_path: str) -> None:
+        assert self._eval(file_path) is True
+
+    @pytest.mark.parametrize(
+        "file_path",
+        [
+            "/project/docs/plans/roadmap.md",
+            "/project/plans/roadmap.md",
+            "/project/.gobby/tasks/backlog.md",
+            "/project/.gobby/project.json",
+            "/project/.claude/plans/19670-scratch.md",
+            "/project/src/gobby/plans/service.py",
+        ],
+    )
+    def test_skips_non_plan_artifact_targets(self, file_path: str) -> None:
+        assert self._eval(file_path) is False
+
+    @pytest.mark.parametrize("skill", ["plan", "plan-draft", "plan-review", "plan-enhance"])
+    def test_skips_when_any_plan_family_skill_loaded(self, skill: str) -> None:
+        assert self._eval("/project/.gobby/plans/design.md", loaded_skills=[skill]) is False
+
+    def test_unrelated_skill_does_not_count_as_plan_loaded(self) -> None:
+        assert self._eval("/project/.gobby/plans/design.md", loaded_skills=["yaml"]) is True
+
+    def test_does_not_skip_when_legacy_injected(self) -> None:
+        assert self._eval("/project/.gobby/plans/design.md", injected_skills=["plan"]) is True
+
+    def test_skips_reads_of_plan_artifacts(self) -> None:
+        assert self._eval("/project/.gobby/plans/design.md", canonical_tool_kind="read") is False
+
+    def test_skips_searches_over_plan_artifacts(self) -> None:
+        assert self._eval("/project/.gobby/plans/design.md", canonical_tool_kind="search") is False
+
+    def test_skips_empty_file_path(self) -> None:
+        assert self._eval("") is False
+
+
 # --- require-json-skill structure ---
 
 
@@ -3423,7 +3554,9 @@ class TestCodeIndexNavigationRules:
         )
         session_id = SessionManager(db).register_session(
             external_id="code-index-fail-open-session",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            # None resolves the current machine; a hardcoded id is rejected as
+            # foreign by machine-scoped ownership.
+            machine_id=None,
             source="codex",
             project_id=project_id,
             project_path="/tmp/code-index-fail-open",

@@ -1,0 +1,18 @@
+tags: [skill-discovery, context, gobby, default]
+
+rules:
+  require-plan-skill:
+    description: "Block plan-artifact writes until a plan skill is loaded"
+    event: before_tool
+    enabled: true
+    priority: 30
+    when: >
+      not skill_loaded('plan')
+      and not skill_loaded('plan-draft')
+      and not skill_loaded('plan-review')
+      and not skill_loaded('plan-enhance')
+      and event.data.get('canonical_tool_kind') == 'write'
+      and '.gobby/plans/' in normalize_path(event.data.get('canonical_file_path', ''))
+    effects:
+      - type: block
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"}). Then continue.'
