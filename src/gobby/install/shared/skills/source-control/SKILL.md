@@ -1,9 +1,9 @@
 ---
 name: source-control
-description: Commit message format and release PR process. Use when ready to commit or push a release; use tasks for task close/review gates.
-version: "1.0.0"
+description: Commit message format, task-branch landing with worktree cleanup, and release PR process. Use when ready to commit, land a task branch, or push a release; use tasks for task close/review gates.
+version: "1.1.0"
 category: core
-triggers: commit, git commit, commit changes, release, push release, create pr, pull request
+triggers: commit, git commit, commit changes, merge, land branch, merge worktree, delete worktree, release, push release, create pr, pull request
 metadata:
   gobby:
     audience: all
@@ -90,7 +90,49 @@ git commit -m "[<project_name>-#42] feat: implement feature"
 
 ---
 
-## Part 2: Release PR Workflow
+## Part 2: Landing a Task Branch (Worktrees)
+
+A task branch that lives in a Gobby-managed worktree
+(`~/.gobby/worktrees/<project>/task-NNNNN-*`) must be landed **through the
+worktree tools**, never with a bare `git merge`. A manual merge leaves the
+worktree's DB record `active` forever: `mark_merged` never runs,
+`cleanup_after` is never stamped, and the daemon reaper can never reclaim the
+worktree. The worktree, its branch, and its registration all leak.
+
+### Landing (the normal path)
+
+```python
+call_tool("gobby-worktrees", "merge_worktree", {"worktree_id": "<id>"})
+call_tool("gobby-worktrees", "delete_worktree", {"worktree_id": "<id>"})
+```
+
+Use default deletion flags (`force=false`, `force_delete_branch=false`).
+`delete_worktree` refuses dirty trees and unmerged branches — if it refuses,
+resolve the reason; do not reach for force flags.
+
+### If a manual `git merge` already happened
+
+Repair the record immediately, then delete:
+
+```python
+call_tool("gobby-worktrees", "mark_worktree_merged", {"worktree_id": "<id>"})
+call_tool("gobby-worktrees", "delete_worktree", {"worktree_id": "<id>"})
+```
+
+### Rules
+
+- Never run `git worktree remove` or `git branch -D` by hand on a managed
+  worktree — the DB record only updates through the tools.
+- `force=true` is only for verified untracked-only dirt.
+  `force_delete_branch=true` abandons unmerged commits and is never part of a
+  normal landing.
+- Not landing yet (handing the worktree to another session or agent)? Use
+  `release_worktree` — never leave a finished task's worktree `active`.
+- After landing, `list_worktrees` must show no `active` row for the task.
+
+---
+
+## Part 3: Release PR Workflow
 
 When you're ready to cut a release from a working branch (e.g., `0.5.0`):
 

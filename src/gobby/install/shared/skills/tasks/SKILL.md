@@ -89,6 +89,13 @@ Closing a leaf task is an ordered checklist:
 | 3 | A clean category-appropriate validation command in a task session transcript | Docs, planning, research, manual, or no-edit close |
 | 4 | One bounded criteria review | Organizational parent |
 
+Workspace rule: a task that owns an isolation worktree is not finished until
+that worktree is landed and deleted (`merge_worktree` then `delete_worktree`;
+after a manual merge, `mark_worktree_merged` then `delete_worktree`) or
+explicitly handed off with `release_worktree`. Never leave a merged worktree
+registered as active — see the `source-control` skill, Part 2: Landing a Task
+Branch.
+
 When a completion gate reports foreign-attributed dirt after its owning session
 committed or abandoned the work, ask that owner to call
 `release_task_paths(task_id="#N", paths=["path/to/file"])` on `gobby-tasks`.

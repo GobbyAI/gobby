@@ -391,6 +391,8 @@ steps:
       - "gobby-skills:get_skill"
       - "gobby-worktrees:push_branch"
       - "gobby-worktrees:merge_worktree"
+      - "gobby-worktrees:mark_worktree_merged"
+      - "gobby-worktrees:delete_worktree"
       - "gobby-worktrees:list_worktrees"
       - "gobby-merge:analyze_merge_landscape"
       - "gobby-merge:predict_conflicts"
