@@ -1,439 +1,763 @@
 header:
   plan_id: wiki-output-design
-  plan_hash: bb0ff2258ab815cb317373f97ee65fd09729e74168fe0e808f374685e73e557f
+  plan_hash: d017d79b5bc8373ac33a3fe30baf27a7a1500e22c3153d2e7072607a5a606a64
   root_task_ref: '#19664'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-07T08:58:26Z'
+  generated_at: '2026-08-07T09:03:50Z'
   task_tree_source: db
-  task_tree_source_hash: bddb7bf9177efd6f0719955727f8531167c5e98cc199088516483b6c7c531e06
+  task_tree_source_hash: b506be533fffa53dc3b62c7539b75e4970e2daab6153cb3c8f2c5b91ff527250
   evidence_summary: []
   evidence: []
 rows:
 - section_id: '1.1'
   item_id: 1.1.1
   plan_node_hash: 26fe21ae68048ba0c669f2ac598fa1062d9d9e772810e52f9f3bc2bb8245ee75
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19773'
+    validation_criteria_snippet: '1.1.1: Output contract exists and covers taxonomy,
+      anatomy, frontmatter, citations, namespaces, diagrams, identity/invalidation/manifest
+      semantics, and trust s...'
+    matched_artifact_ref: docs/contracts/wiki-output.md
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.2
   plan_node_hash: 0acd4e07ea394ab56fd64dca00f91dee14107646bd86378af49082721711c00e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19773'
+    validation_criteria_snippet: '1.1.1: Output contract exists and covers taxonomy,
+      anatomy, frontmatter, citations, namespaces, diagrams, identity/invalidation/manifest
+      semantics, and trust s...'
+    matched_artifact_ref: .gobby/plans/wiki-codewiki-restructure.md
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.3
   plan_node_hash: e70ea6b9682193b5fe82fe6a75238735b2c81ad8343b4d2272691f1192150dc5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19773'
+    validation_criteria_snippet: '1.1.1: Output contract exists and covers taxonomy,
+      anatomy, frontmatter, citations, namespaces, diagrams, identity/invalidation/manifest
+      semantics, and trust s...'
+    matched_artifact_ref: docs/contracts/wiki-output/examples/module.md
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.1
   plan_node_hash: af7106363507ee70dc4fe3aa5513246bea5cffc54d236bd64a3737ba683c0177
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19774'
+    validation_criteria_snippet: '1.2.1: Manifest enumerates all five generated page
+      types and seven deterministic projections with versions, section requirements,
+      and prose limits. file: `src/...'
+    matched_artifact_ref: src/gobby/install/shared/templates/codewiki/manifest.yaml
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.2
   plan_node_hash: 95a29ce5acf3546d3ed5f37d3dff2dda0338650d02c0115c2ce1c09e509f969e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19774'
+    validation_criteria_snippet: '1.2.1: Manifest enumerates all five generated page
+      types and seven deterministic projections with versions, section requirements,
+      and prose limits. file: `src/...'
+    matched_artifact_ref: sync_bundled_content_to_db
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.3
   plan_node_hash: 954916829e194f0ad9bfb5317437cecdadfaea8b403d842a14a2f0d7047b6d6a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19774'
+    validation_criteria_snippet: '1.2.1: Manifest enumerates all five generated page
+      types and seven deterministic projections with versions, section requirements,
+      and prose limits. file: `src/...'
+    matched_artifact_ref: tests/sync/test_integrity.py
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.1
   plan_node_hash: cae25513d36b0a041f8356bb67122f304b70b04f18ec5a2972b27a0a035b6b80
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_regeneration
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.2
   plan_node_hash: 96885e5ab84332c44d3149c44868967e29dcc806374c9436378cf0c7be081a40
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_manifest.rs::build_json_roundtrip_and_byte_identical
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.3
   plan_node_hash: 0c2747e52541a8b1dd0391d03e99ded42f45399f6def0670bbbb780cb90650e0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_manifest.rs::orphan_prune_spares_catalog_files
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.4
   plan_node_hash: 6fc272d196cbbc0d75202bf2629e49e1652db1d90ae3d97722e18e0fd9db073e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_manifest.rs::rename_preserves_page_id
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.5
   plan_node_hash: 62135f8c99239bf1726aed92621dc1c13442bbd48aeabf1f0fbcc844d00ea538
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_publication.rs::interrupted_publication_recovers
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.6
   plan_node_hash: aa33bcb2d19250811ceb2ce1f2d1034089dcc79f74e5287c45bea43836558a99
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_publication.rs::concurrent_reader_single_generation
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.7
   plan_node_hash: 638e15512e199efa01d4ac4ef7b1179f87551a4c6fa957d3d30911d2bfca3bde
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_manifest.rs::unsupported_schema_version_resets_identity
   deferral_target: null
 - section_id: '2.1'
   item_id: 2.1.8
   plan_node_hash: e52d40191d63c4b6fa5d38a63f0799837787b7743fe2e53d06740695f311c4a3
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19775'
+    validation_criteria_snippet: '2.1.1: Page identities are stable across two regenerations
+      of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_publication.rs::concurrent_writers_serialize
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.1
   plan_node_hash: 293d67c3611605a85be5f89e61473554a6793a4345e29e6a1e5142f9a80ac55a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_pages
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.2
   plan_node_hash: 8ede7e1ac1be4b143934295c6391448ac9e6afacfcd963b9869b53fea921b8ac
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::rename_reslug_rewrites_links
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.3
   plan_node_hash: 82e5238b76863befc61beb17cc4d2e40557451922fe269f10c307ab329c853c6
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::ai_cache_key_hits_and_invalidations
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.4
   plan_node_hash: 49e36104787914475abc228656773ea4d793f772338213180c15cd9cec7efc7f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::degraded_artifacts_reselected_until_repaired
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.5
   plan_node_hash: 7a916f9aa2bae9527d2bc3c2f2da30d2c3dff0981ae8c17ba398835f365ff49a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::input_matrix_selects_all_stale_artifacts
   deferral_target: null
 - section_id: '2.2'
   item_id: 2.2.6
   plan_node_hash: 50ec214f9961b11feaa326846d53a0b11852790b2675a3f3710ddffd83667cca
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19776'
+    validation_criteria_snippet: '2.2.1: Each change class maps to the exact regeneration
+      set defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_invalidation.rs::capability_snapshot_is_immutable_and_keyed
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.1
   plan_node_hash: 3ce645965862af94b50f30df31e5fa0b0dd0b42030009f8913d520c37db75ab1
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19777'
+    validation_criteria_snippet: '2.3.1: Loader accepts the bundled template manifest
+      and exposes typed entries renderers consume. test: `crates/gwiki/tests/code_wiki_page_manifest.rs::bundled_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_page_manifest.rs::bundled_manifest_valid
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.2
   plan_node_hash: 895a39f18c163695ae0baee12bbda3078af7ce0e49e07c651645cdfee767182c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19777'
+    validation_criteria_snippet: '2.3.1: Loader accepts the bundled template manifest
+      and exposes typed entries renderers consume. test: `crates/gwiki/tests/code_wiki_page_manifest.rs::bundled_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_page_manifest.rs::invalid_manifests_fail_before_write
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.3
   plan_node_hash: 8468396a0b71948ebc766990854449160e00415bb01ff1f2dd2427e464f1d485
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19777'
+    validation_criteria_snippet: '2.3.1: Loader accepts the bundled template manifest
+      and exposes typed entries renderers consume. test: `crates/gwiki/tests/code_wiki_page_manifest.rs::bundled_...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_page_manifest.rs::frontmatter_built_per_page_type
   deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.1
   plan_node_hash: cf841ee0c1b16721147cac79b177e1cdd5eb189aeb7dfdbd1cf8b6a053f11a08
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19778'
+    validation_criteria_snippet: '2.4.1: Clustering is deterministic for identical
+      graphs and produces the target cluster-count range on fixture graphs. test:
+      `crates/gwiki/tests/code_wiki_clus...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_clustering.rs::clustering_deterministic_and_bounded
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.1
   plan_node_hash: 6819db1c0455ed2324aff01a74af2e60aa3829c7d1c6c6c42310b4fc30cc3b48
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19779'
+    validation_criteria_snippet: '2.5.1: The contract doc defines source/segment identity,
+      unified attribution, retrieval addressability, and deletion semantics; the extended
+      types round-trip t...'
+    matched_artifact_ref: crates/gwiki/tests/wiki_sources.rs::source_model_roundtrip
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.2
   plan_node_hash: f8967bf85c14e16478255cca67646f2b0e5dae1f9e00fe48f2f16838d07c8940
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19779'
+    validation_criteria_snippet: '2.5.1: The contract doc defines source/segment identity,
+      unified attribution, retrieval addressability, and deletion semantics; the extended
+      types round-trip t...'
+    matched_artifact_ref: crates/gwiki/tests/wiki_sources.rs::deletion_tombstones_and_degrades
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.3
   plan_node_hash: 7cb29feb338200ec3b0400d0da659a826ac63c41f8dce449f2ebdcc1bf590eab
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19779'
+    validation_criteria_snippet: '2.5.1: The contract doc defines source/segment identity,
+      unified attribution, retrieval addressability, and deletion semantics; the extended
+      types round-trip t...'
+    matched_artifact_ref: crates/gwiki/tests/wiki_sources.rs::segment_citations_resolve
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.1
   plan_node_hash: 1b294359b997305e8447e1fe4c92aee2380e2bfc116a8f6cda206ae1dcd84623
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19780'
+    validation_criteria_snippet: '3.1.1: Landing renders all fact tables from supplied
+      facts and manifest records and is byte-identical across two runs. test: `crates/gwiki/tests/code_wiki_land...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_landing.rs::landing_deterministic
   deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.2
   plan_node_hash: 538b542a726a22cf908d46df005f16d3c66e5d86ce35547adde9e0272a6c341f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19780'
+    validation_criteria_snippet: '3.1.1: Landing renders all fact tables from supplied
+      facts and manifest records and is byte-identical across two runs. test: `crates/gwiki/tests/code_wiki_land...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_landing.rs::overview_block_fits_injection_budget
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.1
   plan_node_hash: 31fbbda8a9172db406d6c3ab4df13d295a708d2ca609518a0110a464a28f5062
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19781'
+    validation_criteria_snippet: '3.2.1: `layers.md` and `layers.json` agree on membership
+      and render deterministically: provisional names on a cold run, cached names
+      on a warm run with a stabl...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_layers.rs::layers_page_matches_json
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.2
   plan_node_hash: eede21a68caebc0eaa220fbc3f8c58346580114457866d91e7061e529ba1f2c5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19781'
+    validation_criteria_snippet: '3.2.1: `layers.md` and `layers.json` agree on membership
+      and render deterministically: provisional names on a cold run, cached names
+      on a warm run with a stabl...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_layers.rs::architecture_map_valid_and_labeled
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.1
   plan_node_hash: 5171758fb71a2a09285777180e46696bfa9c1f92b887f2e692691ca4fe92286f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19782'
+    validation_criteria_snippet: '3.3.1: Scaffold emits every section of the module
+      anatomy with correct caps and resolvable citations, structure-matching `docs/contracts/wiki-output/examples/m...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_module_scaffold.rs::scaffold_sections_and_caps
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.2
   plan_node_hash: 06d7d0bae1a2717b85c6ed7d25c7fa93baaede219fc6f1d3a438629e112cc742
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19782'
+    validation_criteria_snippet: '3.3.1: Scaffold emits every section of the module
+      anatomy with correct caps and resolvable citations, structure-matching `docs/contracts/wiki-output/examples/m...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_module_scaffold.rs::no_structural_filler_rows
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.3
   plan_node_hash: 7445f1f8eae9b71110285f5ceef40c04a091e0a3ed319446bf3b89850fc16dc5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19782'
+    validation_criteria_snippet: '3.3.1: Scaffold emits every section of the module
+      anatomy with correct caps and resolvable citations, structure-matching `docs/contracts/wiki-output/examples/m...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_module_scaffold.rs::every_module_page_has_diagram_or_label
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.1
   plan_node_hash: c55146a9e89ff1bf830ac9a0580f48dfd815358c78354379d6dc78708c194203
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19783'
+    validation_criteria_snippet: '3.4.1: Catalog regeneration never rewrites engine-owned
+      pages and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is...'
+    matched_artifact_ref: crates/gwiki/src/catalog/regenerate.rs::regenerate_is_byte_identical_on_rerun
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.2
   plan_node_hash: b120e20819eb50b1ada0580b225eb446e2ac163b16ac1105fe0545b251ef51f9
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19783'
+    validation_criteria_snippet: '3.4.1: Catalog regeneration never rewrites engine-owned
+      pages and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is...'
+    matched_artifact_ref: render_wiki_index
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.3
   plan_node_hash: 9feb222ca3e1515099254f88c282259808bc9ed71c1bc1f42a454005c02c0c7e
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19783'
+    validation_criteria_snippet: '3.4.1: Catalog regeneration never rewrites engine-owned
+      pages and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is...'
+    matched_artifact_ref: crates/gwiki/src/catalog/mod.rs
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.4
   plan_node_hash: 9669eed1677526a15a4e38d5a57e1b1e5e7a9536d356811fdef9a3bf12257279
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19783'
+    validation_criteria_snippet: '3.4.1: Catalog regeneration never rewrites engine-owned
+      pages and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is...'
+    matched_artifact_ref: AI_README_TEMPLATE
   deferral_target: null
 - section_id: '3.4'
   item_id: 3.4.5
   plan_node_hash: fcd892d0fb1be17ff678084c71b52520343292c6348878d4f0688be0f403a6d2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19783'
+    validation_criteria_snippet: '3.4.1: Catalog regeneration never rewrites engine-owned
+      pages and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is...'
+    matched_artifact_ref: crates/gwiki/src/catalog/regenerate.rs::catalog_reads_are_generation_consistent
   deferral_target: null
 - section_id: '3.5'
   item_id: 3.5.1
   plan_node_hash: 3290d105302c9868865db2c3f700ffa14d791a64c1d898b8e1814fdd09246160
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19784'
+    validation_criteria_snippet: '3.5.1: All six projection pages render from the
+      shared golden FactsBundle fixture with no index access, and rerun byte-identical.
+      test: `crates/gwiki/tests/cod...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_projections.rs::projections_deterministic_from_fixture
   deferral_target: null
 - section_id: '3.5'
   item_id: 3.5.2
   plan_node_hash: 240e6b086429b9ab8672a96cbac1f9641662a1222a934f9ddbbaaefdf425b00c
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19784'
+    validation_criteria_snippet: '3.5.1: All six projection pages render from the
+      shared golden FactsBundle fixture with no index access, and rerun byte-identical.
+      test: `crates/gwiki/tests/cod...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_projections.rs::projections_bounded_cited_registered
   deferral_target: null
 - section_id: '3.5'
   item_id: 3.5.3
   plan_node_hash: 31438d1112ad37013524a70721e8897acda10c57a2d608c5892c7a40cddf9edd
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19784'
+    validation_criteria_snippet: '3.5.1: All six projection pages render from the
+      shared golden FactsBundle fixture with no index access, and rerun byte-identical.
+      test: `crates/gwiki/tests/cod...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_projections.rs::rejects_unsupported_facts_version
   deferral_target: null
 - section_id: '4.1'
   item_id: 4.1.1
   plan_node_hash: 9627c3113fbc1edfdf89ff5fe49257b4ee208ba5cd9211eb3430f097c09bdea0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19785'
+    validation_criteria_snippet: '4.1.1: Cached names survive regeneration when membership
+      is stable and the full naming key matches, and the naming pass replaces provisional
+      cold-start names; ...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_naming.rs::names_cached_across_runs
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.1
   plan_node_hash: 72632abb79c90be8c3d7164664b7fd4f2dcf55d06c9dc3dbb760c7cc6bd8b961
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19786'
+    validation_criteria_snippet: '4.2.1: Prose slots and concept pages render with
+      verified citations; failed verification produces degraded sections, not ungrounded
+      text. test: `crates/gwiki/t...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_narrative.rs::ungrounded_prose_degrades
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.2
   plan_node_hash: e80d1070a96cae5622c0dea2b8ade42df501447f8664d4cae354cdf17891c994
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19786'
+    validation_criteria_snippet: '4.2.1: Prose slots and concept pages render with
+      verified citations; failed verification produces degraded sections, not ungrounded
+      text. test: `crates/gwiki/t...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_narrative.rs::summaries_within_contract
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.3
   plan_node_hash: 29fa45cc225cd289e24e498401ea1905bd3cf5324e559a203a8b653e7d40a0c0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19786'
+    validation_criteria_snippet: '4.2.1: Prose slots and concept pages render with
+      verified citations; failed verification produces degraded sections, not ungrounded
+      text. test: `crates/gwiki/t...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_narrative.rs::prose_shape_and_duplicate_claims_rejected
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.1
   plan_node_hash: cc0e46525d4b751b5ae262f24fd8061e4e9ba97013134f86c37a924908e75e92
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19787'
+    validation_criteria_snippet: "4.3.1: Both audience tours render 3\u20136 dependency-ordered\
+      \ steps with resolvable links. test: `crates/gwiki/tests/code_wiki_tours.rs::tours_ordered_and_bounded`...."
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_tours.rs::tours_ordered_and_bounded
   deferral_target: null
 - section_id: '4.3'
   item_id: 4.3.2
   plan_node_hash: 3868a4b69d6940570388f567438cc18882fb806c47869ce9384f87f2f989f8b0
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19787'
+    validation_criteria_snippet: "4.3.1: Both audience tours render 3\u20136 dependency-ordered\
+      \ steps with resolvable links. test: `crates/gwiki/tests/code_wiki_tours.rs::tours_ordered_and_bounded`...."
+    matched_artifact_ref: crates/gwiki/src/code_wiki/render/tours.rs
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.1
   plan_node_hash: 4575ad98d83ec6f0b03afd6e4d84b3964ffa2ba963a3d8a9848cffcdadac5893
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19788'
+    validation_criteria_snippet: '5.1.1: Projection contains typed, confidence-tagged
+      nodes/edges (including symbol nodes and evidence spans on extracted edges) across
+      both namespaces and is de...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_graph_projection.rs::projection_typed_and_deterministic
   deferral_target: null
 - section_id: '5.1'
   item_id: 5.1.2
   plan_node_hash: d620d1f4a556723cff31df89b95976d8f44eee6d35882b37475c6d58e56109a8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19788'
+    validation_criteria_snippet: '5.1.1: Projection contains typed, confidence-tagged
+      nodes/edges (including symbol nodes and evidence spans on extracted edges) across
+      both namespaces and is de...'
+    matched_artifact_ref: crates/gwiki/src/exports/tests.rs::extended_schema_serves_all_consumers
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.1
   plan_node_hash: 06d0b901681c544af020aec24f012ed4d812d68940777a2194031cf88d230e72
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19789'
+    validation_criteria_snippet: '5.2.1: Insights page renders all four sections with
+      citations; deterministic sections are byte-stable across runs; an inferred cross-layer
+      edge is excluded fro...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_insights.rs::insights_sections_render
   deferral_target: null
 - section_id: '5.2'
   item_id: 5.2.2
   plan_node_hash: 3d44bd68b531ba37514ba0ee4c601bf8b0f1759f8a9701f58fe7d80d169162ad
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19789'
+    validation_criteria_snippet: '5.2.1: Insights page renders all four sections with
+      citations; deterministic sections are byte-stable across runs; an inferred cross-layer
+      edge is excluded fro...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_insights.rs::rationale_extraction_cited
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.1
   plan_node_hash: 376c468fdd3d2a3de8a75db8b4f4bd6737395c5ecaf3bff09ea8937c662499f5
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19790'
+    validation_criteria_snippet: '5.3.1: Over-bound graphs produce labeled top-N diagrams,
+      never suppression. test: `crates/gwiki/tests/code_wiki_diagrams.rs::truncated_graph_yields_labeled_dia...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_diagrams.rs::truncated_graph_yields_labeled_diagram
   deferral_target: null
 - section_id: '5.3'
   item_id: 5.3.2
   plan_node_hash: 42cbf43974b241ff7778b3a9a55489e69da4197bdbf81103dea360558fd8e7ef
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19790'
+    validation_criteria_snippet: '5.3.1: Over-bound graphs produce labeled top-N diagrams,
+      never suppression. test: `crates/gwiki/tests/code_wiki_diagrams.rs::truncated_graph_yields_labeled_dia...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_diagrams.rs::only_permitted_kinds_valid
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.1
   plan_node_hash: 81f8b73849aa200120be68a2c78c3fd6dc8fa0c521f857df930680bfb4758aae
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19791'
+    validation_criteria_snippet: '6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure
+      contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.
+      6.1.2: Search...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.2
   plan_node_hash: 896d80eb5ffe1fa4caad1bc401e1aab0e88456782debf3f2c64ce0770b560178
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19791'
+    validation_criteria_snippet: '6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure
+      contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.
+      6.1.2: Search...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_summaries.rs::search_snippets_prefer_summary
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.3
   plan_node_hash: a3d9b3c976c76512023047c398bf0e60a1304547432c05832ba6361eca2f7dfa
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19791'
+    validation_criteria_snippet: '6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure
+      contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.
+      6.1.2: Search...'
+    matched_artifact_ref: tests/hooks/test_wiki_overview_injection.py
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.4
   plan_node_hash: d32b33a22b1f8e6411f7b7b621642aefef37406997aa139e7a69d422686bd67f
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19791'
+    validation_criteria_snippet: '6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure
+      contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.
+      6.1.2: Search...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_reader_generation.rs::readers_observe_single_generation
   deferral_target: null
 - section_id: '6.1'
   item_id: 6.1.5
   plan_node_hash: 1818ee052ce3cdbddaf5a45dd8084012fab45a38cfb14e41b1680a897d39affc
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19791'
+    validation_criteria_snippet: '6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure
+      contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.
+      6.1.2: Search...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_reader_generation.rs::search_results_match_committed_generation
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.1
   plan_node_hash: c57d4549c819601c648f60d149cda6d479a24370ecc037fa47cec7f602c581a8
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19792'
+    validation_criteria_snippet: '6.2.1: The public entrypoint composes the full pipeline
+      end-to-end on a fixture vault (compile-time registration proven by the integration
+      test invoking `gener...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_engine.rs::engine_entrypoint_generates
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.2
   plan_node_hash: c994d3bd784c801608f8169add9527911db8ca63a0beb48120d79f270f7b5782
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19792'
+    validation_criteria_snippet: '6.2.1: The public entrypoint composes the full pipeline
+      end-to-end on a fixture vault (compile-time registration proven by the integration
+      test invoking `gener...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_engine.rs::facts_version_preflight_no_side_effects
   deferral_target: null
 - section_id: '6.2'
   item_id: 6.2.3
   plan_node_hash: a5493fb6a9810d247c104a7ec15a4f88d2c6e3744473b87e9a647800317b0794
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19792'
+    validation_criteria_snippet: '6.2.1: The public entrypoint composes the full pipeline
+      end-to-end on a fixture vault (compile-time registration proven by the integration
+      test invoking `gener...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_engine.rs::membership_change_selects_architecture_set
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.1
   plan_node_hash: 875b311ea4296b294153c9cf21f02a5a9b813af40e5c38efc9f0fe8e817a6033
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::full_generation_deterministic
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.2
   plan_node_hash: b7ef7bf440b499aa927e6ba2484bcb22b4779eb0f410c7196a670359ac4fabe4
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::page_count_in_band
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.3
   plan_node_hash: 1305fa68d9dee0d62ae84764ca54a82ef3502c3771eb267266cb2708a944e21a
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::projection_paths_exist
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.4
   plan_node_hash: ec30329fccccd16843e9038f67e065ecf29556d91b0391909f865c26eb98b651
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::anatomy_lint_all_pages
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.5
   plan_node_hash: 41e93167c99a36d24d825249d47f03af1af57f220f2f6320524385d5d674c980
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::module_diagrams_present
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.6
   plan_node_hash: f6c9ec1045de8f330c0d548c0501709b7197022b5f9a3d2f119437924f16150d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::manifest_size_and_orphans
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.7
   plan_node_hash: 62bdd175d4dc0b9984b8f22526e48a53ccee4436154e9ba7415bd4f7133340d2
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::incremental_and_rename
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.8
   plan_node_hash: 2a00f78619676b14de70559ba2f994655d218bcbf27a27c21c0a107a08be996d
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::retrieval_over_new_layout
   deferral_target: null
 - section_id: '7.1'
   item_id: 7.1.9
   plan_node_hash: f704fc8bbdc25eac5bf8aca0d540c6bc6782dff3f1fb62fe23a9bb9c545f5778
-  status: missing
-  leaves: []
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19793'
+    validation_criteria_snippet: '7.1.1: Two consecutive full generations with identical
+      inputs are byte-identical for every deterministic surface; AI prose is stable
+      when caches are warm. test...'
+    matched_artifact_ref: crates/gwiki/tests/code_wiki_end_to_end.rs::production_vault_untouched
   deferral_target: null
 - section_id: D1
   item_id: D1.1

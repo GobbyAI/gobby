@@ -1983,9 +1983,47 @@ truncation labels and a gcode pointer (module files table cap set at 12).
 ## Task Mapping
 `kind: framing`
 
-<!-- Updated after task creation -->
+Expanded 2026-08-07 by expansion run `75b22462-23ea-40e2-8da8-55699e854b44`
+under epic #19664: 7 phase parents, 21 leaves, 83 dependency edges. Every leaf
+carries its `covers:wiki-output-design:<section>:<item>` labels; the 18 code
+leaves carry `tdd:required` and route to `implementation_domain: backend`.
+
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+| P1 | #19766 | open |
+| 1.1 | #19773 | open |
+| 1.2 | #19774 | open |
+| P2 | #19767 | open |
+| 2.1 | #19775 | open |
+| 2.2 | #19776 | open |
+| 2.3 | #19777 | open |
+| 2.4 | #19778 | open |
+| 2.5 | #19779 | open |
+| P3 | #19768 | open |
+| 3.1 | #19780 | open |
+| 3.2 | #19781 | open |
+| 3.3 | #19782 | open |
+| 3.4 | #19783 | open |
+| 3.5 | #19784 | open |
+| P4 | #19769 | open |
+| 4.1 | #19785 | open |
+| 4.2 | #19786 | open |
+| 4.3 | #19787 | open |
+| P5 | #19770 | open |
+| 5.1 | #19788 | open |
+| 5.2 | #19789 | open |
+| 5.3 | #19790 | open |
+| P6 | #19771 | open |
+| 6.1 | #19791 | open |
+| 6.2 | #19792 | open |
+| P7 | #19772 | open |
+| 7.1 | #19793 | open |
+| D1 | #19671 | deferred |
+| D2 | #19665 | deferred |
+| D3 | #19672 | deferred |
+| D4 | #18779 | deferred |
+| D5 | #18902 | deferred |
+| D6 | #17678 | deferred |
 
 ## M1 Task Manifest
 `kind: manifest`
