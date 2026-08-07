@@ -3,28 +3,42 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-import gobby.runner_maintenance.isolation as isolation_module
 import gobby.storage.clones as clones_module
 import gobby.storage.worktrees as worktrees_module
-from gobby.runner_maintenance import _cleanup_missing_isolation_records
-from gobby.storage.clones import LocalCloneManager
+from gobby.runner_maintenance import (
+    _cleanup_missing_isolation_records,
+    _cleanup_missing_isolation_records_async,
+)
+from gobby.storage.clones import Clone, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 
 pytestmark = pytest.mark.unit
 
 
-def test_missing_path_sweep_ignores_remote_rows(
+@dataclass
+class _CrossMachineFixture:
+    worktrees: LocalWorktreeManager
+    clones: LocalCloneManager
+    local_worktree: Worktree
+    remote_worktree: Worktree
+    local_clone: Clone
+    remote_clone: Clone
+    remote_sentinel: Path
+
+
+def _seed_cross_machine_records(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A daemon's missing-path sweep leaves another machine's records untouched."""
+) -> _CrossMachineFixture:
+    """Seed one local and one remote missing-path record per isolation kind."""
     local_machine_id = str(uuid.uuid4())
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
@@ -47,7 +61,6 @@ def test_missing_path_sweep_ignores_remote_rows(
         lambda: next(worktree_owners),
     )
     monkeypatch.setattr(clones_module, "require_machine_id", lambda: next(clone_owners))
-    monkeypatch.setattr(isolation_module, "require_machine_id", lambda: local_machine_id)
 
     local_worktree = worktrees.create(
         project_id=project.id,
@@ -75,11 +88,55 @@ def test_missing_path_sweep_ignores_remote_rows(
     remote_sentinel.mkdir()
     (remote_sentinel / "owned-by-remote").write_text("keep", encoding="utf-8")
 
-    counts = _cleanup_missing_isolation_records(worktrees, clones)
+    return _CrossMachineFixture(
+        worktrees=worktrees,
+        clones=clones,
+        local_worktree=local_worktree,
+        remote_worktree=remote_worktree,
+        local_clone=local_clone,
+        remote_clone=remote_clone,
+        remote_sentinel=remote_sentinel,
+    )
 
+
+def _assert_only_local_records_swept(
+    temp_db: HubDatabase,
+    fixture: _CrossMachineFixture,
+    counts: dict[str, int],
+) -> None:
     assert counts == {"worktrees": 1, "clones": 1}
-    assert worktrees.get(local_worktree.id) is None
-    assert clones.get(local_clone.id) is None
-    assert temp_db.fetchone("SELECT id FROM worktrees WHERE id = %s", (remote_worktree.id,))
-    assert temp_db.fetchone("SELECT id FROM clones WHERE id = %s", (remote_clone.id,))
-    assert (remote_sentinel / "owned-by-remote").read_text(encoding="utf-8") == "keep"
+    assert fixture.worktrees.get(fixture.local_worktree.id) is None
+    assert fixture.clones.get(fixture.local_clone.id) is None
+    assert temp_db.fetchone("SELECT id FROM worktrees WHERE id = %s", (fixture.remote_worktree.id,))
+    assert temp_db.fetchone("SELECT id FROM clones WHERE id = %s", (fixture.remote_clone.id,))
+    assert (fixture.remote_sentinel / "owned-by-remote").read_text(encoding="utf-8") == "keep"
+
+
+def test_missing_path_sweep_ignores_remote_rows(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A daemon's missing-path sweep leaves another machine's records untouched."""
+    fixture = _seed_cross_machine_records(temp_db, tmp_path, monkeypatch)
+
+    counts = _cleanup_missing_isolation_records(fixture.worktrees, fixture.clones)
+
+    _assert_only_local_records_swept(temp_db, fixture, counts)
+
+
+async def test_async_missing_path_sweep_ignores_remote_rows(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The daemon-loop async sweep runs against real storage signatures (#19798)."""
+    fixture = _seed_cross_machine_records(temp_db, tmp_path, monkeypatch)
+
+    counts = await _cleanup_missing_isolation_records_async(
+        fixture.worktrees,
+        fixture.clones,
+        run_db=None,
+    )
+
+    _assert_only_local_records_swept(temp_db, fixture, counts)

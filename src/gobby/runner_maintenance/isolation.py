@@ -16,7 +16,6 @@ from gobby.sessions.tmux_window_naming import (
     resolve_tmux_repair_owner,
 )
 from gobby.terminal_ownership import TERMINAL_TITLE_REPAIR_STATUSES
-from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _ISOLATION_CLEANUP_SCAN_LIMIT = 1000
@@ -245,18 +244,16 @@ async def _cleanup_missing_isolation_records_async(
     limit: int = _ISOLATION_CLEANUP_SCAN_LIMIT,
 ) -> dict[str, int]:
     """Async missing-record cleanup that keeps path checks off the DB executor."""
-    machine_id = require_machine_id()
+    # Storage list methods machine-scope unconditionally via require_machine_id().
     worktrees = await _run_db(
         run_db,
         worktree_storage.list_worktrees,
         limit=limit,
-        machine_id=machine_id,
     )
     clones = await _run_db(
         run_db,
         clone_storage.list_clones,
         limit=limit,
-        machine_id=machine_id,
     )
 
     removed_worktrees = 0
