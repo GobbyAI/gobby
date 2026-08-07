@@ -311,26 +311,6 @@ def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
     assert results == [{"file_path": "src/api.py"}]
 
 
-def test_delete_symbols_for_file_retains_shared_facts(
-    code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
-) -> None:
-    """Legacy fact deletion leaves immutable symbols available to selectors."""
-    code_storage.upsert_symbols(sample_symbols)
-
-    deleted = code_storage.delete_symbols_for_file(PROJECT_ID, "src/app.py")
-    assert deleted == 0
-
-    remaining = code_storage.get_symbols_for_file(PROJECT_ID, "src/app.py")
-    assert len(remaining) == 3
-
-
-def test_delete_symbols_for_file_returns_zero_for_missing(
-    code_storage: CodeIndexStorage,
-) -> None:
-    """Deleting from a non-existent file returns 0."""
-    assert code_storage.delete_symbols_for_file(PROJECT_ID, "gone.py") == 0
-
-
 # ── Files ───────────────────────────────────────────────────────────────
 
 
@@ -795,35 +775,6 @@ def test_upsert_content_chunks(code_storage: CodeIndexStorage) -> None:
 def test_upsert_empty_chunks(code_storage: CodeIndexStorage) -> None:
     """Upserting empty list returns 0."""
     assert code_storage.upsert_content_chunks([]) == 0
-
-
-def test_delete_content_chunks_for_file_retains_shared_facts(
-    code_storage: CodeIndexStorage,
-) -> None:
-    """Legacy fact deletion retains chunks until content GC."""
-    chunks1 = _make_chunks(code_storage, file_path="a.py")
-    chunks2 = _make_chunks(code_storage, file_path="b.py")
-    code_storage.upsert_content_chunks(chunks1)
-    code_storage.upsert_content_chunks(chunks2)
-
-    code_storage.delete_content_chunks_for_file(PROJECT_ID, "a.py")
-
-    # b.py chunks should still exist
-    results = code_storage.search_content_fts("Calculator", PROJECT_ID)
-    file_paths = {r["file_path"] for r in results}
-    assert "a.py" in file_paths
-    assert "b.py" in file_paths
-
-
-def test_delete_content_chunks_for_project_retains_shared_facts(
-    code_storage: CodeIndexStorage,
-) -> None:
-    """Project invalidation retains immutable chunks while state remains visible."""
-    code_storage.upsert_content_chunks(_make_chunks(code_storage))
-    code_storage.delete_content_chunks_for_project(PROJECT_ID)
-
-    results = code_storage.search_content_fts("greet", PROJECT_ID)
-    assert results
 
 
 def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:

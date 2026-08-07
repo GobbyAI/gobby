@@ -99,7 +99,7 @@ impl CodewikiToolExecutor {
         let paths = arg_str_opt(args, "path")
             .map(|p| vec![p])
             .unwrap_or_default();
-        let outcome = fts::search_symbols_exact_first_visible(
+        let results = fts::search_symbols_exact_first_visible(
             &mut conn,
             &query,
             &self.ctx,
@@ -109,12 +109,12 @@ impl CodewikiToolExecutor {
             limit,
         )
         .map_err(|error| tool_err(error.to_string()))?;
-        if outcome.results.is_empty() {
+        if results.is_empty() {
             return Ok(format!("No symbols matched `{query}`."));
         }
         Ok(format_symbol_list(
-            &format!("{} symbol(s) matching `{query}`", outcome.results.len()),
-            &outcome.results,
+            &format!("{} symbol(s) matching `{query}`", results.len()),
+            &results,
         ))
     }
 

@@ -110,13 +110,11 @@ async def _run_db(
 async def _handle_indexed_file_not_found(
     *,
     storage: CodeIndexStorage,
-    config: CodeIndexConfig,
     project_id: str,
     root: Path,
     error: GcodeIndexedFileNotFoundError,
     sync_kind: str,
     synced_field: str,
-    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> bool:
     refreshed = await _run_db(run_db, storage.get_file, project_id, error.file_path)
@@ -154,13 +152,11 @@ async def _handle_indexed_file_not_found(
 async def _handle_project_not_found(
     *,
     storage: CodeIndexStorage,
-    config: CodeIndexConfig,
     project_id: str,
     root: Path,
     error: GcodeProjectNotFoundError,
     sync_kind: str,
     file_path: str,
-    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> None:
     if not await asyncio.to_thread(root.is_dir):
@@ -219,7 +215,6 @@ async def sync_worker_loop(
                 gcode_gateway=gcode_gateway,
                 config=config,
                 batch_size=batch_size,
-                clear_graph=context.clear_graph,
                 run_db=run_db,
                 vector_breaker=vector_breaker,
                 gateway_breaker=context.daemon_config_breaker,
@@ -248,7 +243,6 @@ async def _sync_pass(
     gcode_gateway: GcodeGateway | None,
     config: CodeIndexConfig,
     batch_size: int,
-    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     vector_breaker: SyncCircuitBreaker | None = None,
     gateway_breaker: SyncCircuitBreaker | None = None,
@@ -291,7 +285,6 @@ async def _sync_pass(
                     project_id=project.id,
                     root=root,
                     file=file,
-                    clear_graph=clear_graph,
                     run_db=run_db,
                     vector_breaker=vector_breaker,
                     gateway_breaker=gateway_breaker,
@@ -321,7 +314,6 @@ async def _sync_file(
     project_id: str,
     root: Path,
     file: IndexedFile,
-    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     vector_breaker: SyncCircuitBreaker | None = None,
     gateway_breaker: SyncCircuitBreaker | None = None,
@@ -361,13 +353,11 @@ async def _sync_file(
                 _record_breaker_outcomes(armed)
                 if not await _handle_indexed_file_not_found(
                     storage=storage,
-                    config=config,
                     project_id=project_id,
                     root=root,
                     error=e,
                     sync_kind="vector",
                     synced_field="vectors_synced",
-                    clear_graph=clear_graph,
                     run_db=run_db,
                 ):
                     return False
@@ -375,13 +365,11 @@ async def _sync_file(
                 _record_breaker_outcomes(armed)
                 await _handle_project_not_found(
                     storage=storage,
-                    config=config,
                     project_id=project_id,
                     root=root,
                     error=e,
                     sync_kind="vector",
                     file_path=current.file_path,
-                    clear_graph=clear_graph,
                     run_db=run_db,
                 )
                 return False
@@ -445,13 +433,11 @@ async def _sync_file(
                             _record_breaker_outcomes(armed)
                             if not await _handle_indexed_file_not_found(
                                 storage=storage,
-                                config=config,
                                 project_id=project_id,
                                 root=root,
                                 error=e,
                                 sync_kind="graph",
                                 synced_field="graph_synced",
-                                clear_graph=clear_graph,
                                 run_db=run_db,
                             ):
                                 return False
@@ -459,13 +445,11 @@ async def _sync_file(
                             _record_breaker_outcomes(armed)
                             await _handle_project_not_found(
                                 storage=storage,
-                                config=config,
                                 project_id=project_id,
                                 root=root,
                                 error=e,
                                 sync_kind="graph",
                                 file_path=current.file_path,
-                                clear_graph=clear_graph,
                                 run_db=run_db,
                             )
                             return False

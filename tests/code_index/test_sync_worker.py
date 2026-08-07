@@ -233,7 +233,6 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
         CodeIndexContext,
         SimpleNamespace(
             gcode_gateway=gcode_gateway,
-            clear_graph=None,
             daemon_config_breaker=SyncCircuitBreaker(
                 name="test",
                 probe_target="daemon config",
@@ -286,7 +285,6 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
         CodeIndexContext,
         SimpleNamespace(
             gcode_gateway=gcode_gateway,
-            clear_graph=None,
             daemon_config_breaker=SyncCircuitBreaker(
                 name="test",
                 probe_target="daemon config",
@@ -345,7 +343,6 @@ async def test_sync_worker_logs_throttled_warning_on_pool_outage(
         CodeIndexContext,
         SimpleNamespace(
             gcode_gateway=None,
-            clear_graph=None,
             daemon_config_breaker=SyncCircuitBreaker(
                 name="test",
                 probe_target="daemon config",
@@ -469,7 +466,6 @@ async def test_sync_pass_skips_missing_project_before_pending_files(tmp_path: Pa
         "content_chunks": 0,
         "projects": 1,
     }
-    clear_graph = AsyncMock(return_value={"success": True})
     run_db = RecordingRunDb()
 
     await _sync_pass(
@@ -477,7 +473,6 @@ async def test_sync_pass_skips_missing_project_before_pending_files(tmp_path: Pa
         gcode_gateway=RecordingGcodeGateway(),
         config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
         batch_size=10,
-        clear_graph=clear_graph,
         run_db=run_db,
     )
 
@@ -485,7 +480,6 @@ async def test_sync_pass_skips_missing_project_before_pending_files(tmp_path: Pa
     assert run_db.calls == ["list_indexed_projects"]
     storage.get_pending_sync_files.assert_not_called()
     storage.delete_project_index.assert_not_called()
-    clear_graph.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -506,8 +500,6 @@ async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
         "content_chunks": 0,
         "projects": 1,
     }
-    clear_graph = AsyncMock(return_value={"success": True})
-
     did_sync = await _sync_file(
         storage=storage,
         gcode_gateway=ProjectNotFoundGcodeGateway(remove_root=True),
@@ -515,14 +507,12 @@ async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
         project_id=PROJECT_ID,
         root=root,
         file=pending_file,
-        clear_graph=clear_graph,
         run_db=RecordingRunDb(),
     )
 
     assert did_sync is False
     assert not root.exists()
     storage.delete_project_index.assert_called_once_with(PROJECT_ID)
-    clear_graph.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -569,7 +559,6 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
         "content_chunks": 0,
         "projects": 1,
     }
-    clear_graph = AsyncMock(return_value={"success": True})
     gateway = ProjectNotFoundGcodeGateway(remove_root=True)
     breaker = SyncCircuitBreaker(
         name="Vector sync",
@@ -584,7 +573,6 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
         project_id=PROJECT_ID,
         root=root,
         file=pending_file,
-        clear_graph=clear_graph,
         run_db=RecordingRunDb(),
         vector_breaker=breaker,
     )
@@ -594,7 +582,6 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
     assert gateway.vector_synced_files == [(root, pending_file.file_path)]
     assert gateway.synced_files == []
     storage.delete_project_index.assert_called_once_with(PROJECT_ID)
-    clear_graph.assert_not_awaited()
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     assert breaker.state is BreakerState.CLOSED

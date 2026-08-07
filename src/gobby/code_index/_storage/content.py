@@ -54,12 +54,6 @@ class CodeIndexContentStorageMixin:
             )
         return len(rows)
 
-    def delete_content_chunks_for_file(self, project_id: str, file_path: str) -> None:
-        """Retain immutable chunks; selectors are reconciled through file state."""
-
-    def delete_content_chunks_for_project(self, project_id: str) -> None:
-        """Retain immutable chunks until content GC proves them unreachable."""
-
     def search_content_fts(
         self,
         query: str,

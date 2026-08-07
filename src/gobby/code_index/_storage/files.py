@@ -252,12 +252,3 @@ class CodeIndexFileStorageMixin:
                    WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
                 (require_machine_id(), project_id, file_path),
             )
-
-    def delete_files_for_project(self, project_id: str) -> int:
-        """Delete all file records for a project. Returns count."""
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM code_indexed_files WHERE project_id = %s",
-                (project_id,),
-            )
-            return cursor.rowcount

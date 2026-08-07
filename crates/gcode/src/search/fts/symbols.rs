@@ -13,21 +13,6 @@ use super::common::{
 };
 use super::errors::{SYMBOL_INDEX, bm25_query_error, database_query_error};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct VisibleSearchOutcome<T> {
-    pub results: Vec<T>,
-    pub degraded: bool,
-}
-
-impl<T> VisibleSearchOutcome<T> {
-    fn ok(results: Vec<T>) -> Self {
-        Self {
-            results,
-            degraded: false,
-        }
-    }
-}
-
 pub fn search_symbols_fts(
     conn: &mut Client,
     query: &str,
@@ -196,10 +181,10 @@ pub fn search_symbols_fts_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> anyhow::Result<VisibleSearchOutcome<Symbol>> {
+) -> anyhow::Result<Vec<Symbol>> {
     let bm25_query = sanitize_pg_search_query(query);
     if bm25_query.is_empty() || limit == 0 {
-        return Ok(VisibleSearchOutcome::ok(Vec::new()));
+        return Ok(Vec::new());
     }
 
     let mut params = Vec::new();
@@ -231,9 +216,9 @@ pub fn search_symbols_by_name_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> anyhow::Result<VisibleSearchOutcome<Symbol>> {
+) -> anyhow::Result<Vec<Symbol>> {
     if query.trim().is_empty() || limit == 0 {
-        return Ok(VisibleSearchOutcome::ok(Vec::new()));
+        return Ok(Vec::new());
     }
     let escaped_query = escape_like(query);
     let pattern = format!("%{escaped_query}%");
@@ -266,14 +251,13 @@ pub fn search_symbols_exact_first_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> anyhow::Result<VisibleSearchOutcome<Symbol>> {
+) -> anyhow::Result<Vec<Symbol>> {
     if query.trim().is_empty() || limit == 0 {
-        return Ok(VisibleSearchOutcome::ok(Vec::new()));
+        return Ok(Vec::new());
     }
 
     let mut results = Vec::new();
     let mut seen = HashSet::new();
-    let mut degraded = false;
     let filters = SymbolFilters {
         kind,
         language,
@@ -295,10 +279,9 @@ pub fn search_symbols_exact_first_visible(
         limit,
         order,
     )?;
-    degraded |= exact.degraded;
-    append_unique_symbols(&mut results, &mut seen, exact.results, limit);
+    append_unique_symbols(&mut results, &mut seen, exact, limit);
     if results.len() >= limit {
-        return Ok(VisibleSearchOutcome { results, degraded });
+        return Ok(results);
     }
 
     let prefix_pattern = format!("{}%", escape_like(query));
@@ -315,24 +298,21 @@ pub fn search_symbols_exact_first_visible(
         limit,
         SymbolOrder::Name,
     )?;
-    degraded |= prefix_matches.degraded;
-    append_unique_symbols(&mut results, &mut seen, prefix_matches.results, limit);
+    append_unique_symbols(&mut results, &mut seen, prefix_matches, limit);
     if results.len() >= limit {
-        return Ok(VisibleSearchOutcome { results, degraded });
+        return Ok(results);
     }
 
     let contains = search_symbols_by_name_visible(conn, query, ctx, kind, language, paths, limit)?;
-    degraded |= contains.degraded;
-    append_unique_symbols(&mut results, &mut seen, contains.results, limit);
+    append_unique_symbols(&mut results, &mut seen, contains, limit);
     if results.len() >= limit {
-        return Ok(VisibleSearchOutcome { results, degraded });
+        return Ok(results);
     }
 
     let fts = search_symbols_fts_visible(conn, query, ctx, kind, language, paths, limit)?;
-    degraded |= fts.degraded;
-    append_unique_symbols(&mut results, &mut seen, fts.results, limit);
+    append_unique_symbols(&mut results, &mut seen, fts, limit);
 
-    Ok(VisibleSearchOutcome { results, degraded })
+    Ok(results)
 }
 
 fn query_visible_symbols_by_conditions(
@@ -343,10 +323,10 @@ fn query_visible_symbols_by_conditions(
     filters: SymbolFilters<'_>,
     limit: usize,
     order: SymbolOrder,
-) -> anyhow::Result<VisibleSearchOutcome<Symbol>> {
+) -> anyhow::Result<Vec<Symbol>> {
     let project_ids = visibility::visible_project_ids(ctx);
     if project_ids.is_empty() || limit == 0 {
-        return Ok(VisibleSearchOutcome::ok(Vec::new()));
+        return Ok(Vec::new());
     }
     if requires_explicit_project_filter(&ctx.database_url) {
         let project_placeholder = push_id_list_param(&mut params, &project_ids);
@@ -368,7 +348,7 @@ fn query_visible_symbols_by_conditions(
     let mut symbols = visibility::filter_visible_symbols(conn, ctx, symbols)
         .map_err(|error| anyhow::anyhow!("visible symbol filtering failed: {error}"))?;
     symbols.truncate(limit);
-    Ok(VisibleSearchOutcome::ok(symbols))
+    Ok(symbols)
 }
 
 fn requires_explicit_project_filter(database_url: &str) -> bool {
@@ -399,12 +379,9 @@ pub fn search_text_visible(
     language: Option<&str>,
     paths: &[String],
     limit: usize,
-) -> anyhow::Result<VisibleSearchOutcome<SearchResult>> {
+) -> anyhow::Result<Vec<SearchResult>> {
     let results = search_symbols_fts_visible(conn, query, ctx, None, language, paths, limit)?;
-    Ok(VisibleSearchOutcome {
-        results: results.results.into_iter().map(|s| s.to_brief()).collect(),
-        degraded: results.degraded,
-    })
+    Ok(results.into_iter().map(|s| s.to_brief()).collect())
 }
 
 #[cfg(test)]

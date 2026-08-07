@@ -198,14 +198,6 @@ class CodeIndexSymbolStorageMixin:
         ]
         return results[:limit]
 
-    def delete_symbols_for_file(self, project_id: str, file_path: str) -> int:
-        """Retain immutable symbols; selectors are reconciled through file state."""
-        return 0
-
-    def delete_symbols_for_project(self, project_id: str) -> int:
-        """Retain immutable symbols until content GC proves them unreachable."""
-        return 0
-
     def search_symbols_for_graph(
         self, query: str, project_id: str, limit: int = 20
     ) -> list[dict[str, Any]]:

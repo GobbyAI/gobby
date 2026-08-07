@@ -1023,7 +1023,7 @@ fn two_machine_divergence_scopes_reads_to_local_file_state() {
 
     let text = super::symbols::search_text_visible(&mut conn, "twomachine", &ctx, None, &[], 10)
         .expect("visible text search");
-    let names: Vec<&str> = text.results.iter().map(|r| r.name.as_str()).collect();
+    let names: Vec<&str> = text.iter().map(|r| r.name.as_str()).collect();
     assert_eq!(names, vec!["twomachine_local_marker++"]);
     assert_eq!(
         count_text_visible(&mut conn, "twomachine", &ctx, None, &[]).expect("count text"),

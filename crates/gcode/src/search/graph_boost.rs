@@ -28,7 +28,7 @@ pub fn graph_boost(ctx: &Context, conn: Option<&mut postgres::Client>, query: &s
     };
     let mut resolved =
         match fts::search_symbols_exact_first_visible(conn, query, ctx, None, None, &[], 1) {
-            Ok(outcome) => outcome.results,
+            Ok(results) => results,
             Err(error) => {
                 log::warn!("graph boost symbol resolution failed: {error:#}");
                 return vec![];

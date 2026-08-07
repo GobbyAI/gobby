@@ -154,7 +154,7 @@ def test_symbol_to_brief_omits_empty_docstring(sample_symbols: list[Symbol]) -> 
 
 
 def test_indexed_file_make_id_deterministic() -> None:
-    """Same project+path -> same ID."""
+    """Same project+path+content hash -> same ID."""
     id1 = IndexedFile.make_id("proj", "src/main.py", "hash-a")
     id2 = IndexedFile.make_id("proj", "src/main.py", "hash-a")
     assert id1 == id2
