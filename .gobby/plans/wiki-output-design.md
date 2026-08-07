@@ -1552,6 +1552,25 @@ deferral:
 
 <!-- Rounds appended by enhancement/adversary phases. -->
 
+**Human handoff** `kind: verification`
+
+- authorized_by: user (interactive)
+- after_round: 6
+- verdict_at_handoff: needs_review
+- completed_plan_review_rounds: 6
+- resolution_notes: Rounds 5 and 6 surfaced no independent defects. Every finding
+  in both rounds was a regression introduced by the previous round's repair — F62
+  from F56, F63 from F58 — and both were repaired in round 6 with zero
+  acceptance-item churn, leaving the ledger at 21 sections and 71 acceptance
+  items. The user authorized explicit human handoff, which skips all remaining
+  enhancement and adversary rounds. `## M1 Task Manifest` was written by
+  `apply_plan_handoff_manifest` from coordinator-derived routing decisions over
+  all 21 deliverables (manifest_digest `766a62fb776f19b79a924630950bc7f8366d86dd2a35314ea77be8dd8b23fd8c`,
+  source_plan_hash `0458717cdd04a593125051b501c12db53fc069dcc6ae763bff17a0afab7497e8`).
+  This plan carries no adversary approval verdict and no `coverage_attestation`;
+  the manifest is coordinator-derived, and the last recorded verdict remains
+  `needs_review` at round 6.
+
 **Round 6** `kind: verification`
 
 - reviewer_run: f8d19c34-8fbe-46f4-b9d7-7164650b2c4b
@@ -1967,3 +1986,597 @@ truncation labels and a gcode pointer (module files table cap set at 12).
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Author the wiki output contract
+  category: docs
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Output contract exists and covers taxonomy, anatomy,
+    frontmatter, citations, namespaces, diagrams, identity/invalidation/manifest semantics,
+    and trust signals. file: `docs/contracts/wiki-output.md`.
+
+    1.1.2: Superseded banner present with pointers to this plan and the contract.
+    file: `.gobby/plans/wiki-codewiki-restructure.md`.
+
+    1.1.3: Normative exemplars exist for all seven listed page classes with contract
+    frontmatter, full section anatomy, and truncation-label examples. file: `docs/contracts/wiki-output/examples/module.md`.'
+  labels:
+  - covers:wiki-output-design:1.1:1.1.1
+  - covers:wiki-output-design:1.1:1.1.2
+  - covers:wiki-output-design:1.1:1.1.3
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: tech-writer
+- title: Add the page-type manifest template
+  category: config
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: Manifest enumerates all five generated page types and
+    seven deterministic projections with versions, section requirements, and prose
+    limits. file: `src/gobby/install/shared/templates/codewiki/manifest.yaml`.
+
+    1.2.2: `bundled_content_manifest.json` is regenerated and the bundled-content
+    integrity test passes; `gobby install` places the template at the `GOBBY_HOME`
+    path the 2.3 loader reads. symbol: `sync_bundled_content_to_db`.
+
+    1.2.3: A modified `shared/templates/**` file classifies to the protected `templates`
+    content type and blocks the file-install step via `skip_types`; clean, modified,
+    and untracked states are covered. test: `tests/sync/test_integrity.py`.'
+  labels:
+  - covers:wiki-output-design:1.2:1.2.1
+  - covers:wiki-output-design:1.2:1.2.2
+  - covers:wiki-output-design:1.2:1.2.3
+  tdd: false
+  source_section: '1.2'
+  assigned_agent: backend-developer
+- title: Implement stable identities and the build manifest
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: "2.1.1: Page identities are stable across two regenerations\
+    \ of an identical input tree. test: `crates/gwiki/tests/code_wiki_manifest.rs::identity_stable_across_regeneration`.\n\
+    2.1.2: `build.json` round-trips the complete typed schema (including `layer_names`,\
+    \ `tours`, `rename_lineage`, `graph_projection_digest` in both its present and\
+    \ absent forms, and an `ai_artifacts` map holding an independent `cache_key` and\
+    \ repair state for each page prose slot and each non-page artifact class), stays\
+    \ under the configured build-manifest ceiling, and regenerating identical inputs\
+    \ yields byte-identical bytes; a digest written through `set_graph_projection_digest`\
+    \ is readable verbatim by the next run, and a manifest treated as absent presents\
+    \ no digest. test: `crates/gwiki/tests/code_wiki_manifest.rs::build_json_roundtrip_and_byte_identical`.\n\
+    2.1.3: Orphaned generated pages are detected and pruned; catalog-owned files are\
+    \ never touched; and `is_engine_owned_generated_path` classifies every path class\
+    \ exactly once \u2014 manifest-tracked pages and `code/_meta/**` engine-owned,\
+    \ `code/INDEX.md`, `_context.md`, the vault-root `_index.md`, `knowledge/**`,\
+    \ and rendered source pages not \u2014 so 3.4 and 6.1 share one answer. test:\
+    \ `crates/gwiki/tests/code_wiki_manifest.rs::orphan_prune_spares_catalog_files`.\n\
+    2.1.4: A slug-changing rename preserves `page_id` while updating path, inbound\
+    \ wikilinks, tour metadata, and graph references; lineage is recorded. test: `crates/gwiki/tests/code_wiki_manifest.rs::rename_preserves_page_id`.\n\
+    2.1.5: An injected interruption at each publication stage (before staging validation,\
+    \ during replacement, during pruning, before manifest commit, during catalog refresh)\
+    \ leaves either the old or the new generation fully observable, never a mix. test:\
+    \ `crates/gwiki/tests/code_wiki_publication.rs::interrupted_publication_recovers`.\n\
+    2.1.6: A shared-mode reader at each publication stage observes exactly one generation\
+    \ across pages, projections, catalog, and manifest; two readers entering the crash\
+    \ window with a dirty journal recover exactly once under exclusive ownership and\
+    \ both serve the recovered generation (or fail loudly), never a half-swapped tree;\
+    \ a guarded operation invoked from inside the writer's transaction never re-acquires\
+    \ the lock; and lock acquisition honors its bounded timeout. test: `crates/gwiki/tests/code_wiki_publication.rs::concurrent_reader_single_generation`.\n\
+    2.1.7: An existing manifest with an unsupported `schema_version` or unparseable\
+    \ content triggers the documented full-identity cold-rebuild path; no partial\
+    \ read occurs. test: `crates/gwiki/tests/code_wiki_manifest.rs::unsupported_schema_version_resets_identity`.\n\
+    2.1.8: Two concurrent writers serialize end-to-end on both a cold vault (no prior\
+    \ manifest) and a warm one: the second run reads the first run's committed manifest\
+    \ rather than the stale prior state, no page id is minted twice, and no generation\
+    \ is clobbered. test: `crates/gwiki/tests/code_wiki_publication.rs::concurrent_writers_serialize`."
+  labels:
+  - covers:wiki-output-design:2.1:2.1.1
+  - covers:wiki-output-design:2.1:2.1.2
+  - covers:wiki-output-design:2.1:2.1.3
+  - covers:wiki-output-design:2.1:2.1.4
+  - covers:wiki-output-design:2.1:2.1.5
+  - covers:wiki-output-design:2.1:2.1.6
+  - covers:wiki-output-design:2.1:2.1.7
+  - covers:wiki-output-design:2.1:2.1.8
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Implement change classification and incremental invalidation
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.4'
+  validation_criteria: "2.2.1: Each change class maps to the exact regeneration set\
+    \ defined above. test: `crates/gwiki/tests/code_wiki_invalidation.rs::change_classes_select_expected_pages`.\n\
+    2.2.2: A file rename produces a re-slugged page, pruned old page, and rewritten\
+    \ inbound wikilinks. test: `crates/gwiki/tests/code_wiki_invalidation.rs::rename_reslug_rewrites_links`.\n\
+    2.2.3: Identical inputs hit the AI cache; a comment-only edit re-anchors citations\
+    \ with zero AI regeneration; a change to symbol facts, prompt/schema version,\
+    \ template/render version, model lane, or a behavior-bearing manifest field each\
+    \ invalidates exactly the artifact classes keyed on it. test: `crates/gwiki/tests/code_wiki_invalidation.rs::ai_cache_key_hits_and_invalidations`.\n\
+    2.2.4: A degraded artifact \u2014 page prose and each non-page artifact (layer\
+    \ names, tour steps, insight questions) \u2014 regenerates on the next AI-available\
+    \ run with unchanged inputs; the outcome survives a second failure and clears\
+    \ only after verified output; the unavailable\u2192available capability transition\
+    \ is covered. test: `crates/gwiki/tests/code_wiki_invalidation.rs::degraded_artifacts_reselected_until_repaired`.\n\
+    2.2.5: The artifact-by-input matrix is enforced: the late projection check regenerates\
+    \ the graph on a PARTIAL edge change, a node-field change with identical call/import\
+    \ edges (symbol summary, key-symbol membership, layer assignment, alias pair)\
+    \ moves the graph-projection input digest and regenerates it too, an input whose\
+    \ digest is unchanged leaves `outputs/graph.json` unwritten, COSMETIC tagged-comment\
+    \ changes re-render insights rationale, knowledge-only changes regenerate graph,\
+    \ insights, and aliasing, and a membership-fingerprint change with no file edits\
+    \ classifies ARCHITECTURE and selects exactly the architecture set named in 2.2.\
+    \ test: `crates/gwiki/tests/code_wiki_invalidation.rs::input_matrix_selects_all_stale_artifacts`.\n\
+    2.2.6: Selection and execution share one resolved execution snapshot: a route,\
+    \ profile, provider/model, daemon-lane, or prompt/schema mutation applied after\
+    \ capture changes neither the keys selection used nor the lane execution and persistence\
+    \ run on, and each of those fields independently invalidates when it differs at\
+    \ capture time. test: `crates/gwiki/tests/code_wiki_invalidation.rs::capability_snapshot_is_immutable_and_keyed`."
+  labels:
+  - covers:wiki-output-design:2.2:2.2.1
+  - covers:wiki-output-design:2.2:2.2.2
+  - covers:wiki-output-design:2.2:2.2.3
+  - covers:wiki-output-design:2.2:2.2.4
+  - covers:wiki-output-design:2.2:2.2.5
+  - covers:wiki-output-design:2.2:2.2.6
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Load and validate the page-type manifest
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.3.1: Loader accepts the bundled template manifest and exposes
+    typed entries renderers consume. test: `crates/gwiki/tests/code_wiki_page_manifest.rs::bundled_manifest_valid`.
+
+    2.3.2: Each invalid-manifest class (duplicate id, unsafe path pattern, out-of-range
+    cap, forbidden diagram kind, AI-enabled deterministic projection) fails generation
+    before any page write; a missing installed manifest fails the same way. test:
+    `crates/gwiki/tests/code_wiki_page_manifest.rs::invalid_manifests_fail_before_write`.
+
+    2.3.3: Every page type''s frontmatter is produced through the shared builder from
+    a complete `FrontmatterInput` and carries the pinned contract keys; a missing
+    required input fails before staging, covered per page type including degraded
+    output. test: `crates/gwiki/tests/code_wiki_page_manifest.rs::frontmatter_built_per_page_type`.'
+  labels:
+  - covers:wiki-output-design:2.3:2.3.1
+  - covers:wiki-output-design:2.3:2.3.2
+  - covers:wiki-output-design:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Implement deterministic module clustering membership
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.4.1: Clustering is deterministic for identical graphs and
+    produces the target cluster-count range on fixture graphs. test: `crates/gwiki/tests/code_wiki_clustering.rs::clustering_deterministic_and_bounded`.'
+  labels:
+  - covers:wiki-output-design:2.4:2.4.1
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Define the external-source information model
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: "2.5.1: The contract doc defines source/segment identity, unified\
+    \ attribution, retrieval addressability, and deletion semantics; the extended\
+    \ types round-trip through the existing source manifest, and an entry written\
+    \ before this leaf reads back with a stable `source_id`. test: `crates/gwiki/tests/wiki_sources.rs::source_model_roundtrip`.\n\
+    2.5.2: Removing a source through the existing manifest path writes a tombstone\
+    \ instead of dropping the entry, and the derivation returns exactly the dependent\
+    \ artifacts plus their `degraded_sources` attribution; no citation into a removed\
+    \ source dangles. Both live callers keep their contracts: the CLI removal path\
+    \ still deletes raw sources and assets, and its index-failure rollback promotes\
+    \ the tombstoned entry back to live rather than failing on the retained id, while\
+    \ a live duplicate id still errors; repeated latest-wins session replacement leaves\
+    \ exactly one live entry, skips already-tombstoned pages instead of re-removing\
+    \ them, and keeps tombstones out of listing, selection, and reindexing. The crate\
+    \ compiles with every `SourceRecord` literal migrated to the canonical constructor.\
+    \ test: `crates/gwiki/tests/wiki_sources.rs::deletion_tombstones_and_degrades`.\n\
+    2.5.3: A segment citation rendered through the unified `Citation` shape resolves\
+    \ to its anchor on the rendered source page via the existing read surface, and\
+    \ a citation into a tombstoned segment resolves through that same `wiki_read`\
+    \ path to the content-free tombstone document at the stable rendered path \u2014\
+    \ carrying source and segment identities, anchors, and removal cause \u2014 rather\
+    \ than a missing target, after both CLI removal and latest-wins replacement; the\
+    \ tombstone document stays absent from listing and search. test: `crates/gwiki/tests/wiki_sources.rs::segment_citations_resolve`."
+  labels:
+  - covers:wiki-output-design:2.5:2.5.1
+  - covers:wiki-output-design:2.5:2.5.2
+  - covers:wiki-output-design:2.5:2.5.3
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: backend
+- title: Render the at-a-glance landing page
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  validation_criteria: "3.1.1: Landing renders all fact tables from supplied facts\
+    \ and manifest records and is byte-identical across two runs. test: `crates/gwiki/tests/code_wiki_landing.rs::landing_deterministic`.\n\
+    3.1.2: `## Overview` block length \u22642,000 chars; absent page classes render\
+    \ as omitted sections. test: `crates/gwiki/tests/code_wiki_landing.rs::overview_block_fits_injection_budget`."
+  labels:
+  - covers:wiki-output-design:3.1:3.1.1
+  - covers:wiki-output-design:3.1:3.1.2
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Render named layers and the architecture map
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '5.3'
+  validation_criteria: '3.2.1: `layers.md` and `layers.json` agree on membership and
+    render deterministically: provisional names on a cold run, cached names on a warm
+    run with a stable membership fingerprint. test: `crates/gwiki/tests/code_wiki_layers.rs::layers_page_matches_json`.
+
+    3.2.2: Architecture map is valid mermaid and carries truncation labeling when
+    bounded. test: `crates/gwiki/tests/code_wiki_layers.rs::architecture_map_valid_and_labeled`.'
+  labels:
+  - covers:wiki-output-design:3.2:3.2.1
+  - covers:wiki-output-design:3.2:3.2.2
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Render module page scaffolds
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '5.3'
+  validation_criteria: '3.3.1: Scaffold emits every section of the module anatomy
+    with correct caps and resolvable citations, structure-matching `docs/contracts/wiki-output/examples/module.md`.
+    test: `crates/gwiki/tests/code_wiki_module_scaffold.rs::scaffold_sections_and_caps`.
+
+    3.3.2: Symbol rows never contain structural-filler purposes; missing summaries
+    render as omitted rows, not filler. test: `crates/gwiki/tests/code_wiki_module_scaffold.rs::no_structural_filler_rows`.
+
+    3.3.3: Across a fixture corpus, every module page carries a validating mermaid
+    diagram or a labeled truncation; none carries an empty diagram slot. test: `crates/gwiki/tests/code_wiki_module_scaffold.rs::every_module_page_has_diagram_or_label`.'
+  labels:
+  - covers:wiki-output-design:3.3:3.3.1
+  - covers:wiki-output-design:3.3:3.3.2
+  - covers:wiki-output-design:3.3:3.3.3
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Reconcile the gwiki catalog with the new code namespace
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.4.1: Catalog regeneration never rewrites engine-owned pages
+    and remains byte-identical on rerun. test: `crates/gwiki/src/catalog/regenerate.rs::regenerate_is_byte_identical_on_rerun`.
+
+    3.4.2: Root index groups code entries by the new taxonomy and cross-links same-slug
+    concepts across namespaces. symbol: `render_wiki_index`.
+
+    3.4.3: Every file touched by this leaf is below 1,000 lines; `catalog.rs` no longer
+    exists as a monolith. file: `crates/gwiki/src/catalog/mod.rs`.
+
+    3.4.4: A fresh vault init writes the new-taxonomy agent guide; an existing user-edited
+    guide is left untouched. symbol: `AI_README_TEMPLATE`.
+
+    3.4.5: A catalog read concurrent with each publication stage takes the shared
+    generation lock and observes one generation; regeneration invoked from inside
+    a publication runs through the guarded form without re-acquiring the lock; the
+    documented lock order with `_gwiki/index.lock` is exercised without deadlock;
+    and a reader of the vault-root `_index.md` concurrent with regeneration always
+    reads one complete index, never a truncated one. test: `crates/gwiki/src/catalog/regenerate.rs::catalog_reads_are_generation_consistent`.'
+  labels:
+  - covers:wiki-output-design:3.4:3.4.1
+  - covers:wiki-output-design:3.4:3.4.2
+  - covers:wiki-output-design:3.4:3.4.3
+  - covers:wiki-output-design:3.4:3.4.4
+  - covers:wiki-output-design:3.4:3.4.5
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Render the six deterministic projection pages
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '3.4'
+  validation_criteria: '3.5.1: All six projection pages render from the shared golden
+    FactsBundle fixture with no index access, and rerun byte-identical. test: `crates/gwiki/tests/code_wiki_projections.rs::projections_deterministic_from_fixture`.
+
+    3.5.2: Truncation is labeled, rows are cited, and every projection registers a
+    manifest record and catalog entry. test: `crates/gwiki/tests/code_wiki_projections.rs::projections_bounded_cited_registered`.
+
+    3.5.3: The projection renderer rejects an unsupported `FACTS_VERSION` as local
+    defense; the global before-any-side-effect gate is owned by 6.2. test: `crates/gwiki/tests/code_wiki_projections.rs::rejects_unsupported_facts_version`.'
+  labels:
+  - covers:wiki-output-design:3.5:3.5.1
+  - covers:wiki-output-design:3.5:3.5.2
+  - covers:wiki-output-design:3.5:3.5.3
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Implement semantic cluster naming
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.4'
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  validation_criteria: '4.1.1: Cached names survive regeneration when membership is
+    stable and the full naming key matches, and the naming pass replaces provisional
+    cold-start names; with membership held stable, a prompt/schema version change
+    and a model-lane change each independently miss the key and regenerate names.
+    test: `crates/gwiki/tests/code_wiki_naming.rs::names_cached_across_runs`.'
+  labels:
+  - covers:wiki-output-design:4.1:4.1.1
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Generate grounded narrative prose and concept pages
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Prose slots and concept pages render with verified
+    citations; failed verification produces degraded sections, not ungrounded text.
+    test: `crates/gwiki/tests/code_wiki_narrative.rs::ungrounded_prose_degrades`.
+
+    4.2.2: Every page this leaf produces carries a contract-compliant `summary` built
+    through the shared builder. test: `crates/gwiki/tests/code_wiki_narrative.rs::summaries_within_contract`.
+
+    4.2.3: The prose contract''s mechanical predicates are enforced before staging:
+    a section rendering a second paragraph block and a normalized assertion repeated
+    across two explanatory sections of the same page are each rejected (degraded,
+    never published), and single-paragraph pages with distinct claims pass unchanged.
+    test: `crates/gwiki/tests/code_wiki_narrative.rs::prose_shape_and_duplicate_claims_rejected`.'
+  labels:
+  - covers:wiki-output-design:4.2:4.2.1
+  - covers:wiki-output-design:4.2:4.2.2
+  - covers:wiki-output-design:4.2:4.2.3
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Generate dependency-ordered guided tours
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  validation_criteria: "4.3.1: Both audience tours render 3\u20136 dependency-ordered\
+    \ steps with resolvable links. test: `crates/gwiki/tests/code_wiki_tours.rs::tours_ordered_and_bounded`.\n\
+    4.3.2: Tour metadata appears in the build manifest with stable page ids. file:\
+    \ `crates/gwiki/src/code_wiki/render/tours.rs`."
+  labels:
+  - covers:wiki-output-design:4.3:4.3.1
+  - covers:wiki-output-design:4.3:4.3.2
+  tdd: true
+  source_section: '4.3'
+  implementation_domain: backend
+- title: Emit the typed graph projection
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.2'
+  - '4.3'
+  validation_criteria: "5.1.1: Projection contains typed, confidence-tagged nodes/edges\
+    \ (including symbol nodes and evidence spans on extracted edges) across both namespaces\
+    \ and is deterministic. test: `crates/gwiki/tests/code_wiki_graph_projection.rs::projection_typed_and_deterministic`.\n\
+    5.1.2: `outputs/graph.json` has exactly one semantic producer \u2014 the `gwiki\
+    \ graph` command re-exports the committed projection; existing export consumers\
+    \ (JSON-LD, llms indexes, export tests) render from the extended schema; every\
+    \ file this leaf touches is below 1,000 lines; `crates/gwiki/tests/fixtures/graph_export_schema.json`\
+    \ is committed and regenerated byte-identically by the serializer; and the late\
+    \ projection check writes the projection and its digest exactly on a digest mismatch,\
+    \ leaves the committed output untouched when the digest matches, leaves the prior\
+    \ digest unadvanced when the projection fails to emit, and performs no graph write\
+    \ on the next unchanged run that reads the persisted digest back. test: `crates/gwiki/src/exports/tests.rs::extended_schema_serves_all_consumers`."
+  labels:
+  - covers:wiki-output-design:5.1:5.1.1
+  - covers:wiki-output-design:5.1:5.1.2
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Render the insight report
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  validation_criteria: '5.2.1: Insights page renders all four sections with citations;
+    deterministic sections are byte-stable across runs; an inferred cross-layer edge
+    is excluded from surprising connections rather than cited. test: `crates/gwiki/tests/code_wiki_insights.rs::insights_sections_render`.
+
+    5.2.2: Rationale renders the FactsBundle''s tagged-comment spans with exact `[path:line]`
+    citations; a test proves the renderer performs no direct source or index access.
+    test: `crates/gwiki/tests/code_wiki_insights.rs::rationale_extraction_cited`.'
+  labels:
+  - covers:wiki-output-design:5.2:5.2.1
+  - covers:wiki-output-design:5.2:5.2.2
+  tdd: true
+  source_section: '5.2'
+  implementation_domain: backend
+- title: Implement the bounded diagram fallback
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  validation_criteria: '5.3.1: Over-bound graphs produce labeled top-N diagrams, never
+    suppression. test: `crates/gwiki/tests/code_wiki_diagrams.rs::truncated_graph_yields_labeled_diagram`.
+
+    5.3.2: Every emitted diagram validates as mermaid; only the three permitted kinds
+    are emittable. test: `crates/gwiki/tests/code_wiki_diagrams.rs::only_permitted_kinds_valid`.'
+  labels:
+  - covers:wiki-output-design:5.3:5.3.1
+  - covers:wiki-output-design:5.3:5.3.2
+  tdd: true
+  source_section: '5.3'
+  implementation_domain: backend
+- title: Prefer compact summaries in retrieval and session injection
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  validation_criteria: "6.1.1: Normalizer obeys the 180-char/word-boundary/no-structure\
+    \ contract. test: `crates/gwiki/tests/code_wiki_summaries.rs::normalizer_contract`.\n\
+    6.1.2: Search snippets and catalog entries prefer `summary` frontmatter with normalized-body\
+    \ fallback, across backends and output formats. test: `crates/gwiki/tests/code_wiki_summaries.rs::search_snippets_prefer_summary`.\n\
+    6.1.3: Rendering the catalog root index and passing it through `load_wiki_overview`\
+    \ yields a \u22642,000-char overview block with orientation entry points, and\
+    \ a read concurrent with catalog regeneration returns either the prior or the\
+    \ new complete block, never a partial one. test: `tests/hooks/test_wiki_overview_injection.py`.\n\
+    6.1.4: `wiki_read` and `wiki_search` acquire the shared generation lock and observe\
+    \ one generation across every publication stage, including the dirty-journal window\
+    \ before recovery; the bounded timeout surfaces its documented failure instead\
+    \ of hanging. test: `crates/gwiki/tests/code_wiki_reader_generation.rs::readers_observe_single_generation`.\n\
+    6.1.5: Search results are filtered to the committed generation for engine-owned\
+    \ generated paths only: a generated hit absent from the committed manifest is\
+    \ dropped rather than served, a generated page published since the last index\
+    \ refresh is simply missing (never half-rendered), no snippet mixes generations,\
+    \ and current `knowledge/**`, source-page, `code/INDEX.md`, and `_context.md`\
+    \ hits survive the filter unchanged across both search backends. test: `crates/gwiki/tests/code_wiki_reader_generation.rs::search_results_match_committed_generation`."
+  labels:
+  - covers:wiki-output-design:6.1:6.1.1
+  - covers:wiki-output-design:6.1:6.1.2
+  - covers:wiki-output-design:6.1:6.1.3
+  - covers:wiki-output-design:6.1:6.1.4
+  - covers:wiki-output-design:6.1:6.1.5
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Assemble the engine entrypoint
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '5.1'
+  - '5.2'
+  - '5.3'
+  validation_criteria: "6.2.1: The public entrypoint composes the full pipeline end-to-end\
+    \ on a fixture vault (compile-time registration proven by the integration test\
+    \ invoking `generate_code_wiki`). test: `crates/gwiki/tests/code_wiki_engine.rs::engine_entrypoint_generates`.\n\
+    6.2.2: An unsupported `FACTS_VERSION` is rejected before any side effect \u2014\
+    \ writer, cache, and AI spies observe zero activity. test: `crates/gwiki/tests/code_wiki_engine.rs::facts_version_preflight_no_side_effects`.\n\
+    6.2.3: A run whose only change is cluster membership (no file edits) classifies\
+    \ ARCHITECTURE through the engine and regenerates the architecture set named in\
+    \ 2.2 \u2014 `layers.md`, `layers.json`, affected concept pages, tours, and the\
+    \ graph projection \u2014 proving membership is computed before selection; the\
+    \ graph projection is reached through the late check, whose digest mismatches\
+    \ because layer assignment moved, and a run with unchanged upstream values leaves\
+    \ `outputs/graph.json` unwritten while the rest of the pipeline still runs. test:\
+    \ `crates/gwiki/tests/code_wiki_engine.rs::membership_change_selects_architecture_set`."
+  labels:
+  - covers:wiki-output-design:6.2:6.2.1
+  - covers:wiki-output-design:6.2:6.2.2
+  - covers:wiki-output-design:6.2:6.2.3
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Run full-engine end-to-end acceptance
+  category: test
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '5.1'
+  - '5.2'
+  - '5.3'
+  - '6.1'
+  - '6.2'
+  validation_criteria: "7.1.1: Two consecutive full generations with identical inputs\
+    \ are byte-identical for every deterministic surface; AI prose is stable when\
+    \ caches are warm. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::full_generation_deterministic`.\n\
+    7.1.2: Total generated page count lands in 50\u201390; zero pages under `code/files/**`.\
+    \ test: `crates/gwiki/tests/code_wiki_end_to_end.rs::page_count_in_band`.\n7.1.3:\
+    \ All seven deterministic projection paths exist (`architecture/layers.md` plus\
+    \ `features.md`, `deprecations.md`, `changes.md`, `hotspots.md`, `ownership.md`,\
+    \ `infrastructure.md`), each with a build-manifest record. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::projection_paths_exist`.\n\
+    7.1.4: Every generated page passes the anatomy lint: contract frontmatter with\
+    \ `summary` \u2264180 chars, resolvable citations, table caps respected, collapsible\
+    \ provenance header present, exactly one paragraph block per explanatory section,\
+    \ and no normalized assertion repeated across two explanatory sections of a page.\
+    \ test: `crates/gwiki/tests/code_wiki_end_to_end.rs::anatomy_lint_all_pages`.\n\
+    7.1.5: Every module page carries at least one valid diagram or a labeled truncation.\
+    \ test: `crates/gwiki/tests/code_wiki_end_to_end.rs::module_diagrams_present`.\n\
+    7.1.6: `_meta/build.json` stays under the configured build-manifest ceiling on\
+    \ the real Gobby corpus; orphan pruning leaves catalog-owned files intact. test:\
+    \ `crates/gwiki/tests/code_wiki_end_to_end.rs::manifest_size_and_orphans`.\n7.1.7:\
+    \ A PARTIAL change regenerates only the expected page set; a rename re-slugs,\
+    \ preserves `page_id`, and rewrites links. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::incremental_and_rename`.\n\
+    7.1.8: `wiki_search`, `wiki_read`, and the graph projection work over the new\
+    \ layout; root index cross-links same-slug concepts across namespaces; and a regeneration\
+    \ concurrent with all three surfaces yields one generation everywhere, with search\
+    \ returning no engine-owned generated path absent from the committed manifest\
+    \ while curated and catalog-owned hits stay visible. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::retrieval_over_new_layout`.\n\
+    7.1.9: Production vault byte-untouched throughout (checksum before/after). test:\
+    \ `crates/gwiki/tests/code_wiki_end_to_end.rs::production_vault_untouched`."
+  labels:
+  - covers:wiki-output-design:7.1:7.1.1
+  - covers:wiki-output-design:7.1:7.1.2
+  - covers:wiki-output-design:7.1:7.1.3
+  - covers:wiki-output-design:7.1:7.1.4
+  - covers:wiki-output-design:7.1:7.1.5
+  - covers:wiki-output-design:7.1:7.1.6
+  - covers:wiki-output-design:7.1:7.1.7
+  - covers:wiki-output-design:7.1:7.1.8
+  - covers:wiki-output-design:7.1:7.1.9
+  tdd: false
+  source_section: '7.1'
+  assigned_agent: backend-developer
+```
