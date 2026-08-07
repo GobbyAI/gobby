@@ -128,14 +128,31 @@ the temp vault — `--engine gcode` (pre-move, runs `gcode codewiki`) and
 both modes share the one manifest-producing path. Each mode builds its binary
 from the workspace with `cargo build --locked` and executes the built target
 path directly — never a PATH-resolved installed binary — and records the git
-revision and reported binary version as a capture record in the fixture
-README (non-hashed metadata). Before generating, the script computes a digest
-of the fixture project's sources and refuses to run when it differs from the
-digest pinned in the README (input-identity gate). Normalization strips exactly
-the intentional post-move diffs: `generated_by:` frontmatter values and any
-`gcode-codewiki` marker strings. Everything else (page set, page bodies,
-`_meta` manifest structure, lock/repair behavior artifacts) is hashed as-is
-into a manifest file
+revision and reported binary version as a capture record (non-hashed
+metadata). Everything under
+`crates/gwiki/tests/fixtures/codewiki_parity/project/` is immutable indexed
+input: the one-time `--engine gcode` capture writes its provenance record to
+the outer fixture README
+(`crates/gwiki/tests/fixtures/codewiki_parity/README.md`), and `--engine
+gwiki` writes its capture metadata only into the temporary run directory.
+Neither mode writes anything inside `project/`, so no comparison run can
+mutate its own input. Before generating, the script computes a digest of the
+fixture project's sources and refuses to run when it differs from the digest
+pinned in the outer README (input-identity gate); after each mode it
+re-asserts that the `project/` bytes are unchanged and the tracked fixture
+tree is clean, so neither a dirty-state difference nor a shifted source digest
+can leak into generated output. Normalization strips exactly two classes of
+difference and nothing else. First, the intentional post-move diffs:
+`generated_by:` frontmatter values and any `gcode-codewiki` marker strings.
+Second, the per-run stamps the engine emits unconditionally and which no
+fixture can hold constant — `commit:`, `commit_dirty:`, and the wall-clock
+`generated:` frontmatter lines, plus the matching `commit` / `commit_dirty` /
+generation-timestamp fields in `_meta/codewiki.json` (the engine derives these
+from `git rev-parse HEAD` and `git status --porcelain` against the enclosing
+repository and from local wall-clock time, so they differ between the
+pre-move capture and every later comparison run). Everything else (page set,
+page bodies, per-file source hashes, remaining `_meta` manifest structure,
+lock/repair behavior artifacts) is hashed as-is into a manifest file
 `crates/gwiki/tests/fixtures/codewiki_parity/baseline.sha256` (one
 `<sha256>  <vault-relative-path>` line per generated file, sorted), committed
 as the fixture the 2.6 parity test consumes. The 2.6 parity test invokes this
@@ -160,7 +177,14 @@ the regeneration procedure. The baseline MUST be captured and committed (via
   project with an isolated index identity, execute only freshly built
   `--locked` workspace binaries, assert the pinned fixture source digest
   before generating, and record revision/version capture metadata outside the
-  hashed manifest. file: `crates/gwiki/tests/fixtures/codewiki_parity/project/README.md`.
+  hashed manifest and outside `project/`.
+  file: `crates/gwiki/tests/fixtures/codewiki_parity/README.md`.
+- 1.1.5 - Every byte under
+  `crates/gwiki/tests/fixtures/codewiki_parity/project/` is unchanged and the
+  tracked fixture tree is clean after each engine mode runs, and normalization
+  strips the per-run `commit`/`commit_dirty`/generation-timestamp stamps so
+  two captures of the identical fixture agree.
+  file: `scripts/codewiki_parity_baseline.sh`.
 
 ### 1.2 Implement the `codewiki_facts` facade in gobby-code [category: code]
 `kind: deliverable`
@@ -299,6 +323,15 @@ Targets:
 - `crates/gwiki/src/commands/code/diagram_compose/evidence.rs`
 - `crates/gwiki/src/commands/code/diagram_compose/candidates.rs`
 - `crates/gwiki/src/commands/code/diagram_compose/generation.rs`
+- `crates/gwiki/src/commands/code/text/generation/tool_loop.rs`
+- `crates/gwiki/src/commands/code/text/generation/outcome.rs`
+- `crates/gwiki/src/commands/code/lock.rs`
+- `crates/gcode/src/codewiki_facts/mod.rs`
+- `crates/gcode/src/codewiki_facts/scope.rs`
+- `crates/gcode/src/codewiki_facts/symbols.rs`
+- `crates/gcode/src/codewiki_facts/graph.rs`
+- `crates/gcode/src/codewiki_facts/search.rs`
+- `crates/gcode/src/codewiki_facts/text.rs`
 - `crates/gwiki/src/lib.rs::*` — scope-reason: register the moved engine module tree
 - `crates/gwiki/Cargo.toml`
 - `crates/gwiki/src/api.rs::crate_has_no_gcode_dependency`
@@ -342,7 +375,22 @@ Rewire every datastore access in the moved code through
 `postgres` dependency is added to gwiki for this engine. Where the engine
 previously threaded a raw connection, thread the `CodewikiFacts` handle. If the
 inventory in 1.2 missed a query family, extend the facade in the same change
-(gcode side) rather than opening any datastore access from gwiki.
+(gcode side) rather than opening any datastore access from gwiki — that is why
+the `crates/gcode/src/codewiki_facts/` files are Targets here, and their edits
+are bounded to relocation-discovered typed families: any such extension also
+updates the module-header classification and the read-only facade tests 1.2
+established. No other gcode file is touched by this leaf for that reason.
+
+Ownership identities embedded in the moved engine move with it. The daemon
+agentic caller constant (`DAEMON_AGENTIC_CALLER`, today `"gcode.codewiki"`,
+pinned by a stability test and by an outcome test fixture) becomes
+`"gwiki.code"`, and the lock-contention diagnostics that tell users "another
+gcode codewiki run is already writing" become "another `gwiki code` run"
+(production message, its test assertion, and the module doc comment).
+`ToolPolicy.cli` stays `"gcode"` — that field names the CLI whose read-only
+query tools the loop executes, which remains gcode after the move, so it is
+deliberately preserved rather than renamed. `code_engine_boundary.rs` pins all
+three distinctions.
 
 Non-datastore context threads through a new gwiki-owned carrier
 `crates/gwiki/src/commands/code/runtime.rs`: a `CodeEngineRuntime` struct
@@ -377,6 +425,10 @@ against temp vaults/fixture indexes as they do today.
   identity, output settings, AI routing) and the boundary test covers
   AI-off/direct/daemon/tool-loop plus compare, purge, and repair modes.
   test: `crates/gwiki/tests/code_engine_boundary.rs::runtime_carries_non_datastore_context`.
+- 2.1.7 - The daemon agentic caller is `gwiki.code` and lock-contention
+  diagnostics name `gwiki code`, while `ToolPolicy.cli` remains `gcode`; all
+  three are pinned.
+  test: `crates/gwiki/tests/code_engine_boundary.rs::ownership_identities_moved`.
 
 ### 2.3 Add the `gwiki code` CLI [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -444,6 +496,9 @@ Update `crates/gwiki/src/contract.rs` with the `code` command contract
 Targets:
 - `crates/gcode/src/cli.rs::*` — scope-reason: remove the Codewiki variant, its value enums, and From impls
 - `crates/gcode/src/dispatch.rs::*` — scope-reason: remove the three codewiki dispatch sites (service-config arms, ai-options helper, execution arm)
+- `crates/gcode/src/lib.rs::*` — scope-reason: make `commands` private now that its last external consumer is gone, and repin the enduring public API set
+- `crates/gcode/src/commands/mod.rs::*` — scope-reason: reduce child-module visibility alongside the parent flip
+- `crates/gcode/tests/facade_boundary.rs`
 - `crates/gcode/src/contract.rs::contract`
 - `crates/gcode/src/cli/tests/codewiki.rs::*` — scope-reason: module deleted after its codewiki cases moved to gwiki (2.3) and its setup case moved to the new setup test module
 - `crates/gcode/src/cli/tests/setup.rs`
@@ -473,6 +528,16 @@ gcode CLI test module, relocate its unrelated `parse_setup_standalone` case
 into the enduring `crates/gcode/src/cli/tests/setup.rs` — only the codewiki
 parse cases moved to gwiki in 2.3.
 
+This leaf closes the temporary export 1.3 opened. `commands` is public today
+solely because the binary's `cli.rs` reaches `gobby_code::commands::codewiki::*`;
+1.3 moved `cli.rs`/`dispatch.rs` into the library and 2.1 removed the codewiki
+module, so once this leaf deletes the last codewiki call sites nothing outside
+the crate consumes `commands`. Flip `pub mod commands` to private in `lib.rs`
+(reducing its child-module visibility to match), and update
+`crates/gcode/tests/facade_boundary.rs` so the pinned public set is the
+enduring one: `run_cli`, `codewiki_facts`, `contract`, `test_env`, and the
+projection-boundary items the existing lib.rs pin already declares.
+
 **Acceptance:**
 
 - 2.4.1 - `gcode codewiki` is absent from CLI parse, dispatch, and contract;
@@ -480,12 +545,21 @@ parse cases moved to gwiki in 2.3.
   file: `crates/gcode/contract/gcode.contract.json`.
 - 2.4.2 - Contract-version pins across Rust and Python fixtures agree at gcode
   3 / gwiki 16. test: `tests/test_cli_contracts.py`.
+- 2.4.3 - `commands` is no longer part of gobby-code's public surface and the
+  boundary test pins the enduring public API set with no temporary exports
+  remaining. test: `crates/gcode/tests/facade_boundary.rs::public_surface_is_pinned`.
 
 ### 2.5 Flip the provenance marker with no reader compatibility [category: code] (depends: 2.1)
 `kind: deliverable`
 
 Targets:
 - `crates/gcore/src/codewiki_contract.rs::*` — scope-reason: rename the marker constant, flip its value, and update GOLDEN_PAGE plus self-checks
+- `crates/gwiki/src/commands/code/publication.rs`
+- `crates/gwiki/src/commands/code/build_parts/changes.rs`
+- `crates/gwiki/src/commands/code/text/frontmatter.rs`
+- `crates/gwiki/src/commands/code/ownership/render.rs`
+- `crates/gwiki/src/commands/code/tests/architecture.rs`
+- `crates/gwiki/src/commands/code/tests/contract.rs`
 - `crates/gwiki/src/frontmatter.rs::*` — scope-reason: replace every hardcoded gcode-codewiki literal with the renamed constant
 - `crates/gwiki/src/indexer.rs::*` — scope-reason: replace hardcoded marker literal
 - `crates/gwiki/src/lint.rs::*` — scope-reason: replace hardcoded marker literal
@@ -495,9 +569,18 @@ Targets:
 
 Rename `GENERATED_BY_CODEWIKI` → `GENERATED_BY_GWIKI_CODE` with value
 `"gwiki-code"` in `crates/gcore/src/codewiki_contract.rs`; update `GOLDEN_PAGE`
-and its self-checks. Update the moved engine's emitters (the frontmatter
-writer, the publication writer's bare literal, and the changes and
-ownership-render build parts) and every gwiki reader that currently hardcodes
+and its self-checks. The moved engine has four writers and they do not all
+behave the same way under the rename:
+`crates/gwiki/src/commands/code/text/frontmatter.rs`,
+`crates/gwiki/src/commands/code/build_parts/changes.rs`, and
+`crates/gwiki/src/commands/code/ownership/render.rs` reference the shared
+constant and need the identifier updated, while
+`crates/gwiki/src/commands/code/publication.rs`'s
+placeholder-page writer emits the marker as a bare `generated_by: gcode-codewiki`
+string literal and must be converted to use `GENERATED_BY_GWIKI_CODE` — it is
+the one site a constant rename alone would silently miss. The moved
+architecture and contract tests assert the bare literal too and move to the
+new value. Update those, and every gwiki reader that currently hardcodes
 `gcode-codewiki` — `crates/gwiki/src/frontmatter.rs`,
 `crates/gwiki/src/indexer.rs`, `crates/gwiki/src/lint.rs`,
 `crates/gwiki/src/audit/claims.rs`, plus test literals in
@@ -619,9 +702,20 @@ Create `src/gobby/wiki/codewiki_dormant.py` owning the dormant state:
 CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
 CODEWIKI_DISABLED_REASON = "pending_wiki_redesign"
 
-def reconcile_codewiki_crons_disabled(cron_storage) -> int:
+@dataclass(frozen=True)
+class CodewikiCronReconciliation:
+    disabled: tuple[str, ...]
+    failed: tuple[str, ...]
+    residual_enabled: tuple[str, ...]
+
+
+def reconcile_codewiki_crons_disabled(
+    cron_storage,
+) -> CodewikiCronReconciliation:
     """Idempotently set enabled=False on every system cron row under the
-    nightly prefix. Registers no handler. Returns rows disabled."""
+    nightly prefix. Registers no handler, takes no runner, and marks no
+    service state. Returns the disabled, failed, and still-enabled row ids
+    so the caller can report residue."""
 ```
 
 Implement it with the existing `CronJobStorage` primitives — no bespoke SQL:
@@ -634,15 +728,23 @@ jobs), so after reconciliation every matched row has `enabled=False` and
 `next_run_at=NULL` while non-system and non-prefix rows remain untouched.
 
 The loop is fail-closed, not best-effort: each `update_job` call is wrapped
-per-item, and a raised exception or `None` return counts that row as a
-failed transition without aborting the rest of the loop. After the loop the
-reconciler re-queries the enabled prefix and succeeds only when zero enabled
-rows remain; otherwise it logs the residue, marks the service degraded
-(`mark_service_degraded(runner, "codewiki_dormant_reconciliation")`), and
-relies on the next startup to converge. Scheduler startup proceeds either
-way — an orphaned enabled row is contained (its firing fails with the
-executor's no-handler error, logged as a failed run with backoff) until a
-later startup disables it; daemon startup is never blocked on this
+per-item, and a raised exception (`update_job` raises `SystemRowProtected` and
+plain `ValueError` for several inputs) or a `None` return records that row's id
+in `failed` without aborting the rest of the loop. After the loop the
+reconciler re-queries the enabled prefix and reports whatever remains in
+`residual_enabled`.
+
+Detection and reaction are split because the storage helper has no runner:
+`mark_service_degraded(runner, service_name)` requires a `GobbyRunner`, so the
+reconciler stays runner-independent and returns the residue instead of acting
+on it. `init_orchestration(runner)` — which already holds the runner and
+already calls `mark_service_degraded` for other services — inspects the
+returned result, logs the failed and residual row ids, and calls
+`mark_service_degraded(runner, "codewiki_dormant_reconciliation")` when either
+set is non-empty, relying on the next startup to converge. Scheduler startup
+proceeds either way — an orphaned enabled row is contained (its firing fails
+with the executor's no-handler error, logged as a failed run with backoff)
+until a later startup disables it; daemon startup is never blocked on this
 reconciliation.
 
 Call it from `init_orchestration` where registration used to happen (3.1
@@ -658,17 +760,19 @@ keeps running).
 **Acceptance:**
 
 - 3.2.1 - Startup disables existing nightly rows idempotently and registers no
-  codewiki handler; the reconciler verifies zero enabled prefix rows remain or
-  marks the service degraded and converges on a later startup, never blocking
-  daemon startup. symbol: `reconcile_codewiki_crons_disabled`.
+  codewiki handler; the reconciler returns the disabled, failed, and residual
+  row ids without touching runner state, and converges on a later startup,
+  never blocking daemon startup. symbol: `reconcile_codewiki_crons_disabled`.
 - 3.2.2 - A cron row created enabled by an older deployment is disabled on next
   startup with `enabled=False` and `next_run_at=NULL`; non-system rows,
   non-prefix rows, and other wiki cron jobs are untouched. test: `tests/wiki/test_codewiki_dormant.py::reconcile_disables_and_preserves`.
 - 3.2.3 - No scheduled job in `gobby.wiki.scheduled_jobs` maintains generated
   `code/**` content. behavior: "generated-content maintenance paused" in `src/gobby/wiki/codewiki_dormant.py`.
 - 3.2.4 - With an injected mid-loop failure (`update_job` raising or returning
-  `None`), the reconciler finishes the remaining rows, reports failure via the
-  degraded-service mark, and a subsequent run converges to zero enabled rows.
+  `None`), the reconciler finishes the remaining rows and reports the failed
+  and residual ids in its result; startup logs them and marks
+  `codewiki_dormant_reconciliation` degraded on the runner, and a subsequent
+  run converges to zero enabled rows.
   test: `tests/wiki/test_codewiki_dormant.py::mid_loop_failure_degrades_and_converges`.
 
 ### 3.3 Register the dormant wiki-owned routes and retire the legacy routes [category: code] (depends: 3.1)
@@ -826,9 +930,19 @@ trigger fires and no error occurs; (b) digest file absent — the pipeline
 (the truth-digest read path, `_apply_truth_change_triggers` in the dream
 service, and the storage-runs digest handling) completes cleanly and fires
 nothing; (c) first-sight characterization — a frozen digest with no stored
-hash fires the trigger exactly once, then stays quiet on every later run. No
-production code change expected; if the test finds a crash path on
-stale/absent digests, fix it minimally in the same task.
+hash fires the trigger exactly once, then stays quiet on every later run.
+
+This leaf edits no production code, and the Targets are deliberately limited
+to the new test file. The read path is already fail-soft at every layer: a
+missing vault, missing digest file, unreadable file, malformed JSON, or
+wrong-schema payload each resolve to an empty payload and then an empty
+digest, which the caller treats as "skip this project"; a missing stored hash
+compares unequal rather than raising; and each per-project iteration is
+wrapped in a catch-all that logs and continues. There is therefore no crash
+branch for this task to fix. If the characterization test nonetheless
+uncovers one, it is a defect outside this plan's coverage — file it as a
+separate task rather than editing production code from a leaf that declares
+no production Targets.
 
 **Acceptance:**
 
@@ -1068,6 +1182,72 @@ deferral:
 {"evidence_id":"ea367992-6430-4d1e-aa77-c206471c9115","plan_hash":"cff62325c005a7708e7dce498996aa6eddd6210bfef0bdf0b66a593b2aa516f0","round_number":2,"round_result":{"accepted":["R2-F01","R2-F02","R2-F03","R2-F04","R2-F05","R2-F06","R2-F07","R2-F08","R2-F09","R2-F10","R2-F11","R2-F12","R2-F13","R2-F14","R2-F15","R2-F16","R2-F17","R2-F18","R2-F19","R2-F20"],"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"deb30466e45f975eeab04fa31657edfea2859fa2f1b91a268bc4beaaed2f7967","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":11,"emitted_findings":20,"total":31},"evidence_id":"ea367992-6430-4d1e-aa77-c206471c9115","lanes":[{"candidate_count":12,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":11,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":8,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":18,"manifest_digest":"77a832fc54d4325a7225ab70dcd66cb572015a23af6b9179b63610ad95b615a4","status":"valid"},"source_digest":"8fdc304f295817ada53ec0cec18e69877d18874987aa63bfe1099d89d3af6212","version":1},"declined":[],"findings":[{"category":"weak-testability","check_key":"parity-input-identity","description":"CodeWiki derives page identity, hashes, symbols, and workspace topology from repository paths and bytes. Provenance-only normalization cannot make pre-move and post-move outputs comparable when those inputs differ.","finding_id":"R2-F01","fix":"Make 1.1 and 2.6 run both binaries against one immutable fixture project or pinned checkout with one isolated index/database identity; assert the fixture revision and source digest before each mode.","location":"P1 / § 1.1","prevention":"For every parity gate, pin source bytes, index identity, configuration, and output normalization independently of the implementation worktree.","principle":"A parity comparison requires identical immutable source and index inputs.","root_cause":"The baseline runs before the ownership move against the implementation repository, while the comparison runs after source paths, manifests, and contracts change.","section_id":"1.1","severity":"blocking"},{"category":"weak-testability","check_key":"baseline-binary-provenance","description":"A stale installed binary can produce a valid-looking manifest from code outside the reviewed snapshot, creating a false parity pass.","finding_id":"R2-F02","fix":"Require the script to build and execute explicit workspace target binaries under `--locked`; store the git revision and binary versions as non-hashed metadata.","location":"P1 / § 1.1","prevention":"Require locked workspace builds and record source revision plus binary version for every captured baseline.","principle":"A parity artifact must identify and execute the reviewed binaries.","root_cause":"The baseline permits bare gcode and gwiki resolution through ambient PATH.","section_id":"1.1","severity":"blocking"},{"category":"missing-requirement","check_key":"legacy-runtime-boundary","description":"Sections 1.2 and 2.1 can satisfy their stated inventory scan while leaving grouped imports and non-datastore dependencies unresolved, so the moved engine lacks a compilable gwiki-owned runtime contract.","finding_id":"R2-F03","fix":"Add a gwiki-owned legacy runtime struct for project root/id, quiet/output settings, and `CodewikiFacts`; enumerate and classify every external engine dependency, define signature conversions, add `crates/gwiki/tests/code_engine_boundary.rs` to Targets, and cover AI-off/direct/daemon/tool-loop plus compare, purge, and repair modes.","location":"P1 / § 1.2","prevention":"Inventory every `crate::` dependency and every threaded context field before defining the destination runtime boundary.","principle":"A crate ownership move needs a complete replacement contract for every crossed runtime dependency.","root_cause":"The proposed facts facade covers datastore queries, while the engine also consumes project identity, output settings, graph configuration, daemon AI routing, search, security, and tool-loop operations through `Context` and other gcode modules.","section_id":"1.2","severity":"blocking"},{"category":"traceability","check_key":"rust-bin-privacy","description":"The planned `pub(crate)`/private flip breaks the gcode binary and integration-test crates before the ownership boundary can compile.","finding_id":"R2-F04","fix":"Move CLI dispatch behind one deliberately public library entrypoint, reduce `main.rs` to that entrypoint, migrate integration-test consumers to pinned public APIs or unit-test locations, and list every affected file in 1.3 Targets.","location":"P1 / § 1.3","prevention":"Include package binaries and `tests/` crates in every public-to-private blast-radius sweep.","principle":"Rust package binaries and integration tests are external consumers of the package library.","root_cause":"The visibility plan inventories downstream crates while current `src/cli.rs`, `src/dispatch.rs`, and integration tests import the modules being made private through `gobby_code`.","section_id":"1.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"monolith-task-atomicity","description":"Section 2.1 cannot omit the composer and compile; moving it touches an over-ceiling production file until 2.2. Same-session prose does not make independently expanded leaves atomic.","finding_id":"R2-F05","fix":"Merge 2.2 into 2.1, or decompose the composer at its current path as a prerequisite and move the already-decomposed module tree. Require each leaf to compile independently.","location":"P2 / § 2.1","prevention":"Check current and projected source size plus module completeness at each manifest-leaf boundary.","principle":"Every expanded leaf must finish compilable and below the production source-size ceiling.","root_cause":"The engine requires `diagram_compose.rs` during relocation, while that file has 1,062 lines and decomposition sits in a later dependent deliverable.","section_id":"2.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"cargo-path-version-order","description":"Cargo resolution fails during the phase that is supposed to compile and test the moved engine.","finding_id":"R2-F06","fix":"Use the current gobby-code version in 2.1 and change package plus requirement to 1.6.1 atomically in 4.1, or move the aligned bump before 2.1 and make P2 depend on it.","location":"P2 / § 2.1","prevention":"Validate Cargo version requirements after each dependency-producing deliverable, including intermediate states.","principle":"A path dependency's declared version must resolve at every buildable phase.","root_cause":"Section 2.1 requires gobby-code 1.6.1 while the local package remains 1.6.0 until section 4.1, which depends on P2.","section_id":"2.1","severity":"blocking"},{"category":"traceability","check_key":"legacy-cli-shape","description":"The planned nested surface contradicts the accepted legacy CLI contract and makes 2.4's one-entry contract mirror ambiguous.","finding_id":"R2-F07","fix":"Define `gwiki code` with the same flat flags, defaults, conflicts, and failure behavior; move the existing parser tests with executable/variant paths changed.","location":"P2 / § 2.3","prevention":"Diff the concrete Clap grammar and parse/conflict tests whenever a plan claims CLI parity.","principle":"A relocation promising full legacy flag/default/failure parity must preserve the command grammar.","root_cause":"The current command uses flat `--compare-to`, `--purge`, and `--repair-citations` modes, while 2.3 specifies nested compare/purge/repair subcommands.","section_id":"2.3","severity":"blocking"},{"category":"traceability","check_key":"gwiki-command-exhaustive-sites","description":"CLI mapping alone cannot invoke the moved engine through gwiki's architecture; omitted exhaustive sites will fail compilation or leave the command unreachable.","finding_id":"R2-F08","fix":"Add `api.rs::Command`, `commands/mod.rs` registration and dispatch, `commands/project_admission.rs::classify_command`, mapping sites, typed flat code-mode payloads, outcomes, and exhaustive tests to 2.3 Targets and acceptance.","location":"P2 / § 2.3","prevention":"Sweep constructors, enum matches, registration tables, dispatchers, and admission/permission classifiers for each command addition.","principle":"A new CLI command must cover every exhaustive command representation and dispatch boundary.","root_cause":"The Targets omit gwiki's public `Command` enum, module registration, exhaustive dispatch, project-admission classification, and associated command outcomes.","section_id":"2.3","severity":"blocking"},{"category":"traceability","check_key":"existing-dependency-guard","description":"The planned dependency makes gwiki's current test suite fail, yet the enforcing test is absent from Targets.","finding_id":"R2-F09","fix":"Add the test symbol to 2.1 Targets and replace it with a one-way dependency assertion that pins gwiki's gobby-code path/version and verifies gcode has no gobby-wiki dependency.","location":"P2 / § 2.1","prevention":"Search manifest dependency names across source and tests before adding or reversing crate edges.","principle":"Plans that invert a dependency must update existing tests that enforce the prior architecture.","root_cause":"`crates/gwiki/src/api.rs::crate_has_no_gcode_dependency` explicitly fails when gwiki depends on gobby-code.","section_id":"2.1","severity":"blocking"},{"category":"missing-requirement","check_key":"feature-contract-descriptor","description":"Repointing duplicates or mislabels gwiki commands and changes deterministic generated content beyond the permitted provenance normalization.","finding_id":"R2-F10","fix":"Keep both `BinaryContract` descriptors; remove the retired `codewiki` arm from the gcode resolver, add the flat `code` modes to the gwiki resolver, and target the moved feature builder plus contract-coverage tests.","location":"P2 / § 2.4","prevention":"Inspect registry cardinality and resolver ownership before repointing a contract source.","principle":"Per-binary contract descriptors must retain their binary identity during command ownership changes.","root_cause":"The feature catalog already enumerates gcode and gwiki descriptors separately, while 2.4 directs the gcode descriptor to the gwiki contract.","section_id":"2.4","severity":"blocking"},{"category":"bad-sequencing","check_key":"parity-terminal-gate","description":"A passing result can precede later output-affecting changes and therefore does not gate the final P2 state.","finding_id":"R2-F11","fix":"Add 2.2, 2.4, and 2.5 to 2.6 dependencies alongside 2.3.","location":"P2 / § 2.6","prevention":"Place terminal verification after all producers of the measured artifact in the dependency graph.","principle":"An end-to-end parity gate must run after every change that can affect its measured output.","root_cause":"Section 2.6 depends only on 2.3, while 2.2 refactors generation, 2.4 changes contract metadata, and 2.5 changes provenance.","section_id":"2.6","severity":"blocking"},{"category":"weak-testability","check_key":"marker-scan-allowlist","description":"The stated acceptance cannot pass while the required parity normalizer, README, and old-marker characterization exist.","finding_id":"R2-F12","fix":"Replace the workspace-wide zero scan with a production-reader/writer scan that permits only enumerated fixture and normalizer locations and fails on new production references.","location":"P2 / § 2.5","prevention":"Define production roots and a pinned fixture/normalizer allowlist for literal-retirement checks.","principle":"A source scan must distinguish forbidden production references from required test and normalization fixtures.","root_cause":"Section 1.1 requires old-marker literals, while 2.5 scans all `crates` and `src` for zero occurrences.","section_id":"2.5","severity":"blocking"},{"category":"traceability","check_key":"cron-reconciler-target-ownership","description":"The reconciler can be implemented yet never called; 3.1 also cannot validate 3.2 behavior before it exists.","finding_id":"R2-F13","fix":"Limit 3.1 to handler/registration removal. Add `init_orchestration`, `tests/test_runner_init.py`, and `tests/wiki/test_codewiki_dormant.py` to 3.2 Targets and make 3.2 own call insertion plus reconciliation assertions.","location":"P3 / § 3.2","prevention":"Match every acceptance-owned file to the leaf that first makes the behavior exist.","principle":"The deliverable introducing an integration must own its call site and tests.","root_cause":"Section 3.1 claims runner-init test changes for behavior introduced in dependent section 3.2, while 3.2 omits the runner-init call site and reconciliation tests from Targets.","section_id":"3.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"cron-reconciliation-fail-closed","description":"A mid-loop exception or `update_job` returning `None` can leave enabled rows. Scheduler startup then has rows whose handler was removed, reaching the unknown-handler failure acceptance claims is impossible.","finding_id":"R2-F14","fix":"Treat `None` and exceptions as failure, re-query the enabled prefix, succeed only at zero rows, and fail or suppress scheduler initialization on reconciliation failure. Add injected mid-loop failure and post-verification tests.","location":"P3 / § 3.2","prevention":"Test partial update, `None`, exception, post-write verification, and scheduler-start ordering for destructive reconciliation.","principle":"Handler removal is safe only after every enabled legacy row is durably disabled.","root_cause":"The planned list/update loop uses independent calls and specifies only its successful path.","section_id":"3.2","severity":"blocking"},{"category":"traceability","check_key":"dormant-status-schema","description":"Both contracts cannot be satisfied, leaving route implementation and UI typing with conflicting sources of truth.","finding_id":"R2-F15","fix":"Update Constraints to the recorded V1 decision: exact three-field status response, refresh-only agent-route auth entry, and open unlisted status route.","location":"P3 / § 3.3","prevention":"After an accepted enhancement decision, update every authoritative constraint and downstream producer/consumer reference.","principle":"Authoritative constraints and producer/consumer acceptance must define one serialized schema and auth policy.","root_cause":"Constraints retain legacy status fields and ambiguous route auth, while V1, 3.3, and 3.6 require exactly `{enabled,state,reason}` with status open.","section_id":"3.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"route-ui-atomicity","description":"Completing 3.3 alone removes live routes before the consumer rewrite; 3.6 also omits `WikiTab.tsx`, which constructs the deleted callback.","finding_id":"R2-F16","fix":"Combine 3.3 and 3.6 into one atomic task, or explicitly bind them to one closure/merge boundary; add `WikiTab.tsx` to Targets and require web typecheck plus integrated route/UI tests.","location":"P3 / §§ 3.3 and 3.6","prevention":"Trace API removals through every caller and encode one merge/closure boundary with integrated type and route tests.","principle":"Removing an API route and rewriting its sole consumer must form one atomic integration change.","root_cause":"Sections 3.3 and 3.6 are independent leaves even though current UI code calls both legacy routes and constructs the refresh callback through `WikiTab.tsx`.","section_id":"3.3","severity":"blocking"},{"category":"weak-testability","check_key":"frozen-digest-state","description":"A stale unseen digest still fires once when its hash differs or has no stored value, so file age alone cannot prove the planned no-trigger outcome.","finding_id":"R2-F17","fix":"Seed the stored hash to the frozen digest and verify repeated later runs stay quiet; test absent digest separately. If unseen stale digests must be ignored, add the timestamp production rule and its implementation scope.","location":"P3 / § 3.7","prevention":"Map each regression fixture variable to an actual implementation branch before naming the expected outcome.","principle":"An acceptance test must control the state transition the implementation observes.","root_cause":"The digest reader ignores age, and trigger evaluation compares content hash with stored state.","section_id":"3.7","severity":"blocking"},{"category":"traceability","check_key":"active-doc-surface","description":"The installed gcode skill and active gcode CLI contract remain stale after the command is removed, contradicting 4.2 acceptance.","finding_id":"R2-F18","fix":"Add `crates/gcode/assets/SKILL.md` and `docs/contracts/gcode-cli.md` to 4.2 Targets, update their retired-command guidance, and add a focused scan across current skill/contract/guide surfaces with historical changelogs excluded.","location":"P4 / § 4.2","prevention":"Inventory include-str assets, installed skill templates, CLI contracts, and current guides separately from historical evidence.","principle":"Command retirement must update every active installed or contractual documentation surface.","root_cause":"Targets cover the shared skill and gwiki docs while gcode's embedded skill asset and gcode CLI contract still advertise `gcode codewiki`.","section_id":"4.2","severity":"blocking"},{"category":"traceability","check_key":"cli-test-module-partition","description":"Relocating or deleting the module wholesale either loses unrelated gcode setup coverage or creates a gwiki test that cannot compile.","finding_id":"R2-F19","fix":"Move only CodeWiki parse cases to gwiki; relocate `parse_setup_standalone` into an enduring gcode setup/top-level test module and list both destinations in Targets.","location":"P2 / § 2.3","prevention":"Classify every symbol in a moved test file before assigning whole-file ownership.","principle":"A file move must preserve unrelated tests that share the source module.","root_cause":"`crates/gcode/src/cli/tests/codewiki.rs` also contains `parse_setup_standalone`, which belongs to the enduring gcode setup command.","section_id":"2.3","severity":"blocking"},{"category":"over-engineering","check_key":"skill-surface-proportionality","description":"A new gwiki skill surface would add installation and ownership machinery with no second consumer or stated requirement.","finding_id":"R2-F20","fix":"Resolve the option in the plan: update the existing shared code-index skill with paused/manual `gwiki code` guidance and a pointer to `docs/guides/codewiki.md`.","location":"P4 / § 4.2","prevention":"Resolve one-consumer documentation choices to the existing owner before plan approval.","principle":"A documentation mechanism earns its place through a named consumer and a concrete need for added indirection.","root_cause":"Section 4.2 leaves a choice to create or move guidance to a gwiki skill surface, while the existing shared code-index skill already owns the CodeWiki lifecycle consumer.","section_id":"4.2","severity":"nit"}],"resolution":"all 20 findings accepted by user vote (2026-08-07); R2-F14 and R2-F16 applied as user-approved variants; edits applied to the plan artifact","reviewer_session":"#10270","round":2,"round_number":2,"verdict":"needs_review"},"session_id":"89a747f7-16f8-4f17-a15e-81e23fb067e4"}
 ```
 
+**Round 3** `kind: adversary`
+
+- reviewer_run: `2ac68bac-3355-47b3-9677-52550fcfd909`
+- reviewer_session: `185e4987-bf6d-4fc5-a7b1-a216f13224d6` (#10277)
+- evidence_id: `91e36693-ed33-438c-b3a1-75a3c21ff145` (round_number 3)
+- verdict: needs_review; findings_presented: 8 (all blocking)
+- accepted: all 8 (R3-F01…R3-F08); every finding independently verified
+  against the codebase or the plan text before the vote
+- declined: none — R3-F07's defect was accepted but resolved with a smaller
+  remedy than the finding proposed (see resolution_notes)
+- resolution_notes: R3-F01 resolved by making everything under
+  `fixtures/codewiki_parity/project/` immutable — the one-time gcode capture
+  writes provenance to the outer fixture README, gwiki writes capture metadata
+  only to the temp run dir, and each mode re-asserts unchanged fixture bytes
+  and a clean tracked tree (new 1.1.5). Verification also surfaced a second,
+  fatal gap inside the same finding's scope: `capture_commit_stamp`
+  (`run.rs:594-622`) shells `git rev-parse HEAD` and `git status --porcelain`
+  and stamps `commit`, `commit_dirty`, and a local wall-clock `generated:`
+  into page frontmatter and `_meta/codewiki.json`, none of which the round-2
+  normalization rule stripped — so the parity gate could never have passed;
+  normalization now strips exactly those per-run stamps plus the intentional
+  provenance diffs. R3-F02 resolved by giving 2.4 the terminal privatization
+  it was promised in 1.3 (`lib.rs` `pub mod commands` → private,
+  `commands/mod.rs` child visibility, facade-boundary repin, new 2.4.3);
+  `commands` is public today only because the binary's `cli.rs` reaches
+  `gobby_code::commands::codewiki::*`, which this leaf deletes. R3-F03
+  resolved by adding the six `crates/gcode/src/codewiki_facts/` files to 2.1
+  Targets with the bounded rationale in prose — the validator rejects
+  `::*` scope-reasons on files with no index record, so these are listed as
+  bare paths (they are created by 1.2). R3-F04 accepted as stated and applied:
+  `DAEMON_AGENTIC_CALLER` `"gcode.codewiki"` → `"gwiki.code"` (tool_loop.rs:37,
+  its stability test at :310, and the outcome.rs:476 fixture), lock
+  diagnostics "another gcode codewiki run" → "another `gwiki code` run"
+  (lock.rs:139 production, :168 assertion, :9 doc), and `ToolPolicy.cli`
+  explicitly preserved as `"gcode"` because it names the CLI whose read-only
+  query tools the loop executes; pinned by new 2.1.7. R3-F05 accepted with a
+  corrected premise: verification refuted "four bare literals" — only
+  `publication.rs:559` emits a bare `generated_by: gcode-codewiki` string
+  (inside `placeholder_page`, reached from production `atomic_write`);
+  `changes.rs:164`, `text/frontmatter.rs:266`, and `ownership/render.rs:81`
+  reference the shared constant and still need edits because the constant is
+  being renamed. All four plus the two moved test files carrying the bare
+  literal are now 2.5 Targets. R3-F06 resolved by splitting detection from
+  reaction: `reconcile_codewiki_crons_disabled` returns a structured
+  `CodewikiCronReconciliation(disabled, failed, residual_enabled)` and stays
+  runner-independent, because `mark_service_degraded(runner, service_name)`
+  requires a `GobbyRunner`; `init_orchestration(runner)` — which already calls
+  that helper for two other services — logs the residue and marks
+  `codewiki_dormant_reconciliation` degraded. R3-F07's defect (a
+  characterization leaf authorizing an undeclared production fix) was accepted,
+  but the proposed remedy of adding conditional production Targets was not
+  applied: verification showed the truth-digest path is fail-soft at every
+  layer — missing vault, missing file, unreadable file, malformed JSON, and
+  wrong-schema payload all resolve to an empty digest that the caller skips; a
+  missing stored hash compares unequal rather than raising; and each
+  per-project iteration is wrapped in a catch-all. There is no crash branch, so
+  the smaller fix is to remove the edit authorization and route any surprise to
+  a separate task, which closes the same gap without adding speculative scope.
+  R3-F08 resolved by re-deriving M1 with corrected routing: 1.2 frontend →
+  backend and 2.1 fullstack → backend (both Rust-only), 3.6 frontend →
+  fullstack (Python config plus TypeScript UI).
+
+```json plan-review-round
+{"evidence_id":"91e36693-ed33-438c-b3a1-75a3c21ff145","plan_hash":"8f50978bc9978f47ecf2e00897e381cf21f806d59ba4013cc2b2a128c5179f4e","round_number":3,"round_result":{"accepted":["R3-F01","R3-F02","R3-F03","R3-F04","R3-F05","R3-F06","R3-F07","R3-F08"],"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"a2b65c6294d32b1d3b2fd08e9bb9de973d0d951c95155cc4fcdf6013ed2d98c7","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":8,"total":9},"evidence_id":"91e36693-ed33-438c-b3a1-75a3c21ff145","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":5,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":2,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":17,"manifest_digest":"4218c86e4bdc657a7cb3bc75becdf7bcee12ed1dd5b1515454f8b1d0815dc840","status":"valid"},"source_digest":"7591f8d690f01e3bdf9b130589c69928a2085c5ecadfd647aff90fc5436163af","version":1},"declined":[],"findings":[{"category":"weak-testability","check_key":"parity-capture-metadata-location","description":"Section 1.1 says the committed fixture project never changes, yet both modes record capture metadata in a fixture README and acceptance 1.1.4 points to `project/README.md`. The engine serializes dirty Git state and hashes project-source bytes, so the gwiki comparison can mutate its own input or introduce a non-normalized dirty-state difference.","finding_id":"R3-F01","fix":"Keep every byte under `fixtures/codewiki_parity/project/` immutable. Write one-time gcode baseline provenance to a dedicated artifact outside `project/`; emit gwiki comparison metadata only to the temporary run directory or stdout. Point 1.1.4 and M1 at that metadata artifact and assert unchanged fixture bytes plus clean tracked state after each mode.","location":"P1 / § 1.1 (interaction with § 2.6 and M1)","prevention":"Separate immutable indexed input, committed baseline provenance, and transient comparison metadata; assert fixture bytes and Git cleanliness before and after each engine mode.","principle":"Parity inputs and repository state must remain immutable across baseline and comparison captures.","root_cause":"The round-2 provenance fix records per-run revision/version metadata in a tracked fixture README without separating the digest-pinned project README from outer capture metadata.","section_id":"1.1","severity":"blocking"},{"category":"traceability","check_key":"rust-public-boundary-closure","description":"The final plan state still exposes `gobby_code::commands` and its public child modules even though dispatch becomes an internal library consumer and `gcode codewiki` is removed. Section 2.4 omits `lib.rs`, `commands/mod.rs`, and the public-surface pin, so the applied round-2 boundary fix remains incomplete.","finding_id":"R3-F02","fix":"Add `crates/gcode/src/lib.rs::*`, `crates/gcode/src/commands/mod.rs::*`, and `crates/gcode/tests/facade_boundary.rs::*` to 2.4 Targets. Make `commands` private after the CodeWiki removal and repin the exact enduring public API.","location":"P1 / § 1.3 and P2 / § 2.4","prevention":"For every temporary public export, name its last consumer, removal leaf, visibility edit, and API-pin update.","principle":"A public-to-private ownership move must close every temporary export and repin the final API at the leaf that removes its last consumer.","root_cause":"Section 1.3 keeps `commands` public while moving dispatch behind `run_cli`, but sections 2.1 and 2.4 never target the module visibility or boundary test for the promised terminal privatization.","section_id":"1.3","severity":"blocking"},{"category":"gobby-format","check_key":"conditional-facade-target-coverage","description":"Relocation can concretely expose a missed query family across raw Context/db/model/scope and tool-executor seams. Section 2.1 instructs the implementer to extend the facade in that branch, but the leaf cannot claim or validate any `crates/gcode/src/codewiki_facts/` file.","finding_id":"R3-F03","fix":"Add `crates/gcode/src/codewiki_facts/{mod,scope,symbols,graph,search,text}.rs::*` to 2.1 Targets with a scope reason limited to relocation-discovered typed-family extensions. Require the same leaf to update the module-header classification and read-only facade tests for any extension.","location":"P2 / § 2.1 (boundary with § 1.2)","prevention":"For each contingency clause containing \"extend,\" \"fix,\" or \"update,\" enumerate its exact source and test Targets before manifest handoff.","principle":"Every reachable implementation branch that authorizes file edits must list those exact files in the deliverable Targets.","root_cause":"The applied runtime-boundary edit lets 2.1 extend any missed `codewiki_facts` family in the same leaf, while 2.1 declares none of the facade files as Targets.","section_id":"2.1","severity":"blocking"},{"category":"traceability","check_key":"runtime-ownership-identities","description":"The moved engine currently sends daemon-agentic requests as `gcode.codewiki`, pins that value in an outcome fixture, and tells lock-contention users another `gcode codewiki` run owns the lock. Those identities become false after the old CLI is removed. The tool policy's `cli: gcode` remains valid because those tools intentionally execute read-only gcode queries.","finding_id":"R3-F04","fix":"Add the post-move `text/generation/tool_loop.rs`, `text/generation/outcome.rs`, `lock.rs`, and associated tests to 2.1 Targets. Rename the daemon caller to `gwiki.code` and lock diagnostics to `gwiki code`; explicitly preserve `ToolPolicy.cli = \"gcode\"` and pin all three distinctions in `code_engine_boundary.rs`.","location":"P2 / §§ 2.1, 2.3, and 2.4","prevention":"Sweep protocol caller IDs, diagnostics, fixtures, lock messages, telemetry labels, and policy-owned binary names during every command ownership move.","principle":"An ownership migration must update caller identities and user-visible command references while preserving only identities that still describe a real dependency.","root_cause":"The move inventory covers imports, flags, and dispatch but omits embedded daemon-caller and lock-diagnostic identities.","section_id":"2.1","severity":"blocking"},{"category":"gobby-format","check_key":"provenance-writer-target-coverage","description":"Four current engine writers survive at post-move destinations: publication's bare literal plus changes, frontmatter, and ownership renderers. None appears in 2.5 Targets, so the marker-flip leaf cannot implement or validate its own production allowlist.","finding_id":"R3-F05","fix":"Add `crates/gwiki/src/commands/code/publication.rs`, `build_parts/changes.rs`, `text/frontmatter.rs`, `ownership/render.rs`, and the moved marker architecture/contract tests to 2.5 Targets. Require publication's bare literal to use `GENERATED_BY_GWIKI_CODE`.","location":"P2 / § 2.5","prevention":"Inventory and target every producer, consumer, fixture, and bare literal when changing a serialized provenance marker.","principle":"Every writer governed by a renamed serialization contract must be an explicit Target in the leaf that changes the contract.","root_cause":"Section 2.5 names moved-engine emitter edits in prose but its Targets cover only the shared constant and gwiki readers/tests.","section_id":"2.5","severity":"blocking"},{"category":"unhandled-edge","check_key":"cron-degradation-dataflow","description":"`reconcile_codewiki_crons_disabled(cron_storage) -> int` has no runner and cannot represent failed or residual row identities, yet the same section requires `mark_service_degraded(runner, \"codewiki_dormant_reconciliation\")`. The repository API requires a `GobbyRunner`, and `update_job` may return `None`, so the specified contract cannot perform or report the accepted degraded-startup transition.","finding_id":"R3-F06","fix":"Make the storage helper return a structured result with `disabled_count`, failed transition IDs, and residual enabled IDs. Keep it runner-independent; require `init_orchestration(runner)` to log residue and call `mark_service_degraded` when either failure set is non-empty. Update 3.2.1 and 3.2.4 to test the helper result and caller-visible degraded state for raised and `None` outcomes.","location":"P3 / § 3.2","prevention":"For each reconciliation branch, trace detection, returned residue, caller action, observable state, and retry behavior through concrete signatures.","principle":"Every required failure-state transition must have an explicit input/output path from detection to the owning state object.","root_cause":"The round-2 variant declares a storage-only helper returning one integer while also requiring that helper to mark a `GobbyRunner` degraded and distinguish nullable/exceptional updates from convergence.","section_id":"3.2","severity":"blocking"},{"category":"gobby-format","check_key":"conditional-production-target-coverage","description":"The stale/absent-digest behavior spans the dream service trigger, persisted last-seen hash methods, and digest loading. If the test exposes the allowed crash branch, the leaf cannot complete the instructed production fix within its declared Target inventory.","finding_id":"R3-F07","fix":"Add conditional, scope-reason Targets using the exact indexed symbols for `_apply_truth_change_triggers`, the truth-digest hash get/set methods in `storage_runs.py`, and the bounded digest-loading branch in `truth_digest.py`. State that production edits occur only for a crash demonstrated by the new characterization test.","location":"P3 / § 3.7","prevention":"When a characterization test may convert into a regression fix, list every named production branch as a conditional Target with a bounded scope reason.","principle":"A characterization task that authorizes a production fix must declare the exact production seams it may change.","root_cause":"The round-2 state-accurate characterization edit added a same-task crash-fix branch while retaining only the new test file in Targets.","section_id":"3.7","severity":"blocking"},{"category":"gobby-format","check_key":"manifest-code-domain-routing","description":"M1 routes Rust-only facade task 1.2 to frontend, Rust-only engine move 2.1 to fullstack, and mixed Python plus TypeScript task 3.6 to frontend. Deterministic expansion would dispatch all three to the wrong implementation scope.","finding_id":"R3-F08","fix":"Re-derive and apply M1 with `1.2.implementation_domain = backend`, `2.1.implementation_domain = backend`, and `3.6.implementation_domain = fullstack`; keep categories, dependencies, TDD flags, criteria, and covers labels unchanged.","location":"M1 entries sourced from §§ 1.2, 2.1, and 3.6","prevention":"Before manifest application, compare every code entry's domain against all target languages and runtime layers, then pass explicit overrides for mismatches.","principle":"Every code manifest entry must route to the implementation domain represented by its complete Target set.","root_cause":"The coordinator handoff retained heuristic domains without reviewer overrides for Rust-only and mixed Python/web leaves.","section_id":"M1","severity":"blocking"}],"resolution":"All 8 findings accepted after independent verification (2026-08-07); edits applied to the plan artifact. R3-F01 applied plus an in-scope extension: verification showed capture_commit_stamp stamps commit/commit_dirty/wall-clock generated into pages and _meta, none of which round-2 normalization stripped, so the parity gate could never have passed; normalization now strips those per-run stamps (new 1.1.5). R3-F05 applied with a corrected premise: only publication.rs emits a bare literal; changes.rs, text/frontmatter.rs, and ownership/render.rs reference the shared constant and need the rename. R3-F07's defect accepted but resolved with a smaller remedy than proposed: the truth-digest read path is fail-soft at every layer (missing vault/file, unreadable file, malformed JSON, wrong schema all degrade to an empty digest; a missing stored hash compares unequal; each iteration is wrapped in a catch-all), so no crash branch exists to target; the unbounded production-edit authorization was removed instead of adding speculative conditional Targets. R3-F03 applied as bare-path Targets because the validator rejects ::* scope-reasons on files with no index record.","reviewer_session":"#10277","round":3,"round_number":3,"verdict":"needs_review"},"session_id":"89a747f7-16f8-4f17-a15e-81e23fb067e4"}
+```
+
 ## Task Mapping
 `kind: framing`
 
@@ -1097,12 +1277,18 @@ deferral:
     1.1.4: Both engine modes run against the identical committed fixture project with
     an isolated index identity, execute only freshly built `--locked` workspace binaries,
     assert the pinned fixture source digest before generating, and record revision/version
-    capture metadata outside the hashed manifest. file: `crates/gwiki/tests/fixtures/codewiki_parity/project/README.md`.'
+    capture metadata outside the hashed manifest and outside `project/`. file: `crates/gwiki/tests/fixtures/codewiki_parity/README.md`.
+
+    1.1.5: Every byte under `crates/gwiki/tests/fixtures/codewiki_parity/project/`
+    is unchanged and the tracked fixture tree is clean after each engine mode runs,
+    and normalization strips the per-run `commit`/`commit_dirty`/generation-timestamp
+    stamps so two captures of the identical fixture agree. file: `scripts/codewiki_parity_baseline.sh`.'
   labels:
   - covers:codewiki-ownership-move:1.1:1.1.1
   - covers:codewiki-ownership-move:1.1:1.1.2
   - covers:codewiki-ownership-move:1.1:1.1.3
   - covers:codewiki-ownership-move:1.1:1.1.4
+  - covers:codewiki-ownership-move:1.1:1.1.5
   tdd: false
   source_section: '1.1'
   assigned_agent: backend-developer
@@ -1127,7 +1313,7 @@ deferral:
   - covers:codewiki-ownership-move:1.2:1.2.3
   tdd: true
   source_section: '1.2'
-  implementation_domain: frontend
+  implementation_domain: backend
 - title: Privatize gcode's datastore modules and pin the boundary
   category: code
   task_type: feature
@@ -1167,7 +1353,10 @@ deferral:
     \ \"diagram composition parity\" in `crates/gwiki/src/commands/code/diagram_compose/mod.rs`.\n\
     2.1.6: The runtime carrier holds all non-datastore context (project identity,\
     \ output settings, AI routing) and the boundary test covers AI-off/direct/daemon/tool-loop\
-    \ plus compare, purge, and repair modes. test: `crates/gwiki/tests/code_engine_boundary.rs::runtime_carries_non_datastore_context`."
+    \ plus compare, purge, and repair modes. test: `crates/gwiki/tests/code_engine_boundary.rs::runtime_carries_non_datastore_context`.\n\
+    2.1.7: The daemon agentic caller is `gwiki.code` and lock-contention diagnostics\
+    \ name `gwiki code`, while `ToolPolicy.cli` remains `gcode`; all three are pinned.\
+    \ test: `crates/gwiki/tests/code_engine_boundary.rs::ownership_identities_moved`."
   labels:
   - covers:codewiki-ownership-move:2.1:2.1.1
   - covers:codewiki-ownership-move:2.1:2.1.2
@@ -1175,9 +1364,10 @@ deferral:
   - covers:codewiki-ownership-move:2.1:2.1.4
   - covers:codewiki-ownership-move:2.1:2.1.5
   - covers:codewiki-ownership-move:2.1:2.1.6
+  - covers:codewiki-ownership-move:2.1:2.1.7
   tdd: true
   source_section: '2.1'
-  implementation_domain: fullstack
+  implementation_domain: backend
 - title: Add the `gwiki code` CLI
   category: code
   task_type: feature
@@ -1210,10 +1400,15 @@ deferral:
     `crates/gcode/contract/gcode.contract.json`.
 
     2.4.2: Contract-version pins across Rust and Python fixtures agree at gcode 3
-    / gwiki 16. test: `tests/test_cli_contracts.py`.'
+    / gwiki 16. test: `tests/test_cli_contracts.py`.
+
+    2.4.3: `commands` is no longer part of gobby-code''s public surface and the boundary
+    test pins the enduring public API set with no temporary exports remaining. test:
+    `crates/gcode/tests/facade_boundary.rs::public_surface_is_pinned`.'
   labels:
   - covers:codewiki-ownership-move:2.4:2.4.1
   - covers:codewiki-ownership-move:2.4:2.4.2
+  - covers:codewiki-ownership-move:2.4:2.4.3
   tdd: true
   source_section: '2.4'
   implementation_domain: backend
@@ -1282,9 +1477,9 @@ deferral:
   depends_on:
   - '3.1'
   validation_criteria: '3.2.1: Startup disables existing nightly rows idempotently
-    and registers no codewiki handler; the reconciler verifies zero enabled prefix
-    rows remain or marks the service degraded and converges on a later startup, never
-    blocking daemon startup. symbol: `reconcile_codewiki_crons_disabled`.
+    and registers no codewiki handler; the reconciler returns the disabled, failed,
+    and residual row ids without touching runner state, and converges on a later startup,
+    never blocking daemon startup. symbol: `reconcile_codewiki_crons_disabled`.
 
     3.2.2: A cron row created enabled by an older deployment is disabled on next startup
     with `enabled=False` and `next_run_at=NULL`; non-system rows, non-prefix rows,
@@ -1294,8 +1489,10 @@ deferral:
     content. behavior: "generated-content maintenance paused" in `src/gobby/wiki/codewiki_dormant.py`.
 
     3.2.4: With an injected mid-loop failure (`update_job` raising or returning `None`),
-    the reconciler finishes the remaining rows, reports failure via the degraded-service
-    mark, and a subsequent run converges to zero enabled rows. test: `tests/wiki/test_codewiki_dormant.py::mid_loop_failure_degrades_and_converges`.'
+    the reconciler finishes the remaining rows and reports the failed and residual
+    ids in its result; startup logs them and marks `codewiki_dormant_reconciliation`
+    degraded on the runner, and a subsequent run converges to zero enabled rows. test:
+    `tests/wiki/test_codewiki_dormant.py::mid_loop_failure_degrades_and_converges`.'
   labels:
   - covers:codewiki-ownership-move:3.2:3.2.1
   - covers:codewiki-ownership-move:3.2:3.2.2
@@ -1371,7 +1568,7 @@ deferral:
   - covers:codewiki-ownership-move:3.6:3.6.3
   tdd: true
   source_section: '3.6'
-  implementation_domain: frontend
+  implementation_domain: fullstack
 - title: Pin dream tolerance of a frozen truth digest
   category: test
   task_type: feature
