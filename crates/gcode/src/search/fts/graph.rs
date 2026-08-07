@@ -4,6 +4,7 @@ use postgres::{Client, Row};
 
 use crate::db;
 use crate::models::Symbol;
+use crate::visibility;
 
 use super::common::ResolvedGraphSymbol;
 use super::symbols::{search_symbols_by_name, search_symbols_fts};
@@ -20,7 +21,7 @@ fn exact_symbol_matches_result(
     input: &str,
     limit: usize,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let columns = db::symbol_select_columns("");
+    let columns = db::symbol_select_columns("cs");
     let column = match column {
         "id" | "qualified_name" | "name" => column,
         _ => return Ok(Vec::new()),
@@ -28,6 +29,10 @@ fn exact_symbol_matches_result(
     // Both project_id and the id column are native uuid; non-uuid inputs
     // cannot match any row.
     let Ok(project_id) = db::id_param(project_id) else {
+        return Ok(Vec::new());
+    };
+    // Without a resolvable machine identity no content version is visible.
+    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
         return Ok(Vec::new());
     };
     let input_uuid = if column == "id" {
@@ -38,18 +43,19 @@ fn exact_symbol_matches_result(
     } else {
         None
     };
+    let machine_state = visibility::machine_state_condition("cs", "file_content_hash", "$4");
     let sql = format!(
         "SELECT {columns}
-         FROM code_symbols
-         WHERE project_id = $1 AND {column} = $2
-         ORDER BY file_path ASC, line_start ASC
+         FROM code_symbols cs
+         WHERE cs.project_id = $1 AND cs.{column} = $2 AND {machine_state}
+         ORDER BY cs.file_path ASC, cs.line_start ASC
          LIMIT $3"
     );
     let limit = limit as i64;
     let rows = if let Some(id) = input_uuid {
-        conn.query(&sql, &[&project_id, &id, &limit])?
+        conn.query(&sql, &[&project_id, &id, &limit, &machine_id])?
     } else {
-        conn.query(&sql, &[&project_id, &input, &limit])?
+        conn.query(&sql, &[&project_id, &input, &limit, &machine_id])?
     };
     let mut symbols = Vec::new();
     for row in &rows {

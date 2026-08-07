@@ -293,10 +293,18 @@ fn graph_write_skips_unparsed_import_sentinel_modules() {
 
 #[test]
 fn imports_query_returns_stable_id() {
-    let (query, _) = get_imports_query("project-1", "src/lib.rs");
+    let (query, params) = get_imports_query("project-1", "src/lib.rs", "hash-local");
 
     assert!(query.contains("m.name AS id"), "{query}");
     assert!(query.contains("m.name AS module_name"), "{query}");
+    assert!(
+        query.contains("[:IMPORTS {content_hash: $content_hash}]"),
+        "{query}"
+    );
+    assert_eq!(
+        params.get("content_hash").map(String::as_str),
+        Some("'hash-local'")
+    );
 }
 
 #[test]

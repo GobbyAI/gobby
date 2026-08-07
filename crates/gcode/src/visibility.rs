@@ -99,6 +99,36 @@ pub(super) fn machine_state_condition(
     )
 }
 
+/// Content hash the local machine's file-state selects for `file_path`, or
+/// `None` when the machine is unresolvable, the file is untracked here, or the
+/// active version is a tombstone.
+pub(crate) fn local_active_content_hash(
+    conn: &mut Client,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<Option<String>> {
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return Ok(None);
+    };
+    let Some(project_id) = project_uuid_or_invisible(project_id) else {
+        return Ok(None);
+    };
+    let row = conn.query_opt(
+        "SELECT fs.content_hash
+         FROM code_indexed_file_states fs
+         JOIN code_indexed_files f
+           ON f.project_id = fs.project_id
+          AND f.file_path = fs.file_path
+          AND f.content_hash = fs.content_hash
+         WHERE fs.machine_id = $1
+           AND fs.project_id = $2
+           AND fs.file_path = $3
+           AND f.language != $4",
+        &[&machine_id, &project_id, &file_path, &TOMBSTONE_LANGUAGE],
+    )?;
+    Ok(row.map(|row| row.try_get("content_hash")).transpose()?)
+}
+
 pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
     let Some(machine_id) = local_machine_uuid_or_invisible() else {
         return false;

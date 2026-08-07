@@ -209,12 +209,18 @@ pub(crate) fn symbol_path_steps_query(
 pub(crate) fn get_imports_query(
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
 ) -> (String, HashMap<String, String>) {
     (
-        "MATCH (f:CodeFile {path: $path, project: $project})-[:IMPORTS]->(m:CodeModule) \
+        "MATCH (f:CodeFile {path: $path, project: $project})\
+         -[:IMPORTS {content_hash: $content_hash}]->(m:CodeModule) \
          RETURN m.name AS id, m.name AS module_name"
             .to_string(),
-        typed_query::string_params(&[("project", project_id), ("path", file_path)]),
+        typed_query::string_params(&[
+            ("project", project_id),
+            ("path", file_path),
+            ("content_hash", content_hash),
+        ]),
     )
 }
 

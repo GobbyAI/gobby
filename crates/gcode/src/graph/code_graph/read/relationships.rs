@@ -245,7 +245,15 @@ pub fn find_callee_ids_batch(
 
 pub fn get_imports(ctx: &Context, file_path: &str) -> anyhow::Result<Vec<GraphResult>> {
     with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = get_imports_query(&ctx.project_id, file_path);
+        // IMPORTS edges are tagged per content version; only the local
+        // machine's active version of the file may contribute edges.
+        let mut conn = db::connect_readonly(&ctx.database_url)?;
+        let Some(content_hash) =
+            visibility::local_active_content_hash(&mut conn, &ctx.project_id, file_path)?
+        else {
+            return Ok(Vec::new());
+        };
+        let (query, params) = get_imports_query(&ctx.project_id, file_path, &content_hash);
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })
@@ -373,8 +381,26 @@ pub fn shortest_symbol_path(
 
         for _ in 0..max_depth {
             let edges = symbol_callee_edges(client, &ctx.project_id, &frontier)?;
+            // Routes must not pass through content versions that are not
+            // active on this machine; drop invisible targets before they can
+            // enter the frontier or the parent map.
+            let mut candidates = Vec::new();
+            let mut seen_candidates = HashSet::new();
+            for (_, target_id) in &edges {
+                if !visited.contains(target_id) && seen_candidates.insert(target_id.clone()) {
+                    candidates.push(target_id.clone());
+                }
+            }
+            let candidate_count = candidates.len();
+            let visible_targets: HashSet<String> =
+                post_filter_symbol_ids(ctx, candidates, candidate_count)?
+                    .into_iter()
+                    .collect();
             let mut next_frontier = Vec::new();
             for (source_id, target_id) in edges {
+                if !visible_targets.contains(&target_id) {
+                    continue;
+                }
                 if !visited.insert(target_id.clone()) {
                     continue;
                 }

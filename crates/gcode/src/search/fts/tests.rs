@@ -385,6 +385,122 @@ mod serial_db {
 
         assert!(resolved.is_none());
     }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn two_machine_divergence_scopes_graph_resolution_to_local_state() {
+        let (mut conn, database_url) = connect_overlay_visibility_test_db();
+        let project_id = unique_test_id("two-machine-resolve");
+        cleanup_single_project(&mut conn, &project_id);
+        let _cleanup = SingleProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+
+        insert_project(&mut conn, &project_id, "/tmp/gcode-two-machine-resolve");
+        let local_machine =
+            gobby_core::machine::read_local_machine_id().expect("read local machine id");
+        let foreign_machine = fixture_uuid(&format!("{project_id}:foreign-machine")).to_string();
+
+        insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-local");
+        insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-foreign");
+        insert_machine_file_state(
+            &mut conn,
+            &local_machine,
+            &project_id,
+            "src/lib.rs",
+            "hash-local",
+        );
+        insert_machine_file_state(
+            &mut conn,
+            &foreign_machine,
+            &project_id,
+            "src/lib.rs",
+            "hash-foreign",
+        );
+
+        // The same name exists in both content versions with per-version ids.
+        insert_symbol_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "twomachine_resolver_target",
+            "fn",
+            "hash-local",
+        );
+        insert_symbol_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "twomachine_resolver_target",
+            "fn",
+            "hash-foreign",
+        );
+        // This name only exists in the foreign machine's version.
+        insert_symbol_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "twomachine_foreign_resolver",
+            "fn",
+            "hash-foreign",
+        );
+
+        let (resolved, suggestions) =
+            resolve_graph_symbol(&mut conn, "twomachine_resolver_target", &project_id)
+                .expect("resolve divergent name");
+        assert!(
+            suggestions.is_empty(),
+            "unexpected ambiguity: {suggestions:?}"
+        );
+        let resolved = resolved.expect("divergent name resolves to the local version");
+        let local_id = fixture_uuid(&format!(
+            "{project_id}:src/lib.rs:twomachine_resolver_target:hash-local"
+        ))
+        .to_string();
+        assert_eq!(resolved.id, local_id);
+
+        let (resolved, suggestions) =
+            resolve_graph_symbol(&mut conn, "twomachine_foreign_resolver", &project_id)
+                .expect("resolve foreign-only name");
+        assert!(resolved.is_none(), "foreign-only name must not resolve");
+        assert!(
+            suggestions.is_empty(),
+            "foreign-only name must not suggest: {suggestions:?}"
+        );
+
+        let foreign_id = fixture_uuid(&format!(
+            "{project_id}:src/lib.rs:twomachine_resolver_target:hash-foreign"
+        ))
+        .to_string();
+        let resolved = resolve_graph_symbol_by_id(&mut conn, &foreign_id, &project_id)
+            .expect("resolve foreign version id");
+        assert!(resolved.is_none(), "foreign-version id must be invisible");
+
+        assert_eq!(
+            crate::visibility::local_active_content_hash(&mut conn, &project_id, "src/lib.rs")
+                .expect("local active hash"),
+            Some("hash-local".to_string())
+        );
+        // A path indexed only by the foreign machine has no local active hash.
+        insert_file_version(&mut conn, &project_id, "src/ghost.rs", "rust", "hash-ghost");
+        insert_machine_file_state(
+            &mut conn,
+            &foreign_machine,
+            &project_id,
+            "src/ghost.rs",
+            "hash-ghost",
+        );
+        assert_eq!(
+            crate::visibility::local_active_content_hash(&mut conn, &project_id, "src/ghost.rs")
+                .expect("foreign-only hash"),
+            None
+        );
+    }
 }
 
 fn connect_overlay_visibility_test_db() -> (Client, String) {
@@ -755,8 +871,15 @@ fn insert_symbol_version(
     let id = fixture_uuid(&format!("{project_id}:{file_path}:{name}:{content_hash}"));
     let project_id = fixture_uuid_param(project_id);
     let summary = name.replace('_', " ").replace('+', " plus ");
-    let params: &[&(dyn ToSql + Sync)] =
-        &[&id, &project_id, &file_path, &name, &kind, &content_hash, &summary];
+    let params: &[&(dyn ToSql + Sync)] = &[
+        &id,
+        &project_id,
+        &file_path,
+        &name,
+        &kind,
+        &content_hash,
+        &summary,
+    ];
     conn.execute(
         "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
@@ -800,6 +923,11 @@ fn insert_chunk_version(
 }
 
 #[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
 fn two_machine_divergence_scopes_reads_to_local_file_state() {
     let (mut conn, database_url) = connect_overlay_visibility_test_db();
     let project_id = unique_test_id("two-machine-project");
