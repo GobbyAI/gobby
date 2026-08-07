@@ -204,7 +204,7 @@ def _indexed_file(
     language: str = "python",
 ) -> IndexedFile:
     return IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/app.py", "abc123"),
         project_id=PROJECT_ID,
         file_path="src/app.py",
         language=language,
@@ -522,7 +522,7 @@ async def test_sync_file_purges_when_gcode_project_missing_and_root_disappears(
     assert did_sync is False
     assert not root.exists()
     storage.delete_project_index.assert_called_once_with(PROJECT_ID)
-    clear_graph.assert_awaited_once_with(PROJECT_ID)
+    clear_graph.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -594,7 +594,7 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
     assert gateway.vector_synced_files == [(root, pending_file.file_path)]
     assert gateway.synced_files == []
     storage.delete_project_index.assert_called_once_with(PROJECT_ID)
-    clear_graph.assert_awaited_once_with(PROJECT_ID)
+    clear_graph.assert_not_awaited()
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     assert breaker.state is BreakerState.CLOSED
@@ -1145,7 +1145,7 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     source_file.write_text("def greet(name: str) -> str:\n    return name\n")
 
     indexed_file = IndexedFile(
-        id=IndexedFile.make_id(project_id, file_path),
+        id=IndexedFile.make_id(project_id, file_path, "abc123"),
         project_id=project_id,
         file_path=file_path,
         language="python",

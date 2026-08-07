@@ -513,6 +513,7 @@ mod cluster_tests {
         let main_symbol = Symbol::make_id(
             "project-1",
             "crates/gcode/src/main.rs",
+            "hash",
             "main",
             "function",
             0,
@@ -520,6 +521,7 @@ mod cluster_tests {
         let lib_symbol = Symbol::make_id(
             "project-1",
             "crates/gcore/src/lib.rs",
+            "hash",
             "helper",
             "function",
             0,
@@ -544,6 +546,7 @@ mod cluster_tests {
                 signature: None,
                 docstring: None,
                 parent_symbol_id: None,
+                file_content_hash: "hash".to_string(),
                 content_hash: String::new(),
                 summary: None,
                 created_at: String::new(),

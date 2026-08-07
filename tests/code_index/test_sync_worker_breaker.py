@@ -200,7 +200,7 @@ def _indexed_file(
     language: str = "python",
 ) -> IndexedFile:
     return IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, path),
+        id=IndexedFile.make_id(PROJECT_ID, path, "abc123"),
         project_id=PROJECT_ID,
         file_path=path,
         language=language,

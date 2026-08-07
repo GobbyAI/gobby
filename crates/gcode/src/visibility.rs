@@ -5,7 +5,11 @@ use uuid::Uuid;
 
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
-use crate::models::Symbol;
+use crate::models::{GraphResult, Symbol};
+
+mod catalog;
+
+pub use catalog::{tombstone_count, visible_kinds, visible_tree};
 
 pub const TOMBSTONE_LANGUAGE: &str = "__gcode_deleted__";
 pub const TOMBSTONE_HASH: &str = "__gcode_tombstone__";
@@ -15,6 +19,12 @@ pub struct VisibleFile {
     pub file_path: String,
     pub language: String,
     pub symbol_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IndexedFileState {
+    content_hash: String,
+    language: String,
 }
 
 pub fn is_tombstone_language(language: &str) -> bool {
@@ -56,11 +66,23 @@ pub fn context_for_source_project(ctx: &Context, source_project_id: &str) -> Con
 /// Parse a project id for binding against a uuid column in a bool-returning
 /// visibility check. A non-uuid id cannot exist in the hub, so callers treat a
 /// parse failure exactly like a no-row query result.
-fn project_uuid_or_invisible(project_id: &str) -> Option<Uuid> {
+pub(super) fn project_uuid_or_invisible(project_id: &str) -> Option<Uuid> {
     db::id_param(project_id).ok()
 }
 
+pub(super) fn local_machine_uuid() -> anyhow::Result<Uuid> {
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    db::id_param(&machine_id)
+}
+
+pub(super) fn local_machine_uuid_or_invisible() -> Option<Uuid> {
+    local_machine_uuid().ok()
+}
+
 pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return false;
+    };
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
             let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
@@ -68,10 +90,18 @@ pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) ->
             };
             conn.query_one(
                 "SELECT EXISTS(
-                    SELECT 1 FROM code_indexed_files
-                    WHERE project_id = $1 AND file_path = $2 AND language != $3
+                    SELECT 1
+                    FROM code_indexed_file_states fs
+                    JOIN code_indexed_files f
+                      ON f.project_id = fs.project_id
+                     AND f.file_path = fs.file_path
+                     AND f.content_hash = fs.content_hash
+                    WHERE fs.machine_id = $1
+                      AND fs.project_id = $2
+                      AND fs.file_path = $3
+                      AND f.language != $4
                 )",
-                &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
+                &[&machine_id, &project_id, &file_path, &TOMBSTONE_LANGUAGE],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
             .unwrap_or(false)
@@ -89,22 +119,37 @@ pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) ->
             };
             conn.query_one(
                 "SELECT EXISTS(
-                    SELECT 1 FROM code_indexed_files of
-                    WHERE of.project_id = $1
-                      AND of.file_path = $3
-                      AND of.language != $4
+                    SELECT 1
+                    FROM code_indexed_file_states ofs
+                    JOIN code_indexed_files of
+                      ON of.project_id = ofs.project_id
+                     AND of.file_path = ofs.file_path
+                     AND of.content_hash = ofs.content_hash
+                    WHERE ofs.machine_id = $1
+                      AND ofs.project_id = $2
+                      AND ofs.file_path = $4
+                      AND of.language != $5
                     UNION ALL
-                    SELECT 1 FROM code_indexed_files pf
-                    WHERE pf.project_id = $2
-                      AND pf.file_path = $3
-                      AND pf.language != $4
+                    SELECT 1
+                    FROM code_indexed_file_states pfs
+                    JOIN code_indexed_files pf
+                      ON pf.project_id = pfs.project_id
+                     AND pf.file_path = pfs.file_path
+                     AND pf.content_hash = pfs.content_hash
+                    WHERE pfs.machine_id = $1
+                      AND pfs.project_id = $3
+                      AND pfs.file_path = $4
+                      AND pf.language != $5
                       AND NOT EXISTS (
-                          SELECT 1 FROM code_indexed_files shadow
-                          WHERE shadow.project_id = $1 AND shadow.file_path = pf.file_path
+                          SELECT 1 FROM code_indexed_file_states shadow
+                          WHERE shadow.machine_id = $1
+                            AND shadow.project_id = $2
+                            AND shadow.file_path = pfs.file_path
                       )
                     LIMIT 1
                 )",
                 &[
+                    &machine_id,
                     &overlay_project_id,
                     &parent_project_id,
                     &file_path,
@@ -118,6 +163,9 @@ pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) ->
 }
 
 pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return false;
+    };
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
             let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
@@ -125,10 +173,17 @@ pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -
             };
             conn.query_one(
                 "SELECT EXISTS(
-                    SELECT 1 FROM code_content_chunks
-                    WHERE project_id = $1 AND file_path = $2
+                    SELECT 1
+                    FROM code_indexed_file_states fs
+                    JOIN code_content_chunks c
+                      ON c.project_id = fs.project_id
+                     AND c.file_path = fs.file_path
+                     AND c.content_hash = fs.content_hash
+                    WHERE fs.machine_id = $1
+                      AND fs.project_id = $2
+                      AND fs.file_path = $3
                 )",
-                &[&project_id, &file_path],
+                &[&machine_id, &project_id, &file_path],
             )
             .and_then(|row| row.try_get::<_, bool>(0))
             .unwrap_or(false)
@@ -146,26 +201,45 @@ pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -
             };
             conn.query_one(
                 "SELECT EXISTS(
-                    SELECT 1 FROM code_content_chunks c
+                    SELECT 1
+                    FROM code_indexed_file_states ofs
+                    JOIN code_content_chunks c
+                      ON c.project_id = ofs.project_id
+                     AND c.file_path = ofs.file_path
+                     AND c.content_hash = ofs.content_hash
                     JOIN code_indexed_files f
-                      ON f.project_id = c.project_id AND f.file_path = c.file_path
-                    WHERE c.project_id = $1
-                      AND c.file_path = $3
-                      AND f.language != $4
+                      ON f.project_id = ofs.project_id
+                     AND f.file_path = ofs.file_path
+                     AND f.content_hash = ofs.content_hash
+                    WHERE ofs.machine_id = $1
+                      AND ofs.project_id = $2
+                      AND ofs.file_path = $4
+                      AND f.language != $5
                     UNION ALL
-                    SELECT 1 FROM code_content_chunks c
+                    SELECT 1
+                    FROM code_indexed_file_states pfs
+                    JOIN code_content_chunks c
+                      ON c.project_id = pfs.project_id
+                     AND c.file_path = pfs.file_path
+                     AND c.content_hash = pfs.content_hash
                     JOIN code_indexed_files f
-                      ON f.project_id = c.project_id AND f.file_path = c.file_path
-                    WHERE c.project_id = $2
-                      AND c.file_path = $3
-                      AND f.language != $4
+                      ON f.project_id = pfs.project_id
+                     AND f.file_path = pfs.file_path
+                     AND f.content_hash = pfs.content_hash
+                    WHERE pfs.machine_id = $1
+                      AND pfs.project_id = $3
+                      AND pfs.file_path = $4
+                      AND f.language != $5
                       AND NOT EXISTS (
-                          SELECT 1 FROM code_indexed_files shadow
-                          WHERE shadow.project_id = $1 AND shadow.file_path = c.file_path
+                          SELECT 1 FROM code_indexed_file_states shadow
+                          WHERE shadow.machine_id = $1
+                            AND shadow.project_id = $2
+                            AND shadow.file_path = pfs.file_path
                       )
                     LIMIT 1
                 )",
                 &[
+                    &machine_id,
                     &overlay_project_id,
                     &parent_project_id,
                     &file_path,
@@ -179,7 +253,31 @@ pub fn content_chunks_exist(conn: &mut Client, ctx: &Context, file_path: &str) -
 }
 
 pub fn symbol_is_visible(conn: &mut Client, ctx: &Context, symbol: &Symbol) -> bool {
-    project_path_is_visible(conn, ctx, &symbol.project_id, &symbol.file_path)
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return false;
+    };
+    let Some(project_id) = project_uuid_or_invisible(&symbol.project_id) else {
+        return false;
+    };
+    let is_active = conn
+        .query_one(
+            "SELECT EXISTS(
+                SELECT 1 FROM code_indexed_file_states
+                WHERE machine_id = $1
+                  AND project_id = $2
+                  AND file_path = $3
+                  AND content_hash = $4
+            )",
+            &[
+                &machine_id,
+                &project_id,
+                &symbol.file_path,
+                &symbol.file_content_hash,
+            ],
+        )
+        .and_then(|row| row.try_get::<_, bool>(0))
+        .unwrap_or(false);
+    is_active && project_path_is_visible(conn, ctx, &symbol.project_id, &symbol.file_path)
 }
 
 pub fn project_path_is_visible(
@@ -211,30 +309,44 @@ pub fn project_path_is_visible(
 }
 
 pub fn project_file_is_visible(conn: &mut Client, project_id: &str, file_path: &str) -> bool {
-    let Some(project_id) = project_uuid_or_invisible(project_id) else {
+    let (Some(machine_id), Some(project_id)) = (
+        local_machine_uuid_or_invisible(),
+        project_uuid_or_invisible(project_id),
+    ) else {
         return false;
     };
     conn.query_one(
         "SELECT EXISTS(
-            SELECT 1 FROM code_indexed_files
-            WHERE project_id = $1 AND file_path = $2 AND language != $3
+            SELECT 1
+            FROM code_indexed_file_states fs
+            JOIN code_indexed_files f
+              ON f.project_id = fs.project_id
+             AND f.file_path = fs.file_path
+             AND f.content_hash = fs.content_hash
+            WHERE fs.machine_id = $1
+              AND fs.project_id = $2
+              AND fs.file_path = $3
+              AND f.language != $4
         )",
-        &[&project_id, &file_path, &TOMBSTONE_LANGUAGE],
+        &[&machine_id, &project_id, &file_path, &TOMBSTONE_LANGUAGE],
     )
     .and_then(|row| row.try_get::<_, bool>(0))
     .unwrap_or(false)
 }
 
 pub fn overlay_has_row(conn: &mut Client, overlay_project_id: &str, file_path: &str) -> bool {
-    let Some(overlay_project_id) = project_uuid_or_invisible(overlay_project_id) else {
+    let (Some(machine_id), Some(overlay_project_id)) = (
+        local_machine_uuid_or_invisible(),
+        project_uuid_or_invisible(overlay_project_id),
+    ) else {
         return false;
     };
     conn.query_one(
         "SELECT EXISTS(
-            SELECT 1 FROM code_indexed_files
-            WHERE project_id = $1 AND file_path = $2
+            SELECT 1 FROM code_indexed_file_states
+            WHERE machine_id = $1 AND project_id = $2 AND file_path = $3
         )",
-        &[&overlay_project_id, &file_path],
+        &[&machine_id, &overlay_project_id, &file_path],
     )
     .and_then(|row| row.try_get::<_, bool>(0))
     .unwrap_or(false)
@@ -293,6 +405,32 @@ pub fn visible_symbols_by_ids(
     filter_visible_symbols(conn, ctx, out)
 }
 
+pub fn filter_visible_graph_results(
+    conn: &mut Client,
+    ctx: &Context,
+    results: Vec<GraphResult>,
+) -> anyhow::Result<Vec<GraphResult>> {
+    let ids = results
+        .iter()
+        .map(|result| result.id.clone())
+        .collect::<Vec<_>>();
+    let visible_ids = visible_symbols_by_ids(conn, ctx, &ids)?
+        .into_iter()
+        .map(|symbol| symbol.id)
+        .collect::<HashSet<_>>();
+
+    Ok(results
+        .into_iter()
+        .filter(|result| {
+            if db::id_param(&result.id).is_ok() {
+                visible_ids.contains(&result.id)
+            } else {
+                !result.file_path.is_empty() && indexed_file_exists(conn, ctx, &result.file_path)
+            }
+        })
+        .collect())
+}
+
 pub(crate) fn filter_visible_symbols(
     conn: &mut Client,
     ctx: &Context,
@@ -322,19 +460,19 @@ pub(crate) fn filter_visible_symbols(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let file_languages = indexed_file_languages(conn, &project_ids, &file_paths)?;
+    let file_states = indexed_file_states(conn, &project_ids, &file_paths)?;
 
     Ok(symbols
         .into_iter()
-        .filter(|symbol| symbol_visible_from_file_languages(ctx, symbol, &file_languages))
+        .filter(|symbol| symbol_visible_from_file_states(ctx, symbol, &file_states))
         .collect())
 }
 
-fn indexed_file_languages(
+fn indexed_file_states(
     conn: &mut Client,
     project_ids: &[String],
     file_paths: &[String],
-) -> anyhow::Result<HashMap<(String, String), String>> {
+) -> anyhow::Result<HashMap<(String, String), IndexedFileState>> {
     if project_ids.is_empty() || file_paths.is_empty() {
         return Ok(HashMap::new());
     }
@@ -349,11 +487,18 @@ fn indexed_file_languages(
         return Ok(HashMap::new());
     }
 
+    let machine_id = local_machine_uuid()?;
     let rows = conn.query(
-        "SELECT project_id, file_path, language
-         FROM code_indexed_files
-         WHERE project_id = ANY($1) AND file_path = ANY($2)",
-        &[&project_ids, &file_paths],
+        "SELECT fs.project_id, fs.file_path, fs.content_hash, f.language
+         FROM code_indexed_file_states fs
+         JOIN code_indexed_files f
+           ON f.project_id = fs.project_id
+          AND f.file_path = fs.file_path
+          AND f.content_hash = fs.content_hash
+         WHERE fs.machine_id = $1
+           AND fs.project_id = ANY($2)
+           AND fs.file_path = ANY($3)",
+        &[&machine_id, &project_ids, &file_paths],
     )?;
     rows.into_iter()
         .map(|row| {
@@ -362,28 +507,33 @@ fn indexed_file_languages(
                     db::id_string(&row, "project_id")?,
                     row.try_get::<_, String>("file_path")?,
                 ),
-                row.try_get::<_, String>("language")?,
+                IndexedFileState {
+                    content_hash: row.try_get("content_hash")?,
+                    language: row.try_get("language")?,
+                },
             ))
         })
         .collect()
 }
 
-fn symbol_visible_from_file_languages(
+fn symbol_visible_from_file_states(
     ctx: &Context,
     symbol: &Symbol,
-    file_languages: &HashMap<(String, String), String>,
+    file_states: &HashMap<(String, String), IndexedFileState>,
 ) -> bool {
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
             symbol.project_id == ctx.project_id
-                && indexed_language_is_visible(
-                    file_languages.get(&(ctx.project_id.clone(), symbol.file_path.clone())),
+                && indexed_state_matches_symbol(
+                    file_states.get(&(ctx.project_id.clone(), symbol.file_path.clone())),
+                    symbol,
                 )
         }
         ProjectIndexScope::Overlay {
             overlay_project_id, ..
-        } if symbol.project_id == *overlay_project_id => indexed_language_is_visible(
-            file_languages.get(&(overlay_project_id.clone(), symbol.file_path.clone())),
+        } if symbol.project_id == *overlay_project_id => indexed_state_matches_symbol(
+            file_states.get(&(overlay_project_id.clone(), symbol.file_path.clone())),
+            symbol,
         ),
         ProjectIndexScope::Overlay {
             overlay_project_id,
@@ -392,15 +542,17 @@ fn symbol_visible_from_file_languages(
         } if symbol.project_id == *parent_project_id => {
             let overlay_key = (overlay_project_id.clone(), symbol.file_path.clone());
             let parent_key = (parent_project_id.clone(), symbol.file_path.clone());
-            !file_languages.contains_key(&overlay_key)
-                && indexed_language_is_visible(file_languages.get(&parent_key))
+            !file_states.contains_key(&overlay_key)
+                && indexed_state_matches_symbol(file_states.get(&parent_key), symbol)
         }
         ProjectIndexScope::Overlay { .. } => false,
     }
 }
 
-fn indexed_language_is_visible(language: Option<&String>) -> bool {
-    language.is_some_and(|language| !is_tombstone_language(language))
+fn indexed_state_matches_symbol(state: Option<&IndexedFileState>, symbol: &Symbol) -> bool {
+    state.is_some_and(|state| {
+        state.content_hash == symbol.file_content_hash && !is_tombstone_language(&state.language)
+    })
 }
 
 pub fn visible_symbols_for_file(
@@ -437,10 +589,11 @@ fn query_symbols_for_files(
     project_id: &str,
     file_paths: &[String],
 ) -> anyhow::Result<Vec<Symbol>> {
+    let machine_id = local_machine_uuid()?;
     let project_id = db::id_param(project_id)?;
     let rows = conn.query(
         &symbols_for_files_sql(),
-        &[&project_id, &file_paths, &TOMBSTONE_LANGUAGE],
+        &[&machine_id, &project_id, &file_paths, &TOMBSTONE_LANGUAGE],
     )?;
     rows.iter().map(Symbol::from_row).collect()
 }
@@ -451,11 +604,13 @@ fn query_overlay_symbols_for_files(
     parent_project_id: &str,
     file_paths: &[String],
 ) -> anyhow::Result<Vec<Symbol>> {
+    let machine_id = local_machine_uuid()?;
     let overlay_project_id = db::id_param(overlay_project_id)?;
     let parent_project_id = db::id_param(parent_project_id)?;
     let rows = conn.query(
         &overlay_symbols_for_files_sql(),
         &[
+            &machine_id,
             &overlay_project_id,
             &parent_project_id,
             &file_paths,
@@ -470,11 +625,18 @@ fn symbols_for_files_sql() -> String {
     format!(
         "SELECT {columns}
          FROM code_symbols cs
+         JOIN code_indexed_file_states fs
+           ON fs.project_id = cs.project_id
+          AND fs.file_path = cs.file_path
+          AND fs.content_hash = cs.file_content_hash
          JOIN code_indexed_files cf
-           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-         WHERE cs.project_id = $1
-           AND cs.file_path = ANY($2)
-           AND cf.language != $3
+           ON cf.project_id = fs.project_id
+          AND cf.file_path = fs.file_path
+          AND cf.content_hash = fs.content_hash
+         WHERE fs.machine_id = $1
+           AND cs.project_id = $2
+           AND cs.file_path = ANY($3)
+           AND cf.language != $4
          ORDER BY cs.file_path, cs.line_start, cs.byte_start"
     )
 }
@@ -484,141 +646,31 @@ fn overlay_symbols_for_files_sql() -> String {
     format!(
         "SELECT {columns}
          FROM code_symbols cs
+         JOIN code_indexed_file_states fs
+           ON fs.project_id = cs.project_id
+          AND fs.file_path = cs.file_path
+          AND fs.content_hash = cs.file_content_hash
          JOIN code_indexed_files cf
-           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-         WHERE cs.file_path = ANY($3)
-           AND cf.language != $4
+           ON cf.project_id = fs.project_id
+          AND cf.file_path = fs.file_path
+          AND cf.content_hash = fs.content_hash
+         WHERE fs.machine_id = $1
+           AND cs.file_path = ANY($4)
+           AND cf.language != $5
            AND (
-               cs.project_id = $1
+               cs.project_id = $2
                OR (
-                   cs.project_id = $2
+                   cs.project_id = $3
                    AND NOT EXISTS (
-                       SELECT 1 FROM code_indexed_files shadow
-                       WHERE shadow.project_id = $1 AND shadow.file_path = cs.file_path
+                       SELECT 1 FROM code_indexed_file_states shadow
+                       WHERE shadow.machine_id = $1
+                         AND shadow.project_id = $2
+                         AND shadow.file_path = cs.file_path
                    )
                )
            )
          ORDER BY cs.file_path, cs.line_start, cs.byte_start"
     )
-}
-
-pub fn visible_kinds(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<String>> {
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
-            "SELECT DISTINCT cs.kind
-             FROM code_symbols cs
-             JOIN code_indexed_files cf
-               ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-             WHERE cs.project_id = $1
-               AND cf.language != $2
-             ORDER BY cs.kind",
-            &[&db::id_param(&ctx.project_id)?, &TOMBSTONE_LANGUAGE],
-        )?,
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => conn.query(
-            "SELECT kind
-             FROM (
-                 SELECT cs.kind
-                 FROM code_symbols cs
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-                 WHERE cs.project_id = $1
-                   AND cf.language != $3
-                 UNION
-                 SELECT cs.kind
-                 FROM code_symbols cs
-                 JOIN code_indexed_files cf
-                   ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
-                 WHERE cs.project_id = $2
-                   AND cf.language != $3
-                   AND NOT EXISTS (
-                       SELECT 1 FROM code_indexed_files shadow
-                       WHERE shadow.project_id = $1 AND shadow.file_path = cs.file_path
-                   )
-             ) visible
-             ORDER BY kind",
-            &[
-                &db::id_param(overlay_project_id)?,
-                &db::id_param(parent_project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-    };
-
-    rows.iter()
-        .map(|row| Ok(row.try_get::<_, String>("kind")?))
-        .collect()
-}
-
-pub fn visible_tree(conn: &mut Client, ctx: &Context) -> anyhow::Result<Vec<VisibleFile>> {
-    let rows = match &ctx.index_scope {
-        ProjectIndexScope::Single => conn.query(
-            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
-             FROM code_indexed_files
-             WHERE project_id = $1 AND language != $2
-             ORDER BY file_path",
-            &[&db::id_param(&ctx.project_id)?, &TOMBSTONE_LANGUAGE],
-        )?,
-        ProjectIndexScope::Overlay {
-            overlay_project_id,
-            parent_project_id,
-            ..
-        } => conn.query(
-            "SELECT file_path, language, symbol_count::BIGINT AS symbol_count
-             FROM code_indexed_files
-             WHERE project_id = $1 AND language != $3
-             UNION ALL
-             SELECT pf.file_path, pf.language, pf.symbol_count::BIGINT AS symbol_count
-             FROM code_indexed_files pf
-             WHERE pf.project_id = $2
-               AND pf.language != $3
-               AND NOT EXISTS (
-                   SELECT 1 FROM code_indexed_files of
-                   WHERE of.project_id = $1 AND of.file_path = pf.file_path
-               )
-             ORDER BY file_path",
-            &[
-                &db::id_param(overlay_project_id)?,
-                &db::id_param(parent_project_id)?,
-                &TOMBSTONE_LANGUAGE,
-            ],
-        )?,
-    };
-
-    rows.iter()
-        .map(|row| {
-            Ok(VisibleFile {
-                file_path: row.try_get("file_path")?,
-                language: row.try_get("language")?,
-                symbol_count: row.try_get("symbol_count")?,
-            })
-        })
-        .collect()
-}
-
-pub fn tombstone_count(conn: &mut Client, ctx: &Context) -> usize {
-    let ProjectIndexScope::Overlay {
-        overlay_project_id, ..
-    } = &ctx.index_scope
-    else {
-        return 0;
-    };
-    let Some(overlay_project_id) = project_uuid_or_invisible(overlay_project_id) else {
-        return 0;
-    };
-    conn.query_one(
-        "SELECT COUNT(*)::BIGINT AS count
-         FROM code_indexed_files
-         WHERE project_id = $1 AND language = $2",
-        &[&overlay_project_id, &TOMBSTONE_LANGUAGE],
-    )
-    .ok()
-    .and_then(|row| row.try_get::<_, i64>("count").ok())
-    .and_then(|count| count.try_into().ok())
-    .unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -657,7 +709,7 @@ mod tests {
         assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
         assert!(sql.contains("FROM code_symbols cs"));
         assert!(sql.contains("JOIN code_indexed_files cf"));
-        assert!(sql.contains("cs.file_path = ANY($2)"));
+        assert!(sql.contains("cs.file_path = ANY($3)"));
         assert!(!sql.contains("SELECT id, project_id, file_path"));
     }
 
@@ -666,11 +718,12 @@ mod tests {
         let sql = overlay_symbols_for_files_sql();
 
         assert!(sql.contains("SELECT cs.id, cs.project_id, cs.file_path"));
-        assert!(sql.contains("cs.file_path = ANY($3)"));
-        assert!(sql.contains("cs.project_id = $1"));
+        assert!(sql.contains("cs.file_path = ANY($4)"));
         assert!(sql.contains("cs.project_id = $2"));
+        assert!(sql.contains("cs.project_id = $3"));
         assert!(sql.contains("NOT EXISTS"));
-        assert!(sql.contains("shadow.project_id = $1 AND shadow.file_path = cs.file_path"));
-        assert!(!sql.contains("cs.file_path = $3"));
+        assert!(sql.contains("shadow.project_id = $2"));
+        assert!(sql.contains("shadow.file_path = cs.file_path"));
+        assert!(!sql.contains("cs.file_path = $4"));
     }
 }

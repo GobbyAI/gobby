@@ -44,6 +44,7 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
         queries.push(add_imports_query(
             input.project_id,
             chunk,
+            input.content_hash,
             input.sync_token,
         )?);
     }
@@ -52,6 +53,7 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
             input.project_id,
             input.file_path,
             chunk,
+            input.content_hash,
             input.sync_token,
         )?);
     }
@@ -59,6 +61,7 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
         queries.push(add_symbol_calls_query(
             input.project_id,
             chunk,
+            input.content_hash,
             input.sync_token,
         )?);
     }
@@ -66,6 +69,7 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
         queries.push(add_external_calls_query(
             input.project_id,
             chunk,
+            input.content_hash,
             input.sync_token,
         )?);
     }
@@ -73,6 +77,7 @@ pub(super) fn plan_sync_batches(input: SyncFileMutation<'_>) -> anyhow::Result<V
         queries.push(add_unresolved_calls_query(
             input.project_id,
             chunk,
+            input.content_hash,
             input.sync_token,
         )?);
     }
@@ -102,6 +107,7 @@ mod tests {
             signature: None,
             docstring: None,
             parent_symbol_id: None,
+            file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
             created_at: String::new(),
@@ -117,6 +123,7 @@ mod tests {
         let queries = plan_sync_batches(SyncFileMutation {
             project_id: "proj",
             file_path: "src/lib.rs",
+            content_hash: "hash-1",
             symbol_count: defs.len(),
             imports: &[],
             symbols: &symbols,
@@ -163,6 +170,7 @@ mod tests {
         let queries = plan_sync_batches(SyncFileMutation {
             project_id: "proj",
             file_path: "src/lib.rs",
+            content_hash: "hash-2",
             symbol_count: defs.len(),
             imports: &[],
             symbols: &symbols,

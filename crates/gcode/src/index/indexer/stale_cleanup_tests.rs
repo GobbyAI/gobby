@@ -13,7 +13,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn discovered_scan_deletes_stale_facts_when_ast_indexing_returns_none() {
+    fn discovered_scan_removes_local_selector_when_ast_indexing_returns_none() {
         let (mut conn, database_url) = connect_test_db();
         let project_root = tempfile::tempdir().expect("project tempdir");
         let project_id = unique_test_project_id("gcode-discovered-skip-cleanup");
@@ -54,15 +54,19 @@ mod serial_db {
         .expect("reindex discovered scan");
 
         assert_eq!(reindex.indexed_files, 0);
-        assert_eq!(
-            symbol_count(&mut conn, &project_id, "src/lib.rs"),
-            0,
-            "stale code_symbols rows should be deleted when AST indexing skips an indexed file"
+        assert!(
+            symbol_count(&mut conn, &project_id, "src/lib.rs") > 0,
+            "shared symbol facts remain available to other machines"
         );
         assert_eq!(
             indexed_file_count(&mut conn, &project_id, "src/lib.rs"),
+            1,
+            "shared file facts remain available to other machines"
+        );
+        assert_eq!(
+            indexed_file_state_count(&mut conn, &project_id, "src/lib.rs"),
             0,
-            "deleted file facts should not leave the file stale for every later scan"
+            "the local selector is removed when AST indexing skips the file"
         );
     }
 
@@ -123,7 +127,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn configured_exclude_prunes_previously_indexed_file_facts() {
+    fn configured_exclude_prunes_local_file_selector() {
         let (mut conn, database_url) = connect_test_db();
         let project_root = tempfile::tempdir().expect("project tempdir");
         let project_id = unique_test_project_id("gcode-configured-exclude-cleanup");
@@ -163,9 +167,14 @@ mod serial_db {
         .expect("reindex with configured exclusion");
 
         assert_eq!(
-            indexed_file_count(&mut conn, &project_id, "generated/output.rs"),
+            indexed_file_state_count(&mut conn, &project_id, "generated/output.rs"),
             0,
-            "whole-project reconciliation should prune newly excluded file facts"
+            "whole-project reconciliation should prune the newly excluded local selector"
+        );
+        assert_eq!(
+            indexed_file_count(&mut conn, &project_id, "generated/output.rs"),
+            1,
+            "shared file facts remain until content GC"
         );
     }
 }
@@ -241,6 +250,14 @@ fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Res
     let project_id = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
+        "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
     )?;
@@ -284,6 +301,21 @@ fn indexed_file_count(conn: &mut postgres::Client, project_id: &str, rel: &str) 
         project_id,
         rel,
     )
+}
+
+fn indexed_file_state_count(conn: &mut postgres::Client, project_id: &str, rel: &str) -> i64 {
+    let machine_id =
+        db::id_param(&gobby_core::machine::read_local_machine_id().expect("read local machine id"))
+            .expect("local machine id is a uuid");
+    let project_id = db::id_param(project_id).expect("test project id is a uuid");
+    conn.query_one(
+        "SELECT COUNT(*) FROM code_indexed_file_states
+         WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
+        &[&machine_id, &project_id, &rel],
+    )
+    .expect("count indexed file states")
+    .try_get(0)
+    .expect("file state count")
 }
 
 fn content_chunk_count(conn: &mut postgres::Client, project_id: &str, rel: &str) -> i64 {

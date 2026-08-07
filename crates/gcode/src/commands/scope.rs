@@ -74,17 +74,20 @@ pub(crate) fn other_project_for_path(
     ctx: &Context,
     file_path: &str,
 ) -> Option<ProjectMatch> {
-    if let Some(project) = indexed_project_for_file_path(conn, &ctx.project_id, file_path) {
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id().ok()?).ok()?;
+    if let Some(project) =
+        indexed_project_for_file_path(conn, &machine_id, &ctx.project_id, file_path)
+    {
         return Some(project);
     }
 
     let current_root = ctx.project_root.canonicalize().ok();
     let rows = conn
         .query(
-            "SELECT id, root_path FROM code_indexed_projects
-             WHERE id != $1 AND root_path != ''
+            "SELECT project_id AS id, root_path FROM code_indexed_project_states
+             WHERE machine_id = $1 AND project_id != $2 AND root_path != ''
              ORDER BY root_path",
-            &[&db::id_param(&ctx.project_id).ok()?],
+            &[&machine_id, &db::id_param(&ctx.project_id).ok()?],
         )
         .ok()?;
 
@@ -111,17 +114,23 @@ pub(crate) fn other_project_for_path(
 
 fn indexed_project_for_file_path(
     conn: &mut Client,
+    machine_id: &uuid::Uuid,
     current_project_id: &str,
     file_path: &str,
 ) -> Option<ProjectMatch> {
     conn.query_opt(
-        "SELECT p.id, p.root_path
-             FROM code_indexed_files f
-             JOIN code_indexed_projects p ON p.id = f.project_id
-             WHERE f.file_path = $1 AND f.project_id != $2
+        "SELECT s.project_id AS id, p.root_path
+             FROM code_indexed_file_states s
+             JOIN code_indexed_project_states p
+               ON p.machine_id = s.machine_id AND p.project_id = s.project_id
+             WHERE s.machine_id = $1 AND s.file_path = $2 AND s.project_id != $3
              ORDER BY p.root_path
              LIMIT 1",
-        &[&file_path, &db::id_param(current_project_id).ok()?],
+        &[
+            &machine_id,
+            &file_path,
+            &db::id_param(current_project_id).ok()?,
+        ],
     )
     .ok()
     .flatten()

@@ -38,8 +38,26 @@ enum SymbolPredicate<'a> {
 impl SymbolPredicate<'_> {
     fn where_clause(&self) -> &'static str {
         match self {
-            Self::Project { .. } => "project_id = $1",
-            Self::File { .. } => "project_id = $1 AND file_path = $2",
+            Self::Project { .. } => {
+                "s.project_id = $1
+                 AND EXISTS (
+                    SELECT 1 FROM code_indexed_file_states cifs
+                    WHERE cifs.machine_id = $2
+                      AND cifs.project_id = s.project_id
+                      AND cifs.file_path = s.file_path
+                      AND cifs.content_hash = s.file_content_hash
+                 )"
+            }
+            Self::File { .. } => {
+                "s.project_id = $1 AND s.file_path = $2
+                 AND EXISTS (
+                    SELECT 1 FROM code_indexed_file_states cifs
+                    WHERE cifs.machine_id = $3
+                      AND cifs.project_id = s.project_id
+                      AND cifs.file_path = s.file_path
+                      AND cifs.content_hash = s.file_content_hash
+                 )"
+            }
         }
     }
 
@@ -49,12 +67,20 @@ impl SymbolPredicate<'_> {
         }
     }
 
-    fn params<'p>(&'p self, project_uuid: &'p Uuid) -> Vec<&'p (dyn ToSql + Sync)> {
+    fn params<'p>(
+        &'p self,
+        project_uuid: &'p Uuid,
+        machine_uuid: &'p Uuid,
+    ) -> Vec<&'p (dyn ToSql + Sync)> {
         match self {
-            Self::Project { .. } => vec![project_uuid as &(dyn ToSql + Sync)],
+            Self::Project { .. } => vec![
+                project_uuid as &(dyn ToSql + Sync),
+                machine_uuid as &(dyn ToSql + Sync),
+            ],
             Self::File { file_path, .. } => vec![
                 project_uuid as &(dyn ToSql + Sync),
                 file_path as &(dyn ToSql + Sync),
+                machine_uuid as &(dyn ToSql + Sync),
             ],
         }
     }
@@ -66,12 +92,13 @@ fn fetch_symbols_where(
 ) -> anyhow::Result<Vec<Symbol>> {
     let columns = db::symbol_select_columns("");
     let project_uuid = db::id_param(predicate.project_id())?;
-    let params = predicate.params(&project_uuid);
+    let machine_uuid = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let params = predicate.params(&project_uuid, &machine_uuid);
     conn.query(
         &format!(
-            "SELECT {columns} FROM code_symbols
+            "SELECT {columns} FROM code_symbols s
              WHERE {}
-             ORDER BY file_path, byte_start, id",
+             ORDER BY s.file_path, s.byte_start, s.id",
             predicate.where_clause()
         ),
         &params,

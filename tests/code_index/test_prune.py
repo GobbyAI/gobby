@@ -108,9 +108,13 @@ class PruneGateway:
         self.global_result = global_result or _gcode_result(("/tmp/gcode", "prune", "--force"))
         self.targeted_result = targeted_result
         self.global_timeouts: list[float | None] = []
+        self.retention_days: list[int] = []
         self.targeted_roots: list[Path] = []
 
-    async def prune_all_projects(self, *, timeout: float | None = None) -> GcodeCommandResult:
+    async def prune_all_projects(
+        self, *, retention_days: int, timeout: float | None = None
+    ) -> GcodeCommandResult:
+        self.retention_days.append(retention_days)
         self.global_timeouts.append(timeout)
         return self.global_result
 
@@ -118,8 +122,10 @@ class PruneGateway:
         self,
         project_root: Path,
         *,
+        retention_days: int,
         timeout: float | None = None,
     ) -> GcodeCommandResult:
+        self.retention_days.append(retention_days)
         self.targeted_roots.append(project_root)
         return self.targeted_result or _gcode_result(
             ("/tmp/gcode", "prune", "--force", "--project", str(project_root))
@@ -135,7 +141,7 @@ class PruneContext:
     ) -> None:
         self.storage = storage
         self.gcode_gateway = gateway
-        self.config = SimpleNamespace(maintenance_log_file=str(log_file))
+        self.config = SimpleNamespace(maintenance_log_file=str(log_file), content_retention_days=30)
         self.run_db_calls: list[str] = []
 
     async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -199,6 +205,7 @@ async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) 
         "retried_projects": 0,
     }
     assert gateway.global_timeouts == [CODE_INDEX_PRUNE_TIMEOUT_SECONDS]
+    assert gateway.retention_days == [30]
     assert gateway.targeted_roots == []
     assert storage.cleared_dirty == ["proj-1"]
     log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")

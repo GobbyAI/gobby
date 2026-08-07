@@ -220,8 +220,11 @@ where
             commands::status::projects(format)?;
             Ok(true)
         }
-        Command::Prune { force } => {
-            commands::status::prune(*force, cli.project.as_deref(), cli.quiet)?;
+        Command::Prune {
+            force,
+            retention_days,
+        } => {
+            commands::status::prune(*force, cli.project.as_deref(), cli.quiet, *retention_days)?;
             Ok(true)
         }
         Command::Invalidate {

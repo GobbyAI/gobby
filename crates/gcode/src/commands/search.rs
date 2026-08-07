@@ -837,6 +837,7 @@ mod tests {
             signature: None,
             docstring: None,
             parent_symbol_id: None,
+            file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
             created_at: String::new(),

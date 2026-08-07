@@ -130,17 +130,6 @@ pub(in crate::graph::code_graph) fn dedupe_limited_blast_rows(
     rows
 }
 
-pub(super) fn count_from_rows(rows: &[Row]) -> usize {
-    rows.first()
-        .and_then(|r| r.get("cnt"))
-        .and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_i64().and_then(|value| value.try_into().ok()))
-        })
-        .and_then(|value| usize::try_from(value).ok())
-        .unwrap_or(0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

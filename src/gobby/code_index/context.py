@@ -111,127 +111,20 @@ class CodeIndexContext:
         return await self._run_db(func, *args, **kwargs)
 
     async def invalidate(self, project_id: str) -> dict[str, Any]:
-        """Clear all index data for a project."""
-        stores: dict[str, InvalidateStoreOutcome] = {}
-        project = await self.run_db(self._storage.get_project_stats, project_id)
-        root = Path(project.root_path).expanduser() if project and project.root_path else None
-
-        if root is not None:
-            await self.run_db(
-                self._storage.mark_prune_dirty,
-                project_id,
-                str(root),
-                "invalidate",
-            )
-
-        if self._config.graph_enabled and self._gcode_gateway is not None:
-            try:
-                result = await self._gcode_gateway.graph_clear(project_id)
-                if not result.get("success", False):
-                    error = str(result.get("error", "unknown error"))
-                    logger.warning(
-                        "Code graph clear during invalidate reported failure for %s: %s",
-                        project_id,
-                        error,
-                    )
-                    await self.run_db(
-                        self._storage.record_projection_cleanup_failure,
-                        project_id,
-                        "graph",
-                        error,
-                    )
-                    stores["graph"] = InvalidateStoreOutcome(
-                        "graph",
-                        "failed",
-                        error=error,
-                        pending_retry=True,
-                    )
-                else:
-                    await self.run_db(
-                        self._storage.clear_projection_cleanup_pending,
-                        project_id,
-                        "graph",
-                    )
-                    stores["graph"] = InvalidateStoreOutcome("graph", "ok")
-            except GcodeGatewayError as e:
-                error = str(e)
-                logger.warning(
-                    "Code graph clear during invalidate failed for %s: %s",
-                    project_id,
-                    e,
-                )
-                await self.run_db(
-                    self._storage.record_projection_cleanup_failure,
-                    project_id,
-                    "graph",
-                    error,
-                )
-                stores["graph"] = InvalidateStoreOutcome(
-                    "graph",
-                    "failed",
-                    error=error,
-                    pending_retry=True,
-                )
-        else:
-            stores["graph"] = InvalidateStoreOutcome("graph", "skipped")
-
-        if self._config.embedding_enabled and self._gcode_gateway is not None and root is not None:
-            try:
-                result = await self._gcode_gateway.vector_clear(root)
-                if not result.get("success", True):
-                    error = str(result.get("error", "unknown error"))
-                    logger.warning(
-                        "Vector clear during invalidate reported failure for %s: %s",
-                        project_id,
-                        error,
-                    )
-                    await self.run_db(
-                        self._storage.record_projection_cleanup_failure,
-                        project_id,
-                        "vector",
-                        error,
-                    )
-                    stores["vector"] = InvalidateStoreOutcome(
-                        "vector",
-                        "failed",
-                        error=error,
-                        pending_retry=True,
-                    )
-                else:
-                    await self.run_db(
-                        self._storage.clear_projection_cleanup_pending,
-                        project_id,
-                        "vector",
-                    )
-                    stores["vector"] = InvalidateStoreOutcome("vector", "ok")
-            except GcodeGatewayError as e:
-                error = str(e)
-                logger.warning("Vector clear during invalidate failed for %s: %s", project_id, e)
-                await self.run_db(
-                    self._storage.record_projection_cleanup_failure,
-                    project_id,
-                    "vector",
-                    error,
-                )
-                stores["vector"] = InvalidateStoreOutcome(
-                    "vector",
-                    "failed",
-                    error=error,
-                    pending_retry=True,
-                )
-        else:
-            stores["vector"] = InvalidateStoreOutcome("vector", "skipped")
-
+        """Remove this machine's selector while retaining shared content and projections."""
+        stores = {
+            "graph": InvalidateStoreOutcome("graph", "skipped"),
+            "vector": InvalidateStoreOutcome("vector", "skipped"),
+        }
         counts = await self.run_db(self._storage.delete_project_index, project_id)
         stores["hub"] = InvalidateStoreOutcome("hub", "ok", deleted=counts)
 
-        logger.info("Invalidated code index for project %s", project_id)
-        failed = [store for store, outcome in stores.items() if outcome.status == "failed"]
+        logger.info("Removed local code index state for project %s", project_id)
         return {
-            "status": "partial_failure" if failed else "ok",
+            "status": "ok",
             "project_id": project_id,
             "stores": {store: outcome.to_dict() for store, outcome in stores.items()},
-            "failed_stores": failed,
+            "failed_stores": [],
         }
 
     async def graph_overview(self, project_id: str, *, limit: int = 200) -> dict[str, Any]:

@@ -112,8 +112,6 @@ async def _run_maintenance(
                 await purge_missing_project(
                     project=project,
                     storage=context.storage,
-                    config=context.config,
-                    clear_graph=context.clear_graph,
                     run_db=context.run_db,
                 )
                 missing_root_observations.pop(project_id, None)
@@ -164,8 +162,6 @@ async def _run_maintenance(
                 await purge_missing_project(
                     project=project,
                     storage=context.storage,
-                    config=context.config,
-                    clear_graph=context.clear_graph,
                     run_db=context.run_db,
                 )
                 continue

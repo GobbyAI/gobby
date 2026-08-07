@@ -8,6 +8,7 @@ from typing import Any
 from gobby.code_index._storage.constants import SYNC_FAILURE_COOLOFF_SECONDS
 from gobby.code_index.models import IndexedFile
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 
 
 class CodeIndexFileStorageMixin:
@@ -17,6 +18,7 @@ class CodeIndexFileStorageMixin:
 
     def upsert_file(self, file: IndexedFile) -> None:
         """Reference Python file writer used by tests; production indexing is Rust gcode."""
+        machine_id = require_machine_id()
         with self.db.transaction() as conn:
             conn.execute(
                 """INSERT INTO code_indexed_files (
@@ -25,13 +27,9 @@ class CodeIndexFileStorageMixin:
                     graph_sync_attempted_at, vector_sync_attempted_at, indexed_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
-                    content_hash=excluded.content_hash,
+                    language=excluded.language,
                     symbol_count=excluded.symbol_count,
                     byte_size=excluded.byte_size,
-                    graph_synced=FALSE,
-                    graph_sync_attempted_at=NULL,
-                    vectors_synced=FALSE,
-                    vector_sync_attempted_at=NULL,
                     indexed_at=excluded.indexed_at
                 """,
                 (
@@ -49,20 +47,40 @@ class CodeIndexFileStorageMixin:
                     file.indexed_at,
                 ),
             )
+            conn.execute(
+                """INSERT INTO code_indexed_file_states
+                       (machine_id, project_id, file_path, content_hash)
+                   VALUES (%s, %s, %s, %s)
+                   ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+                       content_hash=excluded.content_hash,
+                       updated_at=CURRENT_TIMESTAMP""",
+                (machine_id, file.project_id, file.file_path, file.content_hash),
+            )
 
     def get_file(self, project_id: str, file_path: str) -> IndexedFile | None:
         """Get indexed file record."""
         row = self.db.fetchone(
-            "SELECT * FROM code_indexed_files WHERE project_id = %s AND file_path = %s",
-            (project_id, file_path),
+            """SELECT f.* FROM code_indexed_file_states fs
+               JOIN code_indexed_files f
+                 ON f.project_id = fs.project_id
+                AND f.file_path = fs.file_path
+                AND f.content_hash = fs.content_hash
+               WHERE fs.machine_id = %s AND fs.project_id = %s AND fs.file_path = %s""",
+            (require_machine_id(), project_id, file_path),
         )
         return IndexedFile.from_row(row) if row else None
 
     def list_files(self, project_id: str) -> list[IndexedFile]:
         """List all indexed files for a project."""
         rows = self.db.fetchall(
-            "SELECT * FROM code_indexed_files WHERE project_id = %s ORDER BY file_path",
-            (project_id,),
+            """SELECT f.* FROM code_indexed_file_states fs
+               JOIN code_indexed_files f
+                 ON f.project_id = fs.project_id
+                AND f.file_path = fs.file_path
+                AND f.content_hash = fs.content_hash
+               WHERE fs.machine_id = %s AND fs.project_id = %s
+               ORDER BY fs.file_path""",
+            (require_machine_id(), project_id),
         )
         return [IndexedFile.from_row(r) for r in rows]
 
@@ -85,11 +103,11 @@ class CodeIndexFileStorageMixin:
             rows = conn.execute(
                 """
                 SELECT ch.file_path AS file_path FROM _current_hashes ch
-                LEFT JOIN code_indexed_files cf
-                    ON cf.project_id = %s AND cf.file_path = ch.file_path
-                WHERE cf.file_path IS NULL OR cf.content_hash != ch.content_hash
+                LEFT JOIN code_indexed_file_states fs
+                    ON fs.machine_id = %s AND fs.project_id = %s AND fs.file_path = ch.file_path
+                WHERE fs.file_path IS NULL OR fs.content_hash != ch.content_hash
                 """,
-                (project_id,),
+                (require_machine_id(), project_id),
             ).fetchall()
 
             conn.execute("DROP TABLE IF EXISTS _current_hashes")
@@ -100,8 +118,9 @@ class CodeIndexFileStorageMixin:
         """Find indexed files that are no longer in the candidate set."""
         with self.db.transaction() as conn:
             rows = conn.execute(
-                "SELECT file_path AS file_path FROM code_indexed_files WHERE project_id = %s",
-                (project_id,),
+                """SELECT file_path FROM code_indexed_file_states
+                   WHERE machine_id = %s AND project_id = %s""",
+                (require_machine_id(), project_id),
             ).fetchall()
 
         return [row["file_path"] for row in rows if row["file_path"] not in current_paths]
@@ -109,10 +128,15 @@ class CodeIndexFileStorageMixin:
     def get_unsynced_files(self, project_id: str, limit: int = 100) -> list[IndexedFile]:
         """Get files where graph/vector sync is incomplete."""
         rows = self.db.fetchall(
-            """SELECT * FROM code_indexed_files
-               WHERE project_id = %s AND graph_synced IS FALSE
-               ORDER BY indexed_at LIMIT %s""",
-            (project_id, limit),
+            """SELECT f.* FROM code_indexed_file_states fs
+               JOIN code_indexed_files f
+                 ON f.project_id = fs.project_id
+                AND f.file_path = fs.file_path
+                AND f.content_hash = fs.content_hash
+               WHERE fs.machine_id = %s AND fs.project_id = %s
+                 AND f.graph_synced IS FALSE
+               ORDER BY f.indexed_at LIMIT %s""",
+            (require_machine_id(), project_id, limit),
         )
         return [IndexedFile.from_row(r) for r in rows]
 
@@ -128,7 +152,7 @@ class CodeIndexFileStorageMixin:
         """Get files needing external sync."""
         retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         conditions = []
-        params: list[Any] = [project_id]
+        params: list[Any] = [require_machine_id(), project_id]
         if vectors:
             conditions.append(
                 """(vectors_synced IS FALSE
@@ -146,9 +170,13 @@ class CodeIndexFileStorageMixin:
         where = " OR ".join(conditions)
         params.append(limit)
         rows = self.db.fetchall(
-            f"""SELECT * FROM code_indexed_files
-                WHERE project_id = %s AND ({where})
-                ORDER BY indexed_at LIMIT %s""",
+            f"""SELECT f.* FROM code_indexed_file_states fs
+                JOIN code_indexed_files f
+                  ON f.project_id = fs.project_id
+                 AND f.file_path = fs.file_path
+                 AND f.content_hash = fs.content_hash
+                WHERE fs.machine_id = %s AND fs.project_id = %s AND ({where})
+                ORDER BY f.indexed_at LIMIT %s""",
             tuple(params),
         )
         return [IndexedFile.from_row(r) for r in rows]
@@ -204,19 +232,24 @@ class CodeIndexFileStorageMixin:
         """Mark every file in a project as needing graph rebuild."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                """UPDATE code_indexed_files
+                """UPDATE code_indexed_files f
                    SET graph_synced = FALSE, graph_sync_attempted_at = NULL
-                   WHERE project_id = %s""",
-                (project_id,),
+                   FROM code_indexed_file_states fs
+                   WHERE fs.machine_id = %s AND fs.project_id = %s
+                     AND f.project_id = fs.project_id
+                     AND f.file_path = fs.file_path
+                     AND f.content_hash = fs.content_hash""",
+                (require_machine_id(), project_id),
             )
             return cursor.rowcount
 
     def delete_file(self, project_id: str, file_path: str) -> None:
-        """Delete a file record (symbols deleted separately)."""
+        """Delete this machine's selector for a file."""
         with self.db.transaction() as conn:
             conn.execute(
-                "DELETE FROM code_indexed_files WHERE project_id = %s AND file_path = %s",
-                (project_id, file_path),
+                """DELETE FROM code_indexed_file_states
+                   WHERE machine_id = %s AND project_id = %s AND file_path = %s""",
+                (require_machine_id(), project_id, file_path),
             )
 
     def delete_files_for_project(self, project_id: str) -> int:

@@ -465,11 +465,12 @@ class GcodeGateway:
     async def prune_all_projects(
         self,
         *,
+        retention_days: int,
         timeout: float | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
-            [binary, "prune", "--force"],
+            [binary, "prune", "--force", "--retention-days", str(retention_days)],
             timeout=timeout,
         )
 
@@ -477,11 +478,20 @@ class GcodeGateway:
         self,
         project_root: Path,
         *,
+        retention_days: int,
         timeout: float | None = None,
     ) -> GcodeCommandResult:
         binary = await self._ensure_version()
         return await self._run_command_result(
-            [binary, "prune", "--force", "--project", str(project_root)],
+            [
+                binary,
+                "prune",
+                "--force",
+                "--project",
+                str(project_root),
+                "--retention-days",
+                str(retention_days),
+            ],
             timeout=timeout,
         )
 

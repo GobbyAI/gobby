@@ -1,10 +1,8 @@
-use crate::config::{Context, QdrantConfig};
+use crate::config::Context;
 use crate::db;
-use crate::graph::code_graph;
 use crate::index::indexer;
 use crate::index_lock::{IndexLockPolicy, lock_project_by_id};
 use crate::output::Format;
-use crate::vector::code_symbols;
 
 pub fn invalidate(ctx: &Context, force: bool, _format: Format) -> anyhow::Result<()> {
     if !force {
@@ -15,7 +13,7 @@ pub fn invalidate(ctx: &Context, force: bool, _format: Format) -> anyhow::Result
             .unwrap_or_else(|| ctx.project_id.clone());
 
         eprint!(
-            "This will clear the entire code index for '{}'. Continue? [y/N] ",
+            "This will clear this machine's code index state for '{}'. Continue? [y/N] ",
             project_name
         );
         let _ = std::io::Write::flush(&mut std::io::stderr());
@@ -56,56 +54,16 @@ pub(crate) struct ProjectInvalidationResult {
 pub(crate) fn invalidate_project_locked(
     ctx: &Context,
 ) -> anyhow::Result<ProjectInvalidationResult> {
-    let qdrant_deleted = run_projection_first(
-        ctx.falkordb.is_some(),
-        ctx.qdrant.is_some(),
-        || {
-            code_graph::clear_project(ctx)
-                .map_err(|err| anyhow::anyhow!("failed to clear FalkorDB projection: {err}"))
-        },
-        || {
-            let qdrant = require_configured_qdrant(ctx.qdrant.as_ref())?;
-            code_symbols::delete_project_collection(qdrant, &ctx.project_id)
-                .map_err(|err| anyhow::anyhow!("failed to delete Qdrant projection: {err}"))
-        },
-        || {
-            let mut conn = db::connect_readwrite(&ctx.database_url)?;
-            indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())
-        },
-    )?;
+    let mut conn = db::connect_readwrite(&ctx.database_url)?;
+    indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())?;
     Ok(ProjectInvalidationResult {
-        graph_cleared: ctx.falkordb.is_some(),
-        qdrant_deleted,
+        graph_cleared: false,
+        qdrant_deleted: None,
     })
-}
-
-fn require_configured_qdrant(qdrant: Option<&QdrantConfig>) -> anyhow::Result<&QdrantConfig> {
-    qdrant.ok_or_else(|| anyhow::anyhow!("Qdrant cleanup was selected without a configured client"))
-}
-
-fn run_projection_first<Falkor, Qdrant, Sql, QdrantOutput>(
-    has_falkor_config: bool,
-    has_qdrant_config: bool,
-    clear_falkor: Falkor,
-    clear_qdrant: Qdrant,
-    invalidate_sql: Sql,
-) -> anyhow::Result<Option<QdrantOutput>>
-where
-    Falkor: FnOnce() -> anyhow::Result<()>,
-    Qdrant: FnOnce() -> anyhow::Result<QdrantOutput>,
-    Sql: FnOnce() -> anyhow::Result<()>,
-{
-    if has_falkor_config {
-        clear_falkor()?;
-    }
-    let qdrant_output = has_qdrant_config.then(clear_qdrant).transpose()?;
-    invalidate_sql()?;
-    Ok(qdrant_output)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::path::PathBuf;
 
     use super::*;
@@ -128,20 +86,37 @@ mod tests {
 
     fn insert_indexed_project(conn: &mut postgres::Client, project_id: &str) {
         let project_id = db::id_param(project_id).expect("test project id is a UUID");
+        let machine_id = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("local machine id is a UUID");
         conn.execute(
-            "INSERT INTO code_indexed_projects
-                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-             VALUES ($1, '/missing/root', 0, 0, NOW(), 0)",
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
             &[&project_id],
         )
         .expect("insert indexed project");
+        conn.execute(
+            "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, '/missing/root', 0, 0, NOW(), 0)",
+            &[&machine_id, &project_id],
+        )
+        .expect("insert indexed project state");
     }
 
-    fn indexed_project_exists(conn: &mut postgres::Client, project_id: &str) -> bool {
+    fn indexed_project_state_exists(conn: &mut postgres::Client, project_id: &str) -> bool {
+        let machine_id = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("local machine id is a UUID");
         let project_id = db::id_param(project_id).expect("test project id is a UUID");
         conn.query_one(
-            "SELECT EXISTS(SELECT 1 FROM code_indexed_projects WHERE id = $1)",
-            &[&project_id],
+            "SELECT EXISTS(
+                SELECT 1 FROM code_indexed_project_states
+                WHERE machine_id = $1 AND project_id = $2
+             )",
+            &[&machine_id, &project_id],
         )
         .expect("query indexed project")
         .get(0)
@@ -154,127 +129,6 @@ mod tests {
             &[&project_id],
         )
         .expect("delete indexed project");
-    }
-
-    #[test]
-    fn projection_cleanup_precedes_sql_invalidation() {
-        let events = RefCell::new(Vec::new());
-
-        run_projection_first(
-            true,
-            true,
-            || {
-                events.borrow_mut().push("falkor");
-                Ok(())
-            },
-            || {
-                events.borrow_mut().push("qdrant");
-                Ok(())
-            },
-            || {
-                events.borrow_mut().push("sql");
-                Ok(())
-            },
-        )
-        .expect("projection-first invalidation succeeds");
-
-        assert_eq!(*events.borrow(), ["falkor", "qdrant", "sql"]);
-    }
-
-    #[test]
-    fn missing_projection_config_skips_only_that_backend() {
-        let cases: &[(bool, bool, &[&str])] = &[
-            (false, true, &["qdrant", "sql"]),
-            (true, false, &["falkor", "sql"]),
-            (false, false, &["sql"]),
-        ];
-
-        for &(has_falkor, has_qdrant, expected) in cases {
-            let events = RefCell::new(Vec::new());
-            run_projection_first(
-                has_falkor,
-                has_qdrant,
-                || {
-                    events.borrow_mut().push("falkor");
-                    Ok(())
-                },
-                || {
-                    events.borrow_mut().push("qdrant");
-                    Ok(())
-                },
-                || {
-                    events.borrow_mut().push("sql");
-                    Ok(())
-                },
-            )
-            .expect("missing projection config is an honest skip");
-
-            assert_eq!(*events.borrow(), expected);
-        }
-    }
-
-    #[test]
-    fn configured_falkor_failure_aborts_before_qdrant_and_sql() {
-        let events = RefCell::new(Vec::new());
-
-        let error = run_projection_first(
-            true,
-            true,
-            || {
-                events.borrow_mut().push("falkor");
-                anyhow::bail!("FalkorDB unavailable")
-            },
-            || {
-                events.borrow_mut().push("qdrant");
-                Ok(())
-            },
-            || {
-                events.borrow_mut().push("sql");
-                Ok(())
-            },
-        )
-        .expect_err("configured FalkorDB failure must abort invalidation");
-
-        assert!(error.to_string().contains("FalkorDB unavailable"));
-        assert_eq!(*events.borrow(), ["falkor"]);
-    }
-
-    #[test]
-    fn configured_qdrant_failure_aborts_before_sql() {
-        let events = RefCell::new(Vec::new());
-
-        let error = run_projection_first(
-            true,
-            true,
-            || {
-                events.borrow_mut().push("falkor");
-                Ok(())
-            },
-            || -> anyhow::Result<()> {
-                events.borrow_mut().push("qdrant");
-                anyhow::bail!("Qdrant unavailable")
-            },
-            || {
-                events.borrow_mut().push("sql");
-                Ok(())
-            },
-        )
-        .expect_err("configured Qdrant failure must abort SQL invalidation");
-
-        assert!(error.to_string().contains("Qdrant unavailable"));
-        assert_eq!(*events.borrow(), ["falkor", "qdrant"]);
-    }
-
-    #[test]
-    fn configured_qdrant_cleanup_requires_client() {
-        let error = require_configured_qdrant(None)
-            .expect_err("configured Qdrant cleanup without a client must fail");
-
-        assert!(
-            error
-                .to_string()
-                .contains("selected without a configured client")
-        );
     }
 
     mod serial_db {
@@ -302,7 +156,7 @@ mod tests {
             assert!(ctx.project_root.as_os_str().is_empty());
             invalidate_project(&ctx).expect("invalidate project by id without a root");
 
-            assert!(!indexed_project_exists(&mut conn, &project_id));
+            assert!(!indexed_project_state_exists(&mut conn, &project_id));
         }
 
         #[test]
@@ -336,7 +190,7 @@ mod tests {
             let error = invalidate_project(&ctx).expect_err("busy project lock must fail visibly");
 
             assert!(error.to_string().contains("index lock is busy"));
-            assert!(indexed_project_exists(&mut conn, &project_id));
+            assert!(indexed_project_state_exists(&mut conn, &project_id));
             delete_indexed_project(&mut conn, &project_id);
         }
     }

@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context, ProjectIndexScope};
+use crate::{db, visibility};
 
 use super::embedding::{embed_query_with_source, embedding_source_from_context};
 use super::qdrant::{collection_name, vector_search};
@@ -8,6 +9,7 @@ use super::types::{CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest};
 
 type RankedHit = (String, f64);
 type ProjectSearchFailure = (String, SearchError);
+const POST_FILTER_OVERFETCH_FACTOR: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SearchError {
@@ -16,6 +18,7 @@ pub enum SearchError {
     QueryEmbeddingFailed,
     InvalidCollectionName(gobby_core::qdrant::CollectionNameError),
     VectorSearch(String),
+    Visibility(String),
 }
 
 impl std::fmt::Display for SearchError {
@@ -26,6 +29,9 @@ impl std::fmt::Display for SearchError {
             Self::QueryEmbeddingFailed => write!(f, "query embedding failed"),
             Self::InvalidCollectionName(error) => write!(f, "{error}"),
             Self::VectorSearch(error) => write!(f, "semantic vector search failed: {error}"),
+            Self::Visibility(error) => {
+                write!(f, "semantic vector visibility lookup failed: {error}")
+            }
         }
     }
 }
@@ -53,8 +59,9 @@ pub fn search_code_symbols(
 
     let collection = collection_name(&request.collection_prefix, &request.project_id)
         .map_err(SearchError::InvalidCollectionName)?;
-    match vector_search(qdrant_config, &collection, &embedding, request.limit) {
-        Ok(hits) => Ok(hits
+    let fetch_limit = post_filter_fetch_limit(request.limit);
+    match vector_search(qdrant_config, &collection, &embedding, fetch_limit) {
+        Ok(hits) => Ok(post_filter_ranked_hits(ctx, hits, request.limit)?
             .into_iter()
             .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })
             .collect()),
@@ -88,11 +95,12 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         return Vec::new();
     };
 
+    let fetch_limit = post_filter_fetch_limit(limit);
     let project_ids = visible_vector_project_ids(ctx);
-    let (hits, failures) = search_visible_projects(&project_ids, limit, |project_id| {
+    let (hits, failures) = search_visible_projects(&project_ids, fetch_limit, |project_id| {
         let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)
             .map_err(SearchError::InvalidCollectionName)?;
-        vector_search(qdrant_config, &collection, &embedding, limit)
+        vector_search(qdrant_config, &collection, &embedding, fetch_limit)
             .map_err(|error| SearchError::VectorSearch(error.to_string()))
     });
 
@@ -104,7 +112,74 @@ pub fn semantic_search(ctx: &Context, query: &str, limit: usize) -> Vec<(String,
         }
     }
 
-    hits
+    match post_filter_ranked_hits(ctx, hits, limit) {
+        Ok(hits) => hits,
+        Err(error) => {
+            log::warn!("semantic vector search skipped: {error}");
+            Vec::new()
+        }
+    }
+}
+
+fn post_filter_fetch_limit(limit: usize) -> usize {
+    limit.saturating_mul(POST_FILTER_OVERFETCH_FACTOR)
+}
+
+fn post_filter_ranked_hits(
+    ctx: &Context,
+    hits: Vec<RankedHit>,
+    limit: usize,
+) -> Result<Vec<RankedHit>, SearchError> {
+    let ids = hits
+        .iter()
+        .map(|(symbol_id, _)| symbol_id.clone())
+        .collect::<Vec<_>>();
+    let mut conn = db::connect_readonly(&ctx.database_url)
+        .map_err(|error| SearchError::Visibility(error.to_string()))?;
+    let visible_ids = visibility::visible_symbols_by_ids(&mut conn, ctx, &ids)
+        .map_err(|error| SearchError::Visibility(error.to_string()))?
+        .into_iter()
+        .map(|symbol| symbol.id)
+        .collect::<HashSet<_>>();
+
+    Ok(retain_ranked_hits(hits, &visible_ids, limit))
+}
+
+fn retain_ranked_hits(
+    hits: Vec<RankedHit>,
+    visible_ids: &HashSet<String>,
+    limit: usize,
+) -> Vec<RankedHit> {
+    hits.into_iter()
+        .filter(|(symbol_id, _)| visible_ids.contains(symbol_id))
+        .take(limit)
+        .collect()
+}
+
+#[cfg(test)]
+mod post_filter_tests {
+    use super::*;
+
+    #[test]
+    fn overfetch_preserves_visible_hits_below_stale_projection_rows() {
+        let hits = vec![
+            ("stale-1".to_string(), 1.0),
+            ("stale-2".to_string(), 0.9),
+            ("stale-3".to_string(), 0.8),
+            ("current-1".to_string(), 0.7),
+            ("current-2".to_string(), 0.6),
+        ];
+        let visible_ids = HashSet::from(["current-1".to_string(), "current-2".to_string()]);
+
+        assert_eq!(post_filter_fetch_limit(2), 8);
+        assert_eq!(
+            retain_ranked_hits(hits, &visible_ids, 2),
+            vec![
+                ("current-1".to_string(), 0.7),
+                ("current-2".to_string(), 0.6),
+            ]
+        );
+    }
 }
 
 fn visible_vector_project_ids(ctx: &Context) -> Vec<&str> {

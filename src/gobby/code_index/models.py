@@ -59,6 +59,7 @@ class Symbol:
     signature: str | None = None
     docstring: str | None = None
     parent_symbol_id: str | None = None
+    file_content_hash: str = ""
     content_hash: str = ""
     summary: str | None = None
     summary_attempted_at: datetime | None = None
@@ -72,9 +73,16 @@ class Symbol:
             self.updated_at = utc_now()
 
     @staticmethod
-    def make_id(project_id: str, file_path: str, name: str, kind: str, byte_start: int) -> str:
+    def make_id(
+        project_id: str,
+        file_path: str,
+        file_content_hash: str,
+        name: str,
+        kind: str,
+        byte_start: int,
+    ) -> str:
         """Generate the UUID5 ID shared by Python tests and the Rust ``gcode`` writer."""
-        key = f"{project_id}:{file_path}:{name}:{kind}:{byte_start}"
+        key = f"{project_id}:{file_path}:{file_content_hash}:{name}:{kind}:{byte_start}"
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
@@ -94,6 +102,7 @@ class Symbol:
             signature=row["signature"],
             docstring=row["docstring"],
             parent_symbol_id=row["parent_symbol_id"],
+            file_content_hash=row["file_content_hash"],
             content_hash=row["content_hash"],
             summary=row["summary"] if "summary" in row.keys() else None,
             summary_attempted_at=(
@@ -119,6 +128,7 @@ class Symbol:
             "signature": self.signature,
             "docstring": self.docstring,
             "parent_symbol_id": self.parent_symbol_id,
+            "file_content_hash": self.file_content_hash,
             "content_hash": self.content_hash,
             "summary": self.summary,
             "summary_attempted_at": self.summary_attempted_at,
@@ -182,8 +192,8 @@ class IndexedFile:
             self.indexed_at = utc_now()
 
     @staticmethod
-    def make_id(project_id: str, file_path: str) -> str:
-        key = f"{project_id}:{file_path}"
+    def make_id(project_id: str, file_path: str, content_hash: str) -> str:
+        key = f"{project_id}:{file_path}:{content_hash}"
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
     @classmethod
@@ -333,6 +343,7 @@ class ContentChunk:
     id: str
     project_id: str
     file_path: str
+    content_hash: str
     chunk_index: int
     line_start: int
     line_end: int
@@ -345,8 +356,8 @@ class ContentChunk:
             self.created_at = utc_now()
 
     @staticmethod
-    def make_id(project_id: str, file_path: str, chunk_index: int) -> str:
-        key = f"{project_id}:{file_path}:chunk:{chunk_index}"
+    def make_id(project_id: str, file_path: str, content_hash: str, chunk_index: int) -> str:
+        key = f"{project_id}:{file_path}:{content_hash}:chunk:{chunk_index}"
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
 

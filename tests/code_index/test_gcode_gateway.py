@@ -299,8 +299,10 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
     }
     maintenance_result = await gateway.maintenance_index(tmp_path, timeout=11)
     nightly_result = await gateway.nightly_full_reindex(tmp_path, timeout=12)
-    global_prune_result = await gateway.prune_all_projects(timeout=13)
-    targeted_prune_result = await gateway.prune_project_for_maintenance(tmp_path, timeout=14)
+    global_prune_result = await gateway.prune_all_projects(retention_days=45, timeout=13)
+    targeted_prune_result = await gateway.prune_project_for_maintenance(
+        tmp_path, retention_days=45, timeout=14
+    )
     invalidate_result = await gateway.invalidate_project_by_id("project-1", timeout=15)
 
     assert maintenance_result.success is True
@@ -370,6 +372,8 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "/tmp/gcode",
             "prune",
             "--force",
+            "--retention-days",
+            "45",
         ),
         (
             "/tmp/gcode",
@@ -377,6 +381,8 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "--force",
             "--project",
             str(tmp_path),
+            "--retention-days",
+            "45",
         ),
         (
             "/tmp/gcode",
@@ -703,7 +709,7 @@ async def test_maintenance_command_classifies_daemon_config_transport(
     gateway = GcodeGateway(binary="/tmp/gcode")
 
     with pytest.raises(GcodeDaemonConfigUnavailableError):
-        await gateway.prune_project_for_maintenance(tmp_path)
+        await gateway.prune_project_for_maintenance(tmp_path, retention_days=30)
 
     assert capsys.readouterr().err == ""
 

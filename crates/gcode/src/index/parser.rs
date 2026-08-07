@@ -11,7 +11,7 @@ use tree_sitter::{Parser, Query, QueryCursor};
 mod calls;
 
 use crate::index::MAX_FILE_SIZE;
-use crate::index::hasher::symbol_content_hash;
+use crate::index::hasher::{content_hash, symbol_content_hash};
 use crate::index::import_resolution::{self, ExtractedImports};
 use crate::index::languages;
 use crate::index::security;
@@ -89,14 +89,19 @@ pub(crate) fn parse_file_with_semantic(
             root_path.canonicalize().ok().and_then(|root| {
                 abs.strip_prefix(&root)
                     .ok()
-                    .map(|p| p.to_string_lossy().to_string())
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
             })
         })
-        .unwrap_or_else(|| file_str.to_string());
+        .unwrap_or_else(|| file_str.replace('\\', "/"));
 
-    let mut symbols = extract_symbols(
-        &tree, &source, spec, language, &ts_lang, project_id, &rel_path,
-    )?;
+    let file_content_hash = content_hash(&source);
+
+    let symbol_file = SymbolFileIdentity {
+        project_id,
+        rel_path: &rel_path,
+        content_hash: &file_content_hash,
+    };
+    let mut symbols = extract_symbols(&tree, &source, spec, language, &ts_lang, symbol_file)?;
     link_parents(&mut symbols);
     collapse_rust_impl_symbols(&mut symbols);
     let extracted_imports = extract_imports(
@@ -133,21 +138,29 @@ pub(crate) fn parse_file_with_semantic(
     }))
 }
 
+struct SymbolFileIdentity<'a> {
+    project_id: &'a str,
+    rel_path: &'a str,
+    content_hash: &'a str,
+}
+
 fn extract_symbols(
     tree: &tree_sitter::Tree,
     source: &[u8],
     spec: &languages::LanguageSpec,
     language: &str,
     ts_lang: &tree_sitter::Language,
-    project_id: &str,
-    rel_path: &str,
+    file: SymbolFileIdentity<'_>,
 ) -> anyhow::Result<Vec<Symbol>> {
     if spec.symbol_query.trim().is_empty() {
         return Ok(Vec::new());
     }
 
     let query = Query::new(ts_lang, spec.symbol_query).with_context(|| {
-        format!("failed to compile symbol query for language `{language}` while parsing {rel_path}")
+        format!(
+            "failed to compile symbol query for language `{language}` while parsing {}",
+            file.rel_path
+        )
     })?;
 
     let mut cursor = QueryCursor::new();
@@ -202,7 +215,14 @@ fn extract_symbols(
         let docstring = extract_docstring(&node, source, language);
         let c_hash =
             symbol_content_hash(source, node.start_byte(), node.end_byte()).unwrap_or_default();
-        let symbol_id = Symbol::make_id(project_id, rel_path, &name, &kind, node.start_byte());
+        let symbol_id = Symbol::make_id(
+            file.project_id,
+            file.rel_path,
+            file.content_hash,
+            &name,
+            &kind,
+            node.start_byte(),
+        );
 
         if seen_ids.contains(&symbol_id) {
             continue;
@@ -211,8 +231,8 @@ fn extract_symbols(
 
         symbols.push(Symbol {
             id: symbol_id,
-            project_id: project_id.to_string(),
-            file_path: rel_path.to_string(),
+            project_id: file.project_id.to_string(),
+            file_path: file.rel_path.to_string(),
             name: name.clone(),
             qualified_name: name,
             kind,
@@ -224,6 +244,7 @@ fn extract_symbols(
             signature: Some(signature),
             docstring,
             parent_symbol_id: None,
+            file_content_hash: file.content_hash.to_string(),
             content_hash: c_hash,
             summary: None,
             created_at: String::new(),

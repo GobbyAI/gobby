@@ -11,7 +11,7 @@ pub(crate) fn test_symbol(
 }
 
 pub(crate) fn test_component_id(file_path: &str, name: &str, kind: &str) -> String {
-    Symbol::make_id("project-1", file_path, name, kind, 0)
+    Symbol::make_id("project-1", file_path, "hash", name, kind, 0)
 }
 
 pub(crate) fn test_symbol_with_qualified(
@@ -37,6 +37,7 @@ pub(crate) fn test_symbol_with_qualified(
         signature: Some(signature.to_string()),
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "hash".to_string(),
         content_hash: String::new(),
         summary: None,
         created_at: String::new(),
@@ -67,6 +68,7 @@ pub(crate) fn test_symbol_range(
         signature: Some(signature.to_string()),
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "hash".to_string(),
         content_hash: String::new(),
         summary: None,
         created_at: String::new(),

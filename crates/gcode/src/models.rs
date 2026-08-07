@@ -144,6 +144,8 @@ pub struct Symbol {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_symbol_id: Option<String>,
     #[serde(default)]
+    pub file_content_hash: String,
+    #[serde(default)]
     pub content_hash: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
@@ -159,11 +161,13 @@ impl Symbol {
     pub fn make_id(
         project_id: &str,
         file_path: &str,
+        file_content_hash: &str,
         name: &str,
         kind: &str,
         byte_start: usize,
     ) -> String {
-        let key = format!("{project_id}:{file_path}:{name}:{kind}:{byte_start}");
+        let key =
+            format!("{project_id}:{file_path}:{file_content_hash}:{name}:{kind}:{byte_start}");
         Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
     }
 
@@ -189,6 +193,7 @@ impl Symbol {
             parent_symbol_id: row
                 .try_get::<_, Option<Uuid>>("parent_symbol_id")?
                 .map(|id| id.to_string()),
+            file_content_hash: row.try_get("file_content_hash")?,
             content_hash: row
                 .try_get::<_, Option<String>>("content_hash")?
                 .unwrap_or_default(),
@@ -263,8 +268,8 @@ pub struct IndexedFile {
 }
 
 impl IndexedFile {
-    pub fn make_id(project_id: &str, file_path: &str) -> String {
-        let key = format!("{project_id}:{file_path}");
+    pub fn make_id(project_id: &str, file_path: &str, content_hash: &str) -> String {
+        let key = format!("{project_id}:{file_path}:{content_hash}");
         Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
     }
 }
@@ -275,6 +280,7 @@ pub struct ContentChunk {
     pub id: String,
     pub project_id: String,
     pub file_path: String,
+    pub content_hash: String,
     pub chunk_index: usize,
     pub line_start: usize,
     pub line_end: usize,
@@ -284,8 +290,13 @@ pub struct ContentChunk {
 }
 
 impl ContentChunk {
-    pub fn make_id(project_id: &str, file_path: &str, chunk_index: usize) -> String {
-        let key = format!("{project_id}:{file_path}:chunk:{chunk_index}");
+    pub fn make_id(
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+        chunk_index: usize,
+    ) -> String {
+        let key = format!("{project_id}:{file_path}:{content_hash}:chunk:{chunk_index}");
         Uuid::new_v5(&CODE_INDEX_UUID_NAMESPACE, key.as_bytes()).to_string()
     }
 }
@@ -331,6 +342,7 @@ pub struct CallRelation {
     pub callee_target_kind: CallTargetKind,
     pub callee_external_module: Option<String>,
     pub file_path: String,
+    pub content_hash: String,
     pub line: usize,
 }
 
@@ -348,6 +360,7 @@ impl CallRelation {
             callee_target_kind: CallTargetKind::Unresolved,
             callee_external_module: None,
             file_path,
+            content_hash: String::new(),
             line,
         }
     }
@@ -576,42 +589,46 @@ mod tests {
             (
                 "proj1",
                 "src/main.py",
+                "hash-a",
                 "foo",
                 "function",
                 42,
-                "403e2117-92e7-5390-ad83-226629486481",
+                "c751e5d7-daef-5260-94bf-db7324643dc5",
             ),
             (
                 "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
                 "crates/gcode/src/models.rs",
+                "hash-b",
                 "Symbol",
                 "struct",
                 111,
-                "d28e80d3-a95e-5c2a-91c3-92551f75a2b1",
+                "70a283ea-e1d2-50cd-99cb-854f35df711b",
             ),
             (
                 "proj-with-dashes",
                 "src/lib.rs",
+                "hash-c",
                 "Widget::render",
                 "method",
                 0,
-                "44da4f31-7218-5b3b-97c4-5a5eca9f0451",
+                "6eb7293d-3607-5cab-b83e-cf2e66c12faa",
             ),
             (
                 "overlay:child",
                 "nested/path/file.ts",
+                "hash-d",
                 "HTTPClient.new",
                 "class",
                 987654321,
-                "f9531553-f2a7-5425-b487-6fb5b31d57bb",
+                "14b94963-d737-50d2-b7a8-b493e63061c8",
             ),
         ];
 
-        for (project_id, file_path, name, kind, byte_start, expected) in cases {
+        for (project_id, file_path, file_hash, name, kind, byte_start, expected) in cases {
             assert_eq!(
-                Symbol::make_id(project_id, file_path, name, kind, byte_start),
+                Symbol::make_id(project_id, file_path, file_hash, name, kind, byte_start),
                 expected,
-                "Python UUID5 parity failed for {project_id}:{file_path}:{name}:{kind}:{byte_start}"
+                "Python UUID5 parity failed for {project_id}:{file_path}:{file_hash}:{name}:{kind}:{byte_start}"
             );
         }
     }

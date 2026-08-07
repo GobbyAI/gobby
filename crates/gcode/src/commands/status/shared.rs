@@ -52,17 +52,19 @@ pub(super) fn collect_projects() -> anyhow::Result<Vec<IndexedProject>> {
     let mut conn = db::connect_readonly(&database_url)?;
     let mut seen_ids = std::collections::HashSet::new();
     let mut all = Vec::new();
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let rows = conn.query(
-        "SELECT id,
+        "SELECT project_id AS id,
                 root_path,
                 total_files::BIGINT AS total_files,
                 total_symbols::BIGINT AS total_symbols,
                 last_indexed_at::TEXT AS last_indexed_at,
                 COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
                 NULL::BIGINT AS total_eligible_files
-         FROM code_indexed_projects
+         FROM code_indexed_project_states
+         WHERE machine_id = $1
          ORDER BY last_indexed_at DESC NULLS LAST",
-        &[],
+        &[&machine_id],
     )?;
 
     for row in rows {

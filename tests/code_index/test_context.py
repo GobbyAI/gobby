@@ -155,9 +155,7 @@ def test_context_propagates_unexpected_gateway_init_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_context_invalidate_marks_dirty_and_delegates_vector_clear_to_gcode(
-    tmp_path: Path,
-) -> None:
+async def test_context_invalidate_removes_only_local_state(tmp_path: Path) -> None:
     storage = MagicMock()
     storage.get_project_stats.return_value = _project(tmp_path)
     storage.delete_project_index.return_value = {"files": 1, "projects": 1}
@@ -176,51 +174,13 @@ async def test_context_invalidate_marks_dirty_and_delegates_vector_clear_to_gcod
     assert result["project_id"] == "proj-1"
     assert result["failed_stores"] == []
     assert result["stores"] == {
-        "graph": {"status": "ok"},
-        "vector": {"status": "ok"},
+        "graph": {"status": "skipped"},
+        "vector": {"status": "skipped"},
         "hub": {"status": "ok", "deleted": {"files": 1, "projects": 1}},
     }
-    storage.get_project_stats.assert_called_once_with("proj-1")
-    storage.mark_prune_dirty.assert_called_once_with("proj-1", str(tmp_path), "invalidate")
-    gateway.graph_clear.assert_awaited_once_with("proj-1")
-    gateway.vector_clear.assert_awaited_once_with(tmp_path)
-    storage.clear_projection_cleanup_pending.assert_any_call("proj-1", "graph")
-    storage.clear_projection_cleanup_pending.assert_any_call("proj-1", "vector")
+    storage.get_project_stats.assert_not_called()
+    storage.mark_prune_dirty.assert_not_called()
+    gateway.graph_clear.assert_not_awaited()
+    gateway.vector_clear.assert_not_awaited()
+    storage.clear_projection_cleanup_pending.assert_not_called()
     storage.delete_project_index.assert_called_once_with("proj-1")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("vector_result", "vector_error"),
-    [
-        ({"success": False, "error": "vector clear rejected"}, None),
-        (None, GcodeGatewayError("vector clear unavailable")),
-    ],
-)
-async def test_context_invalidate_records_failed_vector_clear_for_retry(
-    tmp_path: Path,
-    vector_result: dict[str, object] | None,
-    vector_error: GcodeGatewayError | None,
-) -> None:
-    storage = MagicMock()
-    storage.get_project_stats.return_value = _project(tmp_path)
-    storage.delete_project_index.return_value = {"files": 1, "projects": 1}
-    gateway = MagicMock()
-    gateway.graph_clear = AsyncMock(return_value={"success": True})
-    gateway.vector_clear = AsyncMock(return_value=vector_result, side_effect=vector_error)
-    context = CodeIndexContext(
-        storage=storage,
-        gcode_gateway=gateway,
-        config=CodeIndexConfig(graph_enabled=True, embedding_enabled=True),
-    )
-
-    result = await context.invalidate("proj-1")
-
-    assert result["status"] == "partial_failure"
-    assert result["failed_stores"] == ["vector"]
-    assert result["stores"]["vector"]["pending_retry"] is True
-    storage.record_projection_cleanup_failure.assert_called_once_with(
-        "proj-1",
-        "vector",
-        "vector clear unavailable" if vector_error else "vector clear rejected",
-    )

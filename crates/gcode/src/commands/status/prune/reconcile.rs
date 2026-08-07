@@ -1,6 +1,4 @@
-use crate::graph::code_graph::GraphOrphanCleanup;
 use crate::utils::short_id;
-use crate::vector::code_symbols::VectorOrphanCleanup;
 
 const ORPHAN_PROJECT_WARNING_LIMIT: usize = 5;
 const ORPHAN_PROJECT_SUMMARY_LIMIT: usize = 8;
@@ -73,43 +71,6 @@ pub(super) fn sweep_discovered_ids_with(
         }
     }
     totals
-}
-
-#[derive(Default)]
-pub(super) struct ProjectionPruneTotals {
-    pub(super) graph_projects_cleaned: usize,
-    pub(super) graph_projects_skipped: usize,
-    pub(super) graph_stale_files_deleted: usize,
-    pub(super) graph_nodes_deleted: usize,
-    pub(super) vector_projects_cleaned: usize,
-    pub(super) vector_projects_skipped: usize,
-    pub(super) vector_orphan_files_deleted: usize,
-    pub(super) vectors_deleted: usize,
-}
-
-impl ProjectionPruneTotals {
-    pub(super) fn record_graph_cleanup(&mut self, cleanup: GraphOrphanCleanup) {
-        self.graph_projects_cleaned += 1;
-        self.graph_stale_files_deleted += cleanup.stale_files_deleted;
-        self.graph_nodes_deleted += cleanup.graph_nodes_deleted;
-    }
-
-    pub(super) fn record_vector_cleanup(&mut self, cleanup: VectorOrphanCleanup) {
-        self.vector_projects_cleaned += 1;
-        self.vector_orphan_files_deleted += cleanup.orphan_files_deleted;
-        self.vectors_deleted += cleanup.vectors_deleted;
-    }
-
-    pub(super) fn add(&mut self, other: ProjectionPruneTotals) {
-        self.graph_projects_cleaned += other.graph_projects_cleaned;
-        self.graph_projects_skipped += other.graph_projects_skipped;
-        self.graph_stale_files_deleted += other.graph_stale_files_deleted;
-        self.graph_nodes_deleted += other.graph_nodes_deleted;
-        self.vector_projects_cleaned += other.vector_projects_cleaned;
-        self.vector_projects_skipped += other.vector_projects_skipped;
-        self.vector_orphan_files_deleted += other.vector_orphan_files_deleted;
-        self.vectors_deleted += other.vectors_deleted;
-    }
 }
 
 #[derive(Default, Debug, PartialEq, Eq)]
@@ -274,64 +235,4 @@ pub(super) fn warn_orphan_projection_cleanup_failure(
         );
     }
     *warnings_emitted += 1;
-}
-
-pub(super) fn print_current_project_projection_totals(totals: ProjectionPruneTotals) {
-    if totals.graph_projects_cleaned > 0 {
-        eprintln!(
-            "Pruned graph projection: {} stale file(s), {} file-scoped node(s).",
-            totals.graph_stale_files_deleted, totals.graph_nodes_deleted
-        );
-    } else if totals.graph_projects_skipped > 0 {
-        eprintln!("Skipped graph projection orphan cleanup: FalkorDB is not configured.");
-    }
-
-    if totals.vector_projects_cleaned > 0 {
-        eprintln!(
-            "Pruned vector projection: {} stale file(s), {} vector point(s).",
-            totals.vector_orphan_files_deleted, totals.vectors_deleted
-        );
-    } else if totals.vector_projects_skipped > 0 {
-        eprintln!("Skipped vector projection orphan cleanup: Qdrant is not configured.");
-    }
-}
-
-pub(super) fn print_all_project_projection_totals(totals: ProjectionPruneTotals) {
-    if totals.graph_projects_cleaned > 0 {
-        eprintln!(
-            "Pruned graph projections for {} project(s): {} stale file(s), {} file-scoped node(s).",
-            totals.graph_projects_cleaned,
-            totals.graph_stale_files_deleted,
-            totals.graph_nodes_deleted
-        );
-    } else if totals.graph_projects_skipped > 0 {
-        eprintln!(
-            "Skipped graph projection orphan cleanup for all indexed projects: FalkorDB is not configured."
-        );
-    }
-
-    if totals.vector_projects_cleaned > 0 {
-        eprintln!(
-            "Pruned vector projections for {} project(s): {} stale file(s), {} vector point(s).",
-            totals.vector_projects_cleaned,
-            totals.vector_orphan_files_deleted,
-            totals.vectors_deleted
-        );
-    } else if totals.vector_projects_skipped > 0 {
-        eprintln!(
-            "Skipped vector projection orphan cleanup for all indexed projects: Qdrant is not configured."
-        );
-    }
-}
-
-pub(super) fn warn_projection_cleanup_failure(
-    store: &str,
-    project_label: Option<&str>,
-    error: anyhow::Error,
-) {
-    if let Some(project_label) = project_label {
-        eprintln!("Warning: {store} projection orphan cleanup failed for {project_label}: {error}");
-    } else {
-        eprintln!("Warning: {store} projection orphan cleanup failed: {error}");
-    }
 }

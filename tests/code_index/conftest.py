@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 PROJECT_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/project-1"))
 PROJECT_ID_2 = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/project-2"))
 MISSING_ID = str(uuid.uuid5(uuid.NAMESPACE_URL, "gobby://tests/code-index/missing"))
+FILE_CONTENT_HASH = "file-abc123"
 
 
 @pytest.fixture
@@ -76,7 +77,7 @@ def sample_symbols() -> list[Symbol]:
     language = "python"
 
     func_sym = Symbol(
-        id=Symbol.make_id(project_id, file_path, "greet", "function", 50),
+        id=Symbol.make_id(project_id, file_path, FILE_CONTENT_HASH, "greet", "function", 50),
         project_id=project_id,
         file_path=file_path,
         name="greet",
@@ -89,11 +90,12 @@ def sample_symbols() -> list[Symbol]:
         line_end=9,
         signature="def greet(name: str) -> str:",
         docstring="Return a greeting.",
+        file_content_hash=FILE_CONTENT_HASH,
         content_hash="abc123",
     )
 
     class_sym = Symbol(
-        id=Symbol.make_id(project_id, file_path, "Calculator", "class", 130),
+        id=Symbol.make_id(project_id, file_path, FILE_CONTENT_HASH, "Calculator", "class", 130),
         project_id=project_id,
         file_path=file_path,
         name="Calculator",
@@ -106,11 +108,12 @@ def sample_symbols() -> list[Symbol]:
         line_end=22,
         signature="class Calculator:",
         docstring="A simple calculator.",
+        file_content_hash=FILE_CONTENT_HASH,
         content_hash="def456",
     )
 
     method_sym = Symbol(
-        id=Symbol.make_id(project_id, file_path, "add", "method", 200),
+        id=Symbol.make_id(project_id, file_path, FILE_CONTENT_HASH, "add", "method", 200),
         project_id=project_id,
         file_path=file_path,
         name="add",
@@ -124,6 +127,7 @@ def sample_symbols() -> list[Symbol]:
         signature="def add(self, a: int, b: int) -> int:",
         docstring="Add two numbers.",
         parent_symbol_id=class_sym.id,
+        file_content_hash=FILE_CONTENT_HASH,
         content_hash="ghi789",
     )
 

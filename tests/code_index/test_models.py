@@ -20,25 +20,27 @@ pytestmark = pytest.mark.unit
 
 def test_symbol_make_id_deterministic() -> None:
     """Same inputs always produce the same UUID5."""
-    id1 = Symbol.make_id("proj", "file.py", "foo", "function", 10)
-    id2 = Symbol.make_id("proj", "file.py", "foo", "function", 10)
+    id1 = Symbol.make_id("proj", "file.py", "hash-a", "foo", "function", 10)
+    id2 = Symbol.make_id("proj", "file.py", "hash-a", "foo", "function", 10)
     assert id1 == id2
 
 
 def test_symbol_make_id_varies_with_inputs() -> None:
     """Different inputs produce different IDs."""
-    id_a = Symbol.make_id("proj", "file.py", "foo", "function", 10)
-    id_b = Symbol.make_id("proj", "file.py", "foo", "function", 20)
-    id_c = Symbol.make_id("proj", "file.py", "bar", "function", 10)
+    id_a = Symbol.make_id("proj", "file.py", "hash-a", "foo", "function", 10)
+    id_b = Symbol.make_id("proj", "file.py", "hash-a", "foo", "function", 20)
+    id_c = Symbol.make_id("proj", "file.py", "hash-a", "bar", "function", 10)
+    id_d = Symbol.make_id("proj", "file.py", "hash-b", "foo", "function", 10)
     assert id_a != id_b
     assert id_a != id_c
+    assert id_a != id_d
 
 
 def test_symbol_make_id_is_valid_uuid() -> None:
     """Returned string is a valid UUID."""
     import uuid
 
-    sid = Symbol.make_id("p", "f.py", "x", "function", 0)
+    sid = Symbol.make_id("p", "f.py", "hash", "x", "function", 0)
     parsed = uuid.UUID(sid)
     assert parsed.version == 5
 
@@ -153,15 +155,15 @@ def test_symbol_to_brief_omits_empty_docstring(sample_symbols: list[Symbol]) -> 
 
 def test_indexed_file_make_id_deterministic() -> None:
     """Same project+path -> same ID."""
-    id1 = IndexedFile.make_id("proj", "src/main.py")
-    id2 = IndexedFile.make_id("proj", "src/main.py")
+    id1 = IndexedFile.make_id("proj", "src/main.py", "hash-a")
+    id2 = IndexedFile.make_id("proj", "src/main.py", "hash-a")
     assert id1 == id2
 
 
 def test_indexed_file_make_id_varies() -> None:
     """Different paths -> different IDs."""
-    id1 = IndexedFile.make_id("proj", "a.py")
-    id2 = IndexedFile.make_id("proj", "b.py")
+    id1 = IndexedFile.make_id("proj", "a.py", "hash-a")
+    id2 = IndexedFile.make_id("proj", "b.py", "hash-b")
     assert id1 != id2
 
 

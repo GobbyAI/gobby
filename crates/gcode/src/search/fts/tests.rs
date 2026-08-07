@@ -174,6 +174,7 @@ fn append_unique_symbols_respects_zero_limit() {
             signature: None,
             docstring: None,
             parent_symbol_id: None,
+            file_content_hash: "hash".to_string(),
             content_hash: "hash".to_string(),
             summary: None,
             created_at: String::new(),
@@ -464,6 +465,14 @@ fn cleanup_overlay_visibility_projects(
     let parent_project_id = crate::db::id_param(parent_project_id)?;
     let overlay_project_id = crate::db::id_param(overlay_project_id)?;
     let mut tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM code_indexed_file_states WHERE project_id = $1 OR project_id = $2",
+        &[&parent_project_id, &overlay_project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_indexed_project_states WHERE project_id = $1 OR project_id = $2",
+        &[&parent_project_id, &overlay_project_id],
+    )?;
     for table in OVERLAY_VISIBILITY_CHILD_TABLES {
         let sql = format!("DELETE FROM {table} WHERE project_id = $1 OR project_id = $2");
         tx.execute(&sql, &[&parent_project_id, &overlay_project_id])?;
@@ -565,13 +574,23 @@ fn seed_overlay_visibility_fixture(conn: &mut Client, ids: &OverlayFixtureIds) {
 }
 
 fn insert_project(conn: &mut Client, project_id: &str, root_path: &str) {
+    let project_id = fixture_uuid_param(project_id);
+    let machine_id = fixture_uuid_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    );
     conn.execute(
-        "INSERT INTO code_indexed_projects
-                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-             VALUES ($1, $2, 0, 0, NOW(), 0)",
-        &[&fixture_uuid_param(project_id), &root_path],
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+        &[&project_id],
     )
     .expect("insert project");
+    conn.execute(
+        "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, $3, 0, 0, NOW(), 0)",
+        &[&machine_id, &project_id, &root_path],
+    )
+    .expect("insert project state");
 }
 
 fn insert_file(
@@ -592,6 +611,16 @@ fn insert_file(
         params,
     )
     .expect("insert indexed file");
+    let machine_id = fixture_uuid_param(
+        &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+    );
+    conn.execute(
+        "INSERT INTO code_indexed_file_states
+                (machine_id, project_id, file_path, content_hash)
+             VALUES ($1, $2, $3, 'hash')",
+        &[&machine_id, &project_id, &file_path],
+    )
+    .expect("insert indexed file state");
 }
 
 fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &str, kind: &str) {
@@ -603,9 +632,9 @@ fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &st
         "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
-                 content_hash, summary, created_at, updated_at)
+                 file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $4, $5, 'rust', 0, 1, 1, 1, $4, NULL, NULL,
-                     'hash', $6, NOW(), NOW())",
+                     'hash', 'hash', $6, NOW(), NOW())",
         params,
     )
     .expect("insert symbol");
@@ -623,9 +652,9 @@ fn insert_chunk(
     let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &chunk_index, &content];
     conn.execute(
         "INSERT INTO code_content_chunks
-                (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
-                 created_at)
-             VALUES ($1, $2, $3, $4, 1, 1, $5, 'rust', NOW())",
+                (id, project_id, file_path, content_hash, chunk_index, line_start, line_end,
+                 content, language, created_at)
+             VALUES ($1, $2, $3, 'hash', $4, 1, 1, $5, 'rust', NOW())",
         params,
     )
     .expect("insert content chunk");

@@ -24,6 +24,7 @@ fn symbol(id: &str, file_path: &str, summary: Option<&str>) -> Symbol {
         signature: Some("fn run()".to_string()),
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "hash".to_string(),
         content_hash: "hash".to_string(),
         summary: summary.map(str::to_string),
         created_at: String::new(),
@@ -44,18 +45,14 @@ fn ensure_creates_missing_and_reuses_compatible() {
             200,
             json!({"result": {"operation_id": 1, "status": "completed"}}),
         ),
-        (200, json!({"result": {"count": 1}})),
-        (200, json!({"result": {"operation_id": 2}})),
         (
             200,
             json!({"result": {"config": {"params": {"vectors": {"size": 3, "distance": VECTOR_DISTANCE_COSINE}}}}}),
         ),
         (
             200,
-            json!({"result": {"operation_id": 3, "status": "completed"}}),
+            json!({"result": {"operation_id": 2, "status": "completed"}}),
         ),
-        (200, json!({"result": {"count": 1}})),
-        (200, json!({"result": {"operation_id": 4}})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
         "project-1".to_string(),
@@ -109,22 +106,12 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[2].contains(r#""source_system":"gcode""#));
     assert!(qdrant_requests[2].contains(r#""source_line_start":3"#));
     assert!(qdrant_requests[2].contains(r#""source_byte_end":40"#));
-    assert!(
-        qdrant_requests[3]
-            .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")
-    );
+    assert!(qdrant_requests[3].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
+    assert!(!qdrant_requests[3].contains("DELETE"));
     assert!(
         qdrant_requests[4]
-            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
+            .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")
     );
-    assert!(qdrant_requests[3].contains(r#""key":"project_id""#));
-    assert!(qdrant_requests[3].contains(r#""value":"project-1""#));
-    assert!(qdrant_requests[3].contains(r#""key":"file_path""#));
-    assert!(qdrant_requests[3].contains(r#""value":"src/lib.rs""#));
-    assert!(qdrant_requests[3].contains(r#""must_not""#));
-    assert!(qdrant_requests[3].contains(r#""has_id":["sym-1"]"#));
-    assert!(qdrant_requests[5].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
-    assert!(!qdrant_requests[5].contains("DELETE"));
 }
 
 #[test]
@@ -148,8 +135,6 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
             200,
             json!({"result": {"operation_id": 2, "status": "completed"}}),
         ),
-        (200, json!({"result": {"count": 1}})),
-        (200, json!({"result": {"operation_id": 3}})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
         "project-1".to_string(),
@@ -200,16 +185,6 @@ fn clear_and_rebuild_delete_project_and_upsert_current_symbols() {
         qdrant_requests[4]
             .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")
     );
-    assert!(
-        qdrant_requests[5]
-            .contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1")
-    );
-    assert!(
-        qdrant_requests[6]
-            .contains("POST /collections/code_symbols_project-1/points/delete?wait=true HTTP/1.1")
-    );
-    assert!(qdrant_requests[5].contains(r#""must_not""#));
-    assert!(qdrant_requests[5].contains(r#""has_id":["sym-1"]"#));
 }
 
 #[test]

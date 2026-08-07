@@ -18,16 +18,20 @@ pub fn run(ctx: &Context, format: Format) -> anyhow::Result<()> {
     let stats: Option<IndexedProject> = db::id_param(&ctx.project_id)
         .ok()
         .and_then(|project_id| {
+            let machine_id = gobby_core::machine::read_local_machine_id()
+                .ok()
+                .and_then(|id| db::id_param(&id).ok())?;
             conn.query_opt(
-                "SELECT id,
+                "SELECT project_id AS id,
                     root_path,
                     total_files::BIGINT AS total_files,
                     total_symbols::BIGINT AS total_symbols,
                     last_indexed_at::TEXT AS last_indexed_at,
                     COALESCE(index_duration_ms, 0)::BIGINT AS index_duration_ms,
                     NULL::BIGINT AS total_eligible_files
-             FROM code_indexed_projects WHERE id = $1",
-                &[&project_id],
+             FROM code_indexed_project_states
+             WHERE machine_id = $1 AND project_id = $2",
+                &[&machine_id, &project_id],
             )
             .ok()
             .flatten()

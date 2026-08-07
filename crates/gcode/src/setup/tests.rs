@@ -168,7 +168,14 @@ fn table_columns(sql: &str) -> Vec<&str> {
             // next line and is handled by the branch below.
             continue;
         }
-        if line.starts_with("UNIQUE") {
+        if line.starts_with("FOREIGN KEY")
+            || line.starts_with("REFERENCES")
+            || line.starts_with("ON DELETE")
+            || line.starts_with("ON UPDATE")
+        {
+            continue;
+        }
+        if line.starts_with("UNIQUE") || line.starts_with("PRIMARY KEY") {
             in_table_constraint = !line.contains(')');
             continue;
         }

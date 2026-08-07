@@ -8,8 +8,10 @@
   },
   "relations": [
     {"relation": "projects", "operations": ["SELECT"], "columns": ["id", "name", "repo_path"], "scope_column": "id"},
-    {"relation": "code_indexed_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "id"},
-    {"relation": "code_indexed_files", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
+{"relation": "code_indexed_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "id"},
+{"relation": "code_indexed_project_states", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
+{"relation": "code_indexed_file_states", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
+{"relation": "code_indexed_files", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_symbols", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_imports", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},
     {"relation": "code_calls", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id"},

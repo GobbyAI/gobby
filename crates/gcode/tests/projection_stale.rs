@@ -34,7 +34,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn vector_sync_file_allows_deleted_indexed_file_row() {
+    fn vector_sync_file_allows_deleted_local_file_state() {
         let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
         cleanup_project(&mut conn, PROJECT_ID).expect("pre-clean project rows");
@@ -60,11 +60,15 @@ mod serial_db {
         .expect("write gcode identity");
 
         seed_indexed_file(&mut conn, PROJECT_ID, FILE_PATH);
+        let machine_id = uuid_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
         conn.execute(
-            "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
-            &[&uuid_param(PROJECT_ID), &FILE_PATH],
+            "DELETE FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
+            &[&machine_id, &uuid_param(PROJECT_ID), &FILE_PATH],
         )
-        .expect("delete indexed file row");
+        .expect("delete local indexed file state");
 
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
@@ -106,7 +110,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn prune_reconciles_orphan_project_rows_without_touching_valid_project() {
+    fn prune_retains_recent_unselected_content_without_touching_valid_project() {
         let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
         let valid_project_id = "11111111-2222-4333-8444-555555555555";
@@ -145,7 +149,8 @@ mod serial_db {
             project.path().to_string_lossy(),
         );
         seed_indexed_file_without_project(&mut conn, valid_project_id, FILE_PATH);
-        seed_orphan_project_rows(&mut conn, orphan_project_id);
+        seed_file_state(&mut conn, valid_project_id, FILE_PATH);
+        seed_unselected_project_rows(&mut conn, orphan_project_id);
 
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
@@ -169,13 +174,13 @@ mod serial_db {
         );
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
-            stderr.contains("Reconciled 1 orphan code-index project(s)"),
-            "orphan reconciliation summary missing, stderr={stderr}"
+            stderr.contains("Content GC: 0 version(s)"),
+            "stderr={stderr}"
         );
 
-        assert_eq!(project_child_row_count(&mut conn, orphan_project_id), 0);
+        assert_eq!(project_child_row_count(&mut conn, orphan_project_id), 5);
         assert_eq!(project_child_row_count(&mut conn, valid_project_id), 2);
-        assert_eq!(indexed_project_count(&mut conn, valid_project_id), 1);
+        assert_eq!(indexed_project_state_count(&mut conn, valid_project_id), 1);
     }
 
     #[test]
@@ -218,7 +223,7 @@ mod serial_db {
             !output.status.success(),
             "configured unreachable Falkor must fail discovery"
         );
-        assert_eq!(indexed_project_count(&mut conn, stale_project_id), 1);
+        assert_eq!(indexed_project_state_count(&mut conn, stale_project_id), 1);
     }
 
     #[test]
@@ -271,7 +276,7 @@ mod serial_db {
         );
         assert_eq!(requests.len(), 1);
         assert!(requests[0].contains("GET /collections HTTP/1.1"));
-        assert_eq!(indexed_project_count(&mut conn, stale_project_id), 1);
+        assert_eq!(indexed_project_state_count(&mut conn, stale_project_id), 1);
     }
 
     struct ProjectCleanup {
@@ -290,16 +295,27 @@ mod serial_db {
     fn seed_indexed_file(conn: &mut Client, project_id: &str, file_path: &str) {
         seed_project_with_root(conn, project_id, "/tmp/projection-stale");
         seed_indexed_file_without_project(conn, project_id, file_path);
+        seed_file_state(conn, project_id, file_path);
     }
 
     fn seed_project_with_root(conn: &mut Client, project_id: &str, root_path: impl AsRef<str>) {
+        let project_id = uuid_param(project_id);
+        let machine_id = uuid_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
         conn.execute(
-            "INSERT INTO code_indexed_projects
-                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-             VALUES ($1, $2, 1, 1, NOW(), 0)",
-            &[&uuid_param(project_id), &root_path.as_ref()],
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[&project_id],
         )
-        .expect("insert indexed project");
+        .expect("insert indexed project identity");
+        conn.execute(
+            "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, $3, 1, 1, NOW(), 0)",
+            &[&machine_id, &project_id, &root_path.as_ref()],
+        )
+        .expect("insert indexed project state");
     }
 
     fn seed_indexed_file_without_project(conn: &mut Client, project_id: &str, file_path: &str) {
@@ -316,35 +332,54 @@ mod serial_db {
             "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
-                 content_hash, summary, created_at, updated_at)
+                 file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
-                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', NULL, NOW(), NOW())",
+                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', 'hash-1', NULL, NOW(), NOW())",
             &[&row_uuid(project_id, "symbol"), &project_uuid, &file_path],
         )
         .expect("insert symbol");
     }
 
-    fn seed_orphan_project_rows(conn: &mut Client, project_id: &str) {
+    fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str) {
+        let machine_id = uuid_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
+        conn.execute(
+            "INSERT INTO code_indexed_file_states
+                (machine_id, project_id, file_path, content_hash)
+             VALUES ($1, $2, $3, 'hash-1')",
+            &[&machine_id, &uuid_param(project_id), &file_path],
+        )
+        .expect("insert indexed file state");
+    }
+
+    fn seed_unselected_project_rows(conn: &mut Client, project_id: &str) {
+        conn.execute(
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[&uuid_param(project_id)],
+        )
+        .expect("insert unselected project identity");
         seed_indexed_file_without_project(conn, project_id, FILE_PATH);
         let project_uuid = uuid_param(project_id);
         conn.execute(
             "INSERT INTO code_content_chunks
-                (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
-             VALUES ($1, $2, $3, 0, 1, 1, 'pub fn indexed() {}', 'rust')",
+                (id, project_id, file_path, content_hash, chunk_index, line_start, line_end,
+                 content, language)
+             VALUES ($1, $2, $3, 'hash-1', 0, 1, 1, 'pub fn indexed() {}', 'rust')",
             &[&row_uuid(project_id, "chunk"), &project_uuid, &FILE_PATH],
         )
         .expect("insert content chunk");
         conn.execute(
-            "INSERT INTO code_imports (project_id, source_file, target_module)
-             VALUES ($1, $2, 'std::fmt')",
+            "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+             VALUES ($1, $2, 'hash-1', 'std::fmt')",
             &[&project_uuid, &FILE_PATH],
         )
         .expect("insert import");
         conn.execute(
             "INSERT INTO code_calls
                 (project_id, caller_symbol_id, callee_symbol_id, callee_name,
-                 callee_target_kind, callee_external_module, file_path, line)
-             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 1)",
+                 callee_target_kind, callee_external_module, file_path, content_hash, line)
+             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 'hash-1', 1)",
             &[&project_uuid, &row_uuid(project_id, "symbol"), &FILE_PATH],
         )
         .expect("insert call");
@@ -358,10 +393,14 @@ mod serial_db {
             + count_rows(conn, "code_calls", project_id)
     }
 
-    fn indexed_project_count(conn: &mut Client, project_id: &str) -> i64 {
+    fn indexed_project_state_count(conn: &mut Client, project_id: &str) -> i64 {
+        let machine_id = uuid_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
         conn.query_one(
-            "SELECT COUNT(*)::BIGINT FROM code_indexed_projects WHERE id = $1",
-            &[&uuid_param(project_id)],
+            "SELECT COUNT(*)::BIGINT FROM code_indexed_project_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_id, &uuid_param(project_id)],
         )
         .expect("count indexed project rows")
         .get(0)
@@ -378,6 +417,14 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = uuid_param(project_id);
+        conn.execute(
+            "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_calls
              WHERE project_id = $1
