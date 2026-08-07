@@ -383,13 +383,21 @@ mixed-generation state.
 Reader atomicity is part of the protocol, not an aspiration. `publication.rs`
 exports the generation lock as a public gwiki primitive so every retrieval
 reader can take it in shared mode and observe exactly one generation across
-pages, projections, catalog, and manifest. Two policies make that hold in the
-crash window: a reader that acquires the shared lock while the publication
-journal is dirty (writer died, lock released, swaps incomplete) runs the same
-journaled recovery before serving — or fails loudly with the recovery error,
-never serves a half-swapped tree — and lock acquisition uses a bounded timeout
-with a documented, non-blocking failure mode. 2.1 owns the primitive, the
-journal, and the recovery policy; adoption by the concrete reader entrypoints
+pages, projections, catalog, and manifest. Three policies make that hold in the
+crash window. Lock modes are explicit: recovery mutates the published tree, so a
+reader that finds a dirty journal (writer died, lock released, swaps incomplete)
+while holding the lock in shared mode releases shared ownership, acquires it
+exclusively, rechecks the journal — another process may have recovered first —
+runs recovery, then downgrades to shared before serving, or fails loudly with the
+recovery error; recovery never runs under shared ownership and a half-swapped
+tree is never served. Guard ownership is explicit: every lock-protected
+operation exists as a public entrypoint that acquires the lock and an internal
+form that takes an already-held guard, so the writer — which holds exclusive
+ownership through staged catalog completion — invokes the guarded form and no
+in-generation call path re-enters the lock against itself. Lock acquisition uses
+a bounded timeout with a documented, non-blocking failure mode. 2.1 owns the
+primitive, the journal, the guard type, and the recovery policy; adoption by the
+concrete reader entrypoints
 (`wiki_read`, `wiki_search`) is owned by 6.1 and catalog readers by 3.4, so no
 two leaves edit the same reader file.
 
@@ -398,9 +406,13 @@ independently refreshed BM25/semantic store (`crates/gwiki/src/search/`,
 `store/`), not from the published tree, so no filesystem lock can make it
 atomic with publication. The contract is stated rather than pretended: index
 rows are a projection of some committed generation; results are filtered at read
-time against the committed manifest, so a hit whose path is absent from the
-committed generation is dropped instead of served as a dangling result; and
-pages published since the last refresh stay invisible to search until reindex —
+time against the committed manifest for engine-owned generated paths only — the
+manifest describes the generated `code/**` set and nothing else, so curated
+`knowledge/**`, rendered source pages, and catalog-owned indexes keep their own
+lifecycles and are never subject to generation-membership filtering — which
+means a generated hit absent from the committed generation is dropped instead of
+served as a dangling result; and generated pages published since the last
+refresh stay invisible to search until reindex —
 bounded staleness, never mixed-generation content. The read-time filter and its
 tests are owned by 6.1; triggering the post-publication index refresh is
 orchestration and stays deferred to #19665 (D2).
@@ -425,9 +437,11 @@ orchestration and stays deferred to #19665 (D2).
   during catalog refresh) leaves either the old or the new generation fully
   observable, never a mix. test: `crates/gwiki/tests/code_wiki_publication.rs::interrupted_publication_recovers`.
 - 2.1.6 - A shared-mode reader at each publication stage observes exactly one
-  generation across pages, projections, catalog, and manifest; a reader entering
-  the crash window with a dirty journal recovers before serving or fails loudly,
-  never serving a half-swapped tree, and lock acquisition honors its bounded
+  generation across pages, projections, catalog, and manifest; two readers
+  entering the crash window with a dirty journal recover exactly once under
+  exclusive ownership and both serve the recovered generation (or fail loudly),
+  never a half-swapped tree; a guarded operation invoked from inside the writer's
+  transaction never re-acquires the lock; and lock acquisition honors its bounded
   timeout. test: `crates/gwiki/tests/code_wiki_publication.rs::concurrent_reader_single_generation`.
 - 2.1.7 - An existing manifest with an unsupported `schema_version` or
   unparseable content triggers the documented full-identity cold-rebuild path;
@@ -462,16 +476,27 @@ vault-free and unit-testable. Classify a change set into
   rationale comments changed, also re-render the insights rationale section.
 - `PARTIAL`: symbol changes confined to existing modules — regenerate those module
   pages, plus landing facts and any concept/tour/insights page whose
-  `source_files` intersect the change set; when call/import edges changed, also
-  regenerate the graph projection.
+  `source_files` intersect the change set; when the graph-projection input digest
+  changed, also regenerate the graph projection.
 - `ARCHITECTURE`: module membership or layer assignment changed — detected by
   comparing the prior and current membership fingerprints, so a pure membership
-  shift with no file edits still classifies — additionally regenerate
-  `layers.md`, affected concept pages, and the graph projection.
+  shift with no file edits still classifies — additionally regenerate the
+  **architecture set**: `layers.md`, `layers.json`, affected concept pages,
+  tours, and the graph projection. That named set is the single definition;
+  2.2.1, 2.2.5, and 6.2.3 assert against it verbatim.
 - `FULL`: manifest schema, template/render version, or engine version changed.
 - Knowledge-only changes (knowledge/catalog digest moved, no indexed files):
   regenerate the graph projection, insights, and catalog cross-namespace
   aliasing; code pages are untouched.
+
+The graph projection is invalidated by a digest of its own serialized surface
+rather than by edges alone: the **graph-projection input digest** covers every
+field 5.1 emits — node identity, kind, slug, layer assignment, node summary,
+key-symbol membership, cross-namespace alias pairs, and the edge set with its
+evidence spans — and is persisted in the build manifest. A change that leaves
+call/import edges identical while moving a symbol summary, a key-symbol set, a
+layer assignment, or an alias pair therefore still regenerates
+`outputs/graph.json`.
 
 The complete artifact-by-input dependency matrix (which inputs invalidate each
 page class, `layers.json`, the graph projection, and insights) is documented in
@@ -544,10 +569,13 @@ defined in terms of these keys.
   only after verified output; the unavailable→available capability transition
   is covered. test: `crates/gwiki/tests/code_wiki_invalidation.rs::degraded_artifacts_reselected_until_repaired`.
 - 2.2.5 - The artifact-by-input matrix is enforced: PARTIAL edge changes
-  regenerate the graph projection, COSMETIC tagged-comment changes re-render
-  insights rationale, knowledge-only changes regenerate graph, insights, and
-  aliasing, and a membership-fingerprint change with no file edits classifies
-  ARCHITECTURE and selects the full architecture set.
+  regenerate the graph projection, a node-field change with identical
+  call/import edges (symbol summary, key-symbol membership, layer assignment,
+  alias pair) moves the graph-projection input digest and regenerates it too,
+  COSMETIC tagged-comment changes re-render insights rationale, knowledge-only
+  changes regenerate graph, insights, and aliasing, and a membership-fingerprint
+  change with no file edits classifies ARCHITECTURE and selects exactly the
+  architecture set named in 2.2.
   test: `crates/gwiki/tests/code_wiki_invalidation.rs::input_matrix_selects_all_stale_artifacts`.
 - 2.2.6 - Selection and execution share one resolved execution snapshot: a
   route, profile, provider/model, daemon-lane, or prompt/schema mutation applied
@@ -629,6 +657,8 @@ Targets:
 - `crates/gwiki/src/sources/manifest.rs::*` — scope-reason: segment persistence and tombstoning span `SourceManifest::read`, the `register*` constructors, and `SourceManifest::remove`
 - `crates/gwiki/src/sources/render.rs::*` — scope-reason: rendered source pages gain stable segment anchors so segment citations resolve on the existing read surface
 - `crates/gwiki/src/citations.rs::*` — scope-reason: the unified citation shape spans `render_citations`, `source_records_for_paths`, and every `render_source_citation*` helper
+- `crates/gwiki/src/commands/sources.rs::execute_remove`
+- `crates/gwiki/src/ingest/session_archive.rs::remove_session_page`
 - `crates/gwiki/tests/wiki_sources.rs`
 
 Epic #19664 owns stable identities for external sources and extracted
@@ -660,6 +690,20 @@ dependent artifacts and their `degraded_sources` attribution. No migration path
 exists: pre-0.5, no segment state has shipped, and existing manifest entries
 gain their `source_id` on first read.
 
+Removal has two live callers and both migrate here, because a tombstone changes
+what they observe: `commands/sources.rs::execute_remove` deletes the raw source
+and asset files and rolls back the manifest when indexing fails, and
+`ingest/session_archive.rs::remove_session_page` performs latest-wins
+replacement of a session's page through `SourceManifest::remove_with_cleanup`.
+A tombstone is manifest state only — rendered pages, raw sources, and assets are
+still deleted; tombstoned entries are excluded from listing, compile selection,
+reindexing, and the latest-wins presence check, so replacement never accumulates
+duplicate live entries; and rollback restores the pre-removal record by clearing
+the tombstone. Identity fields are populated through one canonical
+`SourceRecord` constructor, and every struct literal in the crate — production
+and test fixture alike — moves to it in this leaf rather than hand-initializing
+identity.
+
 Boundary: extraction execution, retries, progress, daemon/UI ingestion, and
 surfacing segments as independent `wiki_search` hits stay with #19671 (D1) —
 that epic creates segments in the first place, and this leaf hands it the model,
@@ -675,7 +719,10 @@ the tombstone contract, and the degradation derivation to wire into.
 - 2.5.2 - Removing a source through the existing manifest path writes a
   tombstone instead of dropping the entry, and the derivation returns exactly
   the dependent artifacts plus their `degraded_sources` attribution; no citation
-  into a removed source dangles.
+  into a removed source dangles. Both live callers keep their contracts: the CLI
+  removal path still deletes files and its index-failure rollback restores the
+  live record, and latest-wins session replacement leaves exactly one live entry
+  with the tombstone excluded from listing, selection, and reindexing.
   test: `crates/gwiki/tests/wiki_sources.rs::deletion_tombstones_and_degrades`.
 - 2.5.3 - A segment citation rendered through the unified `Citation` shape
   resolves to its anchor on the rendered source page via the existing read
@@ -810,8 +857,18 @@ Catalog reads join the publication contract here: `regenerate` and the catalog
 readers take 2.1's generation lock in shared mode (the catalog's own
 `_gwiki/index.lock` keeps its documented order relative to it), so a catalog
 read concurrent with a publication observes one generation rather than a
-half-swapped code tree. 2.1 owns the primitive; this leaf is the only editor of
-the catalog files, so adoption lands here.
+half-swapped code tree. `regenerate` splits into a public entrypoint that
+acquires the lock and an internal form taking 2.1's already-held guard, because
+publication completes the staged catalog while holding exclusive ownership —
+the writer calls the guarded form and never re-enters the lock. 2.1 owns the
+primitive; this leaf is the only editor of the catalog files, so adoption lands
+here.
+
+Catalog page writes replace files atomically (`sources::atomic::write_atomic`,
+already in the crate) instead of the current truncate-then-write `fs::write`.
+The vault-root `_index.md` is read outside the generation lock by the Python
+session-start injector (6.1), so atomic replacement is what makes that read
+observe one complete index rather than a truncated file mid-regeneration.
 
 Installed navigation moves with the taxonomy: `AI_README_TEMPLATE` in `vault.rs`
 is rewritten to describe the Landing / Layers / Modules / Concepts / Tours /
@@ -831,8 +888,11 @@ written only where the file is absent, matching current vault-init behavior.
 - 3.4.4 - A fresh vault init writes the new-taxonomy agent guide; an existing
   user-edited guide is left untouched. symbol: `AI_README_TEMPLATE`.
 - 3.4.5 - A catalog read concurrent with each publication stage takes the shared
-  generation lock and observes one generation; the documented lock order with
-  `_gwiki/index.lock` is exercised without deadlock.
+  generation lock and observes one generation; regeneration invoked from inside
+  a publication runs through the guarded form without re-acquiring the lock; the
+  documented lock order with `_gwiki/index.lock` is exercised without deadlock;
+  and a reader of the vault-root `_index.md` concurrent with regeneration always
+  reads one complete index, never a truncated one.
   test: `crates/gwiki/src/catalog/regenerate.rs::catalog_reads_are_generation_consistent`.
 
 ### 3.5 Render the six deterministic projection pages [category: code] (depends: P2, 3.4)
@@ -882,8 +942,10 @@ The LLM naming pass over 2.4's deterministic membership (bakeoff C5/C9 —
 confirmed across two competitors): daemon-routed, labels each cluster from
 member purposes (e.g., `monitoring-and-detection`, not `src/agents/tmux`).
 Names cache in the build manifest's `layer_names` state and `layers.json` so
-regeneration without AI reuses them; renaming occurs only when membership
-changes beyond a threshold (ARCHITECTURE class). Naming rewrites the 3.2
+regeneration without AI reuses them; cached names are reused whenever the 2.4
+membership fingerprint is unchanged and regenerate exactly when it changes (the
+ARCHITECTURE class) — the fingerprint is the only naming invalidator, and no
+threshold or similarity test sits between them. Naming rewrites the 3.2
 provisional cold-start names. Output feeds concept pages (4.2), layer names
 (3.2), and tours (4.3).
 
@@ -964,6 +1026,7 @@ Targets:
 - `crates/gwiki/src/commands/graph.rs::*` — scope-reason: the live `gwiki graph` producer is rewired to re-export the committed projection
 - `crates/gwiki/src/exports/graph.rs::*` — scope-reason: the GraphExport schema extension touches serialization, node/edge builders, and every consumer renderer in this file
 - `crates/gwiki/src/exports/tests.rs::*` — scope-reason: every export test asserts the extended schema
+- `crates/gwiki/tests/fixtures/graph_export_schema.json`
 - `crates/gwiki/tests/code_wiki_graph_projection.rs`
 
 `outputs/graph.json` has one owner: the existing export pipeline. The
@@ -991,7 +1054,14 @@ independently rebuilding `outputs/graph.json`, so the path keeps exactly one
 semantic producer. `graph_projection.rs` builds the typed graph from the build
 manifest, FactsBundle, and catalog; existing consumers (JSON-LD/llms
 renderers, export tests) migrate in this leaf, and the #18869 web reader
-adapts in its own task against a committed schema fixture this leaf publishes.
+adapts in its own task against the committed schema fixture this leaf publishes
+at `crates/gwiki/tests/fixtures/graph_export_schema.json` — regenerated
+byte-identically by the `GraphExport` serializer from a representative
+cross-namespace graph and carrying the schema version #18869 consumes.
+
+This leaf also emits the graph-projection input digest 2.2 keys invalidation on:
+the digest covers exactly the fields serialized below, so the producer and the
+selector cannot drift apart.
 
 Extended schema: nodes `{id, kind: module|concept|layer|page|symbol, slug,
 layer, summary}` spanning both namespaces (code pages from the build manifest,
@@ -1015,8 +1085,10 @@ whole-project graph query at request time.
 - 5.1.2 - `outputs/graph.json` has exactly one semantic producer — the
   `gwiki graph` command re-exports the committed projection; existing export
   consumers (JSON-LD, llms indexes, export tests) render from the extended
-  schema; every file this leaf touches is below 1,000 lines; a schema fixture
-  for #18869 is committed. test: `crates/gwiki/src/exports/tests.rs::extended_schema_serves_all_consumers`.
+  schema; every file this leaf touches is below 1,000 lines; and
+  `crates/gwiki/tests/fixtures/graph_export_schema.json` is committed and
+  regenerated byte-identically by the serializer.
+  test: `crates/gwiki/src/exports/tests.rs::extended_schema_serves_all_consumers`.
 
 ### 5.2 Render the insight report [category: code] (depends: 5.1)
 `kind: deliverable`
@@ -1031,7 +1103,11 @@ boundary in Constraints applies):
 
 - **God nodes** — top modules/symbols by in+out degree with counts and wikilinks.
 - **Surprising connections** — cross-layer edges ranked by unexpectedness
-  (edges whose endpoints share no layer/cluster), each cited.
+  (edges whose endpoints share no layer/cluster), each cited. The section draws
+  only on `extracted` edges, which carry resolvable evidence spans; `inferred`
+  edges (clustering- or alias-derived) hold a derivation source rather than a
+  file span, so they are excluded here instead of being cited with fabricated
+  evidence.
 - **Design rationale** — rendered from the typed tagged-comment spans
   (`NOTE:`/`WHY:`/`HACK:`) carried by the FactsBundle (D6), as cited items
   grouped by module.
@@ -1044,7 +1120,9 @@ AI pass (daemon-routed, grounded in existing pages).
 **Acceptance:**
 
 - 5.2.1 - Insights page renders all four sections with citations; deterministic
-  sections are byte-stable across runs. test: `crates/gwiki/tests/code_wiki_insights.rs::insights_sections_render`.
+  sections are byte-stable across runs; an inferred cross-layer edge is excluded
+  from surprising connections rather than cited.
+  test: `crates/gwiki/tests/code_wiki_insights.rs::insights_sections_render`.
 - 5.2.2 - Rationale renders the FactsBundle's tagged-comment spans with exact
   `[path:line]` citations; a test proves the renderer performs no direct
   source or index access. test: `crates/gwiki/tests/code_wiki_insights.rs::rationale_extraction_cited`.
@@ -1103,8 +1181,13 @@ preference. `render_overview` surfaces orientation entry points (landing, tours,
 insights) inside the existing 2,000-char budget. Session injection reads the
 catalog-owned vault-root `_index.md` through `load_wiki_overview`; this leaf
 owns proving that seam with an integration test that renders the root index via
-`render_overview` and passes it through `load_wiki_overview`. `load_wiki_overview`
-needs no behavior change — adjust only if the block layout changed.
+`render_overview` and passes it through `load_wiki_overview`. That Python reader
+stays outside the generation lock by design: it opens one catalog-owned file and
+extracts a single block, so it cannot observe a mixed-generation join, and 3.4's
+atomic replacement guarantees it reads a complete index rather than a truncated
+one. Its bounded staleness — the prior generation's overview until the catalog
+commits — is the accepted behavior, and `load_wiki_overview` needs no behavior
+change beyond that guarantee.
 
 This leaf also makes the two concrete retrieval entrypoints honor 2.1's
 publication contract, since neither takes any lock today. `wiki_read` acquires
@@ -1113,9 +1196,13 @@ the generation lock in shared mode across path resolution and read, and
 timeout and dirty-journal policy. Because search candidates come from the
 independently refreshed BM25/semantic store rather than the published tree, the
 lock alone cannot make search generation-consistent: search additionally filters
-results against the committed build manifest, dropping hits whose paths are
-absent from the committed generation instead of serving dangling results.
-Missing-until-reindex staleness is the accepted, documented behavior; scheduling
+results against the committed build manifest. That filter applies only to
+engine-owned generated paths, decided by one `is_engine_owned_generated_path`
+predicate this leaf defines and 3.4's catalog ownership check shares — a stale
+generated hit is dropped, while curated `knowledge/**`, rendered source pages,
+`code/INDEX.md`, and `_context.md` files stay visible under their own
+lifecycles, since the build manifest never described them. Missing-until-reindex
+staleness for generated pages is the accepted, documented behavior; scheduling
 the refresh is #19665's (D2).
 
 **Acceptance:**
@@ -1126,16 +1213,20 @@ the refresh is #19665's (D2).
   normalized-body fallback, across backends and output formats. test: `crates/gwiki/tests/code_wiki_summaries.rs::search_snippets_prefer_summary`.
 - 6.1.3 - Rendering the catalog root index and passing it through
   `load_wiki_overview` yields a ≤2,000-char overview block with orientation
-  entry points. test: `tests/hooks/test_wiki_overview_injection.py`.
+  entry points, and a read concurrent with catalog regeneration returns either
+  the prior or the new complete block, never a partial one.
+  test: `tests/hooks/test_wiki_overview_injection.py`.
 - 6.1.4 - `wiki_read` and `wiki_search` acquire the shared generation lock and
   observe one generation across every publication stage, including the
   dirty-journal window before recovery; the bounded timeout surfaces its
   documented failure instead of hanging.
   test: `crates/gwiki/tests/code_wiki_reader_generation.rs::readers_observe_single_generation`.
-- 6.1.5 - Search results are filtered to the committed generation: a hit whose
-  path is absent from the committed manifest is dropped rather than served, a
-  page published since the last index refresh is simply missing (never
-  half-rendered), and no snippet mixes generations.
+- 6.1.5 - Search results are filtered to the committed generation for
+  engine-owned generated paths only: a generated hit absent from the committed
+  manifest is dropped rather than served, a generated page published since the
+  last index refresh is simply missing (never half-rendered), no snippet mixes
+  generations, and current `knowledge/**`, source-page, `code/INDEX.md`, and
+  `_context.md` hits survive the filter unchanged across both search backends.
   test: `crates/gwiki/tests/code_wiki_reader_generation.rs::search_results_match_committed_generation`.
 
 ### 6.2 Assemble the engine entrypoint [category: code] (depends: 2.2, 2.3, 2.4, 2.5, P3, P4, P5)
@@ -1177,8 +1268,8 @@ and graph regeneration. Daemon and CLI adapter wiring stays deferred to #19665
 - 6.2.2 - An unsupported `FACTS_VERSION` is rejected before any side effect —
   writer, cache, and AI spies observe zero activity. test: `crates/gwiki/tests/code_wiki_engine.rs::facts_version_preflight_no_side_effects`.
 - 6.2.3 - A run whose only change is cluster membership (no file edits)
-  classifies ARCHITECTURE through the engine and regenerates the complete
-  architecture set — `layers.md`, `layers.json`, affected concept pages, tours,
+  classifies ARCHITECTURE through the engine and regenerates the architecture
+  set named in 2.2 — `layers.md`, `layers.json`, affected concept pages, tours,
   and the graph projection — proving membership is computed before selection.
   test: `crates/gwiki/tests/code_wiki_engine.rs::membership_change_selects_architecture_set`.
 
@@ -1224,7 +1315,8 @@ isolated temporary vault (never the production vault):
 - 7.1.8 - `wiki_search`, `wiki_read`, and the graph projection work over the
   new layout; root index cross-links same-slug concepts across namespaces; and a
   regeneration concurrent with all three surfaces yields one generation
-  everywhere, with search returning no path absent from the committed manifest. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::retrieval_over_new_layout`.
+  everywhere, with search returning no engine-owned generated path absent from
+  the committed manifest while curated and catalog-owned hits stay visible. test: `crates/gwiki/tests/code_wiki_end_to_end.rs::retrieval_over_new_layout`.
 - 7.1.9 - Production vault byte-untouched throughout (checksum before/after).
   test: `crates/gwiki/tests/code_wiki_end_to_end.rs::production_vault_untouched`.
 
@@ -1331,6 +1423,60 @@ deferral:
 `kind: verification`
 
 <!-- Rounds appended by enhancement/adversary phases. -->
+
+**Round 4** `kind: verification`
+
+- reviewer_run: 4ace8dc4-16a4-4802-9c89-23f1077cf842
+- reviewer_session: #10273 (56ce2bf2-384f-4cc5-886c-a9c60da93abc, codex/gpt-5.6-sol)
+- verdict: needs_review
+- findings:
+- F47/blocking/generation lock mode transition and guard ownership — accepted
+- F48/blocking/search visibility filter spans non-generated namespaces — accepted
+- F49/blocking/session-overview reader outside the publication boundary — accepted
+- F50/blocking/layer-naming threshold contradicts fingerprint keying — accepted
+- F51/blocking/ARCHITECTURE artifact set differs between 2.2 and 6.2.3 — accepted
+- F52/blocking/graph regeneration keyed on edges alone — accepted
+- F53/blocking/inferred edges cannot satisfy the citation contract — accepted
+- F54/blocking/source-model change misses live removal callers — accepted
+- F55/blocking/#18869 schema fixture has no target path — accepted
+- resolution_notes: All nine findings verified against the repository and
+  accepted; five are regressions from round-3 repairs (F43, F44, F35, F37) and
+  two trace to rounds 1–2 (F8, F16, F23, F29). The generation lock gained an
+  explicit mode-transition and guard-ownership protocol: a dirty reader releases
+  shared ownership, takes the lock exclusively, rechecks, recovers, then
+  downgrades, and every lock-protected operation has a public acquiring form
+  plus an internal guarded form so the writer's own catalog completion cannot
+  re-enter the lock (F47; 2.1.6, 3.4.5). The committed-generation search filter
+  now applies only to engine-owned generated paths through one shared
+  `is_engine_owned_generated_path` predicate — the build manifest never
+  described `knowledge/**`, source pages, or catalog indexes, so filtering them
+  would have deleted valid hits (F48; 6.1.5, 7.1.8). The Python session-overview
+  reader stays outside the lock by design (it joins nothing), and 3.4 switches
+  catalog page writes from truncating `fs::write` to the crate's existing
+  `write_atomic`, which is what makes that out-of-lock read complete rather than
+  torn (F49; 3.4.5, 6.1.3). 4.1's undefined rename threshold was deleted in
+  favor of the exact 2.4 membership fingerprint 2.2 and 3.2 already key on
+  (F50). ARCHITECTURE now names one **architecture set** in 2.2 —
+  `layers.md`, `layers.json`, affected concept pages, tours, graph projection —
+  that 2.2.1, 2.2.5, and 6.2.3 assert verbatim (F51). Graph invalidation moved
+  off call/import edges onto a graph-projection input digest covering every
+  field 5.1 serializes, emitted by 5.1 itself so producer and selector cannot
+  drift (F52; 2.2.5). Surprising connections draw only on `extracted` edges,
+  since `inferred` edges carry a derivation source rather than a resolvable span
+  (F53; 5.2.1). 2.5 picked up its two live removal callers —
+  `commands/sources.rs::execute_remove` and
+  `ingest/session_archive.rs::remove_session_page` — plus tombstone visibility
+  rules (files still deleted, tombstones excluded from listing, selection,
+  reindexing, and the latest-wins presence check, rollback clears the tombstone)
+  and a canonical `SourceRecord` constructor for the crate's struct literals
+  (F54; 2.5.2). 5.1 binds the #18869 handoff to a concrete path,
+  `crates/gwiki/tests/fixtures/graph_export_schema.json`, in both Targets and
+  5.1.2 (F55). No new acceptance items were required; eight existing items were
+  tightened, so the coverage ledger changed only its plan hash.
+
+```json plan-review-round
+{"evidence_id":"35ad3ab6-c9a2-421c-ae4a-a6a6a6eb8fae","plan_hash":"33261299beab48d50f17f424ddc9201430ecd10bd54e96a82362e96f97c0853c","round_number":4,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"70c07aca42578655683df41036840635d687d4d4de43c986170e99cdb79484fc","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":7,"emitted_findings":9,"total":16},"evidence_id":"35ad3ab6-c9a2-421c-ae4a-a6a6a6eb8fae","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":9,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":21,"manifest_digest":"bcc64c5e49740334060fb0176e1ac2ec30e4bc87ae380b4c4b6eebf086ccaf5e","status":"valid"},"source_digest":"c7b1f6130f686cd30f7c77fbf51e470205857b5e415978788f8872c40cb102f7","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"F43","causal_section_ids":["2.1","3.4","6.1"],"check_key":"generation-lock-mode-transition","description":"Section 2.1 says a reader first acquires the generation lock in shared mode and then runs journal recovery when it finds a dirty journal, even though recovery mutates the published tree. Section 3.4 separately requires `regenerate` to acquire that lock in shared mode, while 2.1 holds the exclusive writer lock through staged catalog completion. The stated protocol therefore permits two shared readers to race recovery and makes the writer recursively acquire the same lock through catalog regeneration, which can self-deadlock or time out.","finding_id":"F47","fix":"Define a guard-aware protocol. A dirty reader must release shared ownership, acquire exclusive ownership, recheck and recover, then downgrade or reacquire shared before serving. Split catalog regeneration into a public lock-acquiring wrapper and an internal function that accepts the writer's existing exclusive guard. Add two-dirty-reader recovery, writer-through-catalog, and `_gwiki/index.lock` order tests.","introduced_in_round":3,"location":"P2/P3/P6 / §§ 2.1, 3.4, and 6.1 generation-lock protocol","prevention":"For every lock-protected entrypoint, trace clean read, dirty recovery, nested writer calls, upgrades, downgrades, and secondary-lock ordering with concurrent tests.","principle":"Mutating recovery and nested generation work must have an explicit lock mode and guard-ownership contract.","root_cause":"The F43 repair added shared-lock reader adoption and dirty-journal recovery without separating lock-acquiring public entrypoints from mutation-capable, guard-aware internal operations.","section_id":"2.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F44","causal_section_ids":["2.1","3.4","6.1","7.1"],"check_key":"search-visibility-namespace-filter","description":"Section 6.1.5 drops any search hit whose path is absent from the committed build manifest. That manifest records engine-owned generated code pages, while the plan preserves unified retrieval across curated `knowledge/**`, rendered sources, the catalog-owned root and `code/INDEX.md`, and `_context.md` files. Applying the rule as written removes valid non-engine results from `wiki_search`; the current search entrypoint is vault-wide and has no manifest-namespace restriction to prevent that.","finding_id":"F48","fix":"Define one `is_engine_owned_generated_path` predicate shared with catalog ownership. Apply build-manifest membership filtering only to those paths, and explicitly admit curated knowledge, source pages, root/catalog indexes, and context pages under their own lifecycle rules. Add stale generated-code, current knowledge, source, catalog, and context result cases across both search backends.","introduced_in_round":3,"location":"P2/P3/P6/P7 / §§ 2.1, 3.4, 6.1.5, and 7.1 retrieval","prevention":"For every visibility filter, enumerate all search namespaces and classify each as generation-owned, catalog-owned, curated, or external before defining inclusion rules.","principle":"A generation-membership filter may reject only paths owned by the generation manifest that defines that membership.","root_cause":"The F44 repair converted the search commit boundary into an unqualified build-manifest membership filter even though the build manifest owns only generated code-wiki artifacts.","section_id":"6.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"F43","causal_section_ids":["2.1","3.4","6.1"],"check_key":"session-overview-generation-lock","description":"`load_wiki_overview` directly opens the catalog-owned vault-root `_index.md`, and the plan targets that function while saying it needs no behavior change. The writer holds exclusive ownership through staged catalog completion, but 6.1.4 gives shared-lock adoption only to `wiki_read` and `wiki_search`. Session startup can therefore read the root index outside the generation lock during publication or before dirty-journal recovery, contradicting the all-reader atomicity contract.","finding_id":"F49","fix":"Route `load_wiki_overview` through a generation-aware gwiki read operation, or implement the same bounded shared-lock and dirty-journal recovery protocol in the Python reader. Extend `tests/hooks/test_wiki_overview_injection.py` with publication-stage, dirty-journal, timeout, and recovery-error cases rather than testing only block layout and size.","introduced_in_round":3,"location":"P3/P6 / §§ 3.4 root-index ownership and 6.1 session injection","prevention":"Inventory direct file readers by artifact path across language boundaries, not only command entrypoints, and exercise each during publication and dirty-journal recovery.","principle":"Every direct reader of a transactionally published artifact must participate in the same read/recovery boundary.","root_cause":"The F43 repair assigned lock adoption to Rust `wiki_read`, `wiki_search`, and catalog readers but retained the Python session overview's direct filesystem read as behavior-preserving.","section_id":"6.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F23","causal_section_ids":["2.2","3.2","4.1"],"check_key":"layer-name-membership-transition-parity","description":"Section 2.2 keys cluster/layer names on the exact 2.4 membership fingerprint and says nothing else renames stable membership; section 3.2 reuses cached names only when that fingerprint is unchanged. Section 4.1 instead says renaming occurs only when membership changes beyond an unspecified threshold. A below-threshold membership change must therefore both miss the exact cache key and preserve the old name, leaving selection, persisted `layer_names`, and `layers.json` without a coherent outcome.","finding_id":"F50","fix":"Choose one contract. Prefer exact fingerprint change as the deterministic naming invalidator and remove the threshold language, or define separate exact membership and deterministic naming-equivalence states with a specified threshold and persisted digest. Add unchanged, below-boundary, at-boundary, and above-boundary cache/rename tests.","introduced_in_round":2,"location":"P2-P4 / §§ 2.2, 3.2, and 4.1 layer naming","prevention":"State every transition predicate once and reuse it in cache keys, invalidation classes, warm reuse, rendering, and boundary tests.","principle":"Cache identity, reuse, and regeneration must use one deterministic predicate for the same state transition.","root_cause":"The F23 repair made the exact membership fingerprint the naming cache's exact and only semantic invalidator but retained 4.1's older undefined beyond-threshold rename rule.","section_id":"4.1","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F35","causal_section_ids":["2.2","4.3","6.2"],"check_key":"architecture-regeneration-set-parity","description":"Section 2.2 defines ARCHITECTURE as regenerating `layers.md`, affected concept pages, and the graph projection. Section 6.2.3 defines the complete membership-only set as `layers.md`, `layers.json`, affected concept pages, tours, and the graph projection. Because 2.2.1 claims the exact set defined in 2.2 and 2.2.5 only says “full architecture set,” the selector can satisfy its own leaf while omitting `layers.json` and tours required by the engine.","finding_id":"F51","fix":"Define one named ARCHITECTURE artifact set in 2.2 that explicitly includes `layers.md`, `layers.json`, affected concept pages, tours, and graph projection; make 2.2.1, 2.2.5, and 6.2.3 reference it verbatim. Test both membership-only and layer-assignment-only changes against exact artifact IDs.","introduced_in_round":3,"location":"P2/P6 / §§ 2.2.1, 2.2.5, and 6.2.3","prevention":"Maintain one canonical artifact-by-input matrix and reference its named set from classification prose, focused tests, and engine-level tests.","principle":"A change class must name one complete artifact set at every selector and engine acceptance boundary.","root_cause":"The F35 repair added the complete membership-only architecture set to 6.2.3 but did not update 2.2's normative ARCHITECTURE rule or its exact-set acceptance.","section_id":"2.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F8","causal_section_ids":["2.2","5.1"],"check_key":"graph-node-field-invalidation","description":"Section 5.1 serializes module, concept, layer, page, and symbol nodes with slugs, layers, and summaries. Section 2.2 nevertheless regenerates the graph on a PARTIAL change only when call/import edges changed. A symbol fact, key-symbol set, page summary, or other projected node-field change can keep the call/import edges identical and leave `outputs/graph.json` stale; 2.2.5 covers only the edge-change case.","finding_id":"F52","fix":"Define and persist a graph-projection input digest covering every serialized node and edge field and select graph regeneration whenever it changes. Extend 2.2.5 with unchanged-edge cases for symbol membership, node summary, layer assignment, alias metadata, and every other projected field.","introduced_in_round":1,"location":"P2/P5 / §§ 2.2 classification and 5.1 GraphExport schema","prevention":"Derive invalidation from the complete serializer field-to-input matrix and test one stable-edge change for every node and edge field.","principle":"Every serialized graph field must be invalidated by every input that can change its bytes, not only by edge-set changes.","root_cause":"The F8 repair tied PARTIAL graph regeneration to call/import edge changes while the later graph schema also serializes symbol nodes and node summaries.","section_id":"2.2","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"F16","causal_section_ids":["5.1","5.2"],"check_key":"inferred-edge-citation-resolution","description":"The plan-wide grounding rule requires every generated claim to trace to a resolvable path citation, and 5.2 requires every surprising cross-layer connection to be cited. Section 5.1 permits inferred clustering and alias edges to carry only a cluster id or alias pair and explicitly forbids fabricated file spans. An inferred edge selected as surprising therefore has no evidence shape that can satisfy 5.2's citation requirement.","finding_id":"F53","fix":"Either restrict the cited surprising-connections section to extracted edges with resolvable evidence spans, or extend inferred edges with deterministic supporting repository or source citations while preserving the inference label. Add an inferred cross-layer fixture that renders and resolves its evidence end to end.","introduced_in_round":1,"location":"Constraints and P5 / §§ 5.1-5.2 graph evidence","prevention":"For each consumer-required citation, round-trip every producer confidence/evidence variant through rendering and resolution before accepting the schema.","principle":"An output required to be cited may consume only evidence shapes that can resolve under the plan's citation contract.","root_cause":"The F16 repair distinguished inferred graph edges by storing only a cluster-id or alias-pair derivation while retaining the requirement that every surprising connection is cited with resolvable evidence.","section_id":"5.2","severity":"blocking"},{"category":"traceability","causal_finding_id":"F37","causal_section_ids":["2.5"],"check_key":"source-model-live-caller-blast-radius","description":"Section 2.5 adds a required `source_id` and tombstone state to `SourceRecord` and changes `SourceManifest::remove` from hard deletion to retention, but its targets omit numerous direct `SourceRecord { ... }` constructors and the live removal callers. In the current repository, `commands/sources.rs::execute_remove` and `ingest/session_archive.rs::remove_session_page` assume the record is removed and then delete files or perform rollback, while compilation, selection, citation-quality, ingest, recap, vision, and tests construct the record directly. The leaf can therefore fail to compile and can change list, reindex, cleanup, and rollback behavior despite passing its manifest-only tombstone test.","finding_id":"F54","fix":"Target and migrate every production constructor/literal to one canonical constructor or initialize the new fields explicitly. Target `commands/sources.rs`, `ingest/session_archive.rs`, and all list/read/reindex consumers; define whether tombstones are visible, indexable, file-backed, and rollbackable. Add CLI removal, archive cleanup, rollback-after-failure, list, reindex, legacy-read, and citation-resolution tests. Keep segment creation and ingestion orchestration in #19671.","introduced_in_round":3,"location":"P2 / § 2.5 SourceRecord and SourceManifest transition","prevention":"For persisted records, enumerate constructors, struct literals, serializers, list/read/index consumers, remove/rollback callers, and cleanup paths before finalizing targets.","principle":"A persisted type and state-transition change must own every constructor and live caller whose compile-time or behavioral contract changes.","root_cause":"The F37 repair retargeted 2.5 to the existing source model owners but stopped at the type, manifest, renderer, and citation modules instead of following direct `SourceRecord` construction and removal calls.","section_id":"2.5","severity":"blocking"},{"category":"traceability","causal_finding_id":"F29","causal_section_ids":["5.1"],"check_key":"graph-schema-fixture-handoff-artifact","description":"Section 5.1 says #18869 will adapt against a committed schema fixture published by this leaf, but its Targets list only Rust source/test owners and acceptance 5.1.2 names no fixture artifact. The coverage ledger mirrors that acceptance, so 5.1 can close without committing the only concrete handoff #18869 is told to consume.","finding_id":"F55","fix":"Choose the canonical checked-in fixture path, add it to 5.1 Targets, and bind that exact file to acceptance. Require the Rust GraphExport serializer to regenerate it byte-identically from a representative cross-namespace graph and record the schema version #18869 must consume.","introduced_in_round":2,"location":"P5 / § 5.1 targets and acceptance 5.1.2","prevention":"For every typed deferral or downstream consumer fixture, bind the producer task, canonical path, format/version, generation test, and consumer task in the target inventory.","principle":"A committed cross-task handoff must have one exact target path and an acceptance artifact that proves it is produced.","root_cause":"The F29 repair promised #18869 a committed schema fixture but added neither a target path nor a file-bound acceptance criterion.","section_id":"5.1","severity":"blocking"}],"reviewer_session":"#10273","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"b8f54985-47f1-493d-a08a-8b37e5211bd7"}
+```
 
 **Round 3** `kind: verification`
 
