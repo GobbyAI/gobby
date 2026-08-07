@@ -2,10 +2,14 @@ const GCODE_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE
 const GOBBY_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GOBBY_POSTGRES_TEST_DATABASE_URL";
 const DATABASE_URL_ENV: &str = "DATABASE_URL";
 const GOBBY_HOME_ENV: &str = "GOBBY_HOME";
+const GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV: &str = "GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE";
 
 pub fn postgres_test_database_url(purpose: &str) -> String {
     match postgres_test_database_url_from_sources() {
-        Ok(Some(database_url)) => database_url,
+        Ok(Some(database_url)) => {
+            ensure_code_index_schema(&database_url);
+            database_url
+        }
         Ok(None) => {
             panic!(
                 "{purpose} requires a PostgreSQL test database URL; set \
@@ -63,6 +67,62 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+/// Refuse destructive operations against databases that are not clearly
+/// disposable test databases (name ending in `_test`), unless
+/// `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` explicitly overrides the guard.
+pub fn destructive_postgres_test_allowed(database_url: &str) -> Result<(), String> {
+    if destructive_postgres_test_override_enabled() {
+        return Ok(());
+    }
+    let config = database_url
+        .parse::<postgres::Config>()
+        .map_err(|error| format!("database URL could not be parsed: {error}"))?;
+    match config.get_dbname() {
+        Some(name) if name.ends_with("_test") => Ok(()),
+        Some(name) => Err(format!("database name `{name}` does not end with `_test`")),
+        None => Err("database URL does not include a database name".to_string()),
+    }
+}
+
+pub fn destructive_postgres_test_override_enabled() -> bool {
+    std::env::var(GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV)
+        .ok()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+}
+
+/// Provision the code-index schema once per process so DB-backed tests pass
+/// from any starting database state without a manual `gcode setup --standalone`
+/// between runs. Non-`_test` databases are left untouched.
+fn ensure_code_index_schema(database_url: &str) {
+    static PROVISIONED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
+    if let Err(message) = PROVISIONED.get_or_init(|| provision_code_index_schema(database_url)) {
+        panic!("provisioning the code-index test schema failed: {message}");
+    }
+}
+
+fn provision_code_index_schema(database_url: &str) -> Result<(), String> {
+    if let Err(reason) = destructive_postgres_test_allowed(database_url) {
+        eprintln!("skipping code-index test schema provisioning: {reason}");
+        return Ok(());
+    }
+    let mut client = gobby_core::postgres::connect_readwrite(database_url)
+        .map_err(|error| format!("connect to the test database: {error:#}"))?;
+    let mut request =
+        crate::setup::StandaloneSetupRequest::new(true, Some(database_url.to_string()), None);
+    request.overwrite_code_index = true;
+    let status = crate::setup::run_standalone_setup(&request, &mut client)
+        .map_err(|error| format!("standalone setup: {error}"))?;
+    if status.failed.is_empty() {
+        return Ok(());
+    }
+    Err(status
+        .failed
+        .iter()
+        .map(|failure| format!("{}: {}", failure.name, failure.reason))
+        .collect::<Vec<_>>()
+        .join("; "))
 }
 
 #[cfg(test)]
@@ -164,6 +224,42 @@ mod tests {
                     .as_deref(),
                 Some("postgresql://bootstrap/gobby")
             );
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn destructive_postgres_guard_requires_test_database_name() {
+        temp_env::with_var(
+            GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV,
+            Option::<&str>::None,
+            || {
+                assert!(
+                    destructive_postgres_test_allowed("postgresql://localhost/gcode_test").is_ok()
+                );
+                let error = destructive_postgres_test_allowed("postgresql://localhost/gcode")
+                    .expect_err("non-test database is rejected");
+                assert!(error.contains("does not end with `_test`"));
+            },
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn destructive_postgres_guard_accepts_explicit_override_values() {
+        for value in ["1", "true", "TRUE"] {
+            temp_env::with_var(
+                GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV,
+                Some(value),
+                || {
+                    assert!(
+                        destructive_postgres_test_allowed("postgresql://localhost/gcode").is_ok()
+                    );
+                },
+            );
+        }
+        temp_env::with_var(GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV, Some("0"), || {
+            assert!(destructive_postgres_test_allowed("postgresql://localhost/gcode").is_err());
         });
     }
 }

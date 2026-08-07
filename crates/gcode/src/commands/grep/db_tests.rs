@@ -112,6 +112,11 @@ fn insert_chunk_version(
 }
 
 #[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
 fn grep_scopes_chunks_to_local_machine_file_state() {
     let database_url = crate::test_env::postgres_test_database_url("grep PostgreSQL tests");
     let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
