@@ -3,9 +3,9 @@ header:
   plan_hash: d017d79b5bc8373ac33a3fe30baf27a7a1500e22c3153d2e7072607a5a606a64
   root_task_ref: '#19664'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-07T09:03:50Z'
+  generated_at: '2026-08-07T17:40:42Z'
   task_tree_source: db
-  task_tree_source_hash: b506be533fffa53dc3b62c7539b75e4970e2daab6153cb3c8f2c5b91ff527250
+  task_tree_source_hash: d67ccd28f4aae3f43fb0a5629b5f29804962c5e7037773c9e2d2b5666a71f1e3
   evidence_summary: []
   evidence: []
 rows:
@@ -762,36 +762,36 @@ rows:
 - section_id: D1
   item_id: D1.1
   plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#19671'
 - section_id: D2
   item_id: D2.1
   plan_node_hash: 0184a39128cf3ad2b07b249a41af9cbe4b2162b7a9de55a15d8162c065d1b1cc
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#19665'
 - section_id: D3
   item_id: D3.1
   plan_node_hash: f60578f22f0e13a79cac42f3ac77fd46fd2f1b45541a973dc3606975d9733385
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#19672'
 - section_id: D4
   item_id: D4.1
   plan_node_hash: 922639241f0b5c9b42a9f68a18118b64b1066de67b0225311a55bbbe1909233a
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#18779'
 - section_id: D5
   item_id: D5.1
   plan_node_hash: e172df10dae65979738ccea541df0b6c8a13f7fe3fa9d4fc012360e6155a9591
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#18902'
 - section_id: D6
   item_id: D6.1
   plan_node_hash: 15c54aa78cc3bb9210d2af80b9166e4981edcfe08d7ffa4ee67b0d47654e1863
-  status: invalid
+  status: deferred
   leaves: []
   deferral_target: '#17678'
