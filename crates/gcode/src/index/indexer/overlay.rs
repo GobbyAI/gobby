@@ -178,6 +178,18 @@ pub(super) fn index_overlay_files(
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
         let action =
             overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
+        // Reuse an existing overlay content version instead of re-parsing;
+        // `--full` forces the re-parse escape hatch just like the primary
+        // pipeline.
+        if !request.full
+            && indexable
+            && matches!(action, OverlayReconcileAction::Index)
+            && let Some(hash) = current_hash
+            && api::adopt_file_state(conn, &machine_id, overlay_project_id, &rel, hash)?
+        {
+            outcome.skipped_files += 1;
+            continue;
+        }
         match action {
             OverlayReconcileAction::Index if ast_by_rel.contains_key(&rel) => {
                 match index_file(

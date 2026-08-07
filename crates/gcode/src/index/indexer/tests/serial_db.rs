@@ -264,6 +264,258 @@ fn indexing_adopts_existing_content_version_without_reparse() {
     assert_eq!(selector_count, 2);
 }
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn full_indexing_reparses_previously_adopted_content() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_root = tempfile::tempdir().expect("create project root");
+    let project_id = unique_test_project_id("gcode-full-reparse");
+    let first_machine_id = unique_test_project_id("gcode-full-reparse-first-machine");
+    let rel = "src/lib.rs";
+    let content = b"pub fn adopted() {}\n";
+    let absolute_path = project_root.path().join(rel);
+    std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&absolute_path, content).expect("write source file");
+    let content_hash =
+        crate::index::hasher::file_content_hash(&absolute_path).expect("hash source file");
+
+    cleanup_summary_preservation_project(&mut conn, &project_id).expect("pre-clean reparse rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+    api::upsert_project_stats(
+        &mut conn,
+        &first_machine_id,
+        &IndexedProject {
+            id: project_id.clone(),
+            root_path: "/first-machine/repo".to_string(),
+            total_files: 1,
+            total_symbols: 41,
+            last_indexed_at: String::new(),
+            index_duration_ms: 0,
+            total_eligible_files: None,
+        },
+    )
+    .expect("seed first machine project state");
+    // Seed the shared content row with wrong stats: only a real re-parse
+    // corrects them, adoption trusts them as-is.
+    let shared_file = IndexedFile {
+        id: IndexedFile::make_id(&project_id, rel, &content_hash),
+        project_id: project_id.clone(),
+        file_path: rel.to_string(),
+        language: "rust".to_string(),
+        content_hash: content_hash.clone(),
+        symbol_count: 41,
+        byte_size: 4096,
+        indexed_at: String::new(),
+    };
+    api::upsert_file(&mut conn, &shared_file).expect("seed shared content version");
+    api::upsert_file_state(&mut conn, &first_machine_id, &shared_file)
+        .expect("seed first machine selector");
+
+    let ctx = Context {
+        database_url,
+        project_root: project_root.path().to_path_buf(),
+        project_id: project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        index_scope: ProjectIndexScope::Single,
+    };
+    let outcome = index_files(
+        IndexRequest {
+            project_root: project_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: vec![absolute_path],
+            full: true,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("full reindex of adopted content");
+
+    assert_eq!(outcome.skipped_files, 0, "full indexing must not adopt");
+    assert_eq!(outcome.indexed_files, 1);
+    assert_eq!(outcome.symbols_indexed, 1);
+    let project_uuid = test_uuid_param(&project_id);
+    let shared_row = conn
+        .query_one(
+            "SELECT symbol_count, byte_size FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+            &[&project_uuid, &rel, &content_hash],
+        )
+        .expect("load reparsed shared content version");
+    assert_eq!(shared_row.get::<_, i32>(0), 1, "re-parse corrects stats");
+    assert_eq!(shared_row.get::<_, i32>(1), content.len() as i32);
+}
+
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires a PostgreSQL test database URL"
+)]
+#[serial_test::serial(serial_db)]
+fn overlay_indexing_adopts_existing_content_version_without_reparse() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let overlay_root = tempfile::tempdir().expect("create overlay root");
+    let overlay_project_id = unique_test_project_id("gcode-overlay-adoption");
+    let parent_project_id = unique_test_project_id("gcode-overlay-adoption-parent");
+    let first_machine_id = unique_test_project_id("gcode-overlay-adoption-first-machine");
+    let rel = "src/lib.rs";
+    let absolute_path = overlay_root.path().join(rel);
+    std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
+        .expect("create source directory");
+    std::fs::write(&absolute_path, b"pub fn overlay_adopted() {}\n").expect("write source file");
+    let content_hash =
+        crate::index::hasher::file_content_hash(&absolute_path).expect("hash source file");
+
+    cleanup_summary_preservation_project(&mut conn, &overlay_project_id)
+        .expect("pre-clean overlay rows");
+    cleanup_summary_preservation_project(&mut conn, &parent_project_id)
+        .expect("pre-clean parent rows");
+    let _overlay_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: overlay_project_id.clone(),
+    };
+    let _parent_cleanup = SummaryPreservationCleanup {
+        database_url: database_url.clone(),
+        project_id: parent_project_id.clone(),
+    };
+
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    // The parent must look indexed on this machine, with a diverging version
+    // of the same path so reconciliation routes the overlay file to Index.
+    api::upsert_project_stats(
+        &mut conn,
+        &machine_id,
+        &IndexedProject {
+            id: parent_project_id.clone(),
+            root_path: "/tmp/gcode-overlay-adoption-parent".to_string(),
+            total_files: 1,
+            total_symbols: 1,
+            last_indexed_at: String::new(),
+            index_duration_ms: 0,
+            total_eligible_files: None,
+        },
+    )
+    .expect("seed parent project state");
+    let parent_file = IndexedFile {
+        id: IndexedFile::make_id(&parent_project_id, rel, "parent-old-hash"),
+        project_id: parent_project_id.clone(),
+        file_path: rel.to_string(),
+        language: "rust".to_string(),
+        content_hash: "parent-old-hash".to_string(),
+        symbol_count: 1,
+        byte_size: 64,
+        indexed_at: String::new(),
+    };
+    api::upsert_file(&mut conn, &parent_file).expect("seed parent content version");
+    api::upsert_file_state(&mut conn, &machine_id, &parent_file).expect("seed parent selector");
+
+    // Another machine already parsed this exact overlay content version.
+    api::upsert_project_stats(
+        &mut conn,
+        &first_machine_id,
+        &IndexedProject {
+            id: overlay_project_id.clone(),
+            root_path: "/first-machine/overlay".to_string(),
+            total_files: 1,
+            total_symbols: 41,
+            last_indexed_at: String::new(),
+            index_duration_ms: 0,
+            total_eligible_files: None,
+        },
+    )
+    .expect("seed first machine overlay project state");
+    let overlay_file = IndexedFile {
+        id: IndexedFile::make_id(&overlay_project_id, rel, &content_hash),
+        project_id: overlay_project_id.clone(),
+        file_path: rel.to_string(),
+        language: "rust".to_string(),
+        content_hash: content_hash.clone(),
+        symbol_count: 41,
+        byte_size: 4096,
+        indexed_at: String::new(),
+    };
+    api::upsert_file(&mut conn, &overlay_file).expect("seed overlay content version");
+    api::upsert_file_state(&mut conn, &first_machine_id, &overlay_file)
+        .expect("seed first machine overlay selector");
+
+    let ctx = Context {
+        database_url,
+        project_root: overlay_root.path().to_path_buf(),
+        project_id: overlay_project_id.clone(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        index_scope: ProjectIndexScope::Overlay {
+            overlay_project_id: overlay_project_id.clone(),
+            overlay_root: overlay_root.path().to_path_buf(),
+            parent_project_id: parent_project_id.clone(),
+            parent_root: std::path::PathBuf::from("/tmp/gcode-overlay-adoption-parent"),
+        },
+    };
+    let outcome = index_files(
+        IndexRequest {
+            project_root: overlay_root.path().to_path_buf(),
+            path_filter: None,
+            explicit_files: Vec::new(),
+            full: false,
+            require_cpp_semantics: false,
+            sync_projections: true,
+        },
+        &ctx,
+        IndexOptions::default(),
+    )
+    .expect("overlay adoption run");
+
+    assert_eq!(
+        outcome.indexed_files, 0,
+        "overlay run must adopt, not parse"
+    );
+    assert_eq!(outcome.symbols_indexed, 0);
+    assert_eq!(outcome.skipped_files, 1);
+    let overlay_uuid = test_uuid_param(&overlay_project_id);
+    let shared_row = conn
+        .query_one(
+            "SELECT symbol_count FROM code_indexed_files
+             WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+            &[&overlay_uuid, &rel, &content_hash],
+        )
+        .expect("load adopted overlay content version");
+    assert_eq!(
+        shared_row.get::<_, i32>(0),
+        41,
+        "adoption must not re-parse the seeded stats"
+    );
+    let machine_uuid = test_uuid_param(&machine_id);
+    let adopted_hash: String = conn
+        .query_one(
+            "SELECT content_hash FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
+            &[&machine_uuid, &overlay_uuid, &rel],
+        )
+        .expect("load adopted overlay selector")
+        .get(0);
+    assert_eq!(adopted_hash, content_hash);
+}
+
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     let database_url = crate::test_env::postgres_test_database_url("indexer serial DB tests");
     let conn = db::connect_readwrite(&database_url)

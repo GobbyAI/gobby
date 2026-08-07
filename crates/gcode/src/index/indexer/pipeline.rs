@@ -127,7 +127,8 @@ fn index_discovered_files(
             outcome.skipped_files += 1;
             continue;
         }
-        if let Some(content_hash) = current_files.hashes.get(&rel)
+        if !request.full
+            && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
         {
             outcome.skipped_files += 1;
@@ -164,7 +165,8 @@ fn index_discovered_files(
             outcome.skipped_files += 1;
             continue;
         }
-        if let Some(content_hash) = current_files.hashes.get(&rel)
+        if !request.full
+            && let Some(content_hash) = current_files.hashes.get(&rel)
             && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
         {
             outcome.skipped_files += 1;
@@ -283,7 +285,8 @@ fn index_explicit_files_with_connection(
     let mut progress = ActiveIndexProgress::new(options.progress.take(), routed_file_count);
     for (abs, route) in routed_files {
         let rel = relative_path(&abs, root_path).ok();
-        if let Some(rel) = rel.as_deref()
+        if !request.full
+            && let Some(rel) = rel.as_deref()
             && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
             && api::adopt_file_state(conn, &machine_id, project_id, rel, &content_hash)?
         {
