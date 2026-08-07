@@ -436,7 +436,8 @@ pub(crate) fn cleanup_deleted_project_graph(
     ctx: &Context,
 ) -> anyhow::Result<code_graph::GraphOrphanCleanup> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let indexed_file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+    // The graph projection is shared; keep every path any machine references.
+    let indexed_file_paths = db::list_all_machine_indexed_file_paths(&mut conn, &ctx.project_id)?
         .into_iter()
         .collect::<HashSet<_>>();
     code_graph::cleanup_deleted_files(ctx, &indexed_file_paths)

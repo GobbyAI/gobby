@@ -158,7 +158,8 @@ pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
         .as_ref()
         .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let indexed_file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+    // The Qdrant collection is shared; keep every path any machine references.
+    let indexed_file_paths = db::list_all_machine_indexed_file_paths(&mut conn, &ctx.project_id)?
         .into_iter()
         .collect::<HashSet<_>>();
     let cleanup =

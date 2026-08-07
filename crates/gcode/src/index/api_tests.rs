@@ -181,6 +181,81 @@ mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires a PostgreSQL test database URL"
     )]
+    fn cross_machine_states_widen_orphan_keep_set_and_projection_resets() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-cross-machine-keep");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+        let _cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        seed_project(&mut conn, &project_id);
+
+        let local_machine = gobby_core::machine::read_local_machine_id().expect("read machine id");
+        let foreign_machine = uuid::Uuid::new_v5(
+            &CODE_INDEX_UUID_NAMESPACE,
+            format!("{project_id}:foreign-machine").as_bytes(),
+        )
+        .to_string();
+        seed_project_for_machine(&mut conn, &foreign_machine, &project_id);
+
+        let local_file = indexed_file(&project_id, "src/local.rs", "hash-local", 1, 16);
+        api::upsert_file(&mut conn, &local_file).expect("insert local file");
+        api::upsert_file_state(&mut conn, &local_machine, &local_file).expect("local file state");
+
+        let foreign_file = indexed_file(&project_id, "src/foreign.rs", "hash-foreign", 1, 16);
+        api::upsert_file(&mut conn, &foreign_file).expect("insert foreign file");
+        api::upsert_file_state(&mut conn, &foreign_machine, &foreign_file)
+            .expect("foreign file state");
+
+        // Content referenced by no machine stays out of the keep-set.
+        let orphan_file = indexed_file(&project_id, "src/orphan.rs", "hash-orphan", 1, 16);
+        api::upsert_file(&mut conn, &orphan_file).expect("insert orphan file");
+
+        assert_eq!(
+            db::list_indexed_file_paths(&mut conn, &project_id).expect("local paths"),
+            vec!["src/local.rs".to_string()]
+        );
+        assert_eq!(
+            db::list_all_machine_indexed_file_paths(&mut conn, &project_id).expect("all paths"),
+            vec!["src/foreign.rs".to_string(), "src/local.rs".to_string()],
+            "orphan cleanup keep-set must span every machine's file states"
+        );
+
+        // Clear/rebuild wipe the shared projections, so the resets must cover
+        // rows referenced only by other machines and skip unreferenced rows.
+        conn.execute(
+            "UPDATE code_indexed_files
+             SET vectors_synced = true, graph_synced = true
+             WHERE project_id = $1",
+            &[&db::id_param(&project_id).expect("test project id is a uuid")],
+        )
+        .expect("mark project rows synced");
+
+        assert_eq!(
+            db::reset_vectors_sync_for_project(&mut conn, &project_id).expect("reset vectors"),
+            2,
+            "vector reset must cover both machines' referenced rows only"
+        );
+        assert_eq!(
+            db::reset_graph_sync_for_project(&mut conn, &project_id).expect("reset graph"),
+            2,
+            "graph reset must cover both machines' referenced rows only"
+        );
+        let (foreign_vectors_synced, _) =
+            vector_sync_state(&mut conn, &project_id, "src/foreign.rs");
+        assert!(
+            !foreign_vectors_synced,
+            "foreign machine's referenced row must drop to unsynced"
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     fn api_upsert_imports_and_calls_report_rows_inserted_not_input_len() {
         let (mut conn, database_url) = connect_test_db();
         let project_id = unique_test_project_id("gcode-api-relation-upsert");
@@ -260,9 +335,13 @@ fn connect_test_db() -> (postgres::Client, String) {
 
 fn seed_project(conn: &mut postgres::Client, project_id: &str) {
     let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+    seed_project_for_machine(conn, &machine_id, project_id);
+}
+
+fn seed_project_for_machine(conn: &mut postgres::Client, machine_id: &str, project_id: &str) {
     api::upsert_project_stats(
         conn,
-        &machine_id,
+        machine_id,
         &IndexedProject {
             id: project_id.to_string(),
             root_path: format!("/tmp/{project_id}"),

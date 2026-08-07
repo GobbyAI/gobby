@@ -32,6 +32,29 @@ pub fn list_indexed_file_paths(
         .collect()
 }
 
+/// File paths referenced by any machine's file-state for the project.
+///
+/// Projection orphan cleanup must compute its keep-set from this listing: a
+/// shared projection row survives while any machine's file-state references
+/// its path, so a machine-scoped listing would delete other machines' live
+/// projection data.
+pub fn list_all_machine_indexed_file_paths(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<Vec<String>> {
+    let project_id = id_param(project_id)?;
+    let rows = conn.query(
+        "SELECT DISTINCT file_path
+         FROM code_indexed_file_states
+         WHERE project_id = $1
+         ORDER BY file_path",
+        &[&project_id],
+    )?;
+    rows.into_iter()
+        .map(|row| row.try_get("file_path").map_err(Into::into))
+        .collect()
+}
+
 pub fn indexed_project_exists(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -131,21 +154,25 @@ pub fn mark_graph_synced(
     Ok(updated > 0)
 }
 
+/// Reset graph sync flags for every machine's referenced content rows.
+///
+/// `graph clear`/`graph rebuild` wipe the shared per-project projection, so
+/// rows referenced only by other machines must also drop to unsynced or those
+/// machines would never resync into the emptied projection.
 pub fn reset_graph_sync_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files cif
          SET graph_synced = false, graph_sync_attempted_at = NULL
          FROM code_indexed_file_states cifs
-         WHERE cifs.machine_id = $1 AND cifs.project_id = $2
+         WHERE cifs.project_id = $1
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
            AND cif.content_hash = cifs.content_hash",
-        &[&machine_id, &project_id],
+        &[&project_id],
     )?)
 }
 
@@ -254,21 +281,25 @@ pub fn file_vectors_synced(
     Ok(synced)
 }
 
+/// Reset vector sync flags for every machine's referenced content rows.
+///
+/// `vector clear`/`vector rebuild` wipe the shared per-project Qdrant
+/// collection, so rows referenced only by other machines must also drop to
+/// unsynced or those machines would never resync into the emptied collection.
 pub fn reset_vectors_sync_for_project(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<u64> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let project_id = id_param(project_id)?;
     Ok(conn.execute(
         "UPDATE code_indexed_files cif
          SET vectors_synced = false, vector_sync_attempted_at = NULL
          FROM code_indexed_file_states cifs
-         WHERE cifs.machine_id = $1 AND cifs.project_id = $2
+         WHERE cifs.project_id = $1
            AND cif.project_id = cifs.project_id
            AND cif.file_path = cifs.file_path
            AND cif.content_hash = cifs.content_hash",
-        &[&machine_id, &project_id],
+        &[&project_id],
     )?)
 }
 
