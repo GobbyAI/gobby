@@ -47,6 +47,7 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
             "graph_sync_attempted_at",
             "vector_sync_attempted_at",
             "indexed_at",
+            "last_referenced_at",
         ],
     },
     TableContract {

@@ -1,10 +1,11 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::Context as _;
 use postgres::Client;
 
-use crate::config::Context;
+use crate::config::{Context, ServiceConfigSelection};
 use crate::db;
 use crate::graph::code_graph;
 use crate::index::hasher;
@@ -25,6 +26,7 @@ pub(super) struct ContentGcTotals {
     pub(super) deleted_versions: usize,
     pub(super) deleted_symbols: usize,
     pub(super) busy_projects: usize,
+    pub(super) failed_versions: usize,
 }
 
 pub(super) fn discover_content_gc(
@@ -54,7 +56,7 @@ pub(super) fn discover_content_gc(
            ON s.project_id = f.project_id
           AND s.file_path = f.file_path
           AND s.file_content_hash = f.content_hash
-         WHERE f.indexed_at < NOW() - make_interval(days => $2)
+         WHERE f.last_referenced_at < NOW() - make_interval(days => $2)
            AND ($3::uuid IS NULL OR f.project_id = $3)
            AND NOT EXISTS (
                SELECT 1 FROM code_indexed_file_states fs
@@ -67,28 +69,39 @@ pub(super) fn discover_content_gc(
         &[&machine_id, &retention_days, &project_filter],
     )?;
 
+    // Historical-hash lookups are cached per (root, path): candidates that share
+    // a file spawn one git subprocess batch instead of one per content version.
+    let mut history_cache: HashMap<(PathBuf, String), Option<HashSet<String>>> = HashMap::new();
     let mut candidates = Vec::new();
     for row in rows {
         let root_path = PathBuf::from(row.try_get::<_, String>("root_path")?);
         let file_path: String = row.try_get("file_path")?;
         let content_hash: String = row.try_get("content_hash")?;
-        match content_is_in_recent_git_history(
-            &root_path,
-            &file_path,
-            &content_hash,
-            retention_days,
-        ) {
-            Ok(true) => continue,
-            Ok(false) => {}
-            Err(error) => {
-                log::warn!(
-                    "retaining code-index content for {}:{} because recent git history could not be inspected: {error:#}",
-                    row.try_get::<_, String>("project_id")?,
-                    file_path,
-                );
-                continue;
-            }
+        let key = (root_path, file_path);
+        if !history_cache.contains_key(&key) {
+            let looked_up = match recent_content_hashes_in_git_history(
+                &key.0,
+                &key.1,
+                retention_days,
+            ) {
+                Ok(hashes) => Some(hashes),
+                Err(error) => {
+                    log::warn!(
+                        "retaining code-index content for {}:{} because recent git history could not be inspected: {error:#}",
+                        row.try_get::<_, String>("project_id")?,
+                        key.1,
+                    );
+                    None
+                }
+            };
+            history_cache.insert(key.clone(), looked_up);
         }
+        match history_cache.get(&key) {
+            Some(Some(hashes)) if !hashes.contains(&content_hash) => {}
+            // Protected by recent git history, or history unavailable: retain.
+            _ => continue,
+        }
+        let (_, file_path) = key;
         candidates.push(ContentGcCandidate {
             id: row.try_get("id")?,
             project_id: row.try_get("project_id")?,
@@ -104,8 +117,23 @@ pub(super) fn prune_content_versions(
     services: &Context,
     candidates: &[ContentGcCandidate],
 ) -> anyhow::Result<ContentGcTotals> {
+    prune_content_versions_with(services, candidates, |project_id| {
+        Context::resolve_for_project_id_with_services(
+            project_id,
+            services.quiet,
+            ServiceConfigSelection::projection_cleanup(),
+        )
+    })
+}
+
+fn prune_content_versions_with(
+    services: &Context,
+    candidates: &[ContentGcCandidate],
+    resolve_project_services: impl Fn(&str) -> anyhow::Result<Context>,
+) -> anyhow::Result<ContentGcTotals> {
     let mut conn = db::connect_readwrite(&services.database_url)?;
     let mut totals = ContentGcTotals::default();
+    let mut project_contexts: HashMap<String, Option<Context>> = HashMap::new();
     for candidate in candidates {
         let Some(_lock) = lock_project_by_id(
             &services.database_url,
@@ -120,28 +148,37 @@ pub(super) fn prune_content_versions(
             continue;
         }
 
-        let mut ctx = services.clone();
-        ctx.project_id.clone_from(&candidate.project_id);
-        if ctx.falkordb.is_some() {
-            code_graph::delete_symbol_ids(&ctx, &candidate.symbol_ids).with_context(|| {
-                format!(
-                    "delete graph symbols for {}:{}@{}",
-                    candidate.project_id, candidate.file_path, candidate.content_hash
-                )
-            })?;
-        }
-        if let Some(qdrant) = ctx.qdrant.as_ref() {
-            code_symbols::delete_symbol_vectors(
-                qdrant,
-                &candidate.project_id,
-                &candidate.symbol_ids,
-            )
-            .with_context(|| {
-                format!(
-                    "delete vector symbols for {}:{}@{}",
-                    candidate.project_id, candidate.file_path, candidate.content_hash
-                )
-            })?;
+        // Projection endpoints are project-scoped configuration; the caller's
+        // context may carry another project's (or the global) backends.
+        let ctx = project_contexts
+            .entry(candidate.project_id.clone())
+            .or_insert_with(|| match resolve_project_services(&candidate.project_id) {
+                Ok(ctx) => Some(ctx),
+                Err(error) => {
+                    log::warn!(
+                        "skipping content GC for project {}: service context resolution failed: {error:#}",
+                        candidate.project_id,
+                    );
+                    None
+                }
+            });
+        let Some(ctx) = ctx.as_ref() else {
+            totals.failed_versions += 1;
+            continue;
+        };
+
+        if let Err(error) = delete_candidate_projections(ctx, candidate) {
+            // The projections are now partially deleted while the SQL row still
+            // says synced; reset the flags so a re-sync or retry reconverges.
+            log::warn!(
+                "resetting sync flags for {}:{}@{} after projection delete failure: {error:#}",
+                candidate.project_id,
+                candidate.file_path,
+                candidate.content_hash,
+            );
+            reset_candidate_sync_flags(&mut conn, &candidate.id)?;
+            totals.failed_versions += 1;
+            continue;
         }
 
         let deleted = conn.execute(
@@ -158,9 +195,47 @@ pub(super) fn prune_content_versions(
         if deleted > 0 {
             totals.deleted_versions += 1;
             totals.deleted_symbols += candidate.symbol_ids.len();
+        } else {
+            // The row became referenced again after the unreferenced check, but
+            // its projections were just deleted; flag it for re-sync.
+            reset_candidate_sync_flags(&mut conn, &candidate.id)?;
         }
     }
     Ok(totals)
+}
+
+fn delete_candidate_projections(
+    ctx: &Context,
+    candidate: &ContentGcCandidate,
+) -> anyhow::Result<()> {
+    if ctx.falkordb.is_some() {
+        code_graph::delete_symbol_ids(ctx, &candidate.symbol_ids).with_context(|| {
+            format!(
+                "delete graph symbols for {}:{}@{}",
+                candidate.project_id, candidate.file_path, candidate.content_hash
+            )
+        })?;
+    }
+    if let Some(qdrant) = ctx.qdrant.as_ref() {
+        code_symbols::delete_symbol_vectors(qdrant, &candidate.project_id, &candidate.symbol_ids)
+            .with_context(|| {
+            format!(
+                "delete vector symbols for {}:{}@{}",
+                candidate.project_id, candidate.file_path, candidate.content_hash
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn reset_candidate_sync_flags(conn: &mut Client, indexed_file_id: &str) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE code_indexed_files
+            SET graph_synced = false, vectors_synced = false
+          WHERE id = $1",
+        &[&db::id_param(indexed_file_id)?],
+    )?;
+    Ok(())
 }
 
 fn content_is_unreferenced(conn: &mut Client, indexed_file_id: &str) -> anyhow::Result<bool> {
@@ -180,81 +255,56 @@ fn content_is_unreferenced(conn: &mut Client, indexed_file_id: &str) -> anyhow::
     .map_err(Into::into)
 }
 
-fn content_is_in_recent_git_history(
+fn recent_content_hashes_in_git_history(
     root_path: &Path,
     file_path: &str,
-    content_hash: &str,
     retention_days: i32,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<HashSet<String>> {
     let since = format!("{retention_days}.days");
-    let revisions = Command::new("git")
+    let objects = Command::new("git")
         .arg("-C")
         .arg(root_path)
-        .args(["rev-list", "--all", "--since", &since, "--", file_path])
+        .args([
+            "rev-list",
+            "--objects",
+            "--all",
+            "--since",
+            &since,
+            "--",
+            file_path,
+        ])
         .output()
         .with_context(|| format!("run git rev-list in {}", root_path.display()))?;
-    if !revisions.status.success() {
+    if !objects.status.success() {
         anyhow::bail!(
             "git rev-list failed: {}",
-            String::from_utf8_lossy(&revisions.stderr).trim()
+            String::from_utf8_lossy(&objects.stderr).trim()
         );
     }
 
-    for revision in String::from_utf8(revisions.stdout)?.lines() {
+    // --objects lists each blob once, so ping-ponging content versions cost one
+    // cat-file per unique blob instead of one git show per revision.
+    let mut hashes = HashSet::new();
+    for line in String::from_utf8(objects.stdout)?.lines() {
+        let Some((object_id, path)) = line.split_once(' ') else {
+            continue;
+        };
+        if path != file_path {
+            continue;
+        }
         let blob = Command::new("git")
             .arg("-C")
             .arg(root_path)
-            .args(["show", &format!("{revision}:{file_path}")])
+            .args(["cat-file", "blob", object_id])
             .output()
-            .with_context(|| format!("read {file_path} from git revision {revision}"))?;
-        if blob.status.success() && hasher::content_hash(&blob.stdout) == content_hash {
-            return Ok(true);
+            .with_context(|| format!("read git blob {object_id} for {file_path}"))?;
+        if blob.status.success() {
+            hashes.insert(hasher::content_hash(&blob.stdout));
         }
     }
-    Ok(false)
+    Ok(hashes)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
-        let repo = tempfile::tempdir()?;
-        std::fs::write(repo.path().join("tracked.txt"), "retained\n")?;
-        for args in [
-            vec!["init"],
-            vec!["add", "tracked.txt"],
-            vec![
-                "-c",
-                "user.name=Gcode Test",
-                "-c",
-                "user.email=gcode@example.invalid",
-                "commit",
-                "-m",
-                "seed",
-            ],
-        ] {
-            let status = Command::new("git")
-                .arg("-C")
-                .arg(repo.path())
-                .args(args)
-                .status()?;
-            assert!(status.success());
-        }
-
-        assert!(content_is_in_recent_git_history(
-            repo.path(),
-            "tracked.txt",
-            &hasher::content_hash(b"retained\n"),
-            30,
-        )?);
-        assert!(!content_is_in_recent_git_history(
-            repo.path(),
-            "tracked.txt",
-            &hasher::content_hash(b"different\n"),
-            30,
-        )?);
-        Ok(())
-    }
-}
+#[path = "content_gc/tests.rs"]
+mod tests;

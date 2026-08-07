@@ -841,6 +841,10 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "code_indexed_files.last_referenced_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
       "name": "code_indexed_files.project_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -5551,7 +5555,7 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "code_content_chunks.code_content_chunks_project_id_file_path_content_hash_chunk_ind",
+      "name": "code_content_chunks.code_content_chunks_project_file_hash_chunk_index_key",
       "definition": "UNIQUE (project_id, file_path, content_hash, chunk_index)"
     },
     {
@@ -5563,7 +5567,7 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "code_imports.code_imports_project_id_source_file_content_hash_target_module_",
+      "name": "code_imports.code_imports_project_source_file_hash_target_module_key",
       "definition": "UNIQUE (project_id, source_file, content_hash, target_module)"
     },
     {
@@ -5605,6 +5609,10 @@
     {
       "name": "code_indexed_files.code_indexed_files_project_id_fkey",
       "definition": "FOREIGN KEY (project_id) REFERENCES code_indexed_projects(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "code_indexed_project_states.code_indexed_project_states_machine_id_fkey",
+      "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
     },
     {
       "name": "code_indexed_project_states.code_indexed_project_states_pkey",
@@ -6975,8 +6983,8 @@
       "definition": "CREATE UNIQUE INDEX code_content_chunks_pkey ON $schema.code_content_chunks USING btree (id)"
     },
     {
-      "name": "code_content_chunks_project_id_file_path_content_hash_chunk_ind",
-      "definition": "CREATE UNIQUE INDEX code_content_chunks_project_id_file_path_content_hash_chunk_ind ON $schema.code_content_chunks USING btree (project_id, file_path, content_hash, chunk_index)"
+      "name": "code_content_chunks_project_file_hash_chunk_index_key",
+      "definition": "CREATE UNIQUE INDEX code_content_chunks_project_file_hash_chunk_index_key ON $schema.code_content_chunks USING btree (project_id, file_path, content_hash, chunk_index)"
     },
     {
       "name": "code_content_search_bm25",
@@ -6987,8 +6995,8 @@
       "definition": "CREATE UNIQUE INDEX code_imports_pkey ON $schema.code_imports USING btree (id)"
     },
     {
-      "name": "code_imports_project_id_source_file_content_hash_target_module_",
-      "definition": "CREATE UNIQUE INDEX code_imports_project_id_source_file_content_hash_target_module_ ON $schema.code_imports USING btree (project_id, source_file, content_hash, target_module)"
+      "name": "code_imports_project_source_file_hash_target_module_key",
+      "definition": "CREATE UNIQUE INDEX code_imports_project_source_file_hash_target_module_key ON $schema.code_imports USING btree (project_id, source_file, content_hash, target_module)"
     },
     {
       "name": "code_index_projection_cleanup_pending_pkey",

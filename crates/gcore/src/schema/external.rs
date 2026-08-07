@@ -87,6 +87,7 @@ pub fn gcode_postgres_objects(
                     graph_sync_attempted_at TIMESTAMPTZ,
                     vector_sync_attempted_at TIMESTAMPTZ,
                     indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_referenced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     UNIQUE (project_id, file_path, content_hash),
                     FOREIGN KEY (project_id) REFERENCES {code_indexed_projects}(id) ON DELETE CASCADE
                 );"
@@ -244,6 +245,7 @@ pub fn gcode_postgres_objects(
                     content TEXT NOT NULL,
                     language TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT code_content_chunks_project_file_hash_chunk_index_key
                     UNIQUE (project_id, file_path, content_hash, chunk_index),
                     FOREIGN KEY (project_id, file_path, content_hash)
                         REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
@@ -277,6 +279,7 @@ pub fn gcode_postgres_objects(
                     source_file TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
                     target_module TEXT NOT NULL,
+                    CONSTRAINT code_imports_project_source_file_hash_target_module_key
                     UNIQUE (project_id, source_file, content_hash, target_module),
                     FOREIGN KEY (project_id, source_file, content_hash)
                         REFERENCES {code_indexed_files}(project_id, file_path, content_hash)

@@ -79,14 +79,6 @@ fn optional_reconcile_status_reports_orphan_buckets_separately() {
 }
 
 #[test]
-fn orphan_projection_cleanup_requires_confirmed_non_skipped_cleanup() {
-    assert!(orphan_projection_cleanup_confirmed(true, false));
-    assert!(!orphan_projection_cleanup_confirmed(true, true));
-    assert!(!orphan_projection_cleanup_confirmed(false, false));
-    assert!(!orphan_projection_cleanup_confirmed(false, true));
-}
-
-#[test]
 fn bounded_project_id_summary_caps_ids() {
     let ids = (0..10)
         .map(|idx| format!("project-{idx:02}-abcdef"))
@@ -131,7 +123,6 @@ fn global_prune_authorization_matrix_uses_single_gate() {
             stale_project_ids: vec!["stale".to_string()],
             orphan_collection_ids: vec!["collection".to_string()],
             orphan_graph_scope_ids: Vec::new(),
-            orphan_sql_project_ids: Vec::new(),
             content_version_ids: Vec::new(),
         },
         DestructiveSet {
@@ -163,7 +154,6 @@ fn global_prune_authorization_matrix_uses_single_gate() {
         stale_project_ids: vec!["stale".to_string()],
         orphan_collection_ids: vec!["collection".to_string()],
         orphan_graph_scope_ids: vec!["graph".to_string()],
-        orphan_sql_project_ids: Vec::new(),
         content_version_ids: Vec::new(),
     };
     let mut prompts = 0;
@@ -283,7 +273,6 @@ mod serial_db {
             }],
             collections: None,
             graph_scopes: None,
-            orphan_sql_project_ids: Vec::new(),
             content_gc_candidates: Vec::new(),
         };
         let totals = mutate_stale_projects(&discovery);
@@ -339,44 +328,11 @@ mod serial_db {
                 .collect::<Vec<_>>(),
             [target_stale_id.as_str()]
         );
-        assert!(stale_discovery.orphan_sql_project_ids.is_empty());
 
         let orphan_context = prune_test_context(database_url, &target_orphan_id, false);
         let orphan_discovery = discover_project_scoped_records(&orphan_context, 30)
             .expect("discover target orphan project");
         assert!(orphan_discovery.stale_projects.is_empty());
-        assert!(orphan_discovery.orphan_sql_project_ids.is_empty());
-    }
-
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn project_identity_fk_keeps_unselected_content_out_of_orphan_reconciliation() {
-        let (mut conn, database_url) = connect_test_db();
-        let valid_project_id = unique_test_project_id("gcode-orphan-valid");
-        let orphan_project_id = unique_test_project_id("gcode-orphan-missing-parent");
-        cleanup_project(&mut conn, &valid_project_id).expect("pre-clean valid project rows");
-        cleanup_project(&mut conn, &orphan_project_id).expect("pre-clean orphan project rows");
-        let _valid_cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: valid_project_id.clone(),
-        };
-        let _orphan_cleanup = ProjectCleanup {
-            database_url,
-            project_id: orphan_project_id.clone(),
-        };
-
-        seed_project_with_child_rows(&mut conn, &valid_project_id, true);
-        seed_project_with_child_rows(&mut conn, &orphan_project_id, false);
-
-        let orphan_ids = collect_orphan_project_ids(&mut conn).expect("discover orphan projects");
-        assert!(!orphan_ids.contains(&orphan_project_id));
-        assert!(!orphan_ids.contains(&valid_project_id));
-        assert_eq!(project_child_row_count(&mut conn, &orphan_project_id), 5);
-        assert_eq!(project_child_row_count(&mut conn, &valid_project_id), 5);
     }
 
     struct ProjectCleanup {

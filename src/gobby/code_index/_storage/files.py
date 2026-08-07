@@ -30,7 +30,8 @@ class CodeIndexFileStorageMixin:
                     language=excluded.language,
                     symbol_count=excluded.symbol_count,
                     byte_size=excluded.byte_size,
-                    indexed_at=excluded.indexed_at
+                    indexed_at=excluded.indexed_at,
+                    last_referenced_at=NOW()
                 """,
                 (
                     file.id,

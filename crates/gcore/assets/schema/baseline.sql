@@ -455,7 +455,8 @@ CREATE TABLE code_indexed_files (
     vectors_synced boolean DEFAULT false NOT NULL,
     graph_sync_attempted_at timestamp with time zone,
     vector_sync_attempted_at timestamp with time zone,
-    indexed_at timestamp with time zone DEFAULT now() NOT NULL
+    indexed_at timestamp with time zone DEFAULT now() NOT NULL,
+    last_referenced_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 ALTER TABLE ONLY code_indexed_files FORCE ROW LEVEL SECURITY;
@@ -2214,13 +2215,13 @@ ALTER TABLE ONLY code_content_chunks
     ADD CONSTRAINT code_content_chunks_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_content_chunks
-    ADD CONSTRAINT code_content_chunks_project_id_file_path_content_hash_chunk_index_key UNIQUE (project_id, file_path, content_hash, chunk_index);
+    ADD CONSTRAINT code_content_chunks_project_file_hash_chunk_index_key UNIQUE (project_id, file_path, content_hash, chunk_index);
 
 ALTER TABLE ONLY code_imports
     ADD CONSTRAINT code_imports_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_imports
-    ADD CONSTRAINT code_imports_project_id_source_file_content_hash_target_module_key UNIQUE (project_id, source_file, content_hash, target_module);
+    ADD CONSTRAINT code_imports_project_source_file_hash_target_module_key UNIQUE (project_id, source_file, content_hash, target_module);
 
 ALTER TABLE ONLY code_index_projection_cleanup_pending
     ADD CONSTRAINT code_index_projection_cleanup_pending_pkey PRIMARY KEY (project_id, store);
@@ -3270,6 +3271,9 @@ ALTER TABLE ONLY comms_attachments
 
 ALTER TABLE ONLY code_index_prune_dirty_projects
     ADD CONSTRAINT code_index_prune_dirty_projects_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
+
+ALTER TABLE ONLY code_indexed_project_states
+    ADD CONSTRAINT code_indexed_project_states_machine_id_fkey FOREIGN KEY (machine_id) REFERENCES machines(id);
 
 ALTER TABLE ONLY comms_identities
     ADD CONSTRAINT comms_identities_channel_id_fkey FOREIGN KEY (channel_id) REFERENCES comms_channels(id) ON DELETE CASCADE DEFERRABLE;

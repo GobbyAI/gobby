@@ -1,4 +1,3 @@
-use postgres::GenericClient;
 use std::collections::HashSet;
 
 use crate::config::{self, Context};
@@ -19,11 +18,9 @@ use inventory::{
     CollectionInventory, ScopeInventory, all_collection_orphan_ids, all_scope_orphan_ids,
     classify_collection_inventory, classify_scope_inventory,
 };
-pub(super) use reconcile::OrphanSqlDeletionCounts;
 use reconcile::{
-    OrphanProjectReconcileTotals, ReconcileTotals, SweepOutcome, print_optional_reconcile_totals,
-    print_orphan_project_reconcile_totals, print_reconcile_totals, sweep_discovered_ids_with,
-    warn_orphan_projection_cleanup_failure,
+    ReconcileTotals, SweepOutcome, print_optional_reconcile_totals, print_reconcile_totals,
+    sweep_discovered_ids_with,
 };
 
 const GLOBAL_SERVICE_CONTEXT_PROJECT_ID: &str = "00000000-0000-0000-0000-000000000000";
@@ -33,7 +30,6 @@ struct DestructiveSet {
     stale_project_ids: Vec<String>,
     orphan_collection_ids: Vec<String>,
     orphan_graph_scope_ids: Vec<String>,
-    orphan_sql_project_ids: Vec<String>,
     content_version_ids: Vec<String>,
 }
 
@@ -42,7 +38,6 @@ impl DestructiveSet {
         self.stale_project_ids.is_empty()
             && self.orphan_collection_ids.is_empty()
             && self.orphan_graph_scope_ids.is_empty()
-            && self.orphan_sql_project_ids.is_empty()
             && self.content_version_ids.is_empty()
     }
 }
@@ -59,7 +54,6 @@ struct GlobalPruneDiscovery {
     stale_projects: Vec<StaleProjectPlan>,
     collections: Option<CollectionInventory>,
     graph_scopes: Option<ScopeInventory>,
-    orphan_sql_project_ids: Vec<String>,
     content_gc_candidates: Vec<ContentGcCandidate>,
 }
 
@@ -87,7 +81,6 @@ impl GlobalPruneDiscovery {
                 .as_ref()
                 .map(all_scope_orphan_ids)
                 .unwrap_or_default(),
-            orphan_sql_project_ids: self.orphan_sql_project_ids.clone(),
             content_version_ids: self
                 .content_gc_candidates
                 .iter()
@@ -156,19 +149,18 @@ fn prune_project_scoped(
     let stale_totals = mutate_stale_projects(&discovery);
     let content_gc_totals =
         prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
-    let orphan_totals = reconcile_orphan_projects(discovery.orphan_sql_project_ids.clone(), quiet)?;
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
     eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s)",
+        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
         content_gc_totals.deleted_versions,
         content_gc_totals.deleted_symbols,
         content_gc_totals.busy_projects,
+        content_gc_totals.failed_versions,
     );
-    print_orphan_project_reconcile_totals(&orphan_totals);
-    if stale_totals.has_failures() {
+    if stale_totals.has_failures() || content_gc_totals.failed_versions > 0 {
         anyhow::bail!(
             "gcode prune completed with {} reconciliation failure(s)",
-            stale_totals.failed
+            stale_totals.failed + content_gc_totals.failed_versions
         );
     }
     Ok(())
@@ -187,14 +179,14 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
         prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
     let collection_totals = mutate_orphan_collections(&discovery);
     let graph_totals = mutate_orphan_graph_scopes(&discovery);
-    let orphan_totals = reconcile_orphan_projects(discovery.orphan_sql_project_ids.clone(), quiet)?;
 
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
     eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s)",
+        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
         content_gc_totals.deleted_versions,
         content_gc_totals.deleted_symbols,
         content_gc_totals.busy_projects,
+        content_gc_totals.failed_versions,
     );
     print_optional_reconcile_totals(
         "Qdrant collection reconciliation",
@@ -218,10 +210,10 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
             )
         }),
     );
-    print_orphan_project_reconcile_totals(&orphan_totals);
     let failed = stale_totals.failed
         + collection_totals.as_ref().map_or(0, |totals| totals.failed)
-        + graph_totals.as_ref().map_or(0, |totals| totals.failed);
+        + graph_totals.as_ref().map_or(0, |totals| totals.failed)
+        + content_gc_totals.failed_versions;
     if stale_totals.has_failures()
         || collection_totals
             .as_ref()
@@ -229,6 +221,7 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
         || graph_totals
             .as_ref()
             .is_some_and(ReconcileTotals::has_failures)
+        || content_gc_totals.failed_versions > 0
     {
         anyhow::bail!("gcode prune completed with {failed} reconciliation failure(s)");
     }
@@ -238,8 +231,6 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
 fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<GlobalPruneDiscovery> {
     let all_projects = collect_projects()?;
     let database_url = db::resolve_database_url()?;
-    let mut conn = db::connect_readonly(&database_url)?;
-    let orphan_sql_project_ids = collect_orphan_project_ids(&mut conn)?;
     let project_discovery = discover_global_project_prune(&all_projects);
     let content_gc_candidates = discover_content_gc(&database_url, retention_days, None)?;
 
@@ -281,7 +272,6 @@ fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<Glo
         stale_projects: project_discovery.stale_projects,
         collections,
         graph_scopes,
-        orphan_sql_project_ids,
         content_gc_candidates,
     })
 }
@@ -312,11 +302,6 @@ fn discover_project_scoped_records(
             reason: project.reason,
         })
         .collect();
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let orphan_sql_project_ids = collect_orphan_project_ids(&mut conn)?
-        .into_iter()
-        .filter(|project_id| project_id == &ctx.project_id)
-        .collect();
     let content_gc_candidates =
         discover_content_gc(&ctx.database_url, retention_days, Some(&ctx.project_id))?;
     Ok(GlobalPruneDiscovery {
@@ -324,14 +309,13 @@ fn discover_project_scoped_records(
         stale_projects,
         collections: None,
         graph_scopes: None,
-        orphan_sql_project_ids,
         content_gc_candidates,
     })
 }
 
 fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool> {
     eprintln!(
-        "Pending gcode prune: {} stale project(s), {} orphan collection(s), {} orphan graph scope(s), {} orphan SQL project scope(s), {} expired content version(s).",
+        "Pending gcode prune: {} stale project(s), {} orphan collection(s), {} orphan graph scope(s), {} expired content version(s).",
         discovery.stale_projects.len(),
         discovery
             .collections
@@ -343,7 +327,6 @@ fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool
             .as_ref()
             .map(all_scope_orphan_ids)
             .map_or(0, |ids| ids.len()),
-        discovery.orphan_sql_project_ids.len(),
         discovery.content_gc_candidates.len(),
     );
     for project in &discovery.stale_projects {
@@ -361,9 +344,6 @@ fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool
         for project_id in all_scope_orphan_ids(scopes) {
             eprintln!("  Falkor: {project_id}");
         }
-    }
-    for project_id in &discovery.orphan_sql_project_ids {
-        eprintln!("  SQL orphan rows: {project_id}");
     }
     for candidate in &discovery.content_gc_candidates {
         eprintln!(
@@ -473,155 +453,6 @@ fn reconcile_orphan_graph_scope(ctx: &Context, project_id: &str) -> anyhow::Resu
     project_ctx.project_id = project_id.to_string();
     code_graph::clear_project(&project_ctx)?;
     Ok(SweepOutcome::Deleted)
-}
-
-fn reconcile_orphan_projects(
-    project_ids: Vec<String>,
-    quiet: bool,
-) -> anyhow::Result<OrphanProjectReconcileTotals> {
-    let database_url = db::resolve_database_url()?;
-    let mut conn = db::connect_readwrite(&database_url)?;
-    let mut totals = OrphanProjectReconcileTotals::default();
-    let mut warnings_emitted = 0usize;
-
-    for project_id in project_ids {
-        if cleanup_orphan_project_projections(
-            &project_id,
-            quiet,
-            &mut totals,
-            &mut warnings_emitted,
-        ) {
-            let counts = delete_orphan_project_sql_rows(&mut conn, &project_id)?;
-            totals.record_sql(project_id, counts);
-        }
-    }
-
-    Ok(totals)
-}
-
-pub(super) fn collect_orphan_project_ids(
-    conn: &mut impl GenericClient,
-) -> anyhow::Result<Vec<String>> {
-    let rows = conn.query(
-        "SELECT child.project_id
-         FROM (
-             SELECT project_id FROM code_indexed_files
-             UNION
-             SELECT project_id FROM code_symbols
-             UNION
-             SELECT project_id FROM code_content_chunks
-             UNION
-             SELECT project_id FROM code_imports
-             UNION
-             SELECT project_id FROM code_calls
-         ) child
-         LEFT JOIN code_indexed_projects parent ON parent.id = child.project_id
-         WHERE parent.id IS NULL
-         ORDER BY child.project_id",
-        &[],
-    )?;
-
-    rows.into_iter().map(|row| db::id_string(&row, 0)).collect()
-}
-
-pub(super) fn delete_orphan_project_sql_rows(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-) -> anyhow::Result<OrphanSqlDeletionCounts> {
-    let project_id = db::id_param(project_id)?;
-    let calls_deleted = conn.execute(
-        "DELETE FROM code_calls WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let imports_deleted = conn.execute(
-        "DELETE FROM code_imports WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let content_chunks_deleted = conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let files_deleted = conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let symbols_deleted = conn.execute(
-        "DELETE FROM code_symbols WHERE project_id = $1",
-        &[&project_id],
-    )?;
-
-    Ok(OrphanSqlDeletionCounts {
-        symbols_deleted,
-        files_deleted,
-        content_chunks_deleted,
-        imports_deleted,
-        calls_deleted,
-    })
-}
-
-fn cleanup_orphan_project_projections(
-    project_id: &str,
-    quiet: bool,
-    totals: &mut OrphanProjectReconcileTotals,
-    warnings_emitted: &mut usize,
-) -> bool {
-    let mut cleaned = true;
-    let mut skipped = false;
-    let ctx = match Context::resolve_for_project_id_with_services(
-        project_id,
-        quiet,
-        config::ServiceConfigSelection::projection_cleanup(),
-    ) {
-        Ok(ctx) => ctx,
-        Err(error) => {
-            warn_orphan_projection_cleanup_failure(
-                "service config",
-                project_id,
-                error,
-                warnings_emitted,
-            );
-            totals.graph_projects_skipped += 1;
-            totals.vector_projects_skipped += 1;
-            return false;
-        }
-    };
-
-    if ctx.falkordb.is_some() {
-        if let Err(error) = code_graph::clear_project(&ctx) {
-            warn_orphan_projection_cleanup_failure("graph", project_id, error, warnings_emitted);
-            cleaned = false;
-        } else {
-            totals.graph_projects_cleared += 1;
-        }
-    } else {
-        totals.graph_projects_skipped += 1;
-        skipped = true;
-    }
-
-    if let Some(qdrant) = &ctx.qdrant {
-        match code_symbols::delete_project_collection(qdrant, project_id) {
-            Ok(deleted) => totals.vector_collections_deleted += deleted,
-            Err(error) => {
-                warn_orphan_projection_cleanup_failure(
-                    "vector",
-                    project_id,
-                    anyhow::Error::from(error),
-                    warnings_emitted,
-                );
-                cleaned = false;
-            }
-        }
-    } else {
-        totals.vector_projects_skipped += 1;
-        skipped = true;
-    }
-    orphan_projection_cleanup_confirmed(cleaned, skipped)
-}
-
-fn orphan_projection_cleanup_confirmed(cleaned: bool, skipped: bool) -> bool {
-    // Keep SQL discovery rows when any projection store was skipped; they are
-    // what lets a later prune with full service config find and clear orphans.
-    cleaned && !skipped
 }
 
 #[cfg(test)]

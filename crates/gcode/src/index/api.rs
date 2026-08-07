@@ -255,7 +255,8 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
             language=excluded.language,
             symbol_count=excluded.symbol_count,
             byte_size=excluded.byte_size,
-            indexed_at=NOW()",
+            indexed_at=NOW(),
+            last_referenced_at=NOW()",
         &[
             &id_param(&file.id)?,
             &id_param(&file.project_id)?,
@@ -302,12 +303,21 @@ pub fn upsert_file_state(
     file: &IndexedFile,
 ) -> anyhow::Result<()> {
     conn.execute(
-        "INSERT INTO code_indexed_file_states (
-            machine_id, project_id, file_path, content_hash
-         ) VALUES ($1,$2,$3,$4)
-         ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
-            content_hash=excluded.content_hash,
-            updated_at=NOW()",
+        "WITH state AS (
+            INSERT INTO code_indexed_file_states (
+                machine_id, project_id, file_path, content_hash
+            ) VALUES ($1,$2,$3,$4)
+            ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+                content_hash=excluded.content_hash,
+                updated_at=NOW()
+            RETURNING project_id, file_path, content_hash
+         )
+         UPDATE code_indexed_files f
+            SET last_referenced_at = NOW()
+           FROM state s
+          WHERE f.project_id = s.project_id
+            AND f.file_path = s.file_path
+            AND f.content_hash = s.content_hash",
         &[
             &id_param(machine_id)?,
             &id_param(&file.project_id)?,
@@ -328,15 +338,24 @@ pub fn adopt_file_state(
     let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let adopted = conn.execute(
-        "INSERT INTO code_indexed_file_states (
-            machine_id, project_id, file_path, content_hash
+        "WITH adopted AS (
+            INSERT INTO code_indexed_file_states (
+                machine_id, project_id, file_path, content_hash
+            )
+            SELECT $1, project_id, file_path, content_hash
+            FROM code_indexed_files
+            WHERE project_id = $2 AND file_path = $3 AND content_hash = $4
+            ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+                content_hash=excluded.content_hash,
+                updated_at=NOW()
+            RETURNING project_id, file_path, content_hash
          )
-         SELECT $1, project_id, file_path, content_hash
-         FROM code_indexed_files
-         WHERE project_id = $2 AND file_path = $3 AND content_hash = $4
-         ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
-            content_hash=excluded.content_hash,
-            updated_at=NOW()",
+         UPDATE code_indexed_files f
+            SET last_referenced_at = NOW()
+           FROM adopted a
+          WHERE f.project_id = a.project_id
+            AND f.file_path = a.file_path
+            AND f.content_hash = a.content_hash",
         &[&machine_id, &project_id, &file_path, &content_hash],
     )?;
     Ok(adopted > 0)
