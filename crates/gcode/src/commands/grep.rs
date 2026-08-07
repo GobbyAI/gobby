@@ -6,6 +6,10 @@ use serde::Serialize;
 
 mod grep_matcher;
 
+#[cfg(test)]
+#[path = "grep/db_tests.rs"]
+mod db_tests;
+
 use crate::commands::scope;
 use crate::config::{Context, ProjectIndexScope};
 use crate::db;
@@ -148,13 +152,21 @@ fn load_indexed_chunks(
 ) -> anyhow::Result<LoadedIndexedChunks> {
     let mut chunks = Vec::new();
     let tombstone_language = visibility::TOMBSTONE_LANGUAGE;
+    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+        return Ok(LoadedIndexedChunks {
+            chunks,
+            truncated: false,
+        });
+    };
     let rows = match &ctx.index_scope {
         ProjectIndexScope::Single => {
             let project_id = db::id_param(&ctx.project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> = vec![&project_id, &tombstone_language];
+            let mut params: Vec<&(dyn ToSql + Sync)> =
+                vec![&project_id, &tombstone_language, &machine_id];
             let mut conditions = vec![
                 "c.project_id = $1".to_string(),
                 "cf.language != $2".to_string(),
+                "fs.machine_id = $3".to_string(),
             ];
             push_grep_sql_prefilters(&mut conditions, &mut params, "c", filters);
             let limit = GREP_SQL_SAFETY_LIMIT + 1;
@@ -165,8 +177,14 @@ fn load_indexed_chunks(
                         c.line_start::BIGINT AS line_start,
                         c.content
                  FROM code_content_chunks c
+                 JOIN code_indexed_file_states fs
+                   ON fs.project_id = c.project_id
+                  AND fs.file_path = c.file_path
+                  AND fs.content_hash = c.content_hash
                  JOIN code_indexed_files cf
-                   ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+                   ON cf.project_id = c.project_id
+                  AND cf.file_path = c.file_path
+                  AND cf.content_hash = c.content_hash
                  WHERE {}
                  ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
                  LIMIT {limit_placeholder}",
@@ -181,17 +199,23 @@ fn load_indexed_chunks(
         } => {
             let overlay_project_id = db::id_param(overlay_project_id)?;
             let parent_project_id = db::id_param(parent_project_id)?;
-            let mut params: Vec<&(dyn ToSql + Sync)> =
-                vec![&overlay_project_id, &parent_project_id, &tombstone_language];
+            let mut params: Vec<&(dyn ToSql + Sync)> = vec![
+                &overlay_project_id,
+                &parent_project_id,
+                &tombstone_language,
+                &machine_id,
+            ];
             let mut conditions = vec![
                 "cf.language != $3".to_string(),
+                "fs.machine_id = $4".to_string(),
                 "(
                     c.project_id = $1
                     OR (
                         c.project_id = $2
                         AND NOT EXISTS (
-                            SELECT 1 FROM code_indexed_files shadow
-                            WHERE shadow.project_id = $1
+                            SELECT 1 FROM code_indexed_file_states shadow
+                            WHERE shadow.machine_id = $4
+                              AND shadow.project_id = $1
                               AND shadow.file_path = c.file_path
                         )
                     )
@@ -207,8 +231,14 @@ fn load_indexed_chunks(
                         c.line_start::BIGINT AS line_start,
                         c.content
                  FROM code_content_chunks c
+                 JOIN code_indexed_file_states fs
+                   ON fs.project_id = c.project_id
+                  AND fs.file_path = c.file_path
+                  AND fs.content_hash = c.content_hash
                  JOIN code_indexed_files cf
-                   ON cf.project_id = c.project_id AND cf.file_path = c.file_path
+                   ON cf.project_id = c.project_id
+                  AND cf.file_path = c.file_path
+                  AND cf.content_hash = c.content_hash
                  WHERE {}
                  ORDER BY c.file_path ASC, c.line_start ASC, c.chunk_index ASC
                  LIMIT {limit_placeholder}",

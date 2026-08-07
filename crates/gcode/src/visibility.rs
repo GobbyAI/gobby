@@ -79,6 +79,26 @@ pub(super) fn local_machine_uuid_or_invisible() -> Option<Uuid> {
     local_machine_uuid().ok()
 }
 
+/// SQL condition restricting `row_alias` rows to the content versions selected
+/// by the local machine's file-state. `hash_column` names the row's
+/// content-hash column and `machine_placeholder` the caller's bound
+/// machine-uuid parameter.
+pub(super) fn machine_state_condition(
+    row_alias: &str,
+    hash_column: &str,
+    machine_placeholder: &str,
+) -> String {
+    format!(
+        "EXISTS (
+            SELECT 1 FROM code_indexed_file_states vfs
+            WHERE vfs.machine_id = {machine_placeholder}
+              AND vfs.project_id = {row_alias}.project_id
+              AND vfs.file_path = {row_alias}.file_path
+              AND vfs.content_hash = {row_alias}.{hash_column}
+        )"
+    )
+}
+
 pub fn indexed_file_exists(conn: &mut Client, ctx: &Context, file_path: &str) -> bool {
     let Some(machine_id) = local_machine_uuid_or_invisible() else {
         return false;

@@ -122,10 +122,24 @@ pub(super) fn push_visible_project_file_filter(
     params: &mut Vec<PgParam>,
     row_alias: &str,
     indexed_file_alias: &str,
+    hash_column: &str,
     ctx: &Context,
 ) {
     let tombstone = push_param(params, visibility::TOMBSTONE_LANGUAGE.to_string());
     conditions.push(format!("{indexed_file_alias}.language != {tombstone}"));
+    conditions.push(format!(
+        "{indexed_file_alias}.content_hash = {row_alias}.{hash_column}"
+    ));
+    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+        conditions.push("FALSE".to_string());
+        return;
+    };
+    let machine = push_param(params, machine_id);
+    conditions.push(visibility::machine_state_condition(
+        row_alias,
+        hash_column,
+        &machine,
+    ));
 
     match &ctx.index_scope {
         ProjectIndexScope::Single => {
@@ -144,8 +158,9 @@ pub(super) fn push_visible_project_file_filter(
                   OR (
                       {row_alias}.project_id = {parent}
                       AND NOT EXISTS (
-                          SELECT 1 FROM code_indexed_files shadow
-                          WHERE shadow.project_id = {overlay}
+                          SELECT 1 FROM code_indexed_file_states shadow
+                          WHERE shadow.machine_id = {machine}
+                            AND shadow.project_id = {overlay}
                             AND shadow.file_path = {row_alias}.file_path
                       )
                   ))"
@@ -330,6 +345,15 @@ pub(super) fn query_symbols_by_conditions(
     limit: usize,
     order: SymbolOrder,
 ) -> Result<Vec<Symbol>, postgres::Error> {
+    let Some(machine_id) = visibility::local_machine_uuid_or_invisible() else {
+        return Ok(Vec::new());
+    };
+    let machine = push_param(&mut params, machine_id);
+    conditions.push(visibility::machine_state_condition(
+        "cs",
+        "file_content_hash",
+        &machine,
+    ));
     let path_filter_requires_post_filter =
         push_symbol_filters(&mut conditions, &mut params, "cs", filters);
     let query_limit = if path_filter_requires_post_filter {
@@ -348,7 +372,9 @@ pub(super) fn query_symbols_by_conditions(
         "SELECT {columns}
          FROM code_symbols cs
          JOIN code_indexed_files cf
-           ON cf.project_id = cs.project_id AND cf.file_path = cs.file_path
+           ON cf.project_id = cs.project_id
+          AND cf.file_path = cs.file_path
+          AND cf.content_hash = cs.file_content_hash
          WHERE {where_clause}
          ORDER BY {order_by}
          LIMIT {limit_placeholder}",

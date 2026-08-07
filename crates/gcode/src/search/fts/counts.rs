@@ -132,7 +132,14 @@ fn count_visible_symbols_by_conditions(
             paths,
         },
     );
-    push_visible_project_file_filter(&mut conditions, &mut params, "cs", "cf", ctx);
+    push_visible_project_file_filter(
+        &mut conditions,
+        &mut params,
+        "cs",
+        "cf",
+        "file_content_hash",
+        ctx,
+    );
     if path_filter_requires_post_filter {
         return count_symbol_file_path_rows(conn, conditions, params, paths);
     }
@@ -283,7 +290,7 @@ fn count_visible_content_by_conditions(
     paths: &[String],
 ) -> Result<usize, postgres::Error> {
     push_content_filters(&mut conditions, &mut params, "c", language, paths);
-    push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", ctx);
+    push_visible_project_file_filter(&mut conditions, &mut params, "c", "cf", "content_hash", ctx);
     let sql = format!(
         "SELECT COUNT(*)::BIGINT AS count
          FROM code_content_chunks c

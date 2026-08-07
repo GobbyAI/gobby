@@ -680,3 +680,239 @@ fn overlay_visibility_context(ids: &OverlayFixtureIds) -> Context {
         },
     }
 }
+
+fn single_project_context(database_url: &str, project_id: &str) -> Context {
+    Context {
+        database_url: database_url.to_string(),
+        project_root: PathBuf::from("/tmp/gcode-two-machine"),
+        project_id: project_id.to_string(),
+        quiet: true,
+        falkordb: None,
+        qdrant: None,
+        embedding: None,
+        code_vectors: CodeVectorSettings::default(),
+        indexing: gobby_core::config::IndexingConfig::default(),
+        daemon_url: None,
+        index_scope: ProjectIndexScope::Single,
+    }
+}
+
+fn insert_file_version(
+    conn: &mut Client,
+    project_id: &str,
+    file_path: &str,
+    language: &str,
+    content_hash: &str,
+) {
+    let id = fixture_uuid(&format!("{project_id}:{file_path}:{content_hash}"));
+    let project_id = fixture_uuid_param(project_id);
+    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &language, &content_hash];
+    conn.execute(
+        "INSERT INTO code_indexed_files
+                (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
+                 graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
+             VALUES ($1, $2, $3, $4, $5, 1, 1, false, false, NULL, NOW())",
+        params,
+    )
+    .expect("insert indexed file version");
+}
+
+fn insert_machine_file_state(
+    conn: &mut Client,
+    machine_id: &str,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) {
+    let machine_id = fixture_uuid_param(machine_id);
+    let project_id = fixture_uuid_param(project_id);
+    conn.execute(
+        "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, '/tmp/gcode-two-machine', 0, 0, NOW(), 0)
+             ON CONFLICT (machine_id, project_id) DO NOTHING",
+        &[&machine_id, &project_id],
+    )
+    .expect("insert machine project state");
+    conn.execute(
+        "INSERT INTO code_indexed_file_states
+                (machine_id, project_id, file_path, content_hash)
+             VALUES ($1, $2, $3, $4)",
+        &[&machine_id, &project_id, &file_path, &content_hash],
+    )
+    .expect("insert machine file state");
+}
+
+fn insert_symbol_version(
+    conn: &mut Client,
+    project_id: &str,
+    file_path: &str,
+    name: &str,
+    kind: &str,
+    content_hash: &str,
+) {
+    let id = fixture_uuid(&format!("{project_id}:{file_path}:{name}:{content_hash}"));
+    let project_id = fixture_uuid_param(project_id);
+    let summary = name.replace('_', " ").replace('+', " plus ");
+    let params: &[&(dyn ToSql + Sync)] =
+        &[&id, &project_id, &file_path, &name, &kind, &content_hash, &summary];
+    conn.execute(
+        "INSERT INTO code_symbols
+                (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
+                 byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
+                 file_content_hash, content_hash, summary, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $4, $5, 'rust', 0, 1, 1, 1, $4, NULL, NULL,
+                     $6, $6, $7, NOW(), NOW())",
+        params,
+    )
+    .expect("insert symbol version");
+}
+
+fn insert_chunk_version(
+    conn: &mut Client,
+    project_id: &str,
+    file_path: &str,
+    chunk_index: i32,
+    content: &str,
+    content_hash: &str,
+) {
+    let id = fixture_uuid(&format!(
+        "{project_id}:{file_path}:{chunk_index}:{content_hash}"
+    ));
+    let project_id = fixture_uuid_param(project_id);
+    let params: &[&(dyn ToSql + Sync)] = &[
+        &id,
+        &project_id,
+        &file_path,
+        &chunk_index,
+        &content,
+        &content_hash,
+    ];
+    conn.execute(
+        "INSERT INTO code_content_chunks
+                (id, project_id, file_path, content_hash, chunk_index, line_start, line_end,
+                 content, language, created_at)
+             VALUES ($1, $2, $3, $6, $4, 1, 1, $5, 'rust', NOW())",
+        params,
+    )
+    .expect("insert content chunk version");
+}
+
+#[test]
+fn two_machine_divergence_scopes_reads_to_local_file_state() {
+    let (mut conn, database_url) = connect_overlay_visibility_test_db();
+    let project_id = unique_test_id("two-machine-project");
+    cleanup_single_project(&mut conn, &project_id);
+    let _cleanup = SingleProjectCleanup {
+        database_url: database_url.clone(),
+        project_id: project_id.clone(),
+    };
+
+    insert_project(&mut conn, &project_id, "/tmp/gcode-two-machine");
+    let local_machine =
+        gobby_core::machine::read_local_machine_id().expect("read local machine id");
+    let foreign_machine = fixture_uuid(&format!("{project_id}:foreign-machine")).to_string();
+
+    // One shared path with divergent versions: the local machine selects
+    // hash-local, the foreign machine selects hash-foreign.
+    insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-local");
+    insert_file_version(&mut conn, &project_id, "src/lib.rs", "rust", "hash-foreign");
+    insert_machine_file_state(
+        &mut conn,
+        &local_machine,
+        &project_id,
+        "src/lib.rs",
+        "hash-local",
+    );
+    insert_machine_file_state(
+        &mut conn,
+        &foreign_machine,
+        &project_id,
+        "src/lib.rs",
+        "hash-foreign",
+    );
+    insert_symbol_version(
+        &mut conn,
+        &project_id,
+        "src/lib.rs",
+        "twomachine_local_marker++",
+        "fn",
+        "hash-local",
+    );
+    insert_symbol_version(
+        &mut conn,
+        &project_id,
+        "src/lib.rs",
+        "twomachine_foreign_marker++",
+        "fn",
+        "hash-foreign",
+    );
+    insert_chunk_version(
+        &mut conn,
+        &project_id,
+        "src/lib.rs",
+        0,
+        "twomachine chunk localonly++",
+        "hash-local",
+    );
+    insert_chunk_version(
+        &mut conn,
+        &project_id,
+        "src/lib.rs",
+        0,
+        "twomachine chunk foreignonly++",
+        "hash-foreign",
+    );
+
+    // A path indexed only by the foreign machine must be invisible here.
+    insert_file_version(&mut conn, &project_id, "src/ghost.rs", "rust", "hash-ghost");
+    insert_machine_file_state(
+        &mut conn,
+        &foreign_machine,
+        &project_id,
+        "src/ghost.rs",
+        "hash-ghost",
+    );
+    insert_symbol_version(
+        &mut conn,
+        &project_id,
+        "src/ghost.rs",
+        "twomachine_ghost_marker++",
+        "fn",
+        "hash-ghost",
+    );
+    insert_chunk_version(
+        &mut conn,
+        &project_id,
+        "src/ghost.rs",
+        0,
+        "twomachine chunk ghostonly++",
+        "hash-ghost",
+    );
+
+    let ctx = single_project_context(&database_url, &project_id);
+
+    let text = super::symbols::search_text_visible(&mut conn, "twomachine", &ctx, None, &[], 10)
+        .expect("visible text search");
+    let names: Vec<&str> = text.results.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(names, vec!["twomachine_local_marker++"]);
+    assert_eq!(
+        count_text_visible(&mut conn, "twomachine", &ctx, None, &[]).expect("count text"),
+        1
+    );
+
+    let content =
+        super::content::search_content_visible(&mut conn, "twomachine", &ctx, None, &[], 10)
+            .expect("visible content search");
+    assert_eq!(content.len(), 1);
+    assert!(
+        content[0].snippet.contains("localonly"),
+        "expected the local version snippet, got: {}",
+        content[0].snippet
+    );
+    assert_eq!(
+        count_content_visible(&mut conn, "twomachine", &ctx, None, &[]).expect("count content"),
+        1
+    );
+}
