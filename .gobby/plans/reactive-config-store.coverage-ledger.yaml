@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: reactive-config-store
-plan_hash: "e5719330f0b2789a6930762a53a758b3b5092eb96cb9628865735cddfa0a6eb4"
+plan_hash: "a009f2bf161f5876d28450aa3ccd4f42d8570a6a928350fe3e21ccc23081b763"
 root_task_ref: "19645"
 
 sections:
@@ -12,11 +12,11 @@ sections:
       "1.1.4": {expected_leaves: [{title: Compile the typed registry, owner_agent: backend-developer}]}
   "1.2":
     acceptance_items:
-      "1.2.1": {expected_leaves: [{title: Add post-baseline migration 376, owner_agent: backend-developer}]}
-      "1.2.2": {expected_leaves: [{title: Add post-baseline migration 376, owner_agent: backend-developer}]}
-      "1.2.3": {expected_leaves: [{title: Add post-baseline migration 376, owner_agent: backend-developer}]}
-      "1.2.4": {expected_leaves: [{title: Add post-baseline migration 376, owner_agent: backend-developer}]}
-      "1.2.5": {expected_leaves: [{title: Add post-baseline migration 376, owner_agent: backend-developer}]}
+      "1.2.1": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
+      "1.2.5": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
   "1.3":
     acceptance_items:
       "1.3.1": {expected_leaves: [{title: Implement atomic revisioned mutations, owner_agent: backend-developer}]}

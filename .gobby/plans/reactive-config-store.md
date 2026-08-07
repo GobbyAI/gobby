@@ -42,11 +42,15 @@ registered Gobby runtime keys.
   secrets.
 - Public configuration reads, errors, events, YAML, and exports never contain secret
   plaintext.
-- The embedded baseline remains version 375 with its existing checksum. Schema evolution
-  uses migration 376, the first entry in the currently empty `MIGRATIONS` chain
-  (`crates/gcore/src/schema/assets.rs`). Adding it changes `root_hash()`,
-  `latest_version`, and `latest_checksum`, so the release-pinned schema identity is
-  regenerated in the same deliverable.
+- Schema evolution folds into baseline 375 directly. Through the 0.5.0 pre-release
+  period, baseline 375 is the sole PostgreSQL schema authority and `MIGRATIONS` in
+  `crates/gcore/src/schema/assets.rs` stays empty; numbered migrations resume only after
+  0.5.0 ships. Commit `a3b56649a` already folded a former migration 376 back into the
+  baseline, so adding one here would reverse an established convention.
+- Editing `baseline.sql` changes `BASELINE_CHECKSUM` and `root_hash()`, so the catalog
+  manifest, the packaged release-pinned identity, and both Rust identity contract tests
+  are regenerated in the same deliverable. New DDL uses the baseline's idempotent guards
+  (`IF NOT EXISTS`) so existing hubs re-apply cleanly and refresh their receipt.
 - Retain `config_store.is_secret` as registry-derived integrity metadata; no destructive
   column drop.
 - Multiple daemons connected to one remote hub receive revisions through a dedicated
@@ -110,41 +114,44 @@ metadata for namespace, secrecy, visibility, activation, and machine export.
 - 1.1.3 - Public and machine schemas expose only their declared visibility classes. test: `tests/config/test_config_registry.py::test_visibility_partitions_are_disjoint`.
 - 1.1.4 - `auth_mode` is absent from bootstrap and registered as restart-required. symbol: `BootstrapConfig`.
 
-### 1.2 Add post-baseline migration 376 [category: code] (depends: 1.1)
+### 1.2 Extend baseline 375 with revisioned configuration state [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/376_reactive_config_store.sql`
+- `crates/gcore/assets/schema/baseline.sql`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated column catalog gains the revision table and column rows
-- `crates/gcore/src/schema/assets.rs::*` — scope-reason: embed migration 376 and its checksum after immutable baseline 375
-- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: verify fresh and existing-hub application paths
-- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity advances latest version, latest checksum, and assets root hash
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: refresh BASELINE_CHECKSUM for the edited baseline while MIGRATIONS stays empty
+- `crates/gcore/src/schema/runner_tests.rs::*` — scope-reason: verify fresh apply and existing-hub re-apply paths
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated release-pinned identity carries the new baseline checksum and assets root hash
 - `scripts/generate_schema_expected_identity.py`
 - `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`
 - `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`
 
-Migration 376 creates singleton `config_state(id BOOLEAN PRIMARY KEY CHECK(id), revision
-BIGINT NOT NULL)` with its single revision-zero row and adds `revision BIGINT NOT NULL
-DEFAULT 0` to `config_store`. Grant `gobby_daemon_runtime` access to match the existing
-`config_store` grant.
+Add singleton `config_state(id BOOLEAN PRIMARY KEY CHECK(id), revision BIGINT NOT NULL)`
+with its single revision-zero row, and add `revision BIGINT NOT NULL DEFAULT 0` to
+`config_store`. Grant `gobby_daemon_runtime` access to match the existing `config_store`
+grant. Use the baseline's idempotent guards so an existing hub re-applies cleanly.
 
-Keep `BASELINE_VERSION = 375`, `BASELINE_CHECKSUM`, and `baseline.sql` unchanged. Embed
-376 as the first entry in `MIGRATIONS`; `runner.rs` enforces contiguity from
-`BASELINE_VERSION + 1`. Retain `is_secret`; application writes derive it from the
-registry.
+Keep `BASELINE_VERSION = 375` and leave `MIGRATIONS` empty. Refresh `BASELINE_CHECKSUM`
+to the sha256 of the edited `baseline.sql`. Because `has_exact_baseline_receipt` compares
+the stored receipt against `BASELINE_CHECKSUM`, existing hubs stop matching
+`AlreadyBaselined`, re-apply the idempotent baseline, and refresh their receipt — the
+same path commit `a3b56649a` exercised.
 
-Embedding a migration changes `root_hash()`, so regenerate the packaged schema identity
-(`latest_version` 375 → 376, new `latest_checksum` and `assets_root_hash`) that
-`gobby.storage.schema_contract` loads and `gobby install` asserts, and update both Rust
-identity contract tests in the same change.
+Retain `is_secret`; application writes derive it from the registry.
+
+Editing the baseline changes `root_hash()`, so regenerate the packaged schema identity
+that `gobby.storage.schema_contract` loads and `gobby install` asserts. The generator
+shells out to the installed `gdaemon`, so rebuild that binary before regenerating, and
+update both Rust identity contract tests in the same change.
 
 **Acceptance:**
 
-- 1.2.1 - A fresh baseline-375 schema advances through migration 376. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_applies_reactive_config_migration`.
-- 1.2.2 - An existing exact baseline-375 receipt advances to 376 without baseline checksum drift. test: `crates/gcore/src/schema/runner_tests.rs::existing_baseline_advances_to_376`.
-- 1.2.3 - Migration reruns are receipt-safe and require no destructive authorization. test: `crates/gcore/src/schema/runner_tests.rs::reactive_config_migration_is_nondestructive`.
+- 1.2.1 - A fresh apply creates the revision table, seed row, and config_store column. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_creates_config_revision_state`.
+- 1.2.2 - A hub holding the previous baseline receipt re-applies and refreshes to the new checksum without data loss. test: `crates/gcore/src/schema/runner_tests.rs::existing_hub_reapplies_updated_baseline`.
+- 1.2.3 - Re-apply is idempotent and requires no destructive authorization. test: `crates/gcore/src/schema/runner_tests.rs::config_revision_baseline_is_nondestructive`.
 - 1.2.4 - Embedded assets and catalog describe the revision table and row column. file: `crates/gcore/assets/schema/catalog.manifest.json`.
-- 1.2.5 - Regenerated schema identity reports latest version 376 and both identity contract tests pass. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+- 1.2.5 - Regenerated schema identity matches the edited baseline and both identity contract tests pass. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 
 ### 1.3 Implement atomic revisioned mutations [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
@@ -682,7 +689,7 @@ Use isolated ports/state and never contact the user's running daemon.
   - Preserved authenticated effective-config and service-capability contracts.
   - Added Rust registry generation and Gobby-mode precedence removal.
   - Added every uncovered loader re-export and caller.
-  - Replaced baseline editing with non-destructive migration 376.
+  - Replaced hand-editing of the baseline with a numbered migration (reverted in round 3).
   - Specified the pool-exempt notification connection and remote-daemon consumer.
   - Removed compensating rollback in favor of local prepare/commit.
   - Split topology, stateful subscribers, loops, loader groups, and integration testing.
@@ -690,8 +697,8 @@ Use isolated ports/state and never contact the user's running daemon.
 - Review repair round 2 (index-verified):
   - 1.2 gained the schema-identity fan-out — `schema_expected_identity.json`,
     `scripts/generate_schema_expected_identity.py`, and both Rust identity contract
-    tests — plus acceptance item 1.2.5. Embedding migration 376 changes `root_hash()`,
-    which `gobby install` and two `cargo test` targets assert exactly.
+    tests — plus acceptance item 1.2.5. Any change to the embedded schema assets changes
+    `root_hash()`, which `gobby install` and two `cargo test` targets assert exactly.
   - 2.6 corrected Rust module paths: `crates/gcode/src/config/mod.rs` does not exist
     (the module root is `crates/gcode/src/config.rs`), and both crates' new test
     submodules must be declared from their existing `config/tests.rs`.
@@ -706,6 +713,16 @@ Use isolated ports/state and never contact the user's running daemon.
   - 4.1 `depends` gained 3.7. Ledger `owner_agent` for 4.2 corrected to `qa-dev`;
     `test-architect` is not an installed agent.
   - V2 corrected cargo package names to `gobby-code` and `gobby-daemon`.
+- Review repair round 3 (convention correction):
+  - 1.2 no longer adds migration 376. Through the 0.5.0 pre-release period baseline 375
+    is the sole schema authority and `MIGRATIONS` stays empty; commit `a3b56649a`
+    deleted a real migration 376 and folded it into the baseline, establishing that
+    convention. The deliverable now edits `baseline.sql`, refreshes `BASELINE_CHECKSUM`,
+    and relies on the runner's existing-hub re-apply path, with acceptance items
+    rewritten accordingly.
+  - V2 reordered: `gdaemon` is rebuilt before the identity generator runs, because
+    `scripts/generate_schema_expected_identity.py` shells out to the installed binary.
+    Added the catalog-manifest freshness test.
 - No enhancement or adversarial-review round has run.
 
 ## V2: Verification
@@ -754,21 +771,25 @@ GOBBY_TEST_PROTECT=1 uv run pytest \
   tests/integration/config/test_reactive_config_multi_daemon.py -v
 ```
 
-Rust and embedded-schema validation. Regenerate the schema identity before the Rust
-contract tests, because migration 376 changes the assets root hash:
+Rust and embedded-schema validation. Order matters: editing `baseline.sql` changes
+`BASELINE_CHECKSUM` and the assets root hash, and the identity generator shells out to
+the installed `gdaemon`, so rebuild that binary before regenerating the identity and
+before running the contract tests.
 
 ```bash
+cargo build --release -p gobby-daemon -p gobby-code
 uv run python scripts/generate_schema_expected_identity.py
 uv run python scripts/generate_runtime_config_contract.py --check
 cargo test -p gobby-core schema::runner_tests
 cargo test -p gobby-core config::tests::runtime_contract
 cargo test -p gobby-core ai::effective_config
 cargo test -p gobby-core --test schema_contract
+cargo test -p gobby-core --test catalog_manifest_freshness
 cargo test -p gobby-code config::
 cargo test -p gobby-daemon --test cli_contract
-cargo build --release -p gobby-daemon -p gobby-code
 ```
 
 Run focused Ruff, mypy, web Vitest, and web type-check commands for touched paths. Smoke
-the newly built `gdaemon` against an isolated temporary schema and confirm migration 376
-applies; do not reinstall or restart the user's daemon during automated validation.
+the newly built `gdaemon` against an isolated temporary schema and confirm both the fresh
+apply and the existing-hub re-apply paths; do not reinstall or restart the user's daemon
+during automated validation.
