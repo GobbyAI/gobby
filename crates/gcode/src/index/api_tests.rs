@@ -27,6 +27,11 @@ mod serial_db {
         seed_project(&mut conn, &project_id);
 
         let rel = "src/lib.rs";
+        api::upsert_file(
+            &mut conn,
+            &indexed_file(&project_id, rel, "file-hash", 1, 16),
+        )
+        .expect("seed indexed file");
         let mut symbol = test_symbol(&project_id, rel, "tracked", 0, "content-hash-v1");
         symbol.summary = Some("daemon summary".to_string());
         assert_eq!(
@@ -71,7 +76,7 @@ mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires a PostgreSQL test database URL"
     )]
-    fn api_upsert_file_resets_projection_sync_flags_on_conflict() {
+    fn api_upsert_file_preserves_immutable_content_and_projection_state_on_conflict() {
         let (mut conn, database_url) = connect_test_db();
         let project_id = unique_test_project_id("gcode-api-file-upsert");
         cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
@@ -84,6 +89,8 @@ mod serial_db {
         let rel = "src/lib.rs";
         let mut file = indexed_file(&project_id, rel, "file-hash-v1", 1, 16);
         api::upsert_file(&mut conn, &file).expect("insert indexed file");
+        let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
+        api::upsert_file_state(&mut conn, &machine_id, &file).expect("insert indexed file state");
 
         assert!(
             db::mark_vector_sync_attempted(&mut conn, &project_id, rel)
@@ -150,18 +157,21 @@ mod serial_db {
         let graph_attempt_cleared: bool = row.get(5);
         let vector_attempt_cleared: bool = row.get(6);
 
-        assert_eq!(content_hash, "file-hash-v2");
+        assert_eq!(content_hash, "file-hash-v1");
         assert_eq!(symbol_count, 2);
         assert_eq!(byte_size, 32);
-        assert!(!graph_synced, "reindex must mark graph projection stale");
-        assert!(!vectors_synced, "reindex must mark vector projection stale");
+        assert!(graph_synced, "existing content keeps its graph projection");
         assert!(
-            graph_attempt_cleared,
-            "reindex must clear the previous graph sync attempt timestamp"
+            vectors_synced,
+            "existing content keeps its vector projection"
         );
         assert!(
-            vector_attempt_cleared,
-            "reindex must clear the previous vector sync attempt timestamp"
+            !graph_attempt_cleared,
+            "existing content keeps the graph sync attempt timestamp"
+        );
+        assert!(
+            !vector_attempt_cleared,
+            "existing content keeps the vector sync attempt timestamp"
         );
     }
 
@@ -182,25 +192,42 @@ mod serial_db {
         seed_project(&mut conn, &project_id);
 
         let rel = "src/lib.rs";
+        api::upsert_file(
+            &mut conn,
+            &indexed_file(&project_id, rel, "file-hash", 0, 16),
+        )
+        .expect("seed indexed file");
         let import = ImportRelation {
             file_path: rel.to_string(),
             module_name: "std::fs".to_string(),
         };
         assert_eq!(
-            api::upsert_imports(&mut conn, &project_id, rel, &[import.clone(), import])
-                .expect("upsert duplicate imports"),
+            api::upsert_imports(
+                &mut conn,
+                &project_id,
+                rel,
+                "file-hash",
+                &[import.clone(), import],
+            )
+            .expect("upsert duplicate imports"),
             1
         );
 
         let call = CallRelation::new(
-            Symbol::make_id(&project_id, rel, "caller", "function", 0),
+            Symbol::make_id(&project_id, rel, "file-hash", "caller", "function", 0),
             "read_to_string".to_string(),
             rel.to_string(),
             7,
         );
         assert_eq!(
-            api::upsert_calls(&mut conn, &project_id, rel, &[call.clone(), call])
-                .expect("upsert duplicate calls"),
+            api::upsert_calls(
+                &mut conn,
+                &project_id,
+                rel,
+                "file-hash",
+                &[call.clone(), call],
+            )
+            .expect("upsert duplicate calls"),
             1
         );
 
@@ -232,8 +259,10 @@ fn connect_test_db() -> (postgres::Client, String) {
 }
 
 fn seed_project(conn: &mut postgres::Client, project_id: &str) {
+    let machine_id = gobby_core::machine::read_local_machine_id().expect("read machine id");
     api::upsert_project_stats(
         conn,
+        &machine_id,
         &IndexedProject {
             id: project_id.to_string(),
             root_path: format!("/tmp/{project_id}"),
@@ -255,7 +284,7 @@ fn indexed_file(
     byte_size: usize,
 ) -> IndexedFile {
     IndexedFile {
-        id: IndexedFile::make_id(project_id, file_path),
+        id: IndexedFile::make_id(project_id, file_path, content_hash),
         project_id: project_id.to_string(),
         file_path: file_path.to_string(),
         language: "rust".to_string(),
@@ -274,7 +303,14 @@ fn test_symbol(
     content_hash: &str,
 ) -> Symbol {
     Symbol {
-        id: Symbol::make_id(project_id, file_path, name, "function", byte_start),
+        id: Symbol::make_id(
+            project_id,
+            file_path,
+            "file-hash",
+            name,
+            "function",
+            byte_start,
+        ),
         project_id: project_id.to_string(),
         file_path: file_path.to_string(),
         name: name.to_string(),
@@ -288,6 +324,7 @@ fn test_symbol(
         signature: Some(format!("fn {name}()")),
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "file-hash".to_string(),
         content_hash: content_hash.to_string(),
         summary: None,
         created_at: String::new(),
@@ -350,6 +387,14 @@ impl Drop for ProjectCleanup {
 
 fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
     let project_id = db::id_param(project_id)?;
+    conn.execute(
+        "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
     conn.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],

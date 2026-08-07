@@ -33,6 +33,7 @@ fn test_symbol(summary: Option<String>) -> Symbol {
         signature: None,
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "hash".to_string(),
         content_hash: "hash".to_string(),
         summary,
         created_at: String::new(),

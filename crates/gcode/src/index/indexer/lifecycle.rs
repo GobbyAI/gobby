@@ -4,71 +4,13 @@ use std::path::Path;
 use anyhow::Context as _;
 use postgres::Client;
 
-use crate::config::Context;
 use crate::db::id_param;
-use crate::graph::code_graph;
 use crate::index::{api, hasher};
 use crate::models::IndexedProject;
 use crate::projection::sync::{self, ProjectionSyncRequest, ProjectionTarget};
-use crate::vector::code_symbols;
 
-use super::types::{IndexDegradation, IndexOutcome, IndexRequest};
+use super::types::{IndexOutcome, IndexRequest};
 use super::util::{epoch_secs_str, relative_path};
-
-pub(super) fn cleanup_deleted_file_projections(
-    ctx: &Context,
-    file_path: &str,
-    outcome: &mut IndexOutcome,
-    file_vectors_synced: Option<bool>,
-) {
-    if let Err(error) = code_graph::delete_file_projection(ctx, file_path) {
-        push_projection_cleanup_degradation(
-            outcome,
-            file_path,
-            ProjectionTarget::Graph,
-            error.to_string(),
-        );
-    }
-
-    match ctx.qdrant.as_ref() {
-        Some(qdrant) => {
-            if let Err(error) =
-                code_symbols::delete_file_vectors(qdrant, &ctx.project_id, file_path)
-            {
-                push_projection_cleanup_degradation(
-                    outcome,
-                    file_path,
-                    ProjectionTarget::Vectors,
-                    error.to_string(),
-                );
-            }
-        }
-        None if file_vectors_synced == Some(true) => {
-            push_projection_cleanup_degradation(
-                outcome,
-                file_path,
-                ProjectionTarget::Vectors,
-                "Qdrant config is required for deleted-file vector cleanup".to_string(),
-            );
-        }
-        None => {}
-    }
-}
-
-fn push_projection_cleanup_degradation(
-    outcome: &mut IndexOutcome,
-    file_path: &str,
-    target: ProjectionTarget,
-    message: String,
-) {
-    outcome
-        .degraded
-        .push(IndexDegradation::ProjectionCleanupFailed {
-            file_path: file_path.to_string(),
-            target,
-            message,
-        });
-}
 
 pub(super) fn attach_projection_sync(outcome: &mut IndexOutcome, request: &IndexRequest) {
     if !request.sync_projections {
@@ -86,86 +28,37 @@ pub(super) fn attach_projection_sync(outcome: &mut IndexOutcome, request: &Index
 pub fn invalidate(
     conn: &mut Client,
     project_id: &str,
-    daemon_url: Option<&str>,
+    _daemon_url: Option<&str>,
 ) -> anyhow::Result<()> {
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    let machine_uuid = id_param(&machine_id)?;
     let project_uuid = id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
-        "DELETE FROM code_calls WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
-    tx.execute(
-        "DELETE FROM code_imports WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
-    tx.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
-    tx.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
-    tx.execute(
-        "DELETE FROM code_symbols WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
-    tx.execute(
-        "DELETE FROM code_indexed_projects WHERE id = $1",
-        &[&project_uuid],
+        "DELETE FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_uuid, &project_uuid],
     )?;
     tx.commit()?;
-    if let Some(url) = daemon_url {
-        notify_daemon_invalidate(url, project_id);
-    }
-    eprintln!("Invalidated code index for project {project_id}");
+    eprintln!("Invalidated local code index state for project {project_id}");
 
     Ok(())
 }
 
-/// POST to the Gobby daemon requesting FalkorDB/Qdrant cleanup for a project.
-/// Fire-and-forget: warns on failure, never errors.
-fn notify_daemon_invalidate(base_url: &str, project_id: &str) {
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(1))
-        .build()
-    {
-        Ok(c) => c,
-        Err(error) => {
-            eprintln!("Warning: could not build daemon invalidate HTTP client: {error}");
-            return;
-        }
-    };
-
-    let base = base_url.trim_end_matches('/');
-    let url = format!("{base}/api/code-index/invalidate");
-    match client
-        .post(&url)
-        .json(&serde_json::json!({"project_id": project_id}))
-        .send()
-    {
-        Ok(resp) if !resp.status().is_success() => {
-            eprintln!("Warning: daemon invalidate returned {}", resp.status());
-        }
-        Err(e) => {
-            eprintln!("Warning: could not notify daemon: {e}");
-        }
-        _ => {}
-    }
-}
-
 pub(super) fn refresh_project_stats(
     conn: &mut Client,
+    machine_id: &str,
     root_path: &Path,
     project_id: &str,
     elapsed_ms: u64,
     total_eligible_files: Option<usize>,
 ) {
-    let total_files = count_rows(conn, "code_indexed_files", project_id);
-    let total_symbols = count_rows(conn, "code_symbols", project_id);
+    let total_files = count_machine_rows(conn, machine_id, project_id, false);
+    let total_symbols = count_machine_rows(conn, machine_id, project_id, true);
 
     if let Err(error) = api::upsert_project_stats(
         conn,
+        machine_id,
         &IndexedProject {
             id: project_id.to_string(),
             root_path: root_path.to_string_lossy().to_string(),
@@ -185,6 +78,7 @@ pub(super) fn refresh_project_stats(
 
 pub(super) fn get_stale_files(
     conn: &mut Client,
+    machine_id: &str,
     project_id: &str,
     current_hashes: &HashMap<String, String>,
 ) -> anyhow::Result<HashSet<String>> {
@@ -192,10 +86,14 @@ pub(super) fn get_stale_files(
     let mut indexed = HashMap::new();
     let project_uuid = id_param(project_id)
         .with_context(|| format!("stale detection requires a uuid project id, got {project_id}"))?;
+    let machine_uuid = id_param(machine_id)
+        .with_context(|| format!("stale detection requires a uuid machine id, got {machine_id}"))?;
     let rows = conn
         .query(
-            "SELECT file_path, content_hash FROM code_indexed_files WHERE project_id = $1",
-            &[&project_uuid],
+            "SELECT file_path, content_hash
+             FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid],
         )
         .map_err(|error| {
             log::error!(
@@ -266,6 +164,7 @@ pub(super) fn current_file_state(
 
 pub(super) fn get_orphan_files(
     conn: &mut Client,
+    machine_id: &str,
     project_id: &str,
     present_paths: &HashSet<String>,
 ) -> anyhow::Result<Vec<String>> {
@@ -273,10 +172,14 @@ pub(super) fn get_orphan_files(
     let project_uuid = id_param(project_id).with_context(|| {
         format!("orphan detection requires a uuid project id, got {project_id}")
     })?;
+    let machine_uuid = id_param(machine_id).with_context(|| {
+        format!("orphan detection requires a uuid machine id, got {machine_id}")
+    })?;
     let rows = conn
         .query(
-            "SELECT file_path FROM code_indexed_files WHERE project_id = $1",
-            &[&project_uuid],
+            "SELECT file_path FROM code_indexed_file_states
+             WHERE machine_id = $1 AND project_id = $2",
+            &[&machine_uuid, &project_uuid],
         )
         .map_err(|error| {
             log::error!(
@@ -301,17 +204,34 @@ pub(super) fn get_orphan_files(
     Ok(orphans)
 }
 
-fn count_rows(conn: &mut Client, table: &str, project_id: &str) -> usize {
-    if !matches!(table, "code_indexed_files" | "code_symbols") {
-        return 0;
-    }
+fn count_machine_rows(
+    conn: &mut Client,
+    machine_id: &str,
+    project_id: &str,
+    symbols: bool,
+) -> usize {
     // A non-uuid project id cannot exist in the uuid column; report zero rows,
     // matching this helper's existing swallow-to-zero error handling.
     let Ok(project_id) = id_param(project_id) else {
         return 0;
     };
-    let sql = format!("SELECT COUNT(*)::BIGINT AS count FROM {table} WHERE project_id = $1");
-    conn.query_one(&sql, &[&project_id])
+    let Ok(machine_id) = id_param(machine_id) else {
+        return 0;
+    };
+    let sql = if symbols {
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_symbols cs
+         JOIN code_indexed_file_states cifs
+           ON cifs.project_id = cs.project_id
+          AND cifs.file_path = cs.file_path
+          AND cifs.content_hash = cs.file_content_hash
+         WHERE cifs.machine_id = $1 AND cifs.project_id = $2"
+    } else {
+        "SELECT COUNT(*)::BIGINT AS count
+         FROM code_indexed_file_states
+         WHERE machine_id = $1 AND project_id = $2"
+    };
+    conn.query_one(sql, &[&machine_id, &project_id])
         .ok()
         .and_then(|row| row.try_get::<_, i64>("count").ok())
         .unwrap_or(0) as usize

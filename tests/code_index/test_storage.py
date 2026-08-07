@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -19,7 +20,7 @@ from gobby.code_index.models import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
-from tests.code_index.conftest import MISSING_ID, PROJECT_ID, PROJECT_ID_2
+from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
 
 pytestmark = pytest.mark.unit
 
@@ -31,6 +32,36 @@ def _ordered_uuid(n: int) -> str:
     return str(uuid.UUID(int=n))
 
 
+def _upsert_test_file(
+    storage: CodeIndexStorage,
+    file_path: str,
+    content_hash: str = FILE_CONTENT_HASH,
+    *,
+    project_id: str = PROJECT_ID,
+) -> IndexedFile:
+    indexed_file = IndexedFile(
+        id=IndexedFile.make_id(project_id, file_path, content_hash),
+        project_id=project_id,
+        file_path=file_path,
+        language="python",
+        content_hash=content_hash,
+    )
+    storage.upsert_file(indexed_file)
+    return indexed_file
+
+
+@pytest.fixture(autouse=True)
+def _register_local_project(
+    code_storage: CodeIndexStorage,
+    request: pytest.FixtureRequest,
+) -> None:
+    code_storage.upsert_project_stats(
+        IndexedProject(id=PROJECT_ID, root_path="/tmp/gobby-code-index-tests")
+    )
+    if "sample_symbols" in request.fixturenames:
+        _upsert_test_file(code_storage, "src/app.py")
+
+
 # ── Symbols ─────────────────────────────────────────────────────────────
 
 
@@ -38,7 +69,7 @@ def _make_search_symbol(symbol_id: str, name: str, byte_start: int) -> Symbol:
     return Symbol(
         id=symbol_id,
         project_id=PROJECT_ID,
-        file_path=f"src/{name}_{byte_start}.py",
+        file_path="src/app.py",
         name=name,
         qualified_name=name,
         kind="function",
@@ -48,6 +79,7 @@ def _make_search_symbol(symbol_id: str, name: str, byte_start: int) -> Symbol:
         line_start=1,
         line_end=1,
         signature=f"def {name}() -> None:",
+        file_content_hash=FILE_CONTENT_HASH,
         content_hash=symbol_id,
     )
 
@@ -142,6 +174,7 @@ def test_search_symbols_by_name_ranks_exact_prefix_then_id(
     runner_b = _ordered_uuid(0x21)
     runway = _ordered_uuid(0x30)
     exact = _ordered_uuid(0x40)
+    _upsert_test_file(code_storage, "src/app.py")
     symbols = [
         _make_search_symbol(substring_a, "arun_00", 10),
         _make_search_symbol(substring_b, "arun_01", 20),
@@ -162,6 +195,42 @@ def test_search_symbols_by_name_ranks_exact_prefix_then_id(
         runner_b,
         runway,
     ]
+
+
+def test_search_symbols_fts_overfetches_before_machine_visibility_filter(
+    code_storage: CodeIndexStorage,
+) -> None:
+    stale_hash = "stale-file-hash"
+    _upsert_test_file(code_storage, "src/app.py", stale_hash)
+    stale_symbols = [
+        _make_search_symbol(_ordered_uuid(index), f"run_stale_{index}", index)
+        for index in range(1, 4)
+    ]
+    for symbol in stale_symbols:
+        symbol.file_content_hash = stale_hash
+    current_symbols = [
+        _make_search_symbol(_ordered_uuid(index), f"run_current_{index}", index)
+        for index in range(4, 6)
+    ]
+    _upsert_test_file(code_storage, "src/app.py", FILE_CONTENT_HASH)
+    code_storage.upsert_symbols([*stale_symbols, *current_symbols])
+    ranked_ids = [symbol.id for symbol in [*stale_symbols, *current_symbols]]
+
+    with patch("gobby.code_index._storage.symbols.keyword.pick_search_backend") as pick_backend:
+        pick_backend.return_value.search.return_value = [
+            SimpleNamespace(id=symbol_id) for symbol_id in ranked_ids
+        ]
+        results = code_storage.search_symbols_fts("run", PROJECT_ID, limit=2)
+
+    assert [symbol.id for symbol in results] == [
+        current_symbols[0].id,
+        current_symbols[1].id,
+    ]
+    pick_backend.return_value.search.assert_called_once_with(
+        "run",
+        8,
+        filters={"project_id": PROJECT_ID, "kind": None, "file_path": None},
+    )
 
 
 def test_search_symbols_by_name_with_kind_filter(
@@ -195,6 +264,7 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
     The dedup constraint is UNIQUE NULLS NOT DISTINCT, so two identical rows
     whose callee_symbol_id is NULL still conflict and collapse to one row.
     """
+    _upsert_test_file(code_storage, "src/app.py")
     unresolved_call = CallRelation(
         caller_symbol_id=CALLER_SYMBOL_ID,
         callee_name="missing_target",
@@ -220,6 +290,8 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
 
 
 def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
+    _upsert_test_file(code_storage, "src/api.py")
+    _upsert_test_file(code_storage, "src/worker.py")
     code_storage.upsert_imports(
         PROJECT_ID,
         "src/api.py",
@@ -239,17 +311,17 @@ def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:
     assert results == [{"file_path": "src/api.py"}]
 
 
-def test_delete_symbols_for_file(
+def test_delete_symbols_for_file_retains_shared_facts(
     code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
 ) -> None:
-    """Delete all symbols for a file."""
+    """Legacy fact deletion leaves immutable symbols available to selectors."""
     code_storage.upsert_symbols(sample_symbols)
 
     deleted = code_storage.delete_symbols_for_file(PROJECT_ID, "src/app.py")
-    assert deleted == 3
+    assert deleted == 0
 
     remaining = code_storage.get_symbols_for_file(PROJECT_ID, "src/app.py")
-    assert remaining == []
+    assert len(remaining) == 3
 
 
 def test_delete_symbols_for_file_returns_zero_for_missing(
@@ -279,9 +351,9 @@ def test_get_pending_sync_files_uses_boolean_literals_for_postgres() -> None:
     assert storage.get_pending_sync_files(PROJECT_ID) == []
 
     sql, params = db.calls[0]
-    assert params[0] == PROJECT_ID
+    assert params[1] == PROJECT_ID
     assert params[-1] == 50
-    assert len(params) == 4
+    assert len(params) == 5
     assert "vectors_synced IS FALSE" in sql
     assert "graph_synced IS FALSE" in sql
     assert "vector_sync_attempted_at" in sql
@@ -295,14 +367,14 @@ def test_get_pending_sync_files_deprioritizes_recent_failures(
 ) -> None:
     """Recently failed rows do not pin the pending batch head."""
     old_file = IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/old.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/old.py", "old"),
         project_id=PROJECT_ID,
         file_path="src/old.py",
         language="python",
         content_hash="old",
     )
     new_file = IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/new.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/new.py", "new"),
         project_id=PROJECT_ID,
         file_path="src/new.py",
         language="python",
@@ -323,7 +395,7 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
 ) -> None:
     """Failed rows become eligible again after the cooloff expires."""
     file = IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/retry.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/retry.py", "retry"),
         project_id=PROJECT_ID,
         file_path="src/retry.py",
         language="python",
@@ -345,7 +417,7 @@ def test_get_pending_sync_files_retries_after_failure_cooloff(
 def test_upsert_and_get_file(code_storage: CodeIndexStorage) -> None:
     """Round-trip: upsert then retrieve file record."""
     f = IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/lib.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/lib.py", "hash123"),
         project_id=PROJECT_ID,
         file_path="src/lib.py",
         language="python",
@@ -372,7 +444,7 @@ def test_list_files(code_storage: CodeIndexStorage) -> None:
     for name in ("a.py", "b.py", "c.py"):
         code_storage.upsert_file(
             IndexedFile(
-                id=IndexedFile.make_id(PROJECT_ID, name),
+                id=IndexedFile.make_id(PROJECT_ID, name, f"hash-{name}"),
                 project_id=PROJECT_ID,
                 file_path=name,
                 language="python",
@@ -391,7 +463,7 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     # Store a file with hash "old"
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id(PROJECT_ID, "changed.py"),
+            id=IndexedFile.make_id(PROJECT_ID, "changed.py", "old-hash"),
             project_id=PROJECT_ID,
             file_path="changed.py",
             language="python",
@@ -400,7 +472,7 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     )
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id(PROJECT_ID, "same.py"),
+            id=IndexedFile.make_id(PROJECT_ID, "same.py", "current-hash"),
             project_id=PROJECT_ID,
             file_path="same.py",
             language="python",
@@ -417,6 +489,48 @@ def test_get_stale_files(code_storage: CodeIndexStorage) -> None:
     assert "changed.py" in stale
     assert "brand_new.py" in stale
     assert "same.py" not in stale
+
+
+def test_file_states_coexist_across_machines(code_storage: CodeIndexStorage) -> None:
+    local_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000001"
+    remote_machine_id = "eeeeeeee-eeee-4eee-8eee-000000000002"
+    for machine_id in (local_machine_id, remote_machine_id):
+        code_storage.db.execute(
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+            (machine_id, f"test-{machine_id[-4:]}"),
+        )
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
+        code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/local/repo"))
+        _upsert_test_file(code_storage, "src/shared.py", "local-hash")
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
+        code_storage.upsert_project_stats(IndexedProject(id=PROJECT_ID, root_path="/remote/repo"))
+        _upsert_test_file(code_storage, "src/shared.py", "remote-hash")
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=local_machine_id):
+        local_project = code_storage.get_project_stats(PROJECT_ID)
+        local_file = code_storage.get_file(PROJECT_ID, "src/shared.py")
+        assert local_project is not None
+        assert local_file is not None
+        assert local_project.root_path == "/local/repo"
+        assert local_file.content_hash == "local-hash"
+
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=remote_machine_id):
+        remote_project = code_storage.get_project_stats(PROJECT_ID)
+        remote_file = code_storage.get_file(PROJECT_ID, "src/shared.py")
+        assert remote_project is not None
+        assert remote_file is not None
+        assert remote_project.root_path == "/remote/repo"
+        assert remote_file.content_hash == "remote-hash"
+
+    row = code_storage.db.fetchone(
+        """SELECT COUNT(*) AS count FROM code_indexed_files
+           WHERE project_id = %s AND file_path = %s""",
+        (PROJECT_ID, "src/shared.py"),
+    )
+    assert row is not None
+    assert row["count"] == 2
 
 
 # ── Projects ────────────────────────────────────────────────────────────
@@ -546,11 +660,11 @@ def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     assert retrieved.total_symbols == 100
 
 
-def test_delete_project_index_removes_all_project_data(
+def test_delete_project_index_removes_only_local_project_state(
     code_storage: CodeIndexStorage,
     sample_symbols: list[Symbol],
 ) -> None:
-    """Deleting a project index removes stats and all derived index records."""
+    """Deleting a project index removes selectors while retaining shared facts."""
     code_storage.upsert_project_stats(
         IndexedProject(
             id=PROJECT_ID,
@@ -561,11 +675,11 @@ def test_delete_project_index_removes_all_project_data(
     )
     code_storage.upsert_file(
         IndexedFile(
-            id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+            id=IndexedFile.make_id(PROJECT_ID, "src/app.py", FILE_CONTENT_HASH),
             project_id=PROJECT_ID,
             file_path="src/app.py",
             language="python",
-            content_hash="abc123",
+            content_hash=FILE_CONTENT_HASH,
             symbol_count=len(sample_symbols),
         )
     )
@@ -587,16 +701,16 @@ def test_delete_project_index_removes_all_project_data(
             )
         ],
     )
-    code_storage.upsert_content_chunks(_make_chunks())
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
 
     counts = code_storage.delete_project_index(PROJECT_ID)
 
     assert counts == {
-        "symbols": len(sample_symbols),
-        "files": 1,
-        "imports": 1,
-        "calls": 1,
-        "content_chunks": 2,
+        "symbols": 0,
+        "files": 0,
+        "imports": 0,
+        "calls": 0,
+        "content_chunks": 0,
         "projects": 1,
     }
     assert code_storage.get_project_stats(PROJECT_ID) is None
@@ -624,7 +738,7 @@ def test_count_files(code_storage: CodeIndexStorage) -> None:
     for name in ("a.py", "b.py"):
         code_storage.upsert_file(
             IndexedFile(
-                id=IndexedFile.make_id(PROJECT_ID, name),
+                id=IndexedFile.make_id(PROJECT_ID, name, f"h-{name}"),
                 project_id=PROJECT_ID,
                 file_path=name,
                 language="python",
@@ -637,13 +751,20 @@ def test_count_files(code_storage: CodeIndexStorage) -> None:
 # ── Content Chunks ─────────────────────────────────────────────────────
 
 
-def _make_chunks(project_id: str = PROJECT_ID, file_path: str = "src/app.py") -> list[ContentChunk]:
+def _make_chunks(
+    storage: CodeIndexStorage,
+    project_id: str = PROJECT_ID,
+    file_path: str = "src/app.py",
+    content_hash: str = FILE_CONTENT_HASH,
+) -> list[ContentChunk]:
     """Helper to create sample content chunks."""
+    _upsert_test_file(storage, file_path, content_hash, project_id=project_id)
     return [
         ContentChunk(
-            id=ContentChunk.make_id(project_id, file_path, 0),
+            id=ContentChunk.make_id(project_id, file_path, content_hash, 0),
             project_id=project_id,
             file_path=file_path,
+            content_hash=content_hash,
             chunk_index=0,
             line_start=1,
             line_end=100,
@@ -651,9 +772,10 @@ def _make_chunks(project_id: str = PROJECT_ID, file_path: str = "src/app.py") ->
             language="python",
         ),
         ContentChunk(
-            id=ContentChunk.make_id(project_id, file_path, 1),
+            id=ContentChunk.make_id(project_id, file_path, content_hash, 1),
             project_id=project_id,
             file_path=file_path,
+            content_hash=content_hash,
             chunk_index=1,
             line_start=91,
             line_end=150,
@@ -665,7 +787,7 @@ def _make_chunks(project_id: str = PROJECT_ID, file_path: str = "src/app.py") ->
 
 def test_upsert_content_chunks(code_storage: CodeIndexStorage) -> None:
     """Content chunks can be upserted."""
-    chunks = _make_chunks()
+    chunks = _make_chunks(code_storage)
     count = code_storage.upsert_content_chunks(chunks)
     assert count == 2
 
@@ -675,10 +797,12 @@ def test_upsert_empty_chunks(code_storage: CodeIndexStorage) -> None:
     assert code_storage.upsert_content_chunks([]) == 0
 
 
-def test_delete_content_chunks_for_file(code_storage: CodeIndexStorage) -> None:
-    """Deleting chunks for a file removes only that file's chunks."""
-    chunks1 = _make_chunks(file_path="a.py")
-    chunks2 = _make_chunks(file_path="b.py")
+def test_delete_content_chunks_for_file_retains_shared_facts(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Legacy fact deletion retains chunks until content GC."""
+    chunks1 = _make_chunks(code_storage, file_path="a.py")
+    chunks2 = _make_chunks(code_storage, file_path="b.py")
     code_storage.upsert_content_chunks(chunks1)
     code_storage.upsert_content_chunks(chunks2)
 
@@ -687,22 +811,24 @@ def test_delete_content_chunks_for_file(code_storage: CodeIndexStorage) -> None:
     # b.py chunks should still exist
     results = code_storage.search_content_fts("Calculator", PROJECT_ID)
     file_paths = {r["file_path"] for r in results}
-    assert "a.py" not in file_paths
+    assert "a.py" in file_paths
     assert "b.py" in file_paths
 
 
-def test_delete_content_chunks_for_project(code_storage: CodeIndexStorage) -> None:
-    """Deleting chunks for a project removes all chunks."""
-    code_storage.upsert_content_chunks(_make_chunks())
+def test_delete_content_chunks_for_project_retains_shared_facts(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Project invalidation retains immutable chunks while state remains visible."""
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
     code_storage.delete_content_chunks_for_project(PROJECT_ID)
 
     results = code_storage.search_content_fts("greet", PROJECT_ID)
-    assert results == []
+    assert results
 
 
 def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
     """Keyword search finds text in content chunks."""
-    code_storage.upsert_content_chunks(_make_chunks())
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
 
     results = code_storage.search_content_fts("greeting", PROJECT_ID)
     assert len(results) >= 1
@@ -713,8 +839,8 @@ def test_search_content_fts_finds_text(code_storage: CodeIndexStorage) -> None:
 
 def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> None:
     """Keyword search can be filtered to a specific file."""
-    chunks1 = _make_chunks(file_path="a.py")
-    chunks2 = _make_chunks(file_path="b.py")
+    chunks1 = _make_chunks(code_storage, file_path="a.py")
+    chunks2 = _make_chunks(code_storage, file_path="b.py")
     code_storage.upsert_content_chunks(chunks1)
     code_storage.upsert_content_chunks(chunks2)
 
@@ -724,14 +850,14 @@ def test_search_content_fts_filter_by_file(code_storage: CodeIndexStorage) -> No
 
 def test_search_content_fts_empty_query(code_storage: CodeIndexStorage) -> None:
     """Empty query returns no results."""
-    code_storage.upsert_content_chunks(_make_chunks())
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
     assert code_storage.search_content_fts("", PROJECT_ID) == []
     assert code_storage.search_content_fts("   ", PROJECT_ID) == []
 
 
 def test_search_content_fts_no_match(code_storage: CodeIndexStorage) -> None:
     """Query with no matching content returns empty list."""
-    code_storage.upsert_content_chunks(_make_chunks())
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
     results = code_storage.search_content_fts("zzz_nonexistent_zzz", PROJECT_ID)
     assert results == []
 
@@ -740,7 +866,7 @@ def test_search_content_fts_surfaces_backend_failure(
     code_storage: CodeIndexStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Backend failures are treated as unavailable search results."""
-    code_storage.upsert_content_chunks(_make_chunks())
+    code_storage.upsert_content_chunks(_make_chunks(code_storage))
 
     def fail_fetch_all(_hub: Any, _sql: str, _params: list[Any]) -> list[Any]:
         raise RuntimeError("pg_search unavailable")
@@ -938,7 +1064,7 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
 ) -> None:
     """Stale snapshot writes should leave reindexed rows pending."""
     indexed_file = IndexedFile(
-        id=IndexedFile.make_id(PROJECT_ID, "src/app.py"),
+        id=IndexedFile.make_id(PROJECT_ID, "src/app.py", "old-hash"),
         project_id=PROJECT_ID,
         file_path="src/app.py",
         language="python",
@@ -949,6 +1075,7 @@ def test_stale_content_hash_rejects_sync_marks_and_summary(
     stale_file_hash = indexed_file.content_hash
 
     indexed_file.content_hash = "new-hash"
+    indexed_file.id = IndexedFile.make_id(PROJECT_ID, "src/app.py", "new-hash")
     code_storage.upsert_file(indexed_file)
 
     assert code_storage.mark_vectors_synced(indexed_file.id, stale_file_hash) is False

@@ -48,55 +48,19 @@ impl CodeFactWriteSummary {
     }
 }
 
-pub fn delete_file_facts(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    file_path: &str,
-) -> anyhow::Result<()> {
-    let project_uuid = id_param(project_id)?;
-    conn.execute(
-        "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
-        &[&project_uuid, &file_path],
-    )?;
-    delete_file_non_symbol_facts(conn, project_id, file_path)
-}
-
-pub fn delete_file_non_symbol_facts(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    file_path: &str,
-) -> anyhow::Result<()> {
-    let project_id = id_param(project_id)?;
-    conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1 AND file_path = $2",
-        &[&project_id, &file_path],
-    )?;
-    conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = $1 AND file_path = $2",
-        &[&project_id, &file_path],
-    )?;
-    conn.execute(
-        "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
-        &[&project_id, &file_path],
-    )?;
-    conn.execute(
-        "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
-        &[&project_id, &file_path],
-    )?;
-    Ok(())
-}
-
 pub fn delete_stale_file_symbols(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
     current_symbol_ids: &[String],
 ) -> anyhow::Result<usize> {
     let project_id = id_param(project_id)?;
     let deleted = if current_symbol_ids.is_empty() {
         conn.execute(
-            "DELETE FROM code_symbols WHERE project_id = $1 AND file_path = $2",
-            &[&project_id, &file_path],
+            "DELETE FROM code_symbols
+             WHERE project_id = $1 AND file_path = $2 AND file_content_hash = $3",
+            &[&project_id, &file_path, &content_hash],
         )?
     } else {
         let current_symbol_ids = id_params(current_symbol_ids)?;
@@ -104,11 +68,37 @@ pub fn delete_stale_file_symbols(
             "DELETE FROM code_symbols
              WHERE project_id = $1
                AND file_path = $2
-               AND NOT (id = ANY($3::uuid[]))",
-            &[&project_id, &file_path, &current_symbol_ids],
+               AND file_content_hash = $3
+               AND NOT (id = ANY($4::uuid[]))",
+            &[&project_id, &file_path, &content_hash, &current_symbol_ids],
         )?
     };
     usize::try_from(deleted).map_err(|_| anyhow::anyhow!("deleted symbol count exceeds usize"))
+}
+
+pub fn delete_content_version_non_symbol_facts(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<()> {
+    let project_id = id_param(project_id)?;
+    conn.execute(
+        "DELETE FROM code_content_chunks
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    conn.execute(
+        "DELETE FROM code_imports
+         WHERE project_id = $1 AND source_file = $2 AND content_hash = $3",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    conn.execute(
+        "DELETE FROM code_calls
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_id, &file_path, &content_hash],
+    )?;
+    Ok(())
 }
 
 pub fn file_facts_exist(
@@ -181,6 +171,10 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
             .iter()
             .map(|sym| opt_id_param(sym.parent_symbol_id.as_deref().unwrap_or("")))
             .collect::<anyhow::Result<Vec<_>>>()?;
+        let file_content_hashes = chunk
+            .iter()
+            .map(|sym| sym.file_content_hash.clone())
+            .collect::<Vec<_>>();
         let content_hashes = chunk
             .iter()
             .map(|sym| sym.content_hash.clone())
@@ -195,25 +189,25 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
                 line_start, line_end, signature, docstring,
-                parent_symbol_id, content_hash, summary,
+                parent_symbol_id, file_content_hash, content_hash, summary,
                 created_at, updated_at
             )
             SELECT
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
                 line_start, line_end, signature, docstring,
-                parent_symbol_id, content_hash, summary,
+                parent_symbol_id, file_content_hash, content_hash, summary,
                 NOW(), NOW()
             FROM unnest(
                 $1::uuid[], $2::uuid[], $3::text[], $4::text[],
                 $5::text[], $6::text[], $7::text[], $8::int4[],
                 $9::int4[], $10::int4[], $11::int4[], $12::text[],
-                $13::text[], $14::uuid[], $15::text[], $16::text[]
+                $13::text[], $14::uuid[], $15::text[], $16::text[], $17::text[]
             ) AS t(
                 id, project_id, file_path, name, qualified_name,
                 kind, language, byte_start, byte_end,
                 line_start, line_end, signature, docstring,
-                parent_symbol_id, content_hash, summary
+                parent_symbol_id, file_content_hash, content_hash, summary
             )
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, qualified_name=excluded.qualified_name,
@@ -221,7 +215,8 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                 byte_end=excluded.byte_end, line_start=excluded.line_start,
                 line_end=excluded.line_end, signature=excluded.signature,
                 docstring=excluded.docstring, parent_symbol_id=excluded.parent_symbol_id,
-                language=excluded.language, content_hash=excluded.content_hash,
+                language=excluded.language, file_content_hash=excluded.file_content_hash,
+                content_hash=excluded.content_hash,
                 summary=CASE WHEN excluded.content_hash != code_symbols.content_hash
                              THEN NULL ELSE code_symbols.summary END,
                 updated_at=NOW()",
@@ -240,6 +235,7 @@ pub fn upsert_symbols(conn: &mut impl GenericClient, symbols: &[Symbol]) -> anyh
                 &signatures,
                 &docstrings,
                 &parent_symbol_ids,
+                &file_content_hashes,
                 &content_hashes,
                 &summaries,
             ],
@@ -256,13 +252,9 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
             graph_sync_attempted_at, vector_sync_attempted_at, indexed_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,false,false,NULL,NULL,NOW())
         ON CONFLICT(id) DO UPDATE SET
-            content_hash=excluded.content_hash,
+            language=excluded.language,
             symbol_count=excluded.symbol_count,
             byte_size=excluded.byte_size,
-            graph_synced=false,
-            vectors_synced=false,
-            graph_sync_attempted_at=NULL,
-            vector_sync_attempted_at=NULL,
             indexed_at=NOW()",
         &[
             &id_param(&file.id)?,
@@ -279,22 +271,89 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
 
 pub fn upsert_project_seed(
     conn: &mut impl GenericClient,
+    machine_id: &str,
     project_id: &str,
     root_path: &std::path::Path,
 ) -> anyhow::Result<()> {
+    let machine_id = id_param(machine_id)?;
     let project_id = id_param(project_id)?;
     let root_path = root_path.to_string_lossy().to_string();
     conn.execute(
-        "INSERT INTO code_indexed_projects (
-            id, root_path, total_files, total_symbols,
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)
+         ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "INSERT INTO code_indexed_project_states (
+            machine_id, project_id, root_path, total_files, total_symbols,
             last_indexed_at, index_duration_ms
-        ) VALUES ($1,$2,0,0,NULL,0)
-        ON CONFLICT(id) DO UPDATE SET
+        ) VALUES ($1,$2,$3,0,0,NULL,0)
+        ON CONFLICT(machine_id, project_id) DO UPDATE SET
             root_path=excluded.root_path,
             updated_at=NOW()",
-        &[&project_id, &root_path],
+        &[&machine_id, &project_id, &root_path],
     )?;
     Ok(())
+}
+
+pub fn upsert_file_state(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    file: &IndexedFile,
+) -> anyhow::Result<()> {
+    conn.execute(
+        "INSERT INTO code_indexed_file_states (
+            machine_id, project_id, file_path, content_hash
+         ) VALUES ($1,$2,$3,$4)
+         ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+            content_hash=excluded.content_hash,
+            updated_at=NOW()",
+        &[
+            &id_param(machine_id)?,
+            &id_param(&file.project_id)?,
+            &file.file_path,
+            &file.content_hash,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn adopt_file_state(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<bool> {
+    let machine_id = id_param(machine_id)?;
+    let project_id = id_param(project_id)?;
+    let adopted = conn.execute(
+        "INSERT INTO code_indexed_file_states (
+            machine_id, project_id, file_path, content_hash
+         )
+         SELECT $1, project_id, file_path, content_hash
+         FROM code_indexed_files
+         WHERE project_id = $2 AND file_path = $3 AND content_hash = $4
+         ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
+            content_hash=excluded.content_hash,
+            updated_at=NOW()",
+        &[&machine_id, &project_id, &file_path, &content_hash],
+    )?;
+    Ok(adopted > 0)
+}
+
+pub fn delete_file_state(
+    conn: &mut impl GenericClient,
+    machine_id: &str,
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<bool> {
+    let deleted = conn.execute(
+        "DELETE FROM code_indexed_file_states
+         WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
+        &[&id_param(machine_id)?, &id_param(project_id)?, &file_path],
+    )?;
+    Ok(deleted > 0)
 }
 
 pub fn upsert_content_chunks(
@@ -304,9 +363,9 @@ pub fn upsert_content_chunks(
     for chunk in chunks {
         conn.execute(
             "INSERT INTO code_content_chunks (
-                id, project_id, file_path, chunk_index,
+                id, project_id, file_path, content_hash, chunk_index,
                 line_start, line_end, content, language, created_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
             ON CONFLICT(id) DO UPDATE SET
                 content=excluded.content,
                 line_start=excluded.line_start,
@@ -315,6 +374,7 @@ pub fn upsert_content_chunks(
                 &id_param(&chunk.id)?,
                 &id_param(&chunk.project_id)?,
                 &chunk.file_path,
+                &chunk.content_hash,
                 &to_i32(chunk.chunk_index),
                 &to_i32(chunk.line_start),
                 &to_i32(chunk.line_end),
@@ -328,14 +388,21 @@ pub fn upsert_content_chunks(
 
 pub fn upsert_project_stats(
     conn: &mut impl GenericClient,
+    machine_id: &str,
     project: &IndexedProject,
 ) -> anyhow::Result<()> {
+    let project_id = id_param(&project.id)?;
     conn.execute(
-        "INSERT INTO code_indexed_projects (
-            id, root_path, total_files, total_symbols,
+        "INSERT INTO code_indexed_projects (id) VALUES ($1)
+         ON CONFLICT(id) DO UPDATE SET updated_at=NOW()",
+        &[&project_id],
+    )?;
+    conn.execute(
+        "INSERT INTO code_indexed_project_states (
+            machine_id, project_id, root_path, total_files, total_symbols,
             last_indexed_at, index_duration_ms
-        ) VALUES ($1,$2,$3,$4,NOW(),$5)
-        ON CONFLICT(id) DO UPDATE SET
+        ) VALUES ($1,$2,$3,$4,$5,NOW(),$6)
+        ON CONFLICT(machine_id, project_id) DO UPDATE SET
             root_path=excluded.root_path,
             total_files=excluded.total_files,
             total_symbols=excluded.total_symbols,
@@ -343,7 +410,8 @@ pub fn upsert_project_stats(
             index_duration_ms=excluded.index_duration_ms,
             updated_at=NOW()",
         &[
-            &id_param(&project.id)?,
+            &id_param(machine_id)?,
+            &project_id,
             &project.root_path,
             &to_i32(project.total_files),
             &to_i32(project.total_symbols),
@@ -357,20 +425,22 @@ pub fn upsert_imports(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
     imports: &[ImportRelation],
 ) -> anyhow::Result<usize> {
     let project_id = id_param(project_id)?;
     conn.execute(
-        "DELETE FROM code_imports WHERE project_id = $1 AND source_file = $2",
-        &[&project_id, &file_path],
+        "DELETE FROM code_imports
+         WHERE project_id = $1 AND source_file = $2 AND content_hash = $3",
+        &[&project_id, &file_path, &content_hash],
     )?;
     let mut rows_affected = 0usize;
     for imp in imports {
         rows_affected += conn.execute(
-            "INSERT INTO code_imports (project_id, source_file, target_module)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (project_id, source_file, target_module) DO NOTHING",
-            &[&project_id, &imp.file_path, &imp.module_name],
+            "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (project_id, source_file, content_hash, target_module) DO NOTHING",
+            &[&project_id, &imp.file_path, &content_hash, &imp.module_name],
         )? as usize;
     }
     Ok(rows_affected)
@@ -380,16 +450,18 @@ pub fn upsert_calls(
     conn: &mut impl GenericClient,
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
     calls: &[CallRelation],
 ) -> anyhow::Result<usize> {
     let project_uuid = id_param(project_id)?;
     conn.execute(
-        "DELETE FROM code_calls WHERE project_id = $1 AND file_path = $2",
-        &[&project_uuid, &file_path],
+        "DELETE FROM code_calls
+         WHERE project_id = $1 AND file_path = $2 AND content_hash = $3",
+        &[&project_uuid, &file_path, &content_hash],
     )?;
     let mut rows_affected = 0usize;
     for call in calls {
-        rows_affected += insert_call(conn, project_id, call)?;
+        rows_affected += insert_call(conn, project_id, content_hash, call)?;
     }
     Ok(rows_affected)
 }
@@ -397,6 +469,7 @@ pub fn upsert_calls(
 fn insert_call(
     conn: &mut impl GenericClient,
     project_id: &str,
+    content_hash: &str,
     call: &CallRelation,
 ) -> anyhow::Result<usize> {
     let project_id = id_param(project_id)?;
@@ -408,11 +481,11 @@ fn insert_call(
     let rows = conn.execute(
         "INSERT INTO code_calls
          (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
-          callee_target_kind, callee_external_module, file_path, line)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          callee_target_kind, callee_external_module, file_path, content_hash, line)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (
-            project_id, caller_symbol_id, callee_symbol_id, callee_name,
-            callee_target_kind, callee_external_module, file_path, line
+            project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id,
+            callee_name, callee_target_kind, callee_external_module, line
          ) DO NOTHING",
         &[
             &project_id,
@@ -422,6 +495,7 @@ fn insert_call(
             &call.callee_target_kind.as_str(),
             &call.callee_external_module.as_deref().unwrap_or(""),
             &call.file_path,
+            &content_hash,
             &to_i32(call.line),
         ],
     )?;
@@ -446,19 +520,21 @@ pub fn promote_local_import_call(
         "DELETE FROM code_calls
          WHERE project_id = $1
            AND caller_symbol_id IS NOT DISTINCT FROM $2
-           AND callee_symbol_id IS NULL
-           AND callee_name = $3 AND callee_target_kind = 'local_import'
-           AND callee_external_module = $4 AND file_path = $5 AND line = $6",
+            AND callee_symbol_id IS NULL
+            AND callee_name = $3 AND callee_target_kind = 'local_import'
+            AND callee_external_module = $4 AND file_path = $5
+            AND content_hash = $6 AND line = $7",
         &[
             &project_uuid,
             &caller_symbol_id,
             &original.callee_name,
             &original.callee_external_module.as_deref().unwrap_or(""),
             &original.file_path,
+            &original.content_hash,
             &to_i32(original.line),
         ],
     )?;
-    insert_call(conn, project_id, resolved)?;
+    insert_call(conn, project_id, &original.content_hash, resolved)?;
     Ok(())
 }
 

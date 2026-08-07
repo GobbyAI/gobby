@@ -23,6 +23,7 @@ fn indexed_symbol(project_id: &str, file_path: &str) -> Symbol {
         signature: None,
         docstring: None,
         parent_symbol_id: None,
+        file_content_hash: "indexed-before-delete".to_string(),
         content_hash: String::new(),
         summary: None,
         created_at: String::new(),
@@ -59,20 +60,20 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
         index_duration_ms: 0,
         total_eligible_files: Some(1),
     };
-    api::upsert_project_stats(&mut conn, &project)?;
-    api::upsert_file(
-        &mut conn,
-        &IndexedFile {
-            id: IndexedFile::make_id(&project_id, file_path),
-            project_id: project_id.clone(),
-            file_path: file_path.to_string(),
-            language: "rust".to_string(),
-            content_hash: "indexed-before-delete".to_string(),
-            symbol_count: 1,
-            byte_size: 23,
-            indexed_at: String::new(),
-        },
-    )?;
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    api::upsert_project_stats(&mut conn, &machine_id, &project)?;
+    let indexed_file = IndexedFile {
+        id: IndexedFile::make_id(&project_id, file_path, "indexed-before-delete"),
+        project_id: project_id.clone(),
+        file_path: file_path.to_string(),
+        language: "rust".to_string(),
+        content_hash: "indexed-before-delete".to_string(),
+        symbol_count: 1,
+        byte_size: 23,
+        indexed_at: String::new(),
+    };
+    api::upsert_file(&mut conn, &indexed_file)?;
+    api::upsert_file_state(&mut conn, &machine_id, &indexed_file)?;
 
     let ctx = Context {
         database_url,
@@ -95,10 +96,6 @@ fn hybrid_search_excludes_indexed_file_deleted_from_disk() -> anyhow::Result<()>
     let resolved = resolve_hybrid_symbols(&mut conn, &ctx, &merged, &symbol_cache, None, None, &[]);
 
     let project_uuid = crate::db::id_param(&project_id)?;
-    conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_uuid],
-    )?;
     conn.execute(
         "DELETE FROM code_indexed_projects WHERE id = $1",
         &[&project_uuid],

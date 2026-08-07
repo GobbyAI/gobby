@@ -17,15 +17,11 @@ struct RecordingCodeFactSink {
 }
 
 impl CodeFactSink for RecordingCodeFactSink {
-    fn delete_file_facts(&mut self, _project_id: &str, _file_path: &str) -> anyhow::Result<()> {
-        self.writes.push("delete");
-        Ok(())
-    }
-
     fn delete_file_non_symbol_facts(
         &mut self,
         _project_id: &str,
         _file_path: &str,
+        _content_hash: &str,
     ) -> anyhow::Result<()> {
         self.writes.push("delete_non_symbols");
         Ok(())
@@ -35,6 +31,7 @@ impl CodeFactSink for RecordingCodeFactSink {
         &mut self,
         _project_id: &str,
         _file_path: &str,
+        _content_hash: &str,
         current_symbol_ids: &[String],
     ) -> anyhow::Result<usize> {
         self.writes.push("delete_stale_symbols");
@@ -58,6 +55,7 @@ impl CodeFactSink for RecordingCodeFactSink {
         &mut self,
         _project_id: &str,
         _file_path: &str,
+        _content_hash: &str,
         imports: &[ImportRelation],
     ) -> anyhow::Result<usize> {
         self.writes.push("imports");
@@ -69,6 +67,7 @@ impl CodeFactSink for RecordingCodeFactSink {
         &mut self,
         _project_id: &str,
         _file_path: &str,
+        _content_hash: &str,
         calls: &[CallRelation],
     ) -> anyhow::Result<usize> {
         self.writes.push("calls");
@@ -92,7 +91,7 @@ fn library_writes_all_code_facts() {
     let project_id = "project-1";
     let rel = "src/lib.rs";
     let source = b"use std::fmt;\nfn caller() {\n    missing();\n}\n";
-    let caller_id = Symbol::make_id(project_id, rel, "caller", "function", 14);
+    let caller_id = Symbol::make_id(project_id, rel, "hash-1", "caller", "function", 14);
     let parse_result = ParseResult {
         symbols: vec![Symbol {
             id: caller_id.clone(),
@@ -109,6 +108,7 @@ fn library_writes_all_code_facts() {
             signature: Some("fn caller()".to_string()),
             docstring: None,
             parent_symbol_id: None,
+            file_content_hash: "hash-1".to_string(),
             content_hash: "hash-1".to_string(),
             summary: None,
             created_at: String::new(),
@@ -142,10 +142,10 @@ fn library_writes_all_code_facts() {
     assert_eq!(
         sink.writes,
         vec![
+            "file",
             "symbols",
             "delete_stale_symbols",
             "delete_non_symbols",
-            "file",
             "imports",
             "calls",
             "chunks"

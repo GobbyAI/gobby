@@ -1,3 +1,4 @@
+mod content_gc;
 mod current;
 mod invalidate;
 mod projects;

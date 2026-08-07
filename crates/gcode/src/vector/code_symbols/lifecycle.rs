@@ -13,8 +13,7 @@ use super::embedding::{
 };
 use super::qdrant::{
     VECTOR_DISTANCE_COSINE, collection_name, collection_path, delete_vectors_for_filter,
-    delete_vectors_for_filter_excluding_ids, parse_collection_schema, qdrant_http_error,
-    qdrant_request_for_config,
+    parse_collection_schema, qdrant_http_error, qdrant_request_for_config,
 };
 use super::types::{
     CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput,
@@ -104,16 +103,14 @@ impl CodeSymbolVectorLifecycle {
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
         let points = self.points_for_symbols(symbols, schema.size)?;
-        let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
-        let delete_operations_issued = self.delete_stale_vectors(Some(file_path), &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::SyncFile,
             Some(file_path.to_string()),
             symbols.len(),
             vectors_upserted,
-            delete_operations_issued,
+            0,
         ))
     }
 
@@ -146,16 +143,14 @@ impl CodeSymbolVectorLifecycle {
     ) -> Result<CodeSymbolVectorLifecycleOutput, VectorLifecycleError> {
         let schema = self.ensure_collection()?;
         let points = self.points_for_symbols(symbols, schema.size)?;
-        let point_ids = point_ids(&points);
         let vectors_upserted = self.upsert_points(points)?;
-        let delete_operations_issued = self.delete_stale_vectors(None, &point_ids)?;
 
         Ok(self.output(
             CodeSymbolVectorLifecycleAction::Rebuild,
             None,
             symbols.len(),
             vectors_upserted,
-            delete_operations_issued,
+            0,
         ))
     }
 
@@ -291,21 +286,6 @@ impl CodeSymbolVectorLifecycle {
         )
     }
 
-    fn delete_stale_vectors(
-        &self,
-        file_path: Option<&str>,
-        keep_point_ids: &[String],
-    ) -> Result<usize, VectorLifecycleError> {
-        delete_vectors_for_filter_excluding_ids(
-            &self.client,
-            &self.qdrant,
-            &self.collection,
-            &self.project_id,
-            file_path,
-            keep_point_ids,
-        )
-    }
-
     fn upsert_points(&self, points: Vec<UpsertRequest>) -> Result<usize, VectorLifecycleError> {
         if points.is_empty() {
             return Ok(0);
@@ -386,8 +366,4 @@ fn payload_map(
             "vector payload did not serialize to an object".to_string(),
         )),
     }
-}
-
-fn point_ids(points: &[UpsertRequest]) -> Vec<String> {
-    points.iter().map(|point| point.id.clone()).collect()
 }

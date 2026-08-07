@@ -20,6 +20,7 @@ pub fn chunk_file_content(
     source: &[u8],
     rel_path: &str,
     project_id: &str,
+    content_hash: &str,
     language: Option<&str>,
 ) -> Vec<ContentChunk> {
     let text = String::from_utf8_lossy(source);
@@ -39,9 +40,10 @@ pub fn chunk_file_content(
 
         if !chunk_content.trim().is_empty() {
             chunks.push(ContentChunk {
-                id: ContentChunk::make_id(project_id, rel_path, chunk_index),
+                id: ContentChunk::make_id(project_id, rel_path, content_hash, chunk_index),
                 project_id: project_id.to_string(),
                 file_path: rel_path.to_string(),
+                content_hash: content_hash.to_string(),
                 chunk_index,
                 line_start: start + 1,
                 line_end: end,

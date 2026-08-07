@@ -7,6 +7,8 @@ use crate::setup::contracts::{TABLE_CONTRACTS, TableContract};
 
 const REQUIRED_TABLES: &[&str] = &[
     "code_indexed_projects",
+    "code_indexed_project_states",
+    "code_indexed_file_states",
     "code_indexed_files",
     "code_symbols",
     "code_content_chunks",

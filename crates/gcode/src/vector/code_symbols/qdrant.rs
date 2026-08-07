@@ -57,6 +57,35 @@ pub fn delete_file_vectors(
     delete_vectors_for_filter(&client, qdrant, &collection, project_id, Some(file_path))
 }
 
+pub fn delete_symbol_vectors(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+    symbol_ids: &[String],
+) -> Result<usize, VectorLifecycleError> {
+    if symbol_ids.is_empty() {
+        return Ok(0);
+    }
+    let client = qdrant_http_client()?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
+    let resp = qdrant_request_for_config(
+        &client,
+        qdrant,
+        reqwest::Method::POST,
+        &format!("{}/points/delete?wait=true", collection_path(&collection)),
+    )?
+    .json(&json!({"points": symbol_ids}))
+    .send()
+    .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+    let status = resp.status();
+    if status == StatusCode::NOT_FOUND {
+        return Ok(0);
+    }
+    if !status.is_success() {
+        return Err(qdrant_http_error("delete symbol points", status, resp));
+    }
+    Ok(symbol_ids.len())
+}
+
 pub fn cleanup_orphan_file_vectors(
     qdrant: &QdrantConfig,
     project_id: &str,

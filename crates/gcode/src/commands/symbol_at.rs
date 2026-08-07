@@ -448,6 +448,7 @@ mod tests {
             signature: Some(format!("function {name}()")),
             docstring: None,
             parent_symbol_id: None,
+            file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
             created_at: String::new(),

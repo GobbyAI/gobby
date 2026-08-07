@@ -19,10 +19,6 @@ class CodeIndexStorageCleanup(Protocol):
     def delete_project_index(self, project_id: str) -> dict[str, int]: ...
 
 
-class CodeIndexCleanupConfig(Protocol):
-    graph_enabled: bool
-
-
 async def _run_db(
     run_db: Callable[..., Awaitable[Any]] | None,
     func: Callable[..., Any],
@@ -38,30 +34,11 @@ async def purge_missing_project(
     *,
     project: MissingProject,
     storage: CodeIndexStorageCleanup,
-    config: CodeIndexCleanupConfig,
-    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> None:
-    """Remove index data for a project whose root directory is gone."""
+    """Remove this machine's state for a project whose local root is gone."""
     project_id = str(project.id)
     root_path = project.root_path
-
-    if config.graph_enabled and clear_graph is not None:
-        try:
-            result = await clear_graph(project_id)
-            if not result.get("success", False):
-                logger.warning(
-                    "Graph cleanup reported failure for missing code index project %s: %s",
-                    project_id,
-                    result.get("error", "unknown error"),
-                )
-        except Exception as e:
-            logger.warning(
-                "Graph cleanup failed for missing code index project %s: %s",
-                project_id,
-                e,
-                exc_info=True,
-            )
 
     counts = await _run_db(run_db, storage.delete_project_index, project_id)
     if not isinstance(counts, dict):
@@ -74,9 +51,7 @@ async def purge_missing_project(
         raise TypeError(f"delete_project_index returned {type(counts).__name__}, expected dict")
 
     logger.info(
-        "Purged stale code index project %s at %s: %s files, %s symbols",
+        "Removed stale local code index state for project %s at %s",
         project_id,
         root_path,
-        counts.get("files", 0),
-        counts.get("symbols", 0),
     )

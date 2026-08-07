@@ -132,6 +132,7 @@ fn global_prune_authorization_matrix_uses_single_gate() {
             orphan_collection_ids: vec!["collection".to_string()],
             orphan_graph_scope_ids: Vec::new(),
             orphan_sql_project_ids: Vec::new(),
+            content_version_ids: Vec::new(),
         },
         DestructiveSet {
             stale_project_ids: vec!["stale".to_string()],
@@ -163,6 +164,7 @@ fn global_prune_authorization_matrix_uses_single_gate() {
         orphan_collection_ids: vec!["collection".to_string()],
         orphan_graph_scope_ids: vec!["graph".to_string()],
         orphan_sql_project_ids: Vec::new(),
+        content_version_ids: Vec::new(),
     };
     let mut prompts = 0;
     let authorized = authorize_prune_with(false, &pending, |_| {
@@ -282,6 +284,7 @@ mod serial_db {
             collections: None,
             graph_scopes: None,
             orphan_sql_project_ids: Vec::new(),
+            content_gc_candidates: Vec::new(),
         };
         let totals = mutate_stale_projects(&discovery);
 
@@ -300,7 +303,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn project_scoped_discovery_filters_stale_and_orphan_rows_to_override() {
+    fn project_scoped_discovery_filters_stale_rows_and_retains_unselected_content() {
         let (mut conn, database_url) = connect_test_db();
         let target_stale_id = unique_test_project_id("gcode-prune-target-stale");
         let unrelated_stale_id = unique_test_project_id("gcode-prune-unrelated-stale");
@@ -326,8 +329,8 @@ mod serial_db {
         seed_project_with_child_rows(&mut conn, &unrelated_orphan_id, false);
 
         let stale_context = prune_test_context(database_url.clone(), &target_stale_id, false);
-        let stale_discovery =
-            discover_project_scoped_records(&stale_context).expect("discover target stale project");
+        let stale_discovery = discover_project_scoped_records(&stale_context, 30)
+            .expect("discover target stale project");
         assert_eq!(
             stale_discovery
                 .stale_projects
@@ -339,10 +342,10 @@ mod serial_db {
         assert!(stale_discovery.orphan_sql_project_ids.is_empty());
 
         let orphan_context = prune_test_context(database_url, &target_orphan_id, false);
-        let orphan_discovery = discover_project_scoped_records(&orphan_context)
+        let orphan_discovery = discover_project_scoped_records(&orphan_context, 30)
             .expect("discover target orphan project");
         assert!(orphan_discovery.stale_projects.is_empty());
-        assert_eq!(orphan_discovery.orphan_sql_project_ids, [target_orphan_id]);
+        assert!(orphan_discovery.orphan_sql_project_ids.is_empty());
     }
 
     #[test]
@@ -351,7 +354,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn orphan_project_discovery_and_sql_deletion_counts() {
+    fn project_identity_fk_keeps_unselected_content_out_of_orphan_reconciliation() {
         let (mut conn, database_url) = connect_test_db();
         let valid_project_id = unique_test_project_id("gcode-orphan-valid");
         let orphan_project_id = unique_test_project_id("gcode-orphan-missing-parent");
@@ -370,23 +373,9 @@ mod serial_db {
         seed_project_with_child_rows(&mut conn, &orphan_project_id, false);
 
         let orphan_ids = collect_orphan_project_ids(&mut conn).expect("discover orphan projects");
-        assert!(orphan_ids.contains(&orphan_project_id));
+        assert!(!orphan_ids.contains(&orphan_project_id));
         assert!(!orphan_ids.contains(&valid_project_id));
-
-        let counts = delete_orphan_project_sql_rows(&mut conn, &orphan_project_id)
-            .expect("delete orphan rows");
-
-        assert_eq!(
-            counts,
-            OrphanSqlDeletionCounts {
-                symbols_deleted: 1,
-                files_deleted: 1,
-                content_chunks_deleted: 1,
-                imports_deleted: 1,
-                calls_deleted: 1,
-            }
-        );
-        assert_eq!(project_child_row_count(&mut conn, &orphan_project_id), 0);
+        assert_eq!(project_child_row_count(&mut conn, &orphan_project_id), 5);
         assert_eq!(project_child_row_count(&mut conn, &valid_project_id), 5);
     }
 
@@ -457,14 +446,24 @@ mod serial_db {
         let file_id = test_uuid(project_id, "file");
         let symbol_id = test_uuid(project_id, "symbol");
         let chunk_id = test_uuid(project_id, "chunk");
+        let machine_id = db::id_param(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        )
+        .expect("local machine id is a uuid");
+        conn.execute(
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[&project_uuid],
+        )
+        .expect("insert indexed project identity");
         if include_project_row {
             conn.execute(
-                "INSERT INTO code_indexed_projects
-                    (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-                 VALUES ($1, $2, 1, 1, NOW(), 0)",
-                &[&project_uuid, &format!("/tmp/{project_id}")],
+                "INSERT INTO code_indexed_project_states
+                    (machine_id, project_id, root_path, total_files, total_symbols,
+                     last_indexed_at, index_duration_ms)
+                 VALUES ($1, $2, $3, 1, 1, NOW(), 0)",
+                &[&machine_id, &project_uuid, &format!("/tmp/{project_id}")],
             )
-            .expect("insert indexed project");
+            .expect("insert indexed project state");
         }
         conn.execute(
             "INSERT INTO code_indexed_files
@@ -473,34 +472,44 @@ mod serial_db {
             &[&file_id, &project_uuid, &file_path],
         )
         .expect("insert indexed file");
+        if include_project_row {
+            conn.execute(
+                "INSERT INTO code_indexed_file_states
+                    (machine_id, project_id, file_path, content_hash)
+                 VALUES ($1, $2, $3, 'hash-1')",
+                &[&machine_id, &project_uuid, &file_path],
+            )
+            .expect("insert indexed file state");
+        }
         conn.execute(
             "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
-                 content_hash, summary, created_at, updated_at)
+                 file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
-                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', NULL, NOW(), NOW())",
+                 1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', 'hash-1', NULL, NOW(), NOW())",
             &[&symbol_id, &project_uuid, &file_path],
         )
         .expect("insert symbol");
         conn.execute(
             "INSERT INTO code_content_chunks
-                (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
-             VALUES ($1, $2, $3, 0, 1, 1, 'pub fn indexed() {}', 'rust')",
+                (id, project_id, file_path, content_hash, chunk_index, line_start, line_end,
+                 content, language)
+             VALUES ($1, $2, $3, 'hash-1', 0, 1, 1, 'pub fn indexed() {}', 'rust')",
             &[&chunk_id, &project_uuid, &file_path],
         )
         .expect("insert content chunk");
         conn.execute(
-            "INSERT INTO code_imports (project_id, source_file, target_module)
-             VALUES ($1, $2, 'std::fmt')",
+            "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+             VALUES ($1, $2, 'hash-1', 'std::fmt')",
             &[&project_uuid, &file_path],
         )
         .expect("insert import");
         conn.execute(
             "INSERT INTO code_calls
                 (project_id, caller_symbol_id, callee_symbol_id, callee_name,
-                 callee_target_kind, callee_external_module, file_path, line)
-             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 1)",
+                 callee_target_kind, callee_external_module, file_path, content_hash, line)
+             VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 'hash-1', 1)",
             &[&project_uuid, &symbol_id, &file_path],
         )
         .expect("insert call");
@@ -508,6 +517,14 @@ mod serial_db {
 
     fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
         let project_id = db::id_param(project_id)?;
+        conn.execute(
+            "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        conn.execute(
+            "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
         conn.execute(
             "DELETE FROM code_calls WHERE project_id = $1",
             &[&project_id],

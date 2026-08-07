@@ -16,8 +16,13 @@ pub(super) struct IndexContract {
 pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
     TableContract {
         name: "code_indexed_projects",
+        required_columns: &["id", "created_at", "updated_at"],
+    },
+    TableContract {
+        name: "code_indexed_project_states",
         required_columns: &[
-            "id",
+            "machine_id",
+            "project_id",
             "root_path",
             "total_files",
             "total_symbols",
@@ -45,6 +50,16 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
         ],
     },
     TableContract {
+        name: "code_indexed_file_states",
+        required_columns: &[
+            "machine_id",
+            "project_id",
+            "file_path",
+            "content_hash",
+            "updated_at",
+        ],
+    },
+    TableContract {
         name: "code_symbols",
         required_columns: &[
             "id",
@@ -61,6 +76,7 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
             "signature",
             "docstring",
             "parent_symbol_id",
+            "file_content_hash",
             "content_hash",
             "summary",
             "summary_attempted_at",
@@ -74,6 +90,7 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
             "id",
             "project_id",
             "file_path",
+            "content_hash",
             "chunk_index",
             "line_start",
             "line_end",
@@ -84,7 +101,13 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
     },
     TableContract {
         name: "code_imports",
-        required_columns: &["id", "project_id", "source_file", "target_module"],
+        required_columns: &[
+            "id",
+            "project_id",
+            "source_file",
+            "content_hash",
+            "target_module",
+        ],
     },
     TableContract {
         name: "code_calls",
@@ -97,12 +120,28 @@ pub(crate) const TABLE_CONTRACTS: &[TableContract] = &[
             "callee_target_kind",
             "callee_external_module",
             "file_path",
+            "content_hash",
             "line",
         ],
     },
 ];
 
 pub(super) const INDEX_CONTRACTS: &[IndexContract] = &[
+    IndexContract {
+        name: "idx_cifs_content",
+        table: "code_indexed_file_states",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cifs_machine_project",
+        table: "code_indexed_file_states",
+        method: "btree",
+    },
+    IndexContract {
+        name: "idx_cips_project",
+        table: "code_indexed_project_states",
+        method: "btree",
+    },
     IndexContract {
         name: "idx_cif_project",
         table: "code_indexed_files",

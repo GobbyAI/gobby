@@ -27,6 +27,8 @@ pub fn gcode_postgres_objects(
     schema: &str,
 ) -> Result<Vec<ExternalPostgresObject>, ExternalSchemaError> {
     let code_indexed_projects = qualified_relation(schema, "code_indexed_projects")?;
+    let code_indexed_project_states = qualified_relation(schema, "code_indexed_project_states")?;
+    let code_indexed_file_states = qualified_relation(schema, "code_indexed_file_states")?;
     let code_indexed_files = qualified_relation(schema, "code_indexed_files")?;
     let code_symbols = qualified_relation(schema, "code_symbols")?;
     let code_content_chunks = qualified_relation(schema, "code_content_chunks")?;
@@ -45,13 +47,26 @@ pub fn gcode_postgres_objects(
             format!(
                 "CREATE TABLE IF NOT EXISTS {code_indexed_projects} (
                     id UUID PRIMARY KEY,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );"
+            ),
+        ),
+        object(
+            "code_indexed_project_states table",
+            ExternalPostgresObjectKind::Table,
+            format!(
+                "CREATE TABLE IF NOT EXISTS {code_indexed_project_states} (
+                    machine_id UUID NOT NULL,
+                    project_id UUID NOT NULL REFERENCES {code_indexed_projects}(id) ON DELETE CASCADE,
                     root_path TEXT NOT NULL,
                     total_files INTEGER NOT NULL DEFAULT 0,
                     total_symbols INTEGER NOT NULL DEFAULT 0,
                     last_indexed_at TIMESTAMPTZ,
                     index_duration_ms INTEGER,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (machine_id, project_id)
                 );"
             ),
         ),
@@ -72,8 +87,52 @@ pub fn gcode_postgres_objects(
                     graph_sync_attempted_at TIMESTAMPTZ,
                     vector_sync_attempted_at TIMESTAMPTZ,
                     indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (project_id, file_path)
+                    UNIQUE (project_id, file_path, content_hash),
+                    FOREIGN KEY (project_id) REFERENCES {code_indexed_projects}(id) ON DELETE CASCADE
                 );"
+            ),
+        ),
+        object(
+            "code_indexed_file_states table",
+            ExternalPostgresObjectKind::Table,
+            format!(
+                "CREATE TABLE IF NOT EXISTS {code_indexed_file_states} (
+                    machine_id UUID NOT NULL,
+                    project_id UUID NOT NULL,
+                    file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    PRIMARY KEY (machine_id, project_id, file_path),
+                    FOREIGN KEY (machine_id, project_id)
+                        REFERENCES {code_indexed_project_states}(machine_id, project_id)
+                        ON DELETE CASCADE,
+                    FOREIGN KEY (project_id, file_path, content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                );"
+            ),
+        ),
+        object(
+            "idx_cifs_content index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cifs_content
+                 ON {code_indexed_file_states}(project_id, file_path, content_hash);"
+            ),
+        ),
+        object(
+            "idx_cifs_machine_project index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cifs_machine_project
+                 ON {code_indexed_file_states}(machine_id, project_id);"
+            ),
+        ),
+        object(
+            "idx_cips_project index",
+            ExternalPostgresObjectKind::Index,
+            format!(
+                "CREATE INDEX IF NOT EXISTS idx_cips_project
+                 ON {code_indexed_project_states}(project_id);"
             ),
         ),
         object(
@@ -119,11 +178,15 @@ pub fn gcode_postgres_objects(
                     signature TEXT,
                     docstring TEXT,
                     parent_symbol_id UUID,
+                    file_content_hash TEXT NOT NULL,
                     content_hash TEXT NOT NULL,
                     summary TEXT,
                     summary_attempted_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    FOREIGN KEY (project_id, file_path, file_content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                        ON DELETE CASCADE
                 );"
             ),
         ),
@@ -174,13 +237,17 @@ pub fn gcode_postgres_objects(
                     id UUID PRIMARY KEY,
                     project_id UUID NOT NULL,
                     file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
                     chunk_index INTEGER NOT NULL,
                     line_start INTEGER NOT NULL,
                     line_end INTEGER NOT NULL,
                     content TEXT NOT NULL,
                     language TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE (project_id, file_path, chunk_index)
+                    UNIQUE (project_id, file_path, content_hash, chunk_index),
+                    FOREIGN KEY (project_id, file_path, content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                        ON DELETE CASCADE
                 );"
             ),
         ),
@@ -208,8 +275,12 @@ pub fn gcode_postgres_objects(
                     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
                     project_id UUID NOT NULL,
                     source_file TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
                     target_module TEXT NOT NULL,
-                    UNIQUE (project_id, source_file, target_module)
+                    UNIQUE (project_id, source_file, content_hash, target_module),
+                    FOREIGN KEY (project_id, source_file, content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                        ON DELETE CASCADE
                 );"
             ),
         ),
@@ -234,12 +305,17 @@ pub fn gcode_postgres_objects(
                     callee_target_kind TEXT NOT NULL DEFAULT 'unresolved',
                     callee_external_module TEXT NOT NULL DEFAULT '',
                     file_path TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
                     line INTEGER NOT NULL DEFAULT 0,
                     CONSTRAINT code_calls_unique_call_target
                     UNIQUE NULLS NOT DISTINCT (
-                        project_id, caller_symbol_id, callee_symbol_id, callee_name,
-                        callee_target_kind, callee_external_module, file_path, line
-                    )
+                        project_id, file_path, content_hash, caller_symbol_id,
+                        callee_symbol_id, callee_name, callee_target_kind,
+                        callee_external_module, line
+                    ),
+                    FOREIGN KEY (project_id, file_path, content_hash)
+                        REFERENCES {code_indexed_files}(project_id, file_path, content_hash)
+                        ON DELETE CASCADE
                 );"
             ),
         ),

@@ -22,7 +22,7 @@ mod sync_plan;
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
     count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
-    project_file_path_queries, project_scopes_query,
+    delete_symbol_ids_query, project_file_path_queries, project_scopes_query,
 };
 pub use mutation::call_target_id;
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
@@ -63,6 +63,7 @@ impl<'a> CodeGraph<'a> {
     pub fn sync_file(
         &mut self,
         file_path: &str,
+        content_hash: &str,
         imports: &[ImportRelation],
         definitions: &[Symbol],
         calls: &[CallRelation],
@@ -82,6 +83,7 @@ impl<'a> CodeGraph<'a> {
         for query in plan_sync_batches(SyncFileMutation {
             project_id: self.project_id,
             file_path,
+            content_hash,
             symbol_count: definitions.len(),
             imports: &import_items,
             symbols: &symbols,
@@ -93,7 +95,7 @@ impl<'a> CodeGraph<'a> {
         // Stale delete is token-only: every current row was just written with the
         // new sync_token, so a token mismatch alone identifies stale rows — no
         // (potentially unbounded) symbol-id list is needed.
-        self.delete_stale_file_graph(file_path, &sync_token)?;
+        self.delete_stale_file_graph(file_path, content_hash, &sync_token)?;
         if cleanup_orphans {
             self.cleanup_orphans()?;
         }
@@ -122,6 +124,7 @@ impl<'a> CodeGraph<'a> {
     pub fn add_imports(
         &mut self,
         file_path: &str,
+        content_hash: &str,
         imports: &[ImportRelation],
         sync_token: &str,
     ) -> anyhow::Result<usize> {
@@ -132,7 +135,7 @@ impl<'a> CodeGraph<'a> {
         let written = items.len();
         execute_write_query(
             self.client,
-            add_imports_query(self.project_id, &items, sync_token)?,
+            add_imports_query(self.project_id, &items, content_hash, sync_token)?,
         )?;
         Ok(written)
     }
@@ -140,6 +143,7 @@ impl<'a> CodeGraph<'a> {
     pub fn add_definitions(
         &mut self,
         file_path: &str,
+        content_hash: &str,
         definitions: &[Symbol],
         sync_token: &str,
     ) -> anyhow::Result<usize> {
@@ -153,7 +157,13 @@ impl<'a> CodeGraph<'a> {
         let written = symbols.len();
         execute_write_query(
             self.client,
-            add_definitions_query(self.project_id, file_path, &symbols, sync_token)?,
+            add_definitions_query(
+                self.project_id,
+                file_path,
+                &symbols,
+                content_hash,
+                sync_token,
+            )?,
         )?;
         Ok(written)
     }
@@ -161,6 +171,7 @@ impl<'a> CodeGraph<'a> {
     pub fn add_calls(
         &mut self,
         file_path: &str,
+        content_hash: &str,
         calls: &[CallRelation],
         sync_token: &str,
     ) -> anyhow::Result<usize> {
@@ -171,21 +182,36 @@ impl<'a> CodeGraph<'a> {
             written += call_groups.symbol.len();
             execute_write_query(
                 self.client,
-                add_symbol_calls_query(self.project_id, &call_groups.symbol, sync_token)?,
+                add_symbol_calls_query(
+                    self.project_id,
+                    &call_groups.symbol,
+                    content_hash,
+                    sync_token,
+                )?,
             )?;
         }
         if !call_groups.external.is_empty() {
             written += call_groups.external.len();
             execute_write_query(
                 self.client,
-                add_external_calls_query(self.project_id, &call_groups.external, sync_token)?,
+                add_external_calls_query(
+                    self.project_id,
+                    &call_groups.external,
+                    content_hash,
+                    sync_token,
+                )?,
             )?;
         }
         if !call_groups.unresolved.is_empty() {
             written += call_groups.unresolved.len();
             execute_write_query(
                 self.client,
-                add_unresolved_calls_query(self.project_id, &call_groups.unresolved, sync_token)?,
+                add_unresolved_calls_query(
+                    self.project_id,
+                    &call_groups.unresolved,
+                    content_hash,
+                    sync_token,
+                )?,
             )?;
         }
         Ok(written)
@@ -194,9 +220,12 @@ impl<'a> CodeGraph<'a> {
     pub fn delete_stale_file_graph(
         &mut self,
         file_path: &str,
+        content_hash: &str,
         sync_token: &str,
     ) -> anyhow::Result<()> {
-        for query in delete_stale_file_graph_queries(self.project_id, file_path, sync_token)? {
+        for query in
+            delete_stale_file_graph_queries(self.project_id, file_path, content_hash, sync_token)?
+        {
             execute_write_query(self.client, query)?;
         }
         Ok(())
@@ -218,6 +247,17 @@ impl<'a> CodeGraph<'a> {
             self.client,
             delete_file_node_query(self.project_id, file_path)?,
         )
+    }
+
+    pub fn delete_symbol_ids(&mut self, symbol_ids: &[String]) -> anyhow::Result<()> {
+        if symbol_ids.is_empty() {
+            return Ok(());
+        }
+        execute_write_query(
+            self.client,
+            delete_symbol_ids_query(self.project_id, symbol_ids)?,
+        )?;
+        self.cleanup_orphans()
     }
 
     pub fn delete_file_projection(&mut self, file_path: &str) -> anyhow::Result<()> {
@@ -296,13 +336,21 @@ fn value_to_usize(value: &Value) -> Option<usize> {
 pub fn sync_file_graph(
     ctx: &Context,
     file_path: &str,
+    content_hash: &str,
     imports: &[ImportRelation],
     definitions: &[Symbol],
     calls: &[CallRelation],
     cleanup_orphans: bool,
 ) -> anyhow::Result<usize> {
     with_code_graph(ctx, |graph| {
-        graph.sync_file(file_path, imports, definitions, calls, cleanup_orphans)
+        graph.sync_file(
+            file_path,
+            content_hash,
+            imports,
+            definitions,
+            calls,
+            cleanup_orphans,
+        )
     })
 }
 
@@ -330,6 +378,12 @@ pub fn delete_file_graph(
 pub fn delete_file_projection(ctx: &Context, file_path: &str) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).delete_file_projection(file_path)
+    })
+}
+
+pub fn delete_symbol_ids(ctx: &Context, symbol_ids: &[String]) -> anyhow::Result<()> {
+    with_required_core_graph(ctx, |client| {
+        CodeGraph::new(&ctx.project_id, client).delete_symbol_ids(symbol_ids)
     })
 }
 

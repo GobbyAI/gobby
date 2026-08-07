@@ -114,7 +114,6 @@ fn sync_file_symbols_batches_embedding_and_qdrant_upsert() {
             200,
             json!({"result": {"operation_id": 18, "status": "completed"}, "status": "ok"}),
         ),
-        (200, json!({"result": {"count": 0}, "status": "ok"})),
     ]);
     let mut lifecycle = CodeSymbolVectorLifecycle::new(
         "project-1".to_string(),

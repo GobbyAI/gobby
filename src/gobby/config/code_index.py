@@ -77,6 +77,11 @@ class CodeIndexConfig(BaseModel):
         default="~/.gobby/logs/code-index-maintenance.log",
         description="Dedicated rotating log file for code-index prune and nightly maintenance",
     )
+    content_retention_days: int = Field(
+        default=30,
+        ge=1,
+        description="Days to retain unreferenced indexed content and recent Git history",
+    )
     missing_root_purge_observations: int = Field(
         default=3,
         ge=1,

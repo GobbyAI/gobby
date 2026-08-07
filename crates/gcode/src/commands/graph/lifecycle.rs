@@ -220,10 +220,15 @@ fn sync_file_graph(
     }
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
-        code_graph::with_code_graph(ctx, |graph| {
-            graph.delete_file_graph(&facts.file_path, &[])?;
-            graph.delete_file_node(&facts.file_path)
-        })?;
+        code_graph::sync_file_graph(
+            ctx,
+            &facts.file_path,
+            &facts.content_hash,
+            &facts.imports,
+            &facts.definitions,
+            &facts.calls,
+            false,
+        )?;
         db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
         return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
     }
@@ -236,6 +241,7 @@ fn sync_file_graph(
     let relationships_written = code_graph::sync_file_graph(
         ctx,
         &facts.file_path,
+        &facts.content_hash,
         &facts.imports,
         &facts.definitions,
         &facts.calls,
@@ -309,14 +315,9 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 
             let synced_symbols = match (|| -> anyhow::Result<usize> {
                 let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-                if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
-                    graph.delete_file_graph(&facts.file_path, &[])?;
-                    graph.delete_file_node(&facts.file_path)?;
-                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-                    return Ok(0);
-                }
                 graph.sync_file(
                     &facts.file_path,
+                    &facts.content_hash,
                     &facts.imports,
                     &facts.definitions,
                     &facts.calls,

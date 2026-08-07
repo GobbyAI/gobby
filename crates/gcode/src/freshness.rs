@@ -94,10 +94,13 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
 /// same way (`--no-freshness` still bypasses it upstream).
 fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
 
     let last_indexed_at: Option<SystemTime> = match conn.query_opt(
-        "SELECT last_indexed_at FROM code_indexed_projects WHERE id = $1",
-        &[&db::id_param(&ctx.project_id)?],
+        "SELECT last_indexed_at
+         FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &db::id_param(&ctx.project_id)?],
     )? {
         Some(row) => row.try_get::<_, Option<SystemTime>>(0)?,
         None => None,
@@ -413,6 +416,7 @@ mod tests {
                 signature: None,
                 docstring: None,
                 parent_symbol_id: None,
+                file_content_hash: crate::index::hasher::content_hash(source),
                 content_hash: symbol_hash(source, start, end),
                 summary: None,
                 created_at: String::new(),

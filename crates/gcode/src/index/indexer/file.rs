@@ -188,16 +188,8 @@ pub(super) fn write_parsed_file_facts(
     byte_size: usize,
     parse_result: &ParseResult,
 ) -> anyhow::Result<FileIndexCounts> {
-    let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
-    let current_symbol_ids = parse_result
-        .symbols
-        .iter()
-        .map(|symbol| symbol.id.clone())
-        .collect::<Vec<_>>();
-    sink.delete_stale_file_symbols(project_id, rel, &current_symbol_ids)?;
-    sink.delete_file_non_symbol_facts(project_id, rel)?;
     sink.upsert_file(&IndexedFile {
-        id: IndexedFile::make_id(project_id, rel),
+        id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
         file_path: rel.to_string(),
         language: language.to_string(),
@@ -206,14 +198,29 @@ pub(super) fn write_parsed_file_facts(
         byte_size,
         indexed_at: epoch_secs_str(),
     })?;
-    let imports_indexed = sink.upsert_imports(project_id, rel, &parse_result.imports)?;
-    let calls_indexed = sink.upsert_calls(project_id, rel, &parse_result.calls)?;
+    let symbols_indexed = sink.upsert_symbols(&parse_result.symbols)?;
+    let current_symbol_ids = parse_result
+        .symbols
+        .iter()
+        .map(|symbol| symbol.id.clone())
+        .collect::<Vec<_>>();
+    sink.delete_stale_file_symbols(project_id, rel, content_hash, &current_symbol_ids)?;
+    sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
+    let imports_indexed =
+        sink.upsert_imports(project_id, rel, content_hash, &parse_result.imports)?;
+    let calls_indexed = sink.upsert_calls(project_id, rel, content_hash, &parse_result.calls)?;
     let unresolved_targets_indexed = parse_result
         .calls
         .iter()
         .filter(|call| call.callee_target_kind == CallTargetKind::Unresolved)
         .count();
-    let chunks = chunker::chunk_file_content(&parse_result.source, rel, project_id, Some(language));
+    let chunks = chunker::chunk_file_content(
+        &parse_result.source,
+        rel,
+        project_id,
+        content_hash,
+        Some(language),
+    );
     let chunks_indexed = if chunks.is_empty() {
         0
     } else {
@@ -240,9 +247,8 @@ pub(super) fn write_content_only_file_facts(
     byte_size: usize,
     source: &[u8],
 ) -> anyhow::Result<FileIndexCounts> {
-    sink.delete_file_facts(project_id, rel)?;
     sink.upsert_file(&IndexedFile {
-        id: IndexedFile::make_id(project_id, rel),
+        id: IndexedFile::make_id(project_id, rel, content_hash),
         project_id: project_id.to_string(),
         file_path: rel.to_string(),
         language: language.to_string(),
@@ -251,7 +257,8 @@ pub(super) fn write_content_only_file_facts(
         byte_size,
         indexed_at: epoch_secs_str(),
     })?;
-    let chunks = chunker::chunk_file_content(source, rel, project_id, Some(language));
+    sink.delete_file_non_symbol_facts(project_id, rel, content_hash)?;
+    let chunks = chunker::chunk_file_content(source, rel, project_id, content_hash, Some(language));
     let chunks_indexed = if chunks.is_empty() {
         0
     } else {

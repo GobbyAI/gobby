@@ -192,7 +192,7 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     )
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
-    clear_graph.assert_awaited_once_with("proj-missing")
+    clear_graph.assert_not_awaited()
     assert gcode_gateway.vector_cleared_roots == []
     assert gcode_gateway.maintenance_calls == []
     assert not missing_root.exists()
@@ -344,7 +344,7 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
     assert "--sync-projections" not in gcode_gateway.maintenance_result.command
     storage.delete_project_index.assert_called_once_with("proj-stale")
     storage.get_unsummarized_symbols.assert_not_called()
-    clear_graph.assert_awaited_once_with("proj-stale")
+    clear_graph.assert_not_awaited()
     assert gcode_gateway.vector_cleared_roots == []
     summarizer.summarize_batch.assert_not_called()
     assert "Maintenance reindex failed" not in caplog.text

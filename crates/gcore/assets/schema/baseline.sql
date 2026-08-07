@@ -369,6 +369,7 @@ CREATE TABLE code_calls (
     callee_target_kind text DEFAULT 'unresolved'::text NOT NULL,
     callee_external_module text DEFAULT ''::text NOT NULL,
     file_path text NOT NULL,
+    content_hash text NOT NULL,
     line integer DEFAULT 0 NOT NULL
 );
 
@@ -387,6 +388,7 @@ CREATE TABLE code_content_chunks (
     id uuid NOT NULL,
     project_id uuid NOT NULL,
     file_path text NOT NULL,
+    content_hash text NOT NULL,
     chunk_index integer NOT NULL,
     line_start integer NOT NULL,
     line_end integer NOT NULL,
@@ -401,6 +403,7 @@ CREATE TABLE code_imports (
     id integer NOT NULL,
     project_id uuid NOT NULL,
     source_file text NOT NULL,
+    content_hash text NOT NULL,
     target_module text NOT NULL
 );
 
@@ -459,6 +462,15 @@ ALTER TABLE ONLY code_indexed_files FORCE ROW LEVEL SECURITY;
 
 CREATE TABLE code_indexed_projects (
     id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY code_indexed_projects FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE code_indexed_project_states (
+    machine_id uuid NOT NULL,
+    project_id uuid NOT NULL,
     root_path text NOT NULL,
     total_files integer DEFAULT 0 NOT NULL,
     total_symbols integer DEFAULT 0 NOT NULL,
@@ -468,7 +480,17 @@ CREATE TABLE code_indexed_projects (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
-ALTER TABLE ONLY code_indexed_projects FORCE ROW LEVEL SECURITY;
+ALTER TABLE ONLY code_indexed_project_states FORCE ROW LEVEL SECURITY;
+
+CREATE TABLE code_indexed_file_states (
+    machine_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    file_path text NOT NULL,
+    content_hash text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+ALTER TABLE ONLY code_indexed_file_states FORCE ROW LEVEL SECURITY;
 
 CREATE TABLE code_symbols (
     id uuid NOT NULL,
@@ -485,6 +507,7 @@ CREATE TABLE code_symbols (
     signature text,
     docstring text,
     parent_symbol_id uuid,
+    file_content_hash text NOT NULL,
     content_hash text NOT NULL,
     summary text,
     summary_attempted_at timestamp with time zone,
@@ -2185,19 +2208,19 @@ ALTER TABLE ONLY code_calls
     ADD CONSTRAINT code_calls_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_calls
-    ADD CONSTRAINT code_calls_unique_call_target UNIQUE NULLS NOT DISTINCT (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind, callee_external_module, file_path, line);
+    ADD CONSTRAINT code_calls_unique_call_target UNIQUE NULLS NOT DISTINCT (project_id, file_path, content_hash, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind, callee_external_module, line);
 
 ALTER TABLE ONLY code_content_chunks
     ADD CONSTRAINT code_content_chunks_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_content_chunks
-    ADD CONSTRAINT code_content_chunks_project_id_file_path_chunk_index_key UNIQUE (project_id, file_path, chunk_index);
+    ADD CONSTRAINT code_content_chunks_project_id_file_path_content_hash_chunk_index_key UNIQUE (project_id, file_path, content_hash, chunk_index);
 
 ALTER TABLE ONLY code_imports
     ADD CONSTRAINT code_imports_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_imports
-    ADD CONSTRAINT code_imports_project_id_source_file_target_module_key UNIQUE (project_id, source_file, target_module);
+    ADD CONSTRAINT code_imports_project_id_source_file_content_hash_target_module_key UNIQUE (project_id, source_file, content_hash, target_module);
 
 ALTER TABLE ONLY code_index_projection_cleanup_pending
     ADD CONSTRAINT code_index_projection_cleanup_pending_pkey PRIMARY KEY (project_id, store);
@@ -2209,13 +2232,43 @@ ALTER TABLE ONLY code_indexed_files
     ADD CONSTRAINT code_indexed_files_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY code_indexed_files
-    ADD CONSTRAINT code_indexed_files_project_id_file_path_key UNIQUE (project_id, file_path);
+    ADD CONSTRAINT code_indexed_files_project_id_file_path_content_hash_key UNIQUE (project_id, file_path, content_hash);
 
 ALTER TABLE ONLY code_indexed_projects
     ADD CONSTRAINT code_indexed_projects_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY code_indexed_project_states
+    ADD CONSTRAINT code_indexed_project_states_pkey PRIMARY KEY (machine_id, project_id);
+
+ALTER TABLE ONLY code_indexed_file_states
+    ADD CONSTRAINT code_indexed_file_states_pkey PRIMARY KEY (machine_id, project_id, file_path);
+
 ALTER TABLE ONLY code_symbols
     ADD CONSTRAINT code_symbols_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY code_indexed_files
+    ADD CONSTRAINT code_indexed_files_project_id_fkey FOREIGN KEY (project_id) REFERENCES code_indexed_projects(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_indexed_project_states
+    ADD CONSTRAINT code_indexed_project_states_project_id_fkey FOREIGN KEY (project_id) REFERENCES code_indexed_projects(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_indexed_file_states
+    ADD CONSTRAINT code_indexed_file_states_project_state_fkey FOREIGN KEY (machine_id, project_id) REFERENCES code_indexed_project_states(machine_id, project_id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_indexed_file_states
+    ADD CONSTRAINT code_indexed_file_states_content_fkey FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash);
+
+ALTER TABLE ONLY code_symbols
+    ADD CONSTRAINT code_symbols_content_fkey FOREIGN KEY (project_id, file_path, file_content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_content_chunks
+    ADD CONSTRAINT code_content_chunks_content_fkey FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_imports
+    ADD CONSTRAINT code_imports_content_fkey FOREIGN KEY (project_id, source_file, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
+
+ALTER TABLE ONLY code_calls
+    ADD CONSTRAINT code_calls_content_fkey FOREIGN KEY (project_id, file_path, content_hash) REFERENCES code_indexed_files(project_id, file_path, content_hash) ON DELETE CASCADE;
 
 ALTER TABLE ONLY comms_attachments
     ADD CONSTRAINT comms_attachments_pkey PRIMARY KEY (id);
@@ -2685,6 +2738,12 @@ CREATE INDEX idx_cif_graph_synced ON code_indexed_files USING btree (project_id,
 CREATE INDEX idx_cif_project ON code_indexed_files USING btree (project_id);
 
 CREATE INDEX idx_cif_vectors_synced ON code_indexed_files USING btree (project_id, vectors_synced);
+
+CREATE INDEX idx_cifs_content ON code_indexed_file_states USING btree (project_id, file_path, content_hash);
+
+CREATE INDEX idx_cifs_machine_project ON code_indexed_file_states USING btree (machine_id, project_id);
+
+CREATE INDEX idx_cips_project ON code_indexed_project_states USING btree (project_id);
 
 CREATE INDEX idx_cipcp_updated ON code_index_projection_cleanup_pending USING btree (updated_at, created_at);
 
@@ -3517,6 +3576,10 @@ ALTER TABLE code_indexed_files ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE code_indexed_projects ENABLE ROW LEVEL SECURITY;
 
+ALTER TABLE code_indexed_project_states ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE code_indexed_file_states ENABLE ROW LEVEL SECURITY;
+
 ALTER TABLE code_symbols ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY gobby_daemon_runtime_access ON code_calls TO gobby_daemon_runtime USING (true) WITH CHECK (true);
@@ -3532,6 +3595,10 @@ CREATE POLICY gobby_daemon_runtime_access ON code_index_prune_dirty_projects TO 
 CREATE POLICY gobby_daemon_runtime_access ON code_indexed_files TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_daemon_runtime_access ON code_indexed_projects TO gobby_daemon_runtime USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_daemon_runtime_access ON code_indexed_project_states TO gobby_daemon_runtime USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_daemon_runtime_access ON code_indexed_file_states TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_daemon_runtime_access ON code_symbols TO gobby_daemon_runtime USING (true) WITH CHECK (true);
 
@@ -3550,6 +3617,10 @@ CREATE POLICY gobby_migration_owner_access ON code_index_prune_dirty_projects TO
 CREATE POLICY gobby_migration_owner_access ON code_indexed_files TO CURRENT_USER USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_migration_owner_access ON code_indexed_projects TO CURRENT_USER USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_migration_owner_access ON code_indexed_project_states TO CURRENT_USER USING (true) WITH CHECK (true);
+
+CREATE POLICY gobby_migration_owner_access ON code_indexed_file_states TO CURRENT_USER USING (true) WITH CHECK (true);
 
 CREATE POLICY gobby_migration_owner_access ON code_symbols TO CURRENT_USER USING (true) WITH CHECK (true);
 
@@ -3656,6 +3727,14 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_files TO gobby_gcode_cap
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_projects TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_projects TO gobby_gcode_capability;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_project_states TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_project_states TO gobby_gcode_capability;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_file_states TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_indexed_file_states TO gobby_gcode_capability;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE code_symbols TO gobby_daemon_runtime;
 
@@ -4782,6 +4861,8 @@ BEGIN
     FOREACH table_name IN ARRAY ARRAY[
         'projects',
         'code_indexed_projects',
+        'code_indexed_project_states',
+        'code_indexed_file_states',
         'code_indexed_files',
         'code_symbols',
         'code_imports',
@@ -4885,9 +4966,12 @@ BEGIN
     );
     EXECUTE format(
         'GRANT SELECT, INSERT, UPDATE, DELETE ON '
-        '%I.code_indexed_projects, %I.code_indexed_files, %I.code_symbols, '
+        '%I.code_indexed_projects, %I.code_indexed_project_states, '
+        '%I.code_indexed_file_states, %I.code_indexed_files, %I.code_symbols, '
         '%I.code_imports, %I.code_calls, %I.code_content_chunks, '
         '%I.code_index_projection_cleanup_pending, %I.code_index_prune_dirty_projects TO %I',
+        target_schema,
+        target_schema,
         target_schema,
         target_schema,
         target_schema,

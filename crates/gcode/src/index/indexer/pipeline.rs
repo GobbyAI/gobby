@@ -14,8 +14,8 @@ use super::file::{
     index_file,
 };
 use super::lifecycle::{
-    attach_projection_sync, cleanup_deleted_file_projections, current_file_state, get_orphan_files,
-    get_stale_files, refresh_project_stats,
+    attach_projection_sync, current_file_state, get_orphan_files, get_stale_files,
+    refresh_project_stats,
 };
 use super::local_imports::{resolve_local_import_calls, resolve_project_local_import_calls};
 use super::overlay::index_overlay_files;
@@ -61,6 +61,8 @@ fn index_discovered_files(
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
     let mut outcome = IndexOutcome::new(project_id);
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    api::upsert_project_seed(conn, &machine_id, project_id, root_path)?;
 
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
     let (mut candidates, mut content_only) =
@@ -78,7 +80,12 @@ fn index_discovered_files(
     // Build current file state for incremental detection and orphan cleanup.
     let current_files = current_file_state(root_path, &candidates, &content_only);
     let stale: Option<HashSet<String>> = if !request.full {
-        Some(get_stale_files(conn, project_id, &current_files.hashes)?)
+        Some(get_stale_files(
+            conn,
+            &machine_id,
+            project_id,
+            &current_files.hashes,
+        )?)
     } else {
         None
     };
@@ -86,11 +93,10 @@ fn index_discovered_files(
     // Clean orphans only during whole-project scans. Filtered scans do not know
     // about files outside the requested subtree.
     if request.path_filter.is_none() {
-        let orphans = get_orphan_files(conn, project_id, &current_files.present_paths)?;
+        let orphans =
+            get_orphan_files(conn, &machine_id, project_id, &current_files.present_paths)?;
         for orphan in &orphans {
-            let file_vectors_synced = db::file_vectors_synced(conn, project_id, orphan)?;
-            cleanup_deleted_file_projections(ctx, orphan, &mut outcome, file_vectors_synced);
-            api::delete_file_facts(conn, project_id, orphan)?;
+            api::delete_file_state(conn, &machine_id, project_id, orphan)?;
         }
     }
 
@@ -121,6 +127,13 @@ fn index_discovered_files(
             outcome.skipped_files += 1;
             continue;
         }
+        if let Some(content_hash) = current_files.hashes.get(&rel)
+            && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
+        {
+            outcome.skipped_files += 1;
+            progress.advance(&rel);
+            continue;
+        }
 
         match index_file(
             conn,
@@ -133,16 +146,8 @@ fn index_discovered_files(
         )? {
             Some(counts) => outcome.add_counts(counts),
             None => {
-                let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
-                let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
-                cleanup_skipped_file_if_indexed(
-                    ctx,
-                    &rel,
-                    &mut outcome,
-                    file_facts_exist,
-                    file_vectors_synced,
-                    || api::delete_file_facts(conn, project_id, &rel),
-                )?;
+                api::delete_file_state(conn, &machine_id, project_id, &rel)?;
+                outcome.skipped_files += 1;
             }
         }
         progress.advance(&rel);
@@ -157,6 +162,13 @@ fn index_discovered_files(
             && !stale_map.contains(&rel)
         {
             outcome.skipped_files += 1;
+            continue;
+        }
+        if let Some(content_hash) = current_files.hashes.get(&rel)
+            && api::adopt_file_state(conn, &machine_id, project_id, &rel, content_hash)?
+        {
+            outcome.skipped_files += 1;
+            progress.advance(&rel);
             continue;
         }
         match index_content_only(conn, path, project_id, root_path, &excludes)? {
@@ -176,6 +188,7 @@ fn index_discovered_files(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
+        &machine_id,
         root_path,
         project_id,
         start.elapsed().as_millis() as u64,
@@ -199,6 +212,8 @@ fn index_explicit_files_with_connection(
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
     let mut outcome = IndexOutcome::new(project_id);
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    api::upsert_project_seed(conn, &machine_id, project_id, root_path)?;
     outcome.scanned_files = request.explicit_files.len();
 
     let excludes = effective_excludes(&ctx.indexing.extra_excludes);
@@ -214,9 +229,7 @@ fn index_explicit_files_with_connection(
 
         if !abs.exists() {
             let rel = requested_relative_path(root_path, fp);
-            let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
-            cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
-            api::delete_file_facts(conn, project_id, &rel)?;
+            api::delete_file_state(conn, &machine_id, project_id, &rel)?;
             continue;
         }
 
@@ -241,16 +254,8 @@ fn index_explicit_files_with_connection(
                     outcome.skipped_files += 1;
                     continue;
                 };
-                let file_facts_exist = api::file_facts_exist(conn, project_id, &rel)?;
-                let file_vectors_synced = db::file_vectors_synced(conn, project_id, &rel)?;
-                cleanup_skipped_file_if_indexed(
-                    ctx,
-                    &rel,
-                    &mut outcome,
-                    file_facts_exist,
-                    file_vectors_synced,
-                    || api::delete_file_facts(conn, project_id, &rel),
-                )?;
+                api::delete_file_state(conn, &machine_id, project_id, &rel)?;
+                outcome.skipped_files += 1;
             }
         }
     }
@@ -278,6 +283,14 @@ fn index_explicit_files_with_connection(
     let mut progress = ActiveIndexProgress::new(options.progress.take(), routed_file_count);
     for (abs, route) in routed_files {
         let rel = relative_path(&abs, root_path).ok();
+        if let Some(rel) = rel.as_deref()
+            && let Ok(content_hash) = crate::index::hasher::file_content_hash(&abs)
+            && api::adopt_file_state(conn, &machine_id, project_id, rel, &content_hash)?
+        {
+            outcome.skipped_files += 1;
+            progress.advance(rel);
+            continue;
+        }
         match route {
             ExplicitFileRoute::Ast => {
                 if let Some(count) = index_file(
@@ -314,6 +327,7 @@ fn index_explicit_files_with_connection(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
+        &machine_id,
         root_path,
         project_id,
         start.elapsed().as_millis() as u64,
@@ -382,22 +396,6 @@ pub(super) fn explicit_route_with_discovery_options(
         Some(walker::FileClassification::ContentOnly) => ExplicitFileRoute::ContentOnly,
         None => ExplicitFileRoute::Skip,
     }
-}
-
-pub(super) fn cleanup_skipped_file_if_indexed(
-    ctx: &Context,
-    rel: &str,
-    outcome: &mut IndexOutcome,
-    file_facts_exist: bool,
-    file_vectors_synced: Option<bool>,
-    delete_file_facts: impl FnOnce() -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
-    outcome.skipped_files += 1;
-    if file_facts_exist {
-        cleanup_deleted_file_projections(ctx, rel, outcome, file_vectors_synced);
-        delete_file_facts()?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

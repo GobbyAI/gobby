@@ -703,6 +703,14 @@ mod tests {
     ) -> Result<(), postgres::Error> {
         let project_id = test_project_uuid(project_id);
         let mut tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
+        tx.execute(
+            "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+            &[&project_id],
+        )?;
         for table in GRAPH_RESOLUTION_CHILD_TABLES {
             let sql = format!("DELETE FROM {table} WHERE project_id = $1");
             tx.execute(&sql, &[&project_id])?;
@@ -716,18 +724,30 @@ mod tests {
 
     fn insert_project(conn: &mut Client, project_id: &str) {
         let root_path = format!("/tmp/gcode-graph-resolution-{project_id}");
+        let project_id = test_project_uuid(project_id);
+        let machine_id = test_project_uuid(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
         conn.execute(
-            "INSERT INTO code_indexed_projects
-                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-             VALUES ($1, $2, 0, 0, NOW(), 0)",
-            &[&test_project_uuid(project_id), &root_path],
+            "INSERT INTO code_indexed_projects (id) VALUES ($1)",
+            &[&project_id],
         )
         .expect("insert graph resolution project");
+        conn.execute(
+            "INSERT INTO code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+             VALUES ($1, $2, $3, 0, 0, NOW(), 0)",
+            &[&machine_id, &project_id, &root_path],
+        )
+        .expect("insert graph resolution project state");
     }
 
     fn insert_file(conn: &mut Client, project_id: &str, file_path: &str, symbol_count: i32) {
-        let id = crate::db::id_param(&crate::models::IndexedFile::make_id(project_id, file_path))
-            .expect("indexed-file id is a uuid");
+        let id = crate::db::id_param(&crate::models::IndexedFile::make_id(
+            project_id, file_path, "hash",
+        ))
+        .expect("indexed-file id is a uuid");
         let project_id = test_project_uuid(project_id);
         let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &symbol_count];
         conn.execute(
@@ -738,6 +758,16 @@ mod tests {
             params,
         )
         .expect("insert graph resolution file");
+        let machine_id = test_project_uuid(
+            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
+        );
+        conn.execute(
+            "INSERT INTO code_indexed_file_states
+                (machine_id, project_id, file_path, content_hash)
+             VALUES ($1, $2, $3, 'hash')",
+            &[&machine_id, &project_id, &file_path],
+        )
+        .expect("insert graph resolution file state");
     }
 
     fn insert_symbol(
@@ -755,9 +785,9 @@ mod tests {
             "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
-                 content_hash, summary, created_at, updated_at)
+                 file_content_hash, content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $4, 'function', 'rust', 0, 1, $5, $5, $4, NULL, NULL,
-                     'hash', NULL, NOW(), NOW())",
+                     'hash', 'hash', NULL, NOW(), NOW())",
             params,
         )
         .expect("insert graph resolution symbol");

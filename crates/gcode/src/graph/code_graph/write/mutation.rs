@@ -17,7 +17,7 @@ static SYNC_TOKEN_COUNTER: AtomicU64 = AtomicU64::new(0);
 const ADD_IMPORTS_CYPHER: &str = "UNWIND $imports AS import
          MERGE (f:CodeFile {path: import.source_file, project: $project})
          MERGE (m:CodeModule {name: import.target_module, project: $project})
-         MERGE (f)-[r:IMPORTS]->(m)
+         MERGE (f)-[r:IMPORTS {content_hash: $content_hash}]->(m)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
@@ -31,11 +31,12 @@ const ADD_DEFINITIONS_CYPHER: &str = "UNWIND $symbols AS symbol
              s.kind = symbol.kind,
              s.language = symbol.language,
              s.file_path = $file_path,
+             s.file_content_hash = $content_hash,
              s.line_start = symbol.line_start,
              s.line_end = symbol.line_end,
              s.updated_at = timestamp(),
              s.sync_token = $sync_token
-         MERGE (f)-[r:DEFINES]->(s)
+         MERGE (f)-[r:DEFINES {content_hash: $content_hash}]->(s)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
@@ -47,7 +48,7 @@ const ADD_SYMBOL_CALLS_CYPHER: &str = "UNWIND $symbol_calls AS call
          MERGE (caller:CodeSymbol {id: call.caller_id, project: $project})
          MERGE (callee:CodeSymbol {id: call.target_id, project: $project})
          ON CREATE SET callee.name = call.callee_name, callee.updated_at = timestamp()
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line, content_hash: $content_hash}]->(callee)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
@@ -63,7 +64,7 @@ const ADD_EXTERNAL_CALLS_CYPHER: &str = "UNWIND $external_calls AS call
              callee.module = call.callee_module,
              callee.updated_at = timestamp(),
              callee.sync_token = $sync_token
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line, content_hash: $content_hash}]->(callee)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
@@ -77,7 +78,7 @@ const ADD_UNRESOLVED_CALLS_CYPHER: &str = "UNWIND $unresolved_calls AS call
          ON CREATE SET callee.name = call.callee_name,
              callee.updated_at = timestamp(),
              callee.sync_token = $sync_token
-         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line}]->(callee)
+         MERGE (caller)-[r:CALLS {file: call.file_path, line: call.line, content_hash: $content_hash}]->(callee)
          SET r.provenance = $provenance,
              r.confidence = $confidence,
              r.source_system = $source_system,
@@ -181,7 +182,7 @@ pub(in crate::graph::code_graph) fn partition_call_graph_items(
     groups
 }
 
-fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
+fn metadata_params(sync_token: &str, content_hash: &str) -> Vec<(&'static str, TypedValue)> {
     vec![
         (
             "provenance",
@@ -192,6 +193,7 @@ fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
             "source_system",
             TypedValue::String(SOURCE_SYSTEM_GCODE.to_string()),
         ),
+        ("content_hash", TypedValue::String(content_hash.to_string())),
         sync_token_param(sync_token),
     ]
 }
@@ -199,6 +201,7 @@ fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
 pub(super) struct SyncFileMutation<'a> {
     pub(super) project_id: &'a str,
     pub(super) file_path: &'a str,
+    pub(super) content_hash: &'a str,
     pub(super) symbol_count: usize,
     pub(super) imports: &'a [ImportGraphItem],
     pub(super) symbols: &'a [&'a Symbol],
@@ -229,6 +232,7 @@ pub(super) fn ensure_file_node_query(
 pub(super) fn add_imports_query(
     project_id: &str,
     imports: &[ImportGraphItem],
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
@@ -254,7 +258,7 @@ pub(super) fn add_imports_query(
             ),
         ),
     ];
-    params.extend(metadata_params(sync_token));
+    params.extend(metadata_params(sync_token, content_hash));
     typed_query(ADD_IMPORTS_CYPHER, params)
 }
 
@@ -262,6 +266,7 @@ pub(super) fn add_definitions_query(
     project_id: &str,
     file_path: &str,
     symbols: &[&Symbol],
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
@@ -290,7 +295,7 @@ pub(super) fn add_definitions_query(
             ),
         ),
     ];
-    params.extend(metadata_params(sync_token));
+    params.extend(metadata_params(sync_token, content_hash));
     typed_query(ADD_DEFINITIONS_CYPHER, params)
 }
 
@@ -366,39 +371,42 @@ fn call_rows(calls: &[CallGraphItem]) -> anyhow::Result<TypedValue> {
 pub(super) fn add_symbol_calls_query(
     project_id: &str,
     calls: &[CallGraphItem],
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
         ("symbol_calls", call_rows(calls)?),
     ];
-    params.extend(metadata_params(sync_token));
+    params.extend(metadata_params(sync_token, content_hash));
     typed_query(ADD_SYMBOL_CALLS_CYPHER, params)
 }
 
 pub(super) fn add_external_calls_query(
     project_id: &str,
     calls: &[CallGraphItem],
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
         ("external_calls", call_rows(calls)?),
     ];
-    params.extend(metadata_params(sync_token));
+    params.extend(metadata_params(sync_token, content_hash));
     typed_query(ADD_EXTERNAL_CALLS_CYPHER, params)
 }
 
 pub(super) fn add_unresolved_calls_query(
     project_id: &str,
     calls: &[CallGraphItem],
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<TypedQuery> {
     let mut params = vec![
         ("project", TypedValue::String(project_id.to_string())),
         ("unresolved_calls", call_rows(calls)?),
     ];
-    params.extend(metadata_params(sync_token));
+    params.extend(metadata_params(sync_token, content_hash));
     typed_query(ADD_UNRESOLVED_CALLS_CYPHER, params)
 }
 

@@ -144,7 +144,10 @@ class CodeIndexPruner:
                 }
 
             run_id = uuid4().hex
-            result = await gateway.prune_all_projects(timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS)
+            result = await gateway.prune_all_projects(
+                retention_days=self._context.config.content_retention_days,
+                timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
+            )
             if result.timed_out:
                 status: Literal["completed", "failed", "timed_out"] = "timed_out"
             elif result.success or _is_noop_shutdown_result(result):
@@ -272,6 +275,7 @@ class CodeIndexPruner:
                 try:
                     command_result = await gateway.prune_project_for_maintenance(
                         Path(root_path).expanduser(),
+                        retention_days=self._context.config.content_retention_days,
                         timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS,
                     )
                     if command_result.timed_out:

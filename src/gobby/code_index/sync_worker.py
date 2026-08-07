@@ -134,8 +134,6 @@ async def _handle_indexed_file_not_found(
         await purge_missing_project(
             project=_MissingProject(id=project_id, root_path=str(root)),
             storage=storage,
-            config=config,
-            clear_graph=clear_graph,
             run_db=run_db,
         )
         return False
@@ -169,8 +167,6 @@ async def _handle_project_not_found(
         await purge_missing_project(
             project=_MissingProject(id=project_id, root_path=str(root)),
             storage=storage,
-            config=config,
-            clear_graph=clear_graph,
             run_db=run_db,
         )
         return

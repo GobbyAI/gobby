@@ -8,16 +8,13 @@ use postgres::Client;
 use wait_timeout::ChildExt;
 
 use crate::config::{Context, ProjectIndexScope};
-use crate::db;
 use crate::index::api;
 use crate::index::{hasher, parser, walker};
 use crate::models::IndexedFile;
 use crate::visibility;
 
 use super::file::{create_semantic_resolver_if_needed, index_content_only, index_file};
-use super::lifecycle::{
-    attach_projection_sync, cleanup_deleted_file_projections, refresh_project_stats,
-};
+use super::lifecycle::{attach_projection_sync, refresh_project_stats};
 use super::local_imports::resolve_local_import_calls;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
@@ -102,6 +99,8 @@ pub(super) fn index_overlay_files(
     let start = Instant::now();
     let discovery_start = Instant::now();
     let root_path = &request.project_root;
+    let machine_id = gobby_core::machine::read_local_machine_id()?;
+    api::upsert_project_seed(conn, &machine_id, overlay_project_id, root_path)?;
     let mut outcome = IndexOutcome::new(overlay_project_id);
     outcome.overlay = Some(OverlayIndexMetadata {
         overlay_project_id: overlay_project_id.clone(),
@@ -122,8 +121,8 @@ pub(super) fn index_overlay_files(
     let content_by_rel = paths_by_relative(root_path, &content_only);
     let import_context = parser::build_import_resolution_context(root_path, &candidates);
 
-    let parent_files = indexed_file_states(conn, parent_project_id)?;
-    let overlay_files = indexed_file_states(conn, overlay_project_id)?;
+    let parent_files = indexed_file_states(conn, &machine_id, parent_project_id)?;
+    let overlay_files = indexed_file_states(conn, &machine_id, overlay_project_id)?;
     let mut rels = overlay_reconcile_candidates(
         request,
         root_path,
@@ -179,17 +178,6 @@ pub(super) fn index_overlay_files(
         let indexable = ast_by_rel.contains_key(&rel) || content_by_rel.contains_key(&rel);
         let action =
             overlay_reconcile_action(abs.exists(), current_hash, parent, overlay, indexable);
-        let file_vectors_synced = if matches!(
-            action,
-            OverlayReconcileAction::Inherit
-                | OverlayReconcileAction::Tombstone
-                | OverlayReconcileAction::DeleteOverlay
-        ) {
-            db::file_vectors_synced(conn, overlay_project_id, &rel)?
-        } else {
-            None
-        };
-
         match action {
             OverlayReconcileAction::Index if ast_by_rel.contains_key(&rel) => {
                 match index_file(
@@ -212,18 +200,15 @@ pub(super) fn index_overlay_files(
                 }
             }
             OverlayReconcileAction::Inherit => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
-                api::delete_file_facts(conn, overlay_project_id, &rel)?;
+                api::delete_file_state(conn, &machine_id, overlay_project_id, &rel)?;
                 outcome.skipped_files += 1;
             }
             OverlayReconcileAction::Tombstone => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
                 write_tombstone(conn, overlay_project_id, root_path, &rel)?;
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
-                cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
-                api::delete_file_facts(conn, overlay_project_id, &rel)?;
+                api::delete_file_state(conn, &machine_id, overlay_project_id, &rel)?;
             }
             OverlayReconcileAction::Index => {
                 anyhow::bail!("overlay index action selected for non-indexable path `{rel}`")
@@ -242,6 +227,7 @@ pub(super) fn index_overlay_files(
     let stats_start = Instant::now();
     refresh_project_stats(
         conn,
+        &machine_id,
         root_path,
         overlay_project_id,
         start.elapsed().as_millis() as u64,
@@ -300,15 +286,21 @@ fn paths_by_relative(root_path: &Path, paths: &[PathBuf]) -> HashMap<String, Pat
 
 fn indexed_file_states(
     conn: &mut Client,
+    machine_id: &str,
     project_id: &str,
 ) -> anyhow::Result<HashMap<String, IndexedFileState>> {
     let mut files = HashMap::new();
-    let project_id = db::id_param(project_id)?;
+    let machine_id = crate::db::id_param(machine_id)?;
+    let project_id = crate::db::id_param(project_id)?;
     for row in conn.query(
-        "SELECT file_path, content_hash, language
-         FROM code_indexed_files
-         WHERE project_id = $1",
-        &[&project_id],
+        "SELECT s.file_path, s.content_hash, f.language
+         FROM code_indexed_file_states s
+         JOIN code_indexed_files f
+           ON f.project_id = s.project_id
+          AND f.file_path = s.file_path
+          AND f.content_hash = s.content_hash
+         WHERE s.machine_id = $1 AND s.project_id = $2",
+        &[&machine_id, &project_id],
     )? {
         files.insert(
             row.try_get("file_path")?,
@@ -437,9 +429,8 @@ fn write_tombstone(
 ) -> anyhow::Result<()> {
     let mut tx = conn.transaction().context("start tombstone transaction")?;
     let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
-    sink.delete_file_facts(project_id, rel)?;
     sink.upsert_file(&IndexedFile {
-        id: IndexedFile::make_id(project_id, rel),
+        id: IndexedFile::make_id(project_id, rel, visibility::TOMBSTONE_HASH),
         project_id: project_id.to_string(),
         file_path: rel.to_string(),
         language: visibility::TOMBSTONE_LANGUAGE.to_string(),

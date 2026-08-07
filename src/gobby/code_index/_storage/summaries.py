@@ -8,6 +8,7 @@ from gobby.code_index._storage.constants import SYNC_FAILURE_COOLOFF_SECONDS
 from gobby.code_index.models import Symbol
 from gobby.code_index.summary_safety import sanitize_symbol_summary
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 
 
 class CodeIndexSummaryStorageMixin:
@@ -28,13 +29,17 @@ class CodeIndexSummaryStorageMixin:
         placeholders = ",".join("%s" for _ in kinds)
         retry_cutoff = (datetime.now(UTC) - timedelta(seconds=failure_cooloff_seconds)).isoformat()
         rows = self.db.fetchall(
-            f"""SELECT * FROM code_symbols
-                WHERE project_id = %s AND summary IS NULL
-                  AND (summary_attempted_at IS NULL OR summary_attempted_at < %s)
-                  AND kind IN ({placeholders})
-                ORDER BY updated_at DESC
+            f"""SELECT s.* FROM code_symbols s
+                JOIN code_indexed_file_states fs
+                  ON fs.project_id = s.project_id
+                 AND fs.file_path = s.file_path
+                 AND fs.content_hash = s.file_content_hash
+                WHERE fs.machine_id = %s AND fs.project_id = %s AND s.summary IS NULL
+                  AND (s.summary_attempted_at IS NULL OR s.summary_attempted_at < %s)
+                  AND s.kind IN ({placeholders})
+                ORDER BY s.updated_at DESC
                 LIMIT %s""",
-            (project_id, retry_cutoff, *kinds, limit),
+            (require_machine_id(), project_id, retry_cutoff, *kinds, limit),
         )
         return [Symbol.from_row(r) for r in rows]
 

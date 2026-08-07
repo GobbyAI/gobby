@@ -68,31 +68,36 @@ pub(crate) fn delete_file_graph_queries(
 pub(crate) fn delete_stale_file_graph_queries(
     project_id: &str,
     file_path: &str,
+    content_hash: &str,
     sync_token: &str,
 ) -> anyhow::Result<Vec<TypedQuery>> {
     let base_params = || {
-        [
+        vec![
             ("project", TypedValue::String(project_id.to_string())),
             ("file_path", TypedValue::String(file_path.to_string())),
+            ("content_hash", TypedValue::String(content_hash.to_string())),
             sync_token_param(sync_token),
         ]
     };
     let mut queries = vec![
         typed_query(
             "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:IMPORTS]->(:CodeModule {project: $project})
-             WHERE r.sync_token IS NULL OR r.sync_token <> $sync_token
+             WHERE r.content_hash = $content_hash
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
              DELETE r",
             base_params(),
         )?,
         typed_query(
             "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:DEFINES]->(:CodeSymbol {project: $project})
-             WHERE r.sync_token IS NULL OR r.sync_token <> $sync_token
+             WHERE r.content_hash = $content_hash
+               AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
              DELETE r",
             base_params(),
         )?,
         typed_query(
             "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
              WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+               AND r.content_hash = $content_hash
                AND (r.sync_token IS NULL OR r.sync_token <> $sync_token)
              DELETE r",
             base_params(),
@@ -103,7 +108,11 @@ pub(crate) fn delete_stale_file_graph_queries(
     // new sync_token, so a token mismatch alone identifies stale rows. Dropping
     // the per-file symbol-id list keeps the sync request bounded (gobby-cli #678).
     queries.push(typed_query(
-        "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
+        "MATCH (s:CodeSymbol {
+            project: $project,
+            file_path: $file_path,
+            file_content_hash: $content_hash
+         })
          WHERE s.sync_token IS NULL OR s.sync_token <> $sync_token
          DETACH DELETE s",
         base_params(),
@@ -122,6 +131,29 @@ pub(crate) fn delete_file_node_query(
         [
             ("project", TypedValue::String(project_id.to_string())),
             ("file_path", TypedValue::String(file_path.to_string())),
+        ],
+    )
+}
+
+pub(crate) fn delete_symbol_ids_query(
+    project_id: &str,
+    symbol_ids: &[String],
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH (s:CodeSymbol {project: $project})
+         WHERE s.id IN $symbol_ids
+         DETACH DELETE s",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            (
+                "symbol_ids",
+                TypedValue::List(
+                    symbol_ids
+                        .iter()
+                        .map(|id| TypedValue::String(id.clone()))
+                        .collect(),
+                ),
+            ),
         ],
     )
 }

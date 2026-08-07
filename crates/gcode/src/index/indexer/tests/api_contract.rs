@@ -37,19 +37,28 @@ fn library_api_is_cli_independent() {
 }
 
 #[test]
-fn invalidate_postgres_deletes_are_project_scoped() {
+fn invalidate_postgres_deletes_only_machine_state() {
     let source = include_str!("../lifecycle.rs");
     for expected in [
-        "DELETE FROM code_symbols WHERE project_id = $1",
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        "DELETE FROM code_content_chunks WHERE project_id = $1",
-        "DELETE FROM code_imports WHERE project_id = $1",
-        "DELETE FROM code_calls WHERE project_id = $1",
-        "DELETE FROM code_indexed_projects WHERE id = $1",
+        "DELETE FROM code_indexed_project_states",
+        "WHERE machine_id = $1 AND project_id = $2",
     ] {
         assert!(
             source.contains(expected),
             "missing scoped delete: {expected}"
+        );
+    }
+    for retained in [
+        "DELETE FROM code_symbols",
+        "DELETE FROM code_indexed_files",
+        "DELETE FROM code_content_chunks",
+        "DELETE FROM code_imports",
+        "DELETE FROM code_calls",
+        "DELETE FROM code_indexed_projects",
+    ] {
+        assert!(
+            !source.contains(retained),
+            "invalidate must retain shared facts: {retained}"
         );
     }
     let truncate_code = ["TRUNCATE", " code_"].concat();

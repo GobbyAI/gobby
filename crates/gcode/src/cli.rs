@@ -571,6 +571,9 @@ pub(crate) enum Command {
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
+        /// Retain unreferenced content and recent Git history for this many days
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u32).range(1..))]
+        retention_days: u32,
     },
 }
 

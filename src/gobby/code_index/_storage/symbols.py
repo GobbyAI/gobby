@@ -10,6 +10,7 @@ from gobby.code_index._storage.search_helpers import rows_by_ids
 from gobby.code_index.models import Symbol
 from gobby.search import keyword
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class CodeIndexSymbolStorageMixin:
                 sym.signature,
                 sym.docstring,
                 sym.parent_symbol_id,
+                sym.file_content_hash,
                 sym.content_hash,
                 sym.summary,
                 sym.summary_attempted_at,
@@ -55,9 +57,9 @@ class CodeIndexSymbolStorageMixin:
                     id, project_id, file_path, name, qualified_name,
                     kind, language, byte_start, byte_end,
                     line_start, line_end, signature, docstring,
-                    parent_symbol_id, content_hash, summary,
+                    parent_symbol_id, file_content_hash, content_hash, summary,
                     summary_attempted_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     qualified_name=excluded.qualified_name,
@@ -70,6 +72,7 @@ class CodeIndexSymbolStorageMixin:
                     docstring=excluded.docstring,
                     parent_symbol_id=excluded.parent_symbol_id,
                     language=excluded.language,
+                    file_content_hash=excluded.file_content_hash,
                     content_hash=excluded.content_hash,
                     summary=CASE WHEN excluded.content_hash != code_symbols.content_hash
                                  THEN NULL ELSE code_symbols.summary END,
@@ -100,8 +103,14 @@ class CodeIndexSymbolStorageMixin:
     def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Symbol]:
         """Get all symbols in a file."""
         rows = self.db.fetchall(
-            "SELECT * FROM code_symbols WHERE project_id = %s AND file_path = %s ORDER BY line_start",
-            (project_id, file_path),
+            """SELECT s.* FROM code_symbols s
+               JOIN code_indexed_file_states fs
+                 ON fs.project_id = s.project_id
+                AND fs.file_path = s.file_path
+                AND fs.content_hash = s.file_content_hash
+               WHERE fs.machine_id = %s AND fs.project_id = %s AND fs.file_path = %s
+               ORDER BY s.line_start""",
+            (require_machine_id(), project_id, file_path),
         )
         return [Symbol.from_row(r) for r in rows]
 
@@ -119,18 +128,18 @@ class CodeIndexSymbolStorageMixin:
         limit: int = 50,
     ) -> list[Symbol]:
         """Search symbols by name prefix/substring."""
-        conditions = ["project_id = %s"]
-        params: list[Any] = [project_id]
+        conditions = ["fs.machine_id = %s", "s.project_id = %s"]
+        params: list[Any] = [require_machine_id(), project_id]
 
         escaped = self._escape_like(query)
-        conditions.append("(name LIKE %s ESCAPE '\\' OR qualified_name LIKE %s ESCAPE '\\')")
+        conditions.append("(s.name LIKE %s ESCAPE '\\' OR s.qualified_name LIKE %s ESCAPE '\\')")
         params.extend([f"%{escaped}%", f"%{escaped}%"])
 
         if kind:
-            conditions.append("kind = %s")
+            conditions.append("s.kind = %s")
             params.append(kind)
         if file_path:
-            conditions.append("file_path = %s")
+            conditions.append("s.file_path = %s")
             params.append(file_path)
 
         where = " AND ".join(conditions)
@@ -138,10 +147,14 @@ class CodeIndexSymbolStorageMixin:
 
         rows = self.db.fetchall(
             f"""
-            SELECT *
-            FROM code_symbols
+            SELECT s.*
+            FROM code_symbols s
+            JOIN code_indexed_file_states fs
+              ON fs.project_id = s.project_id
+             AND fs.file_path = s.file_path
+             AND fs.content_hash = s.file_content_hash
             WHERE {where}
-            ORDER BY (name = %s) DESC, (name LIKE %s ESCAPE '\\') DESC, name, id
+            ORDER BY (s.name = %s) DESC, (s.name LIKE %s ESCAPE '\\') DESC, s.name, s.id
             LIMIT %s
             """,
             tuple(params),
@@ -163,33 +176,35 @@ class CodeIndexSymbolStorageMixin:
         try:
             hits = keyword.pick_search_backend(self.db, "code_symbols").search(
                 query,
-                limit,
+                limit * 4,
                 filters={"project_id": project_id, "kind": kind, "file_path": file_path},
             )
             rows = rows_by_ids(self.db, "code_symbols", [hit.id for hit in hits])
+            states = self.db.fetchall(
+                """SELECT file_path, content_hash FROM code_indexed_file_states
+                   WHERE machine_id = %s AND project_id = %s""",
+                (require_machine_id(), project_id),
+            )
         except Exception as exc:
             logger.debug("Code symbol keyword search failed: %s", exc, exc_info=True)
             return []
         symbols_by_id = {str(row["id"]): Symbol.from_row(row) for row in rows}
-        return [symbols_by_id[hit.id] for hit in hits if hit.id in symbols_by_id]
+        visible_versions = {(row["file_path"], row["content_hash"]) for row in states}
+        results = [
+            symbol
+            for hit in hits
+            if (symbol := symbols_by_id.get(hit.id)) is not None
+            and (symbol.file_path, symbol.file_content_hash) in visible_versions
+        ]
+        return results[:limit]
 
     def delete_symbols_for_file(self, project_id: str, file_path: str) -> int:
-        """Delete all symbols for a file. Returns count."""
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM code_symbols WHERE project_id = %s AND file_path = %s",
-                (project_id, file_path),
-            )
-            return cursor.rowcount
+        """Retain immutable symbols; selectors are reconciled through file state."""
+        return 0
 
     def delete_symbols_for_project(self, project_id: str) -> int:
-        """Delete all symbols for a project."""
-        with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "DELETE FROM code_symbols WHERE project_id = %s",
-                (project_id,),
-            )
-            return cursor.rowcount
+        """Retain immutable symbols until content GC proves them unreachable."""
+        return 0
 
     def search_symbols_for_graph(
         self, query: str, project_id: str, limit: int = 20

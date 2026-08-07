@@ -506,12 +506,14 @@ pub(crate) fn validate_parent_code_index(
         return Ok(());
     };
 
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let exists = conn
         .query_one(
             "SELECT EXISTS(
-                SELECT 1 FROM code_indexed_files WHERE project_id = $1
+                SELECT 1 FROM code_indexed_file_states
+                WHERE machine_id = $1 AND project_id = $2
             )",
-            &[&db::id_param(parent_project_id)?],
+            &[&machine_id, &db::id_param(parent_project_id)?],
         )
         .and_then(|row| row.try_get::<_, bool>(0))?;
 
@@ -535,19 +537,21 @@ pub fn warn_project_identity(identity: &ProjectIdentity, quiet: bool) {
     }
 }
 
-/// Resolve a `--project` name to a project root by looking up `code_indexed_projects`.
+/// Resolve a `--project` name to a root registered on this machine.
 ///
 /// Matches against the basename of `root_path` in the PostgreSQL hub.
 fn resolve_project_by_name(name: &str, database_url: &str) -> anyhow::Result<PathBuf> {
     let mut conn = db::connect_readonly(database_url)?;
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let (slash_suffix, backslash_suffix) = project_name_suffixes(name);
     let rows = conn.query(
-        "SELECT root_path FROM code_indexed_projects
-         WHERE root_path = $1
-            OR right(root_path, length($2)) = $2
-            OR right(root_path, length($3)) = $3
+        "SELECT root_path FROM code_indexed_project_states
+         WHERE machine_id = $1
+           AND (root_path = $2
+             OR right(root_path, length($3)) = $3
+             OR right(root_path, length($4)) = $4)
          ORDER BY last_indexed_at DESC NULLS LAST",
-        &[&name, &slash_suffix, &backslash_suffix],
+        &[&machine_id, &name, &slash_suffix, &backslash_suffix],
     )?;
 
     for row in rows {
