@@ -24,10 +24,9 @@ Based on Anthropic's frontend-design skill (Copyright 2025 Anthropic, PBC, Apach
 See NOTICE.md in this directory for attribution.
 
 Upstream: https://github.com/pbakaus/impeccable (v3.5.0, commit a075d89b)
-The `impeccable` skill ships with all 17 steering-command reference files
-(shape, audit, polish, distill, animate, etc.) bundled under `references/`,
-plus the quality floor (`references/craft-floor.md`), Operate-mode depth
-(`references/operate.md`), and the full 4.0.4 script release under `scripts/`.
+The `impeccable` skill ships with all 39 released 4.0.4 reference files plus
+seven Gobby-retained domain references under `references/`, and the full 4.0.4
+script release under `scripts/`.
 The dispatch table below loads references via
 `get_skill_file(name="impeccable", path="references/<cmd>.md")` on
 `gobby-skills`; scripts run from the cache directory returned by
@@ -69,7 +68,7 @@ Every surface serves one visitor mode; name it before designing and let it steer
 
 ## Sub-command Dispatch
 
-This skill is a **router** over 22 user arguments backed by 24 reference files, plus the inline `teach` mode. Evaluate the argument passed after `/gobby impeccable` and take the matching action below. With no argument, call `get_skill_file(name="impeccable", path="references/routing.md")` on `gobby-skills` and follow its context-aware menu flow.
+This skill is a **router** over 23 user arguments backed by 25 reference files, plus the inline `teach` mode. Evaluate the argument passed after `/gobby impeccable` and take the matching action below. With no argument, call `get_skill_file(name="impeccable", path="references/routing.md")` on `gobby-skills` and follow its context-aware menu flow.
 
 ### Inline mode
 
@@ -98,6 +97,7 @@ When the argument matches a row below, call `get_skill_file(name="impeccable", p
 | `distill` | Strip a design to its essentials | `references/distill.md` |
 | `harden` | Cover edge states, i18n, overflow, and errors | `references/harden.md` |
 | `onboard` | Improve time-to-value and onboarding | `references/onboard.md` |
+| `live` | Run the agent-driven browser variant loop | `references/live.md` |
 | `animate` | Add purposeful motion | `references/animate.md` |
 | `colorize` | Rework the color system | `references/colorize.md` |
 | `typeset` | Refine typography and type scale | `references/typeset.md` |
@@ -112,6 +112,7 @@ When the argument matches a row below, call `get_skill_file(name="impeccable", p
 
 - New or replacement visual work loads `references/new-work.md`, which loads `references/visualize.md` when image generation is available.
 - Native flows load `references/ios.md` and/or `references/android.md` before platform-specific adaptation or audit.
+- Live mode loads `references/live-setup.md` only for one-time configuration, drift handling, or CSP consent.
 - Hook documentation and lifecycle diagnostics load `references/hooks.md` and `references/doctor.md` directly.
 - Degraded in-thread fallbacks remain reachable with `get_skill_file` at `references/degraded/asset-producer.md`, `references/degraded/documenter.md`, `references/degraded/finish-reviewer.md`, and `references/degraded/manual-edit-applier.md`.
 

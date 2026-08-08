@@ -25,10 +25,9 @@ specific language governing permissions and limitations under the License.
 - Original vendor: 2026-04-15 from commit `f589ff0b6`.
 
 Upstream skill content lives in `skill/` (`SKILL.src.md` + `reference/`) and is
-compiled into per-harness generated output. Gobby currently vendors 37 of the
-39 released reference files from the generated 4.0.4 output. The remaining
-`live.md` and `live-setup.md` are assigned to the live-mode adaptation leaf.
-Gobby also retains seven domain references removed upstream at v3.5.0.
+compiled into per-harness generated output. Gobby vendors all 39 released
+reference files from the generated 4.0.4 output and retains seven domain
+references removed upstream at v3.5.0.
 
 The main `SKILL.md` routes reference-backed flows through
 `get_skill_file(name="impeccable", path="references/<path>.md")` on
@@ -74,6 +73,8 @@ materialized cache.
 | `references/routing.md` | Named-default adaptation: uses `SKILL.md` dispatch |
 | `references/craft.md` | Named-default adaptation: alias uses normal dispatch |
 | `references/new-work.md` | Named-default adaptation: `.impeccable.md` and teach own visual authority |
+| `references/live.md` | Named-default adaptation: agent-driven live mode in ordinary Gobby sessions |
+| `references/live-setup.md` | Named-default adaptation: materialized-script setup without daemon management |
 | `references/onboard.md` | Standard adaptation |
 | `references/visualize.md` | Standard adaptation |
 | `references/extract.md` | Standard adaptation |
@@ -174,10 +175,13 @@ The 4.0.4 additions use the same preamble, cross-reference expansion,
 applicable. Named ownership adaptations route `init.md` to teach mode,
 `document.md` and `new-work.md` to `.impeccable.md`, `hooks.md` to
 documentation-only behavior under Gobby rules, `routing.md` and `craft.md` to
-the main dispatch, and `doctor.md` to Gobby lifecycle diagnostics. Native
-references retain upstream platform guidance with the session preamble and
-expanded loads. `onboard.md`, `visualize.md`, and `extract.md` receive the
-standard transforms.
+the main dispatch, `doctor.md` to Gobby lifecycle diagnostics, and `live.md`
+plus `live-setup.md` to agent-driven materialized scripts in ordinary Gobby
+sessions. The live adaptation keeps upstream overlay cleanup and recovery,
+assumes the app dev server is already running, and adds no Gobby daemon-level
+port or session manager. Native references retain upstream platform guidance
+with the session preamble and expanded loads. `onboard.md`, `visualize.md`, and
+`extract.md` receive the standard transforms.
 
 ## Vendored scripts
 
