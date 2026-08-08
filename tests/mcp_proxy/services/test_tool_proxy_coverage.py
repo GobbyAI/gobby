@@ -643,6 +643,37 @@ class TestCallToolFallback:
         assert result["success"] is False
         assert result["fallback_suggestions"] == []
 
+    @pytest.mark.asyncio
+    async def test_downstream_argument_error_logs_at_debug(
+        self,
+        mock_mcp_manager,
+        mock_internal_manager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_mcp_manager.has_server.return_value = True
+        mock_mcp_manager.call_tool = AsyncMock(
+            side_effect=Exception("Argument Validation Error - stateId must be a UUID.")
+        )
+
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+            fallback_resolver=None,
+        )
+
+        with caplog.at_level("DEBUG", logger="gobby.mcp.server"):
+            result = await proxy.call_tool("linear", "update_issue", {})
+
+        matching = [
+            record
+            for record in caplog.records
+            if "Tool call failed: linear/update_issue" in record.message
+        ]
+        assert result["success"] is False
+        assert matching
+        assert all(record.levelname == "DEBUG" for record in matching)
+
 
 class TestFindToolServer:
     """Tests for find_tool_server method (lines 250-278)."""

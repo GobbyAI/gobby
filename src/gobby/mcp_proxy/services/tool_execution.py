@@ -651,7 +651,9 @@ async def _execute_tool(
             )
         else:
             error_message = str(e)
-        logger.warning("Tool call failed: %s/%s: %s", server_name, tool_name, error_message)
+        is_argument_error = service._is_argument_error(error_message)
+        log_failure = logger.debug if is_argument_error else logger.warning
+        log_failure("Tool call failed: %s/%s: %s", server_name, tool_name, error_message)
 
         response: dict[str, Any] = {
             "success": False,
@@ -661,7 +663,7 @@ async def _execute_tool(
             "tool_name": tool_name,
         }
 
-        if service._is_argument_error(error_message):
+        if is_argument_error:
             input_schema: dict[str, Any] | None = None
             try:
                 schema_result = await service.get_tool_schema(server_name, tool_name)
