@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from gobby.config.app import load_config
+from gobby.config.app import DaemonConfig, load_config
 from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
@@ -38,6 +38,25 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _warn_missing_terminal_dependency(config: DaemonConfig) -> None:
+    if not config.tmux.enabled:
+        return
+
+    from gobby.agents.tmux.wsl_compat import needs_wsl
+
+    if needs_wsl():
+        if not shutil.which("wsl"):
+            logger.warning(
+                "WSL is not installed. Agent spawning in terminal mode will not work. "
+                "Install: wsl --install"
+            )
+    elif not shutil.which("tmux"):
+        logger.warning(
+            "tmux is not installed. Agent spawning in terminal mode will not work. "
+            "Install: brew install tmux (macOS), apt install tmux (Linux)"
+        )
+
+
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
     """Initialize config, telemetry, database, secrets, and core managers."""
     if config_path is not None and not config_path.exists():
@@ -54,19 +73,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.machine_id = get_machine_id()
 
-    from gobby.agents.tmux.wsl_compat import needs_wsl
-
-    if needs_wsl():
-        if not shutil.which("wsl"):
-            logger.warning(
-                "WSL is not installed. Agent spawning in terminal mode will not work. "
-                "Install: wsl --install"
-            )
-    elif not shutil.which("tmux"):
-        logger.warning(
-            "tmux is not installed. Agent spawning in terminal mode will not work. "
-            "Install: brew install tmux (macOS), apt install tmux (Linux)"
-        )
     _ensure_headless_settings()
 
     runner._shutdown_requested = False
@@ -123,6 +129,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         config_store=runner.config_store,
         resolve_database_url=True,
     )
+    _warn_missing_terminal_dependency(runner.config)
     postgres_database = cast(PostgresHubDatabase, runner.database)
     database_capacity = postgres_database.server_capacity()
     runner.database_concurrency = resolve_database_concurrency(
