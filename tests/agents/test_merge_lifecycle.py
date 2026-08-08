@@ -508,3 +508,53 @@ async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase)
     assert response.reason is not None
     assert "gobby-agents:end_agent_run" in response.reason
     assert "merge" in response.reason
+
+
+@pytest.mark.asyncio
+async def test_merge_worker_three_cleanup_failures_transition_to_terminate(
+    temp_db: HubDatabase,
+) -> None:
+    instance_manager = _install_merge_worker_workflow(temp_db, current_step="cleanup")
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+
+    failure_events = [
+        _mcp_event(
+            "gobby-worktrees:delete_worktree",
+            event_type=HookEventType.AFTER_TOOL,
+            is_error=True,
+        ),
+        _mcp_event(
+            "gobby-worktrees:delete_worktree",
+            event_type=HookEventType.AFTER_TOOL,
+            tool_output={"success": False},
+        ),
+    ]
+    for expected_failures, event in enumerate(failure_events, start=1):
+        await engine.evaluate(
+            event,
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+            variables=variables,
+        )
+        instance = instance_manager.get_instance(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker"
+        )
+        assert instance is not None
+        assert instance.current_step == "cleanup"
+        assert instance.variables["worktree_cleanup_failures"] == expected_failures
+
+    await engine.evaluate(
+        _mcp_event(
+            "gobby-worktrees:delete_worktree",
+            event_type=HookEventType.AFTER_TOOL,
+            is_error=True,
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["worktree_cleanup_failures"] == 3
+    assert instance.variables.get("worktree_cleanup_done") is not True
