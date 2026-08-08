@@ -14,11 +14,28 @@ fn write_identity(project: &std::path::Path, project_id: &str, name: &str) {
 }
 
 fn seed_leftover_local_import(conn: &mut Client, caller_id: &str) {
+    // UUIDv5(CODE_INDEX_UUID_NAMESPACE, graph-standalone-js-legacy-file).
+    const LEGACY_FILE_ID: &str = "190124bc-9601-5ac1-b353-36f5315fb26c";
+    // code_calls.content_hash is NOT NULL and FK-tied to code_indexed_files,
+    // so the leftover row needs an indexed-file anchor for legacy.js.
+    conn.execute(
+        "INSERT INTO code_indexed_files
+            (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
+             graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
+         VALUES ($1, $2, 'legacy.js', 'javascript', 'hash-legacy', 0, 0, true, true, NOW(),
+                 NOW())",
+        &[
+            &crate::common::uuid_param(LEGACY_FILE_ID),
+            &crate::common::uuid_param(JS_DEFAULT_LOCAL_PROJECT_ID),
+        ],
+    )
+    .expect("seed leftover legacy.js file row");
     conn.execute(
         "INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
-             callee_external_module, file_path, line)
-         VALUES ($1, $2, NULL, 'helper', 'local_import', 'src/utils.js', 'legacy.js', 99)",
+             callee_external_module, file_path, content_hash, line)
+         VALUES ($1, $2, NULL, 'helper', 'local_import', 'src/utils.js', 'legacy.js',
+                 'hash-legacy', 99)",
         &[
             &crate::common::uuid_param(JS_DEFAULT_LOCAL_PROJECT_ID),
             &crate::common::uuid_param(caller_id),

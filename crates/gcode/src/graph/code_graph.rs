@@ -24,7 +24,7 @@ pub use read::{
 pub use write::{
     CodeGraph, GraphOrphanCleanup, call_target_id, cleanup_deleted_files, cleanup_orphans,
     clear_all_code_index, clear_project, delete_file_graph, delete_file_projection,
-    delete_symbol_ids, list_project_scopes, sync_file_graph, with_code_graph,
+    delete_symbol_ids, list_project_scopes, sync_file_graph, sync_no_fact_file, with_code_graph,
 };
 
 pub(crate) use lifecycle::extract_summary_text;

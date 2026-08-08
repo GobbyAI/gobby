@@ -50,6 +50,11 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     let _cleanup = ProjectCleanup::new(&env.database_url, TEST_PROJECT_ID);
     seed_project(&mut conn);
 
+    // Drop any projection residue from earlier (possibly aborted) runs so the
+    // stale-node assertions below start from a clean graph.
+    let cleared = json_command(&env, project.path(), &["graph", "clear"]);
+    assert_eq!(cleared["success"], true);
+
     let missing = run_gcode(
         &env,
         project.path(),

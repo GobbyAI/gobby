@@ -27,7 +27,7 @@ pub(crate) use deletion::{
 pub use mutation::call_target_id;
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
 
-use deletion::delete_stale_file_graph_queries;
+use deletion::{delete_bare_file_node_query, delete_stale_file_graph_queries};
 use mutation::{
     SyncFileMutation, add_definitions_query, add_external_calls_query, add_imports_query,
     add_symbol_calls_query, add_unresolved_calls_query, definition_graph_symbols,
@@ -242,6 +242,19 @@ impl<'a> CodeGraph<'a> {
         Ok(())
     }
 
+    /// Reconcile a file that currently has no graph facts: sweep this content
+    /// hash's stale rows without MERGE-ing a file node, then drop the file node
+    /// only if nothing anchors to it any more. Facts written under another
+    /// content hash (other machines' views) survive.
+    pub fn sync_no_fact_file(&mut self, file_path: &str, content_hash: &str) -> anyhow::Result<()> {
+        let sync_token = new_sync_token(file_path);
+        self.delete_stale_file_graph(file_path, content_hash, &sync_token)?;
+        execute_write_query(
+            self.client,
+            delete_bare_file_node_query(self.project_id, file_path)?,
+        )
+    }
+
     pub fn delete_file_node(&mut self, file_path: &str) -> anyhow::Result<()> {
         execute_write_query(
             self.client,
@@ -351,6 +364,12 @@ pub fn sync_file_graph(
             calls,
             cleanup_orphans,
         )
+    })
+}
+
+pub fn sync_no_fact_file(ctx: &Context, file_path: &str, content_hash: &str) -> anyhow::Result<()> {
+    with_code_graph(ctx, |graph| {
+        graph.sync_no_fact_file(file_path, content_hash)
     })
 }
 

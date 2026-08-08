@@ -5,7 +5,6 @@ const USAGES_PAGING_PROJECT_ID: &str = "e12aa4c7-9ec4-5e1f-9ad8-00dc21db2ffe"; /
 const USAGES_PAGING_CALLER_ID: &str = "5023d255-797d-553c-a76c-4fc04e7da1cc"; // graph-standalone-usages-paging-caller
 const USAGES_PAGING_CALLEE_ID: &str = "88891d82-fa5c-570f-ba94-47fe64deeea7"; // graph-standalone-usages-paging-callee
 const USAGES_PAGING_FILE_ID: &str = "c0e15ee9-c150-5838-9ec6-d62495354c8f"; // graph-standalone-usages-paging-file
-const USAGES_PAGING_MACHINE_ID: &str = "caf4f8fd-6b97-5cdd-90c5-580aa0e9ec9b"; // graph-standalone-usages-paging-machine
 
 /// One raw graph page is MAX_GRAPH_LIMIT (100) rows, so 102 tied edges force
 /// `find_usages` to stitch two separate Cypher executions together.
@@ -19,24 +18,6 @@ fn clear_seeded_graph(graph: &mut GraphClient) {
             Some(params),
         )
         .expect("clear seeded usages-paging graph");
-}
-
-/// `cleanup_project` deletes `code_indexed_files` before the project row, so
-/// the machine-scoped state rows (which reference files without a cascade)
-/// must go first.
-fn cleanup_seeded_rows(conn: &mut Client) {
-    let project_id = crate::common::uuid_param(USAGES_PAGING_PROJECT_ID);
-    conn.execute(
-        "DELETE FROM code_indexed_file_states WHERE project_id = $1",
-        &[&project_id],
-    )
-    .expect("delete seeded file states");
-    conn.execute(
-        "DELETE FROM code_indexed_project_states WHERE project_id = $1",
-        &[&project_id],
-    )
-    .expect("delete seeded project states");
-    cleanup_project(conn, USAGES_PAGING_PROJECT_ID).expect("cleanup seeded project rows");
 }
 
 fn source_lines(results: &Value) -> Vec<u64> {
@@ -83,17 +64,9 @@ fn usages_pagination_is_deterministic_across_tied_rows() {
     )
     .expect("write gcode identity");
 
-    // The spawned gcode resolves machine identity from $GOBBY_HOME/machine_id
-    // (run_gcode points GOBBY_HOME at .no-daemon-home), and symbol visibility
-    // requires machine-scoped state rows for that identity.
-    let no_daemon_home = project.path().join(".no-daemon-home");
-    fs::create_dir_all(&no_daemon_home).expect("create no-daemon home");
-    fs::write(no_daemon_home.join("machine_id"), USAGES_PAGING_MACHINE_ID)
-        .expect("write machine id");
-
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
     let _cleanup = ProjectCleanup::new(&env.database_url, USAGES_PAGING_PROJECT_ID);
-    cleanup_seeded_rows(&mut conn);
+    cleanup_project(&mut conn, USAGES_PAGING_PROJECT_ID).expect("cleanup prior rows");
     conn.batch_execute(&format!(
         "INSERT INTO code_indexed_projects (id)
          VALUES ('{USAGES_PAGING_PROJECT_ID}');
@@ -102,7 +75,7 @@ fn usages_pagination_is_deterministic_across_tied_rows() {
             (machine_id, project_id, root_path, total_files, total_symbols, last_indexed_at,
              index_duration_ms)
          VALUES
-            ('{USAGES_PAGING_MACHINE_ID}', '{USAGES_PAGING_PROJECT_ID}',
+            ('{HARNESS_MACHINE_ID}', '{USAGES_PAGING_PROJECT_ID}',
              '/tmp/graph-standalone-usages-paging', 1, 2, NOW(), 0);
 
          INSERT INTO code_indexed_files
@@ -115,7 +88,7 @@ fn usages_pagination_is_deterministic_across_tied_rows() {
          INSERT INTO code_indexed_file_states
             (machine_id, project_id, file_path, content_hash)
          VALUES
-            ('{USAGES_PAGING_MACHINE_ID}', '{USAGES_PAGING_PROJECT_ID}', 'src/lib.rs',
+            ('{HARNESS_MACHINE_ID}', '{USAGES_PAGING_PROJECT_ID}', 'src/lib.rs',
              'hash-paging');
 
          INSERT INTO code_symbols
@@ -205,5 +178,5 @@ fn usages_pagination_is_deterministic_across_tied_rows() {
     );
 
     clear_seeded_graph(&mut graph);
-    cleanup_seeded_rows(&mut conn);
+    cleanup_project(&mut conn, USAGES_PAGING_PROJECT_ID).expect("cleanup seeded rows");
 }

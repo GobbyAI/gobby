@@ -192,6 +192,25 @@ pub(crate) fn count_file_projection_nodes_query(
     )
 }
 
+/// Remove the file node only when no facts anchor to it any more. A file node
+/// still holding DEFINES/IMPORTS edges (e.g. another machine's content hash)
+/// must survive a no-fact sync from this machine.
+pub(crate) fn delete_bare_file_node_query(
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH (f:CodeFile {path: $file_path, project: $project})
+         WHERE NOT (f)-[:DEFINES]->(:CodeSymbol {project: $project})
+           AND NOT (f)-[:IMPORTS]->(:CodeModule {project: $project})
+         DETACH DELETE f",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+        ],
+    )
+}
+
 pub(crate) fn cleanup_orphans_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
     // Orphan cleanup runs after low-activity sync paths so failed writes leave

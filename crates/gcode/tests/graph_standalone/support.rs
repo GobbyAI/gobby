@@ -10,6 +10,7 @@ pub(super) use std::process::{Command, Output};
 // hub stores every code_* id column as native uuid. The legacy label is kept in
 // the trailing comment for greppability.
 pub(super) const TEST_PROJECT_ID: &str = "285bdd28-41b4-5acb-878b-6e72cf276dd1"; // graph-standalone-project
+pub(super) const HARNESS_MACHINE_ID: &str = "ff5dd0ce-20a1-5f6c-8a89-ea85c2bbeea9"; // graph-standalone-machine
 pub(super) const MISSING_INDEXED_PROJECT_ID: &str = "8a20293a-76d6-559d-990d-df24b32cc0e2"; // graph-missing-indexed-project
 pub(super) const LOCAL_IMPORT_PROJECT_ID: &str = "b75024f9-b106-5eac-86f1-f35805f97dbe"; // graph-standalone-local-import
 pub(super) const NO_PHANTOM_PROJECT_ID: &str = "9865ea81-c9bb-5edc-8de6-895686366ae6"; // graph-standalone-no-phantom
@@ -73,13 +74,22 @@ pub(super) fn run_gcode_with_format(
     format: &str,
     args: &[&str],
 ) -> Output {
+    // gcode resolves local machine identity from $GOBBY_HOME/machine_id;
+    // provision the daemon-free home with the shared harness identity so
+    // machine-scoped index state resolves consistently across the suite.
+    let gobby_home = cwd.join(".no-daemon-home");
+    fs::create_dir_all(&gobby_home).expect("create no-daemon home");
+    let machine_id_path = gobby_home.join("machine_id");
+    if !machine_id_path.exists() {
+        fs::write(&machine_id_path, HARNESS_MACHINE_ID).expect("write harness machine id");
+    }
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
         .env("GCODE_DATABASE_URL", &env.database_url)
         .env("GOBBY_FALKORDB_HOST", &env.falkor_host)
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
-        .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
+        .env("GOBBY_HOME", gobby_home)
         .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
         .arg("--no-freshness")
         .arg("--format")
@@ -143,8 +153,8 @@ pub(super) fn graph_synced(conn: &mut Client, file_path: &str) -> bool {
 pub(super) fn seed_temporary_content_import(conn: &mut Client) {
     let project_id = crate::common::uuid_param(TEST_PROJECT_ID);
     conn.execute(
-        "INSERT INTO code_imports (project_id, source_file, target_module)
-         VALUES ($1, $2, 'temporary.stale.module')",
+        "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+         VALUES ($1, $2, 'hash-content', 'temporary.stale.module')",
         &[&project_id, &CONTENT_ONLY_FILE],
     )
     .expect("insert temporary content import");
@@ -177,10 +187,15 @@ pub(super) fn clear_temporary_content_import(conn: &mut Client) {
 pub(super) fn seed_project(conn: &mut Client) {
     cleanup_project(conn, TEST_PROJECT_ID).expect("cleanup graph rows");
     conn.batch_execute(&format!(
-        "INSERT INTO code_indexed_projects
-            (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
+        "INSERT INTO code_indexed_projects (id)
+         VALUES ('{TEST_PROJECT_ID}');
+
+         INSERT INTO code_indexed_project_states
+            (machine_id, project_id, root_path, total_files, total_symbols, last_indexed_at,
+             index_duration_ms)
          VALUES
-            ('{TEST_PROJECT_ID}', '/tmp/graph-standalone', 4, 4, NOW(), 0);
+            ('{HARNESS_MACHINE_ID}', '{TEST_PROJECT_ID}', '/tmp/graph-standalone', 4, 4, NOW(),
+             0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
@@ -197,43 +212,55 @@ pub(super) fn seed_project(conn: &mut Client) {
              'crates/core/src/lib.rs', 'rust', 'hash-cross-callee', 1, 24, false, true, NULL,
              NOW());
 
-         INSERT INTO code_content_chunks
-            (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
-             created_at)
+         INSERT INTO code_indexed_file_states
+            (machine_id, project_id, file_path, content_hash)
          VALUES
-            ('{CONTENT_CHUNK_ID}', '{TEST_PROJECT_ID}', 'docs/content.txt',
+            ('{HARNESS_MACHINE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'hash-1'),
+            ('{HARNESS_MACHINE_ID}', '{TEST_PROJECT_ID}', 'docs/content.txt', 'hash-content'),
+            ('{HARNESS_MACHINE_ID}', '{TEST_PROJECT_ID}', 'crates/app/src/lib.rs',
+             'hash-cross-caller'),
+            ('{HARNESS_MACHINE_ID}', '{TEST_PROJECT_ID}', 'crates/core/src/lib.rs',
+             'hash-cross-callee');
+
+         INSERT INTO code_content_chunks
+            (id, project_id, file_path, content_hash, chunk_index, line_start, line_end, content,
+             language, created_at)
+         VALUES
+            ('{CONTENT_CHUNK_ID}', '{TEST_PROJECT_ID}', 'docs/content.txt', 'hash-content',
              0, 1, 1, 'plain prose without code graph facts', 'text', NOW());
 
          INSERT INTO code_symbols
             (id, project_id, file_path, name, qualified_name, kind, language, byte_start, byte_end,
-             line_start, line_end, signature, docstring, parent_symbol_id, content_hash,
-             summary, created_at, updated_at)
+             line_start, line_end, signature, docstring, parent_symbol_id, file_content_hash,
+             content_hash, summary, created_at, updated_at)
          VALUES
             ('{CALLER_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'caller',
              'crate::caller', 'function', 'rust', 0, 28, 1, 1, 'pub fn caller()', NULL, NULL,
-             'hash-1', NULL, NOW(), NOW()),
+             'hash-1', 'hash-sym-caller', NULL, NOW(), NOW()),
             ('{CALLEE_ID}', '{TEST_PROJECT_ID}', 'src/lib.rs', 'callee',
              'crate::callee', 'function', 'rust', 29, 47, 2, 2, 'pub fn callee()', NULL, NULL,
-             'hash-1', NULL, NOW(), NOW()),
+             'hash-1', 'hash-sym-callee', NULL, NOW(), NOW()),
             ('{CROSS_CRATE_CALLER_ID}', '{TEST_PROJECT_ID}',
              'crates/app/src/lib.rs', 'app_entry', 'app::app_entry', 'function', 'rust', 0, 38,
-             1, 3, 'pub fn app_entry()', NULL, NULL, 'hash-cross-caller', NULL, NOW(), NOW()),
+             1, 3, 'pub fn app_entry()', NULL, NULL, 'hash-cross-caller', 'hash-sym-app-entry',
+             NULL, NOW(), NOW()),
             ('{CROSS_CRATE_CALLEE_ID}', '{TEST_PROJECT_ID}',
              'crates/core/src/lib.rs', 'core_leaf', 'core::core_leaf', 'function', 'rust', 0, 24,
-             1, 1, 'pub fn core_leaf()', NULL, NULL, 'hash-cross-callee', NULL, NOW(), NOW());
+             1, 1, 'pub fn core_leaf()', NULL, NULL, 'hash-cross-callee', 'hash-sym-core-leaf',
+             NULL, NOW(), NOW());
 
-         INSERT INTO code_imports (project_id, source_file, target_module)
-         VALUES ('{TEST_PROJECT_ID}', 'src/lib.rs', 'std');
+         INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+         VALUES ('{TEST_PROJECT_ID}', 'src/lib.rs', 'hash-1', 'std');
 
          INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
-             callee_external_module, file_path, line)
+             callee_external_module, file_path, content_hash, line)
         VALUES
             ('{TEST_PROJECT_ID}', '{CALLER_ID}', '{CALLEE_ID}',
-             'callee', 'symbol', '', 'src/lib.rs', 1),
+             'callee', 'symbol', '', 'src/lib.rs', 'hash-1', 1),
             ('{TEST_PROJECT_ID}', '{CROSS_CRATE_CALLER_ID}',
              '{CROSS_CRATE_CALLEE_ID}', 'core_leaf', 'symbol', '',
-             'crates/app/src/lib.rs', 2);"
+             'crates/app/src/lib.rs', 'hash-cross-caller', 2);"
     ))
     .expect("seed graph rows");
 }

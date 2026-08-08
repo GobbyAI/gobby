@@ -220,15 +220,7 @@ fn sync_file_graph(
     }
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
     if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
-        code_graph::sync_file_graph(
-            ctx,
-            &facts.file_path,
-            &facts.content_hash,
-            &facts.imports,
-            &facts.definitions,
-            &facts.calls,
-            false,
-        )?;
+        code_graph::sync_no_fact_file(ctx, &facts.file_path, &facts.content_hash)?;
         db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
         return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
     }
@@ -315,6 +307,11 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 
             let synced_symbols = match (|| -> anyhow::Result<usize> {
                 let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+                    graph.sync_no_fact_file(&facts.file_path, &facts.content_hash)?;
+                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                    return Ok(0);
+                }
                 graph.sync_file(
                     &facts.file_path,
                     &facts.content_hash,

@@ -55,6 +55,16 @@ pub fn uuid_param(id: &str) -> uuid::Uuid {
 pub fn cleanup_project(conn: &mut Client, project_id: &str) -> anyhow::Result<()> {
     let project_id = uuid_param(project_id);
     let mut tx = conn.transaction()?;
+    // Machine-scoped state rows reference code_indexed_files without a
+    // cascade, so they must go before the file rows.
+    tx.execute(
+        "DELETE FROM code_indexed_file_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_indexed_project_states WHERE project_id = $1",
+        &[&project_id],
+    )?;
     tx.execute(
         "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
