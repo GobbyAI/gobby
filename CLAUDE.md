@@ -38,6 +38,25 @@ These are enforced by hooks, rules and workflows.
 17. **Agent depth limit of 5.** No recursive agent chains deeper than 5 levels.
 18. **ALWAYS use `gobby-agents:send_message` for direct cross-session agent communication.** Reserve `gobby-sessions:send_keys` for terminal control.
 
+## Claude Code Display Bug — Mid-Turn Text Is Lost
+
+Claude Code drops assistant text that is followed by tool calls in the same
+turn (anthropics/claude-code #77410, #76210, #77960). The prose may never
+render and, on some builds, is not even persisted to the transcript. Until
+fixed upstream, every agent in this repo MUST:
+
+1. Deliver ALL user-facing content — answers to questions, review findings,
+   decision lists, summaries, handoffs — as the turn's **final** text message,
+   with **no tool calls after it**.
+2. Sequence turns as: tool work first, prose last. Never sandwich substantive
+   prose between tool calls.
+3. Never rely on text written immediately before an `AskUserQuestion` call —
+   it will not be displayed. Present the full content as final prose in the
+   preceding turn, then collect the decision (for plan reviews: decisions are
+   collected in prose, never via `AskUserQuestion`).
+4. If a mid-turn user message arrives, answer it in the final message of the
+   current turn, not inline between tool calls.
+
 ## Progressive Tool Discovery Enforced by Hooks
 
 Gobby uses an MCP proxy with progressive discovery. This means that you can't just call any tool you want.
