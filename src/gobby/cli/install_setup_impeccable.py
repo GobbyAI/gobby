@@ -20,10 +20,26 @@ from pathlib import Path
 from gobby.install.bin_freshness_promotion import stage_and_promote_binary_file
 from gobby.paths import get_gobby_home
 from gobby.skills.script_cache import (
+    BROWSER_FETCH_OWNER_FILE,
     BrowserCacheReadiness,
     browser_cache_is_ready,
     browser_cache_lock,
+    collect_deletion_tombstones,
+    collect_stale_stages,
+    deletion_tombstone_name,
+    fsync_directory,
+    is_deletion_tombstone,
+    is_owned_stage,
+    live_process_owner_records,
+    process_owner_is_live,
+    read_skill_scripts_owner,
+    skill_scripts_namespace,
+    skill_scripts_namespace_lock_target,
+    skill_scripts_root_lock_target,
     write_browser_cache_readiness,
+)
+from gobby.skills.script_cache import (
+    write_process_owner as _write_process_owner,
 )
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 from gobby.utils.dependency_requirements import (
@@ -44,7 +60,6 @@ _INSTALL_TIMEOUT_SECONDS = 180.0
 _FETCH_TIMEOUT_SECONDS = 180.0
 _TERMINATE_GRACE_SECONDS = 5.0
 _OWNER_FILE = ".gobby-process-owner.json"
-_FETCH_OWNER_FILE = ".gobby-browser-fetch-owner.json"
 _RETAINED_FILE = ".retained-generations.json"
 _GENERATION_MARKER = "-generation-"
 _REVISION_PATTERN = re.compile(r"chrome\s*:\s*['\"](?P<build>[^'\"]+)['\"]")
@@ -74,6 +89,14 @@ class ImpeccableInstallResult:
     chrome_ready: bool
 
 
+@dataclass(frozen=True)
+class ImpeccableRemovalResult:
+    """Artifacts removed or deliberately preserved by managed-tool cleanup."""
+
+    removed: tuple[Path, ...]
+    skipped: tuple[str, ...]
+
+
 def impeccable_lockfile_path() -> Path:
     """Return the package-relative vendored lockfile path."""
     return Path(__file__).parents[1] / "install" / "impeccable-package-lock.json"
@@ -100,9 +123,9 @@ def install_impeccable_cli() -> ImpeccableInstallResult:
     home = get_gobby_home()
     root = home / "tools" / "impeccable"
     pointer = root / IMPECCABLE_RELEASE.version
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
-    with export_file_lock(root / ".install"):
+    with export_file_lock(home / "tools" / ".impeccable-install"):
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
         _collect_abandoned_generations(root, pointer)
         generation = _verified_generation(pointer)
         if generation is not None:
@@ -133,6 +156,83 @@ def install_impeccable_cli() -> ImpeccableInstallResult:
             installed=True,
             chrome_ready=chrome_ready,
         )
+
+
+def remove_impeccable_runtime() -> ImpeccableRemovalResult:
+    """Remove Impeccable-owned managed runtime artifacts."""
+    home = get_gobby_home().resolve()
+    tool_root = home / "tools" / "impeccable"
+    namespace = skill_scripts_namespace(home)
+    removed: list[Path] = []
+    skipped: list[str] = []
+    with export_file_lock(home / "tools" / ".impeccable-install"):
+        tool_writers = (
+            live_process_owner_records(tool_root)
+            if tool_root.is_dir() and not tool_root.is_symlink()
+            else []
+        )
+        artifacts = (tool_root, home / "bin" / "impeccable", home / "bin" / ".impeccable-version")
+        for artifact in artifacts:
+            if artifact == tool_root and tool_writers:
+                skipped.append(f"Skipped {tool_root}; live writer: {tool_writers[0]}")
+                continue
+            if artifact.is_dir() and not artifact.is_symlink():
+                shutil.rmtree(artifact)
+            elif artifact.exists() or artifact.is_symlink():
+                artifact.unlink()
+            else:
+                continue
+            removed.append(artifact)
+        with export_file_lock(skill_scripts_namespace_lock_target(namespace)):
+            removed.extend(collect_deletion_tombstones(namespace))
+            live_stages = set(collect_stale_stages(namespace))
+            try:
+                roots = sorted(namespace.iterdir())
+            except FileNotFoundError:
+                roots = []
+            for root in roots:
+                if root in live_stages:
+                    skipped.append(f"Skipped live skill scripts stage: {root}")
+                    continue
+                if is_owned_stage(root) or is_deletion_tombstone(root):
+                    continue
+                if root.is_symlink():
+                    skipped.append(f"Skipped symlink skill scripts cache root: {root}")
+                    continue
+                if not root.is_dir():
+                    continue
+                owner = read_skill_scripts_owner(root)
+                if owner is None:
+                    skipped.append(f"Skipped unowned skill scripts cache root: {root}")
+                    continue
+                if owner.skill_name != "impeccable":
+                    continue
+                if owner.skill_id != root.name:
+                    skipped.append(f"Skipped mismatched skill scripts cache root: {root}")
+                    continue
+                with export_file_lock(skill_scripts_root_lock_target(root)):
+                    if not root.is_dir() or root.is_symlink():
+                        continue
+                    current_owner = read_skill_scripts_owner(root)
+                    if current_owner != owner:
+                        skipped.append(f"Skipped changed skill scripts cache root: {root}")
+                        continue
+                    writers = live_process_owner_records(root)
+                    if writers:
+                        skipped.append(f"Skipped {root}; live writer: {writers[0]}")
+                        continue
+                    tombstone = namespace / deletion_tombstone_name(root.name, uuid.uuid4().hex)
+                    os.replace(root, tombstone)
+                    fsync_directory(namespace)
+                    _removal_checkpoint("root_tombstoned")
+                    shutil.rmtree(tombstone)
+                    fsync_directory(namespace)
+                    removed.append(root)
+    return ImpeccableRemovalResult(tuple(removed), tuple(skipped))
+
+
+def _removal_checkpoint(_name: str) -> None:
+    """Test-only crash injection point during root removal."""
 
 
 def inspect_impeccable_installation() -> Path | None:
@@ -242,7 +342,7 @@ def _install_generation(
         _publication_checkpoint("generation_fsynced")
         return generation
     except BaseException:
-        if not _owner_record_is_live(owner_record):
+        if not process_owner_is_live(owner_record):
             shutil.rmtree(generation, ignore_errors=True)
         raise
 
@@ -275,7 +375,7 @@ def _collect_abandoned_generations(root: Path, pointer: Path) -> None:
         if candidate.name in preserved:
             continue
         owner = candidate / _OWNER_FILE
-        if _owner_record_is_live(owner):
+        if process_owner_is_live(owner):
             logger.warning("Skipping live abandoned Impeccable generation %s", candidate)
             continue
         shutil.rmtree(candidate)
@@ -461,12 +561,7 @@ def _ensure_path(bin_dir: Path) -> None:
 def _browser_readiness(generation: Path) -> BrowserCacheReadiness:
     puppeteer_version = _locked_package_version("puppeteer")
     revisions = (
-        generation
-        / "node_modules"
-        / "puppeteer-core"
-        / "lib"
-        / "puppeteer"
-        / "revisions.js"
+        generation / "node_modules" / "puppeteer-core" / "lib" / "puppeteer" / "revisions.js"
     )
     try:
         source = revisions.read_text(encoding="utf-8")
@@ -495,8 +590,8 @@ def _ensure_chrome(generation: Path, home: Path) -> tuple[bool, bool]:
     cache_root = home / "cache" / "puppeteer"
     expected = _browser_readiness(generation)
     with browser_cache_lock(cache_root):
-        fetch_owner = cache_root / _FETCH_OWNER_FILE
-        if _owner_record_is_live(fetch_owner):
+        fetch_owner = cache_root / BROWSER_FETCH_OWNER_FILE
+        if process_owner_is_live(fetch_owner):
             logger.warning("Skipping Impeccable Chrome fetch while its prior writer is live")
             return False, False
         fetch_owner.unlink(missing_ok=True)
@@ -553,11 +648,7 @@ def _run_owned_process(
         )
         os.close(read_fd)
         read_fd = -1
-        identity = _process_start_identity(process.pid)
-        if identity is None:
-            raise ImpeccableInstallError("cannot record installer process identity")
-        _write_json(owner_record, {"pgid": process.pid, "leader_start": identity})
-        _fsync_directory(owner_record.parent)
+        _write_process_owner(owner_record, process.pid)
         os.write(write_fd, b"1")
         os.close(write_fd)
         write_fd = -1
@@ -598,48 +689,6 @@ def _terminate_process_group(process: subprocess.Popen[str]) -> None:
     except ProcessLookupError:
         pass
     process.communicate()
-
-
-def _process_start_identity(pid: int) -> str | None:
-    proc_stat = Path(f"/proc/{pid}/stat")
-    try:
-        fields = proc_stat.read_text(encoding="utf-8").split()
-        return fields[21]
-    except (IndexError, OSError):
-        pass
-    try:
-        result = subprocess.run(
-            ["ps", "-o", "lstart=", "-p", str(pid)],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=5,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    identity = result.stdout.strip()
-    return identity or None
-
-
-def _owner_record_is_live(path: Path) -> bool:
-    try:
-        value = _read_json(path)
-        pgid = value["pgid"]
-        recorded_identity = value["leader_start"]
-        if not isinstance(pgid, int) or not isinstance(recorded_identity, str):
-            return False
-    except (KeyError, OSError, TypeError, ValueError, ImpeccableInstallError):
-        return False
-    current_identity = _process_start_identity(pgid)
-    if current_identity is not None and current_identity != recorded_identity:
-        return False
-    try:
-        os.killpg(pgid, 0)
-        return True
-    except PermissionError:
-        return True
-    except ProcessLookupError:
-        return False
 
 
 def _read_json(path: Path) -> dict[str, object]:

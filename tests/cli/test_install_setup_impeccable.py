@@ -7,18 +7,31 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 import tomllib
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
+from click.testing import CliRunner
 
 from gobby.cli import install_setup_impeccable as installer
+from gobby.cli.install import uninstall
 from gobby.skills.script_cache import (
+    DELETION_TOMBSTONE_PREFIX,
+    PROCESS_OWNER_FILE,
     BrowserCacheReadiness,
+    SkillScriptsOwner,
     browser_cache_is_ready,
     read_browser_cache_readiness,
+    skill_scripts_namespace_lock_target,
+    skill_scripts_root_lock_target,
+    stage_name,
     write_browser_cache_readiness,
+    write_process_owner,
+    write_skill_scripts_owner,
 )
+from gobby.sync.jsonl_io import export_file_lock
 from gobby.utils.dependency_requirements import (
     IMPECCABLE_NODE_MIN_VERSION,
     IMPECCABLE_RELEASE,
@@ -406,7 +419,7 @@ def test_owner_record_precedes_child_writes(tmp_path: Path) -> None:
     owner = tmp_path / "owner.json"
     pid = os.fork()
     if pid == 0:
-        installer._write_json = lambda path, value: os._exit(91)
+        installer.__dict__["_write_process_owner"] = lambda path, pgid: os._exit(91)
         installer._run_owned_process(
             [
                 sys.executable,
@@ -437,18 +450,13 @@ def test_orphaned_group_blocks_stage_collection(tmp_path: Path) -> None:
         start_new_session=True,
     )
     try:
-        identity = installer._process_start_identity(process.pid)
-        assert identity is not None
-        installer._write_json(
-            stage / installer._OWNER_FILE,
-            {"pgid": process.pid, "leader_start": identity},
-        )
+        write_process_owner(stage / installer._OWNER_FILE, process.pid)
 
         installer._collect_abandoned_generations(root, root / "3.5.0")
         assert stage.exists()
 
         with pytest.MonkeyPatch.context() as monkeypatch:
-            monkeypatch.setattr(installer, "_process_start_identity", lambda pid: "reused")
+            monkeypatch.setattr(installer, "process_owner_is_live", lambda path: False)
             installer._collect_abandoned_generations(root, root / "3.5.0")
         assert not stage.exists()
     finally:
@@ -472,6 +480,7 @@ def test_publication_survives_kill_at_every_point(
     monkeypatch.setenv("GOBBY_HOME", str(home))
     pid = os.fork()
     if pid == 0:
+
         def crash_at_checkpoint(_name: str) -> None:
             if _name == checkpoint:
                 os._exit(92)
@@ -514,6 +523,7 @@ def test_repair_crash_preserves_previous_generation(
 
     pid = os.fork()
     if pid == 0:
+
         def crash_after_retention(_name: str) -> None:
             if _name == "retained_record_written":
                 os._exit(93)
@@ -533,3 +543,410 @@ def test_repair_crash_preserves_previous_generation(
     assert previous.exists()
     retained = json.loads((pointer.parent / installer._RETAINED_FILE).read_text(encoding="utf-8"))
     assert previous.name in retained["generations"]
+
+
+def test_remove_impeccable_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "configured-home"
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    tool_root = home / "tools" / "impeccable"
+    launcher = home / "bin" / "impeccable"
+    stamp = home / "bin" / ".impeccable-version"
+    owned_root = home / "cache" / "skill-scripts" / "65eb3be0-7f8d-4b0f-b679-4e162bd90aac"
+    other_root = home / "cache" / "skill-scripts" / "other-skill-id"
+    unmarked_root = home / "cache" / "skill-scripts" / "unmarked-id"
+    malformed_root = home / "cache" / "skill-scripts" / "malformed-id"
+    symlink_root = home / "cache" / "skill-scripts" / "symlink-id"
+    symlink_target = tmp_path / "outside-cache"
+    browser_cache = home / "cache" / "puppeteer"
+    literal_home_state = tmp_path / "literal-home" / ".gobby" / "tools" / "impeccable"
+    for path in (
+        tool_root,
+        owned_root,
+        other_root,
+        unmarked_root,
+        malformed_root,
+        symlink_target,
+        browser_cache,
+        literal_home_state,
+    ):
+        path.mkdir(parents=True)
+    symlink_root.symlink_to(symlink_target, target_is_directory=True)
+    (malformed_root / "owner.json").write_text("not-json", encoding="utf-8")
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.write_text("launcher", encoding="utf-8")
+    stamp.write_text("3.5.0\n", encoding="utf-8")
+    write_skill_scripts_owner(
+        owned_root,
+        SkillScriptsOwner(owned_root.name, "impeccable", "bundled"),
+    )
+    write_skill_scripts_owner(
+        other_root,
+        SkillScriptsOwner("other-skill-id", "another-skill", "bundled"),
+    )
+
+    result = installer.remove_impeccable_runtime()
+
+    assert result.removed == (tool_root, launcher, stamp, owned_root)
+    assert len(result.skipped) == 3
+    assert any("unowned" in warning and str(unmarked_root) in warning for warning in result.skipped)
+    assert any(
+        "unowned" in warning and str(malformed_root) in warning for warning in result.skipped
+    )
+    assert any("symlink" in warning and str(symlink_root) in warning for warning in result.skipped)
+    assert not tool_root.exists()
+    assert not launcher.exists()
+    assert not stamp.exists()
+    assert not owned_root.exists()
+    assert other_root.exists()
+    assert unmarked_root.exists()
+    assert malformed_root.exists()
+    assert symlink_root.is_symlink()
+    assert symlink_target.exists()
+    assert browser_cache.exists()
+    assert literal_home_state.exists()
+
+
+def test_native_win32_removes_degraded_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    root = home / "cache" / "skill-scripts" / "win32-impeccable-id"
+    root.mkdir(parents=True)
+    write_skill_scripts_owner(
+        root,
+        SkillScriptsOwner(root.name, "impeccable", "bundled"),
+    )
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    monkeypatch.setattr(installer, "is_native_windows", lambda: True)
+
+    result = installer.remove_impeccable_runtime()
+
+    assert result.removed == (root,)
+    assert not root.exists()
+    assert installer.remove_impeccable_runtime().removed == ()
+
+
+def test_crash_atomic_removal_recovers_tombstone(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    namespace = home / "cache" / "skill-scripts"
+    root = namespace / "crash-impeccable-id"
+    root.mkdir(parents=True)
+    write_skill_scripts_owner(root, SkillScriptsOwner(root.name, "impeccable", "bundled"))
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+
+    def crash(name: str) -> None:
+        assert name == "root_tombstoned"
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(installer, "_removal_checkpoint", crash)
+    with pytest.raises(KeyboardInterrupt):
+        installer.remove_impeccable_runtime()
+
+    tombstones = [
+        path for path in namespace.iterdir() if path.name.startswith(DELETION_TOMBSTONE_PREFIX)
+    ]
+    assert not root.exists()
+    assert len(tombstones) == 1
+    assert (tombstones[0] / "owner.json").is_file()
+
+    monkeypatch.setattr(installer, "_removal_checkpoint", lambda _name: None)
+    result = installer.remove_impeccable_runtime()
+
+    assert result.removed == (tombstones[0],)
+    assert not tombstones[0].exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
+@pytest.mark.parametrize("writer_kind", ["installer", "materializer"])
+def test_remove_waits_for_orphaned_writer_group(
+    writer_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    if writer_kind == "installer":
+        root = home / "tools" / "impeccable"
+        stage = root / "3.5.0-generation-live"
+    else:
+        root = home / "cache" / "skill-scripts" / "live-impeccable-id"
+        stage = root / ".gobby-stage-deps-live"
+    stage.mkdir(parents=True)
+    if writer_kind == "materializer":
+        write_skill_scripts_owner(root, SkillScriptsOwner(root.name, "impeccable", "bundled"))
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+    pid_file = tmp_path / "child.pid"
+    parent = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib,signal,subprocess,sys;"
+                "child=subprocess.Popen([sys.executable,'-c','import signal;signal.pause()'],"
+                "start_new_session=True);"
+                "pathlib.Path(sys.argv[1]).write_text(str(child.pid));"
+                "signal.pause()"
+            ),
+            str(pid_file),
+        ]
+    )
+    child_pid: int | None = None
+    try:
+        deadline = time.monotonic() + 5
+        while not pid_file.exists() and time.monotonic() < deadline:
+            threading.Event().wait(0.01)
+        child_pid = int(pid_file.read_text(encoding="utf-8"))
+        write_process_owner(stage / PROCESS_OWNER_FILE, child_pid)
+        parent.kill()
+        parent.wait(timeout=5)
+
+        first = installer.remove_impeccable_runtime()
+
+        assert root.exists()
+        assert any("live writer" in warning for warning in first.skipped)
+        os.killpg(child_pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(child_pid, 0)
+            except ProcessLookupError:
+                break
+            threading.Event().wait(0.01)
+
+        second = installer.remove_impeccable_runtime()
+
+        assert root in second.removed
+        assert not root.exists()
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if child_pid is not None:
+            try:
+                os.killpg(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def test_install_and_uninstall_are_linearized(
+    impeccable_runtime: tuple[Path, list[list[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home, _ = impeccable_runtime
+    entered = threading.Event()
+    release = threading.Event()
+    uninstall_started = threading.Event()
+    uninstall_done = threading.Event()
+    errors: list[BaseException] = []
+    original = installer._run_owned_process
+
+    def blocked_process(
+        command: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None,
+        timeout: float,
+        owner_record: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        if command[1] == "ci":
+            entered.set()
+            assert release.wait(timeout=5)
+        return original(command, cwd=cwd, env=env, timeout=timeout, owner_record=owner_record)
+
+    def run(function: object) -> None:
+        try:
+            assert callable(function)
+            function()
+        except BaseException as exc:
+            errors.append(exc)
+
+    def run_uninstall() -> None:
+        uninstall_started.set()
+        run(installer.remove_impeccable_runtime)
+        uninstall_done.set()
+
+    monkeypatch.setattr(installer, "_run_owned_process", blocked_process)
+    installing = threading.Thread(target=run, args=(installer.install_impeccable_cli,))
+    installing.start()
+    assert entered.wait(timeout=5)
+    uninstalling = threading.Thread(target=run_uninstall)
+    uninstalling.start()
+    assert uninstall_started.wait(timeout=5)
+    assert not uninstall_done.wait(timeout=0.05)
+    release.set()
+    installing.join(timeout=5)
+    uninstalling.join(timeout=5)
+
+    assert not errors
+    assert not installing.is_alive()
+    assert not uninstalling.is_alive()
+    assert not (home / "tools" / "impeccable").exists()
+
+
+def test_cold_materializer_and_uninstall_are_linearized(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    namespace = home / "cache" / "skill-scripts"
+    root = namespace / "collision-fallback-id"
+    entered = threading.Event()
+    release = threading.Event()
+    uninstall_started = threading.Event()
+    uninstall_done = threading.Event()
+    errors: list[BaseException] = []
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+
+    def publish() -> None:
+        try:
+            with export_file_lock(skill_scripts_namespace_lock_target(namespace)):
+                entered.set()
+                assert release.wait(timeout=5)
+                stage = namespace / stage_name("root", "cold-publisher")
+                stage.mkdir()
+                write_skill_scripts_owner(
+                    stage,
+                    SkillScriptsOwner(root.name, "impeccable", "bundled"),
+                )
+                os.replace(stage, root)
+        except BaseException as exc:
+            errors.append(exc)
+
+    result: list[installer.ImpeccableRemovalResult] = []
+
+    def uninstall_runtime() -> None:
+        uninstall_started.set()
+        result.append(installer.remove_impeccable_runtime())
+        uninstall_done.set()
+
+    publishing = threading.Thread(target=publish)
+    publishing.start()
+    assert entered.wait(timeout=5)
+    uninstalling = threading.Thread(target=uninstall_runtime)
+    uninstalling.start()
+    assert uninstall_started.wait(timeout=5)
+    assert not uninstall_done.wait(timeout=0.05)
+    release.set()
+    publishing.join(timeout=5)
+    uninstalling.join(timeout=5)
+
+    assert not errors
+    assert result and root in result[0].removed
+    assert not root.exists()
+
+
+def test_warm_waiter_restarts_after_uninstall_deletes_root(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    namespace = home / "cache" / "skill-scripts"
+    root = namespace / "warm-impeccable-id"
+    root.mkdir(parents=True)
+    write_skill_scripts_owner(root, SkillScriptsOwner(root.name, "impeccable", "bundled"))
+    acquired = threading.Event()
+    release = threading.Event()
+    producer_done = threading.Event()
+    monkeypatch.setattr(installer, "get_gobby_home", lambda: home)
+
+    def block_after_root_lock(candidate: Path) -> list[Path]:
+        if candidate == root:
+            acquired.set()
+            assert release.wait(timeout=5)
+        return []
+
+    def warm_publish() -> None:
+        while True:
+            with export_file_lock(skill_scripts_root_lock_target(root)):
+                if root.exists():
+                    (root / "warm-generation").mkdir()
+                    producer_done.set()
+                    return
+            with export_file_lock(skill_scripts_namespace_lock_target(namespace)):
+                if root.exists():
+                    continue
+                stage = namespace / stage_name("root", "warm-restart")
+                stage.mkdir()
+                write_skill_scripts_owner(
+                    stage,
+                    SkillScriptsOwner(root.name, "impeccable", "bundled"),
+                )
+                (stage / "warm-generation").mkdir()
+                os.replace(stage, root)
+                producer_done.set()
+                return
+
+    monkeypatch.setattr(installer, "live_process_owner_records", block_after_root_lock)
+    uninstalling = threading.Thread(target=installer.remove_impeccable_runtime)
+    uninstalling.start()
+    assert acquired.wait(timeout=5)
+    publishing = threading.Thread(target=warm_publish)
+    publishing.start()
+    assert not producer_done.wait(timeout=0.05)
+    release.set()
+    uninstalling.join(timeout=5)
+    publishing.join(timeout=5)
+
+    assert producer_done.is_set()
+    assert root.is_dir()
+    assert (root / "warm-generation").is_dir()
+
+
+@pytest.mark.parametrize(
+    ("arguments", "hook_removed", "cleanup_called", "exit_code"),
+    [
+        ([], True, False, 0),
+        (["--tools"], False, True, 0),
+        (["--tools", "--all"], True, True, 0),
+        (["--tools", "--claude"], True, True, 0),
+        (["--tools", "--project"], False, False, 2),
+        (["--tools", "--project", "--all"], False, False, 2),
+        (["--tools", "--project", "--claude"], False, False, 2),
+    ],
+)
+def test_uninstall_tools_selector_matrix(
+    arguments: list[str],
+    hook_removed: bool,
+    cleanup_called: bool,
+    exit_code: int,
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.parent.mkdir()
+    settings.write_text("{}", encoding="utf-8")
+    cleanup = installer.ImpeccableRemovalResult((), ())
+    with (
+        patch("gobby.cli.install.Path.home", return_value=tmp_path),
+        patch("gobby.cli.install.remove_impeccable_runtime", return_value=cleanup) as remove,
+        patch(
+            "gobby.cli.install.uninstall_claude",
+            return_value={"success": True, "hooks_removed": [], "files_removed": []},
+        ) as remove_claude,
+    ):
+        result = CliRunner().invoke(uninstall, [*arguments, "--yes"])
+
+    assert result.exit_code == exit_code
+    assert remove.called is cleanup_called
+    assert remove_claude.called is hook_removed
+    if exit_code == 2:
+        assert "--tools cannot be combined with --project" in result.output
+
+
+def test_uninstall_tools_without_hooks(tmp_path: Path) -> None:
+    removed = tmp_path / "tools" / "impeccable"
+    cleanup = installer.ImpeccableRemovalResult((removed,), ())
+    with (
+        patch("gobby.cli.install.Path.home", return_value=tmp_path),
+        patch("gobby.cli.install.remove_impeccable_runtime", return_value=cleanup) as remove,
+    ):
+        result = CliRunner().invoke(uninstall, ["--tools", "--yes"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert str(removed) in result.output
+    remove.assert_called_once_with()

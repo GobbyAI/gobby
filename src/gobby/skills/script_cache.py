@@ -28,8 +28,10 @@ _READINESS_FILE = ".gobby-browser-ready.json"
 SKILL_SCRIPTS_OWNER_FILE = "owner.json"
 SKILL_SCRIPTS_PROVENANCE_FILE = "provenance.json"
 PROCESS_OWNER_FILE = ".gobby-process-owner.json"
+BROWSER_FETCH_OWNER_FILE = ".gobby-browser-fetch-owner.json"
 DEPENDENCY_READY_FILE = ".gobby-dependencies-ready.json"
 STAGE_PREFIX = ".gobby-stage-"
+DELETION_TOMBSTONE_PREFIX = ".gobby-delete-"
 _OWNER_SCHEMA_VERSION = 1
 _LOCK_RETRY_SECONDS = 0.05
 
@@ -89,6 +91,18 @@ def stage_name(kind: str, token: str) -> str:
 def is_owned_stage(path: Path) -> bool:
     """Return whether a path uses Gobby's reserved stage namespace."""
     return path.name.startswith(STAGE_PREFIX)
+
+
+def deletion_tombstone_name(skill_id: str, token: str) -> str:
+    """Return an ownership-recognizable name for a root being deleted."""
+    if not skill_id or not token or any(char in skill_id + token for char in "/\\"):
+        raise ValueError("invalid deletion tombstone identity")
+    return f"{DELETION_TOMBSTONE_PREFIX}{skill_id}-{token}"
+
+
+def is_deletion_tombstone(path: Path) -> bool:
+    """Return whether a path is an ownership-preserving deletion tombstone."""
+    return path.name.startswith(DELETION_TOMBSTONE_PREFIX)
 
 
 def read_skill_scripts_owner(root: Path) -> SkillScriptsOwner | None:
@@ -183,8 +197,47 @@ def process_owner_is_live(path: Path) -> bool:
         return False
 
 
+def live_process_owner_records(root: Path) -> list[Path]:
+    """Return live known writer records beneath a non-symlink root."""
+    if root.is_symlink():
+        return []
+    owner_names = {PROCESS_OWNER_FILE, BROWSER_FETCH_OWNER_FILE}
+    live: list[Path] = []
+
+    def raise_walk_error(error: OSError) -> None:
+        raise error
+
+    for current, directories, files in os.walk(root, followlinks=False, onerror=raise_walk_error):
+        current_path = Path(current)
+        directories[:] = [name for name in directories if not (current_path / name).is_symlink()]
+        for name in owner_names.intersection(files):
+            owner = current_path / name
+            if process_owner_is_live(owner):
+                live.append(owner)
+    return sorted(live)
+
+
+def collect_deletion_tombstones(parent: Path) -> list[Path]:
+    """Finish crash-interrupted root removals without following symlinks."""
+    removed: list[Path] = []
+    try:
+        candidates = list(parent.iterdir())
+    except FileNotFoundError:
+        return removed
+    for candidate in candidates:
+        if not is_deletion_tombstone(candidate):
+            continue
+        if candidate.is_dir() and not candidate.is_symlink():
+            shutil.rmtree(candidate)
+        else:
+            candidate.unlink(missing_ok=True)
+        removed.append(candidate)
+    return removed
+
+
 def collect_stale_stages(parent: Path) -> list[Path]:
     """Remove inactive owned stages and return live stages that were preserved."""
+    collect_deletion_tombstones(parent)
     live: list[Path] = []
     try:
         candidates = list(parent.iterdir())

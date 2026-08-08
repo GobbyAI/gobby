@@ -23,6 +23,7 @@ from gobby.paths import get_gobby_home
 from gobby.skills.parser import SkillParseError, validate_runtime_metadata
 from gobby.skills.scanner import is_external_source, scan_skill_content
 from gobby.skills.script_cache import (
+    BROWSER_FETCH_OWNER_FILE,
     DEPENDENCY_READY_FILE,
     PROCESS_OWNER_FILE,
     BrowserCacheReadiness,
@@ -536,7 +537,7 @@ async def _ensure_browser(
         return False, "Local Puppeteer executable is unavailable; browser fetch skipped"
     cache_root = home / "cache" / "puppeteer"
     async with async_browser_cache_lock(cache_root):
-        owner_record = cache_root / ".gobby-browser-fetch-owner.json"
+        owner_record = cache_root / BROWSER_FETCH_OWNER_FILE
         if await run_blocking_safely(process_owner_is_live, owner_record):
             return False, "A prior browser fetch process is still active"
         owner_record.unlink(missing_ok=True)

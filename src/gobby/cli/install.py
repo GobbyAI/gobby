@@ -72,6 +72,7 @@ from ._install_prompts import (
 )
 from ._install_state import empty_install_state, prepare_install_state, should_configure_section
 from .install_setup import ensure_daemon_config, run_daemon_setup
+from .install_setup_impeccable import remove_impeccable_runtime
 from .installers import (
     install_agy,
     install_claude,
@@ -787,6 +788,12 @@ def install(
     help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
 )
 @click.option(
+    "--tools",
+    "tools_flag",
+    is_flag=True,
+    help="Remove Gobby-managed tools and their owned materialization caches",
+)
+@click.option(
     "--project",
     "project_flag",
     is_flag=True,
@@ -809,16 +816,19 @@ def uninstall(
     droid_flag: bool,
     qwen_flag: bool,
     all_flag: bool,
+    tools_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
 ) -> None:
-    """Uninstall Gobby hooks from AI coding CLIs.
+    """Uninstall Gobby hooks and selected managed tools.
 
     By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
     Use --project to uninstall per-project hooks from the current directory.
     Use --claude, --grok, --agy, --qwen, or --codex to uninstall only from
     specific CLIs.
     """
+    if tools_flag and project_flag:
+        raise click.UsageError("--tools cannot be combined with --project")
     project_path = working_dir.resolve() if working_dir else Path.cwd()
 
     # Determine which CLIs to uninstall
@@ -830,8 +840,18 @@ def uninstall(
         and not codex_flag
         and not droid_flag
         and not all_flag
+        and not tools_flag
     ):
         all_flag = True
+
+    if tools_flag:
+        cleanup = remove_impeccable_runtime()
+        for path in cleanup.removed:
+            click.echo(f"Removed managed artifact: {path}")
+        for warning in cleanup.skipped:
+            click.echo(f"Warning: {warning}", err=True)
+        if not any((claude_flag, grok_flag, agy_flag, qwen_flag, codex_flag, droid_flag, all_flag)):
+            return
 
     # Build list of CLIs to uninstall
     clis_to_uninstall: list[str] = []
