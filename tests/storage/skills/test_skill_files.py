@@ -42,6 +42,19 @@ def _hash(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def _skill_file(skill_id: str, path: str, file_type: str = "reference") -> SkillFile:
+    content = f"content:{path}"
+    return SkillFile(
+        id="",
+        skill_id=skill_id,
+        path=path,
+        file_type=file_type,
+        content=content,
+        content_hash=_hash(content),
+        size_bytes=len(content.encode()),
+    )
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -372,3 +385,233 @@ class TestSkillFileCRUD:
 
     def test_hard_delete_missing_skill_returns_false(self, storage: LocalSkillManager) -> None:
         assert storage.hard_delete("00000000-0000-0000-0000-0000000000ff") is False
+
+
+class TestSkillFileFiltering:
+    def test_get_skill_files_path_prefix(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(
+            sample_skill.id,
+            [
+                _skill_file(sample_skill.id, "references/100%/literal.md"),
+                _skill_file(sample_skill.id, "references/100x/not-literal.md"),
+                _skill_file(sample_skill.id, "references/a_b/literal.md", "script"),
+                _skill_file(sample_skill.id, "references/axb/not-literal.md", "script"),
+                _skill_file(sample_skill.id, "references/a\\b/literal.md"),
+                _skill_file(sample_skill.id, "references/ab/not-literal.md"),
+            ],
+        )
+
+        percent = storage.get_skill_files(sample_skill.id, path_prefix="references/100%/")
+        underscore = storage.get_skill_files(
+            sample_skill.id,
+            path_prefix="references/a_b/",
+            file_type="script",
+        )
+        backslash = storage.get_skill_files(sample_skill.id, path_prefix="references/a\\b/")
+
+        assert [item.path for item in percent] == ["references/100%/literal.md"]
+        assert [item.path for item in underscore] == ["references/a_b/literal.md"]
+        assert [item.path for item in backslash] == ["references/a\\b/literal.md"]
+
+    def test_get_skill_files_composes_complement_and_keyset(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(
+            sample_skill.id,
+            [
+                _skill_file(sample_skill.id, "references/a.md"),
+                _skill_file(sample_skill.id, "references/b.md"),
+                _skill_file(sample_skill.id, "references/c.md"),
+                _skill_file(sample_skill.id, "scripts/run.py", "script"),
+            ],
+        )
+
+        first_page = storage.get_skill_files(
+            sample_skill.id,
+            exclude_file_type="script",
+            limit=2,
+        )
+        second_page = storage.get_skill_files(
+            sample_skill.id,
+            exclude_file_type="script",
+            after_path=first_page[-1].path,
+            limit=2,
+        )
+
+        assert [item.path for item in first_page] == ["references/a.md", "references/b.md"]
+        assert [item.path for item in second_page] == ["references/c.md"]
+
+    def test_exclude_license_parity_across_seams(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(
+            sample_skill.id,
+            [
+                _skill_file(sample_skill.id, "LICENSE", "license"),
+                _skill_file(sample_skill.id, "references/a.md"),
+                _skill_file(sample_skill.id, "references/b.md"),
+                _skill_file(sample_skill.id, "references/c.md"),
+            ],
+        )
+
+        listed = storage.get_skill_files(sample_skill.id)
+        listed_with_license = storage.get_skill_files(sample_skill.id, exclude_license=False)
+        first = storage.get_skill_file_page(sample_skill.id, limit=2)
+        assert first is not None
+        second = storage.get_skill_file_page(
+            sample_skill.id,
+            after_path=first["files"][-1]["path"],
+            limit=2,
+        )
+        with_license = storage.get_skill_file_page(
+            sample_skill.id,
+            limit=10,
+            exclude_license=False,
+        )
+        manifest = storage.get_skill_with_manifest(
+            skill_id=sample_skill.id,
+            name=None,
+            project_id=None,
+            file_limit=10,
+            directory_limit=10,
+        )
+        manifest_with_license = storage.get_skill_with_manifest(
+            skill_id=sample_skill.id,
+            name=None,
+            project_id=None,
+            file_limit=10,
+            directory_limit=10,
+            exclude_license=False,
+        )
+
+        assert [item.path for item in listed] == [
+            "references/a.md",
+            "references/b.md",
+            "references/c.md",
+        ]
+        assert [item.path for item in listed_with_license] == [
+            "LICENSE",
+            "references/a.md",
+            "references/b.md",
+            "references/c.md",
+        ]
+        assert second is not None
+        assert with_license is not None
+        assert manifest is not None
+        assert manifest_with_license is not None
+        assert first["total_files"] == 3
+        assert first["remaining_file_count"] == 1
+        assert second["total_files"] == 1
+        assert second["remaining_file_count"] == 0
+        assert with_license["total_files"] == 4
+        assert with_license["remaining_file_count"] == 0
+        assert manifest["total_files"] == 3
+        assert manifest["remaining_file_count"] == 0
+        assert manifest_with_license["total_files"] == 4
+        assert manifest_with_license["remaining_file_count"] == 0
+
+    def test_skill_file_path_utf8_byte_limit(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        accepted = "a" * 1024
+        rejected = ("a" * 1023) + "\u00e9"
+
+        storage.set_skill_files(sample_skill.id, [_skill_file(sample_skill.id, accepted)])
+        with pytest.raises(ValueError, match="1024 UTF-8 bytes"):
+            storage.set_skill_files(sample_skill.id, [_skill_file(sample_skill.id, rejected)])
+
+        assert [item.path for item in storage.get_skill_files(sample_skill.id)] == [accepted]
+
+    def test_oversized_legacy_paths_are_omitted_from_retrievable_counts(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(
+            sample_skill.id,
+            [_skill_file(sample_skill.id, "references/visible.md")],
+        )
+        oversized_path = "z" * 1025
+        with storage.db.transaction() as conn:
+            conn.execute(
+                """INSERT INTO skill_files
+                   (id, skill_id, path, file_type, content, content_hash,
+                    size_bytes, created_at, updated_at)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), NOW())""",
+                (
+                    "89000000-0000-4000-8000-000000000001",
+                    sample_skill.id,
+                    oversized_path,
+                    "reference",
+                    "legacy",
+                    _hash("legacy"),
+                    len("legacy"),
+                ),
+            )
+
+        listed = storage.get_skill_files(sample_skill.id)
+        first = storage.get_skill_file_page(sample_skill.id, limit=1)
+        terminal = storage.get_skill_file_page(
+            sample_skill.id,
+            after_path="references/visible.md",
+            limit=1,
+        )
+        manifest = storage.get_skill_with_manifest(
+            skill_id=sample_skill.id,
+            name=None,
+            project_id=None,
+            file_limit=10,
+            directory_limit=10,
+        )
+
+        assert [item.path for item in listed] == ["references/visible.md"]
+        assert first is not None
+        assert first["total_files"] == 1
+        assert first["remaining_file_count"] == 0
+        assert first["omitted_oversized_path_count"] == 1
+        assert terminal is not None
+        assert terminal["files"] == []
+        assert terminal["total_files"] == 0
+        assert terminal["remaining_file_count"] == 0
+        assert terminal["omitted_oversized_path_count"] == 1
+        assert manifest is not None
+        assert manifest["total_files"] == 1
+        assert manifest["remaining_file_count"] == 0
+        assert manifest["omitted_oversized_path_count"] == 1
+
+    def test_count_and_summary_aggregates(
+        self, storage: LocalSkillManager, sample_skill: Skill
+    ) -> None:
+        storage.set_skill_files(
+            sample_skill.id,
+            [
+                _skill_file(sample_skill.id, "references/a.md"),
+                _skill_file(sample_skill.id, "references/b.md"),
+                _skill_file(sample_skill.id, "scripts/build/run.py", "script"),
+                _skill_file(sample_skill.id, "scripts/test/check.py", "script"),
+            ],
+        )
+
+        result = storage.get_skill_with_manifest(
+            skill_id=sample_skill.id,
+            name=None,
+            project_id=None,
+            file_limit=1,
+            directory_limit=1,
+        )
+
+        assert result is not None
+        assert result["skill"].id == sample_skill.id
+        assert result["files"] == [
+            {
+                "path": "references/a.md",
+                "file_type": "reference",
+                "size_bytes": len("content:references/a.md"),
+            }
+        ]
+        assert result["total_files"] == 2
+        assert result["remaining_file_count"] == 1
+        assert result["scripts"]["total_files"] == 2
+        assert result["scripts"]["per_top_level_dir"] == {"build": 1}
+        assert result["scripts"]["remaining_directory_count"] == 1
+        assert result["scripts"]["remaining_file_count"] == 1

@@ -1022,7 +1022,18 @@ class TestSkillFiles:
                 }
             ]
         }
-        skill_manager.get_skill_files.assert_called_once_with("1")
+        skill_manager.get_skill_files.assert_called_once_with("1", path_prefix=None)
+
+    def test_list_skill_files_passes_path_prefix(
+        self, client: TestClient, skill_manager: MagicMock
+    ) -> None:
+        skill_manager.get_skill_files.return_value = []
+
+        response = client.get("/api/skills/1/files", params={"path_prefix": "scripts/"})
+
+        assert response.status_code == 200
+        assert response.json() == {"files": []}
+        skill_manager.get_skill_files.assert_called_once_with("1", path_prefix="scripts/")
 
     def test_list_skill_files_missing_skill(
         self, client: TestClient, skill_manager: MagicMock

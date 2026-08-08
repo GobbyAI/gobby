@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -10,6 +11,93 @@ from gobby.mcp_proxy.tools.skills._context import SkillsContext
 from gobby.utils.session_context import get_current_session_id
 
 logger = logging.getLogger(__name__)
+
+MAX_MANIFEST_FILE_ENTRIES = 100
+MAX_MANIFEST_DIRECTORY_ENTRIES = 20
+MAX_MANIFEST_RESPONSE_BYTES = 16384
+
+
+def _encoded_size(value: dict[str, Any]) -> int:
+    return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+
+
+def _oversized_warning(count: int) -> str | None:
+    if count == 0:
+        return None
+    return f"{count} legacy file path(s) exceeded 1024 UTF-8 bytes and were omitted"
+
+
+def _build_manifest(snapshot: dict[str, Any], skill_id: str) -> dict[str, Any]:
+    entries = list(snapshot["files"][:MAX_MANIFEST_FILE_ENTRIES])
+    scripts = snapshot["scripts"]
+    directories = dict(scripts["per_top_level_dir"])
+    manifest: dict[str, Any] = {
+        "entries": entries,
+        "total_files": snapshot["total_files"],
+        "remaining_file_count": snapshot["total_files"] - len(entries),
+        "scripts": {
+            "total_files": scripts["total_files"],
+            "total_bytes": scripts["total_bytes"],
+            "per_top_level_dir": directories,
+            "remaining_directory_count": scripts["remaining_directory_count"],
+            "remaining_file_count": scripts["remaining_file_count"],
+            "note": (
+                "Use materialize_skill_scripts for execution and get_skill_file "
+                "for individual reads."
+            ),
+        },
+        "omitted_oversized_path_count": snapshot["omitted_oversized_path_count"],
+        "overflow_note": (
+            f"Use get_skill_files(skill_id='{skill_id}') with path_prefix and after_path "
+            "to discover omitted entries."
+        ),
+    }
+    warning = _oversized_warning(snapshot["omitted_oversized_path_count"])
+    if warning is not None:
+        manifest["warning"] = warning
+
+    while _encoded_size(manifest) > MAX_MANIFEST_RESPONSE_BYTES:
+        if entries:
+            entries.pop()
+            manifest["remaining_file_count"] += 1
+            continue
+        if directories:
+            name = sorted(directories)[-1]
+            file_count = int(directories.pop(name))
+            script_manifest = manifest["scripts"]
+            script_manifest["remaining_directory_count"] += 1
+            script_manifest["remaining_file_count"] += file_count
+            continue
+        raise ValueError("Skill manifest metadata exceeds the response byte budget")
+    return manifest
+
+
+def _build_file_page(snapshot: dict[str, Any]) -> dict[str, Any]:
+    entries = list(snapshot["files"][:MAX_MANIFEST_FILE_ENTRIES])
+    response: dict[str, Any] = {
+        "success": True,
+        "skill_id": snapshot["skill_id"],
+        "name": snapshot["name"],
+        "files": entries,
+        "total_files": snapshot["total_files"],
+        "remaining_file_count": snapshot["total_files"] - len(entries),
+        "next_after_path": None,
+        "omitted_oversized_path_count": snapshot["omitted_oversized_path_count"],
+    }
+    warning = _oversized_warning(snapshot["omitted_oversized_path_count"])
+    if warning is not None:
+        response["warning"] = warning
+
+    while True:
+        response["remaining_file_count"] = snapshot["total_files"] - len(entries)
+        response["next_after_path"] = (
+            entries[-1]["path"] if entries and response["remaining_file_count"] > 0 else None
+        )
+        if _encoded_size(response) <= MAX_MANIFEST_RESPONSE_BYTES:
+            return response
+        if not entries:
+            raise ValueError("Skill file page metadata exceeds the response byte budget")
+        entries.pop()
 
 
 def _serve_scan_error(
@@ -86,19 +174,17 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if not skill_id and not name:
                 return {"success": False, "error": "Either name or skill_id is required"}
 
-            # Get skill by ID or name
-            skill = None
-            if skill_id:
-                try:
-                    skill = ctx.storage.get_skill(skill_id)
-                except ValueError:
-                    pass
-
-            if skill is None and name:
-                skill = ctx.storage.get_by_name(name, project_id=ctx.project_id)
-
-            if skill is None:
+            snapshot = await ctx.run_db(
+                ctx.storage.get_skill_with_manifest,
+                skill_id=skill_id,
+                name=name,
+                project_id=ctx.project_id,
+                file_limit=MAX_MANIFEST_FILE_ENTRIES,
+                directory_limit=MAX_MANIFEST_DIRECTORY_ENTRIES,
+            )
+            if snapshot is None:
                 return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+            skill = snapshot["skill"]
 
             scan_error = _serve_scan_error(skill.name, skill.source_type, skill.content)
             if scan_error is not None:
@@ -133,10 +219,16 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 session_id = get_current_session_id()
             if session_id:
                 try:
-                    resolved_session_id = ctx.session_manager.resolve_session_reference(
-                        session_id, project_id=ctx.project_id
+                    resolved_session_id = await ctx.run_db(
+                        ctx.session_manager.resolve_session_reference,
+                        session_id,
+                        project_id=ctx.project_id,
                     )
-                    ctx.session_manager.record_skills_used(resolved_session_id, [skill.name])
+                    await ctx.run_db(
+                        ctx.session_manager.record_skills_used,
+                        resolved_session_id,
+                        [skill.name],
+                    )
                 except Exception as e:
                     logger.debug(
                         "Best-effort skill tracking failed for session %s: %s", session_id, e
@@ -150,8 +242,11 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         from gobby.workflows.state_manager import SessionVariableManager
 
                         var_name = f"{skill.name.replace('-', '_')}_level"
-                        SessionVariableManager(ctx.db).set_variable(
-                            resolved_session_id, var_name, effective_level
+                        await ctx.run_db(
+                            SessionVariableManager(ctx.db).set_variable,
+                            resolved_session_id,
+                            var_name,
+                            effective_level,
                         )
                     except Exception as e:
                         logger.debug(
@@ -182,18 +277,51 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "source_ref": skill.source_ref,
             }
 
-            # Include file metadata if files exist
-            try:
-                skill_files = ctx.storage.get_skill_files(skill.id)
-                if skill_files:
-                    skill_data["files"] = [f.to_dict() for f in skill_files]
-            except Exception as e:
-                logger.debug("Failed to get files for skill %s: %s", skill.name, e)
+            if (
+                snapshot["total_files"]
+                or snapshot["scripts"]["total_files"]
+                or snapshot["omitted_oversized_path_count"]
+            ):
+                skill_data["files"] = _build_manifest(snapshot, skill.id)
 
             return {
                 "success": True,
                 "skill": skill_data,
             }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="get_skill_files",
+        description=(
+            "List one bounded page of skill files. Use path_prefix and the returned "
+            "next_after_path cursor to continue."
+        ),
+    )
+    async def get_skill_files_tool(
+        name: str | None = None,
+        skill_id: str | None = None,
+        path_prefix: str | None = None,
+        file_type: str | None = None,
+        after_path: str | None = None,
+    ) -> dict[str, Any]:
+        """List a byte-bounded, keyset-paginated page from one resolved skill."""
+        try:
+            if not skill_id and not name:
+                return {"success": False, "error": "Either name or skill_id is required"}
+            snapshot = await ctx.run_db(
+                ctx.storage.get_skill_file_page,
+                skill_id,
+                name=name,
+                project_id=ctx.project_id,
+                path_prefix=path_prefix,
+                file_type=file_type,
+                after_path=after_path,
+                limit=MAX_MANIFEST_FILE_ENTRIES + 1,
+            )
+            if snapshot is None:
+                return {"success": False, "error": f"Skill not found: {skill_id or name}"}
+            return _build_file_page(snapshot)
         except Exception as e:
             return {"success": False, "error": str(e)}
 

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from gobby.storage.skills._models import SkillFile
+from gobby.storage.skills._models import Skill, SkillFile
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -18,6 +19,22 @@ logger = logging.getLogger(__name__)
 # Deterministic id namespace: same (skill_id, path) -> same id, backing the
 # UNIQUE(skill_id, path) constraint with id-level stability.
 _NS_SKILL_FILES = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:skill_files")
+MAX_SKILL_FILE_PATH_BYTES = 1024
+
+
+def _escape_like_prefix(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _validate_file_path(path: str) -> None:
+    if len(path.encode("utf-8")) > MAX_SKILL_FILE_PATH_BYTES:
+        raise ValueError(
+            f"Skill file path exceeds {MAX_SKILL_FILE_PATH_BYTES} UTF-8 bytes: {path!r}"
+        )
+
+
+def _decode_json(value: Any) -> Any:
+    return json.loads(value) if isinstance(value, str) else value
 
 
 class SkillFilesMixin:
@@ -46,6 +63,9 @@ class SkillFilesMixin:
 
     def _set_skill_files(self, conn: Transaction, skill_id: str, files: list[SkillFile]) -> int:
         """Synchronize skill files using an existing transaction."""
+        for skill_file in files:
+            _validate_file_path(skill_file.path)
+
         now = utc_now()
         changed = 0
 
@@ -146,41 +166,36 @@ class SkillFilesMixin:
         file_type: str | None = None,
         include_content: bool = False,
         exclude_license: bool = True,
+        path_prefix: str | None = None,
+        exclude_file_type: str | None = None,
+        after_path: str | None = None,
+        limit: int | None = None,
     ) -> list[SkillFile]:
-        """List files for a skill.
-
-        Args:
-            skill_id: Parent skill ID
-            file_type: Optional filter by file type
-            include_content: If True, include file content (default False for token efficiency)
-            exclude_license: If True, exclude license files from results (default True)
-
-        Returns:
-            List of SkillFile objects (content field empty unless include_content=True)
-        """
-        conditions = ["skill_id = %s", "deleted_at IS NULL"]
-        params: list[Any] = [skill_id]
-
-        if file_type:
-            conditions.append("file_type = %s")
-            params.append(file_type)
-
-        if exclude_license:
-            conditions.append("file_type != 'license'")
-
-        where = " AND ".join(conditions)
+        """List eligible files for a skill using ordered server-side filters."""
+        if limit is not None and limit < 1:
+            raise ValueError("limit must be at least 1")
+        cte, params = self._filtered_files_cte(
+            skill_id=skill_id,
+            file_type=file_type,
+            exclude_file_type=exclude_file_type,
+            exclude_license=exclude_license,
+            path_prefix=path_prefix,
+            after_path=after_path,
+        )
         cols = (
             "*"
             if include_content
             else "id, skill_id, path, file_type, content_hash, size_bytes, deleted_at, created_at, updated_at"
         )
-
+        limit_sql = ""
+        if limit is not None:
+            limit_sql = " LIMIT %s"
+            params.append(limit)
         rows = self.db.fetchall(
-            f"SELECT {cols} FROM skill_files WHERE {where} ORDER BY path",  # nosec B608
+            f"WITH {cte} SELECT {cols} FROM eligible_files ORDER BY path{limit_sql}",  # nosec B608
             tuple(params),
         )
-
-        result = []
+        result: list[SkillFile] = []
         for row in rows:
             if include_content:
                 result.append(SkillFile.from_row(row))
@@ -200,6 +215,282 @@ class SkillFilesMixin:
                     )
                 )
         return result
+
+    @staticmethod
+    def _filtered_files_cte(
+        *,
+        skill_id: str | None = None,
+        resolved_skill: bool = False,
+        cte_prefix: str = "",
+        path_prefix: str | None = None,
+        file_type: str | None = None,
+        exclude_file_type: str | None = None,
+        exclude_license: bool = True,
+        after_path: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        """Build the shared filtered and retrievable file sets."""
+        if resolved_skill:
+            source = "skill_files sf JOIN resolved_skill rs ON rs.id = sf.skill_id"
+            conditions = ["sf.deleted_at IS NULL"]
+            params: list[Any] = []
+        else:
+            if skill_id is None:
+                raise ValueError("skill_id is required")
+            source = "skill_files sf"
+            conditions = ["sf.skill_id = %s", "sf.deleted_at IS NULL"]
+            params = [skill_id]
+        if path_prefix is not None:
+            conditions.append("sf.path LIKE %s ESCAPE '\\'")
+            params.append(f"{_escape_like_prefix(path_prefix)}%")
+        if file_type is not None:
+            conditions.append("sf.file_type = %s")
+            params.append(file_type)
+        if exclude_file_type is not None:
+            conditions.append("sf.file_type != %s")
+            params.append(exclude_file_type)
+        if exclude_license:
+            conditions.append("sf.file_type != 'license'")
+
+        filtered = f"{cte_prefix}filtered_files"
+        eligible = f"{cte_prefix}eligible_files"
+        after_sql = ""
+        if after_path is not None:
+            after_sql = " AND path > %s"
+        cte = (
+            f"{filtered} AS (SELECT sf.* FROM {source} WHERE {' AND '.join(conditions)}), "
+            f"{eligible} AS (SELECT * FROM {filtered} "
+            f"WHERE octet_length(path) <= %s{after_sql})"
+        )
+        params.append(MAX_SKILL_FILE_PATH_BYTES)
+        if after_path is not None:
+            params.append(after_path)
+        return cte, params
+
+    @staticmethod
+    def _resolved_skill_cte(
+        *, skill_id: str | None, name: str | None, project_id: str | None
+    ) -> tuple[str, list[Any]]:
+        """Build the current ID-first, project-aware live-skill resolver."""
+        cte = """resolved_skill AS (
+            SELECT ranked.* FROM (
+                SELECT s.*, 0 AS selector_rank
+                FROM skills s
+                WHERE %s::text IS NOT NULL
+                  AND s.id::text = %s
+                  AND s.deleted_at IS NULL
+                UNION ALL
+                SELECT s.*,
+                    CASE WHEN %s::text IS NOT NULL AND s.project_id::text = %s
+                        THEN 1 ELSE 2 END AS selector_rank
+                FROM skills s
+                WHERE %s::text IS NOT NULL
+                  AND s.name = %s
+                  AND s.deleted_at IS NULL
+                  AND NOT EXISTS (
+                      SELECT 1 FROM skills selected_by_id
+                      WHERE %s::text IS NOT NULL
+                        AND selected_by_id.id::text = %s
+                        AND selected_by_id.deleted_at IS NULL
+                  )
+                  AND (
+                      (
+                          %s::text IS NOT NULL
+                          AND s.project_id::text = %s
+                          AND ('/' || translate(coalesce(s.source_path, ''), chr(92), '/') || '/')
+                              NOT LIKE '%%/gobby/install/shared/skills/%%'
+                      )
+                      OR s.project_id IS NULL
+                  )
+            ) ranked
+            ORDER BY selector_rank
+            LIMIT 1
+        )"""
+        return cte, [
+            skill_id,
+            skill_id,
+            project_id,
+            project_id,
+            name,
+            name,
+            skill_id,
+            skill_id,
+            project_id,
+            project_id,
+        ]
+
+    def get_skill_file_page(
+        self,
+        skill_id: str | None,
+        *,
+        name: str | None = None,
+        project_id: str | None = None,
+        path_prefix: str | None = None,
+        file_type: str | None = None,
+        exclude_file_type: str | None = None,
+        exclude_license: bool = True,
+        after_path: str | None = None,
+        limit: int,
+    ) -> dict[str, Any] | None:
+        """Resolve a skill and return one bounded file page and its counts."""
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        resolver, params = self._resolved_skill_cte(
+            skill_id=skill_id, name=name, project_id=project_id
+        )
+        cte, file_params = self._filtered_files_cte(
+            resolved_skill=True,
+            path_prefix=path_prefix,
+            file_type=file_type,
+            exclude_file_type=exclude_file_type,
+            exclude_license=exclude_license,
+            after_path=after_path,
+        )
+        params.extend(file_params)
+        params.append(limit)
+        row = self.db.fetchone(
+            f"""WITH {resolver},
+                {cte},
+                page AS (
+                    SELECT path, file_type, size_bytes
+                    FROM eligible_files ORDER BY path LIMIT %s
+                )
+                SELECT
+                    COALESCE(
+                        (SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'path', path,
+                                'file_type', file_type,
+                                'size_bytes', size_bytes
+                            ) ORDER BY path
+                        ) FROM page),
+                        '[]'::jsonb
+                    ) AS files,
+                    (SELECT count(*) FROM eligible_files) AS total_files,
+                    (SELECT count(*) FROM eligible_files) -
+                        (SELECT count(*) FROM page) AS remaining_file_count,
+                    (SELECT count(*) FROM filtered_files
+                        WHERE octet_length(path) > {MAX_SKILL_FILE_PATH_BYTES}
+                    ) AS omitted_oversized_path_count,
+                    resolved_skill.id AS resolved_skill_id,
+                    resolved_skill.name AS resolved_skill_name
+                FROM resolved_skill""",  # nosec B608
+            tuple(params),
+        )
+        if row is None:
+            return None
+        return {
+            "skill_id": str(row["resolved_skill_id"]),
+            "name": row["resolved_skill_name"],
+            "files": list(_decode_json(row["files"]) or []),
+            "total_files": int(row["total_files"]),
+            "remaining_file_count": int(row["remaining_file_count"]),
+            "omitted_oversized_path_count": int(row["omitted_oversized_path_count"]),
+        }
+
+    def get_skill_with_manifest(
+        self,
+        *,
+        skill_id: str | None,
+        name: str | None,
+        project_id: str | None,
+        file_limit: int,
+        directory_limit: int,
+        exclude_license: bool = True,
+    ) -> dict[str, Any] | None:
+        """Resolve a skill row and its bounded manifest in one statement."""
+        if file_limit < 1 or directory_limit < 1:
+            raise ValueError("manifest limits must be at least 1")
+        resolver, params = self._resolved_skill_cte(
+            skill_id=skill_id, name=name, project_id=project_id
+        )
+        manifest_cte, manifest_params = self._filtered_files_cte(
+            resolved_skill=True,
+            cte_prefix="manifest_",
+            exclude_file_type="script",
+            exclude_license=exclude_license,
+        )
+        scripts_cte, scripts_params = self._filtered_files_cte(
+            resolved_skill=True,
+            cte_prefix="script_",
+            file_type="script",
+            exclude_license=exclude_license,
+        )
+        params.extend(manifest_params)
+        params.extend(scripts_params)
+        params.extend([file_limit, directory_limit])
+        row = self.db.fetchone(
+            f"""WITH {resolver},
+                {manifest_cte},
+                {scripts_cte},
+                manifest_page AS (
+                    SELECT path, file_type, size_bytes
+                    FROM manifest_eligible_files ORDER BY path LIMIT %s
+                ),
+                script_directories AS (
+                    SELECT
+                        split_part(substr(path, length('scripts/') + 1), '/', 1) AS name,
+                        count(*) AS file_count
+                    FROM script_eligible_files
+                    GROUP BY 1
+                ),
+                script_directory_page AS (
+                    SELECT name, file_count
+                    FROM script_directories ORDER BY name LIMIT %s
+                )
+                SELECT resolved_skill.*,
+                    COALESCE(
+                        (SELECT jsonb_agg(
+                            jsonb_build_object(
+                                'path', path,
+                                'file_type', file_type,
+                                'size_bytes', size_bytes
+                            ) ORDER BY path
+                        ) FROM manifest_page),
+                        '[]'::jsonb
+                    ) AS manifest_files,
+                    (SELECT count(*) FROM manifest_eligible_files) AS manifest_total_files,
+                    (SELECT count(*) FROM manifest_eligible_files) -
+                        (SELECT count(*) FROM manifest_page) AS manifest_remaining_file_count,
+                    (SELECT count(*) FROM manifest_filtered_files
+                        WHERE octet_length(path) > {MAX_SKILL_FILE_PATH_BYTES}
+                    ) +
+                    (SELECT count(*) FROM script_filtered_files
+                        WHERE octet_length(path) > {MAX_SKILL_FILE_PATH_BYTES}
+                    ) AS omitted_oversized_path_count,
+                    (SELECT count(*) FROM script_eligible_files) AS script_total_files,
+                    COALESCE((SELECT sum(size_bytes) FROM script_eligible_files), 0)
+                        AS script_total_bytes,
+                    COALESCE(
+                        (SELECT jsonb_object_agg(name, file_count ORDER BY name)
+                         FROM script_directory_page),
+                        '{{}}'::jsonb
+                    ) AS script_directories,
+                    (SELECT count(*) FROM script_directories) -
+                        (SELECT count(*) FROM script_directory_page)
+                        AS script_remaining_directory_count,
+                    (SELECT count(*) FROM script_eligible_files) -
+                        COALESCE((SELECT sum(file_count) FROM script_directory_page), 0)
+                        AS script_remaining_file_count
+                FROM resolved_skill""",  # nosec B608
+            tuple(params),
+        )
+        if row is None:
+            return None
+        skill = Skill.from_row(row)
+        return {
+            "skill": skill,
+            "files": list(_decode_json(row["manifest_files"]) or []),
+            "total_files": int(row["manifest_total_files"]),
+            "remaining_file_count": int(row["manifest_remaining_file_count"]),
+            "omitted_oversized_path_count": int(row["omitted_oversized_path_count"]),
+            "scripts": {
+                "total_files": int(row["script_total_files"]),
+                "total_bytes": int(row["script_total_bytes"]),
+                "per_top_level_dir": dict(_decode_json(row["script_directories"]) or {}),
+                "remaining_directory_count": int(row["script_remaining_directory_count"]),
+                "remaining_file_count": int(row["script_remaining_file_count"]),
+            },
+        }
 
     def get_skill_file(self, skill_id: str, path: str) -> SkillFile | None:
         """Get a single skill file with content.

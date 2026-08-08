@@ -748,11 +748,14 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/{skill_id}/files")
-    def list_skill_files(skill_id: str) -> dict[str, Any]:
+    def list_skill_files(
+        skill_id: str,
+        path_prefix: str | None = Query(None, description="Filter by path prefix"),
+    ) -> dict[str, Any]:
         """List a skill's attached files (metadata only, no content)."""
         try:
             server.skill_manager.get_skill(skill_id)
-            files = server.skill_manager.get_skill_files(skill_id)
+            files = server.skill_manager.get_skill_files(skill_id, path_prefix=path_prefix)
             return {"files": [f.to_dict() for f in files]}
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
