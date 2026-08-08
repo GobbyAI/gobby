@@ -12,14 +12,21 @@ pub mod semantic;
 pub mod walker;
 
 pub(crate) fn normalize_storage_path(path: &std::path::Path) -> String {
-    let path = path.to_string_lossy();
+    normalize_storage_path_str(&path.to_string_lossy())
+}
+
+/// Separator normalization for storage keys: rewrites `\` to `/` only on
+/// Windows, where it is a path separator. On Unix a backslash is a legal
+/// filename character and must survive so every layer (indexer, import
+/// resolution, walker matching) keys the file identically.
+pub(crate) fn normalize_storage_path_str(path: &str) -> String {
     #[cfg(windows)]
     {
         path.replace('\\', "/")
     }
     #[cfg(not(windows))]
     {
-        path.into_owned()
+        path.to_owned()
     }
 }
 
@@ -45,6 +52,15 @@ mod tests {
 
         assert_eq!(
             super::normalize_storage_path(path),
+            r"src/name\with-backslash.rs"
+        );
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn storage_path_str_preserves_unix_backslashes() {
+        assert_eq!(
+            super::normalize_storage_path_str(r"src/name\with-backslash.rs"),
             r"src/name\with-backslash.rs"
         );
     }

@@ -3,6 +3,8 @@ use std::path::{Component, Path, PathBuf};
 
 use gobby_core::vault::resolve_vault_dir;
 
+use crate::index::{normalize_storage_path, normalize_storage_path_str};
+
 const GCODE_CONFIG_PATH: &str = ".gobby/gcode.json";
 const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".gobby/plans/**/*.md",
@@ -63,7 +65,7 @@ impl HiddenPathAllowlist {
     fn from_patterns(patterns: Vec<String>) -> Self {
         let patterns = patterns
             .into_iter()
-            .map(|pattern| pattern.trim().replace('\\', "/"))
+            .map(|pattern| normalize_storage_path_str(pattern.trim()))
             .filter(|pattern| is_valid_allowlist_pattern(pattern))
             .flat_map(|pattern| expand_zero_depth_globstar(&pattern))
             .collect();
@@ -94,7 +96,7 @@ impl HiddenPathAllowlist {
 
     pub(super) fn matches(&self, root: &Path, path: &Path) -> bool {
         let rel = path.strip_prefix(root).unwrap_or(path);
-        let rel = rel.to_string_lossy().replace('\\', "/");
+        let rel = normalize_storage_path(rel);
         self.patterns.iter().any(|pattern| {
             glob::Pattern::new(pattern)
                 .map(|pattern| pattern.matches_path(Path::new(&rel)))

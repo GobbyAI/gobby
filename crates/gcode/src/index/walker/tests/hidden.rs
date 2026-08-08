@@ -194,3 +194,16 @@ fn excludes_win_over_allowlisted_hidden_paths() {
     assert!(rels(root, ast).is_empty());
     assert!(rels(root, content_only).is_empty());
 }
+
+#[test]
+#[cfg(not(windows))]
+fn discovers_unix_backslash_filename_under_literal_key() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, r".gobby/plans/name\plan.md", b"# Plan\n");
+
+    let (ast, content_only) = discover_files(root, &[] as &[&str]);
+
+    assert!(rels(root, ast).is_empty());
+    assert_eq!(rels(root, content_only), vec![r".gobby/plans/name\plan.md"]);
+}

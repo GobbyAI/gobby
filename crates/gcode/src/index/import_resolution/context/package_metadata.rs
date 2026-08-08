@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use crate::index::normalize_storage_path;
+
 pub(in crate::index::import_resolution) fn load_js_external_packages(
     root_path: &Path,
 ) -> HashSet<String> {
@@ -82,11 +84,8 @@ pub(in crate::index::import_resolution) fn build_go_package_files(
         let Some(rel) = canonical_relative_path(path, &root_abs) else {
             continue;
         };
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-        let dir = rel
-            .parent()
-            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default();
+        let rel_str = normalize_storage_path(&rel);
+        let dir = rel.parent().map(normalize_storage_path).unwrap_or_default();
         packages.entry(dir).or_default().push(rel_str);
     }
     for files in packages.values_mut() {

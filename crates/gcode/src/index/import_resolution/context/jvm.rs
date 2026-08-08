@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::super::predicates::java_declared_types;
+use crate::index::normalize_storage_path;
 
 pub(super) struct JavaClassIndex {
     /// Simple and fully-qualified class names declared by local files. Used to
@@ -36,7 +37,7 @@ pub(super) fn build_java_class_index(
                 return (local_classes, class_files);
             };
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             let mut package = None;
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();
@@ -100,7 +101,7 @@ pub(super) fn build_kotlin_package_files(
             }
             let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             // The `package` header is the first substantive element of a Kotlin
             // file (after optional file annotations and comments). Stop at the
             // first real line so a later string/identifier containing "package "
@@ -165,7 +166,7 @@ pub(super) fn build_scala_package_files(
             }
             let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             let mut package_segments = Vec::new();
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();

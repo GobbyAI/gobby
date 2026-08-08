@@ -9,6 +9,7 @@ use regex::Regex;
 
 use super::super::helpers::{is_elixir_alias, is_elixir_alias_path};
 use super::super::predicates::elixir_dependency_roots;
+use crate::index::normalize_storage_path;
 
 pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
     candidate_files
@@ -68,7 +69,7 @@ pub(in crate::index::import_resolution) fn build_elixir_local_module_files(
             }
             let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path.as_path());
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             let mut modules: Vec<String> = Vec::new();
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim_start();

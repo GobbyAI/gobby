@@ -315,3 +315,20 @@ end
         Some("RuntimeOnly")
     );
 }
+
+#[test]
+#[cfg(not(windows))]
+fn swift_module_files_preserve_unix_backslash_filenames() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let root = tempdir.path();
+    let file = root.join(r"Sources/App/Mod\el.swift");
+    fs::create_dir_all(file.parent().expect("parent")).expect("dirs");
+    fs::write(&file, "struct Model {}\n").expect("swift file");
+
+    let modules = build_swift_module_files(root, &[file]);
+
+    assert_eq!(
+        modules.get("App"),
+        Some(&vec![r"Sources/App/Mod\el.swift".to_string()])
+    );
+}

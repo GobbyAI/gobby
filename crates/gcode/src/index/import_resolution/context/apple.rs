@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
+use crate::index::normalize_storage_path;
+
 pub(super) struct ObjcIndex {
     pub(super) import_files: HashMap<String, Vec<String>>,
     pub(super) file_types: HashMap<String, Vec<String>>,
@@ -23,7 +25,7 @@ pub(super) fn build_objc_indexes(root_path: &Path, candidate_files: &[PathBuf]) 
                 return None;
             }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             let mut keys = vec![rel_str.clone()];
             if let Some(file_name) = rel.file_name().and_then(|name| name.to_str()) {
                 keys.push(file_name.to_string());
@@ -183,7 +185,7 @@ fn normalize_objc_project_path(path: &Path) -> Option<String> {
         }
     }
 
-    (!normalized.as_os_str().is_empty()).then(|| normalized.to_string_lossy().replace('\\', "/"))
+    (!normalized.as_os_str().is_empty()).then(|| normalize_storage_path(&normalized))
 }
 
 fn is_objc_identifier(name: &str) -> bool {
@@ -248,7 +250,7 @@ pub(in crate::index::import_resolution) fn build_swift_module_files(
             if modules.is_empty() {
                 return None;
             }
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             Some((rel_str, modules))
         })
         .fold(

@@ -302,11 +302,7 @@ fn env_flag(name: &str) -> bool {
 }
 
 fn path_to_uri(path: &Path) -> String {
-    let path = path.to_string_lossy();
-    #[cfg(windows)]
-    let path = path.replace('\\', "/");
-    #[cfg(not(windows))]
-    let path = path.into_owned();
+    let path = crate::index::normalize_storage_path(path);
 
     let encoded = path
         .split('/')

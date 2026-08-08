@@ -5,6 +5,7 @@ use anyhow::Context as _;
 use serde::Serialize;
 
 use crate::config::Context;
+use crate::index::normalize_storage_path_str;
 use crate::output;
 
 use super::types::{CodewikiDocMeta, CodewikiMeta};
@@ -140,10 +141,11 @@ fn compare_paths(project_root: &Path, out: Option<&str>) -> anyhow::Result<Compa
         }
     }
     let relative_meta = normalized.join(CODEWIKI_META_PATH);
-    let git_meta = relative_meta
-        .to_str()
-        .context("codewiki --compare-to metadata path is not valid UTF-8")?
-        .replace('\\', "/");
+    let git_meta = normalize_storage_path_str(
+        relative_meta
+            .to_str()
+            .context("codewiki --compare-to metadata path is not valid UTF-8")?,
+    );
     Ok(ComparePaths {
         current_meta: project_root.join(relative_meta),
         default_git_meta: git_meta,
@@ -167,6 +169,9 @@ fn parse_compare_target<'a>(
 }
 
 fn normalize_explicit_git_meta(path: &str) -> anyhow::Result<String> {
+    // Deliberately unconditional (not normalize_storage_path_str): this is a
+    // user-typed compare target, so Windows-style separators must be honored
+    // on every platform and `..\` must always read as traversal.
     let normalized_separators = path.replace('\\', "/");
     let mut normalized = PathBuf::new();
     for component in Path::new(&normalized_separators).components() {

@@ -1,5 +1,7 @@
 use std::path::{Component, Path};
 
+use crate::index::normalize_storage_path_str;
+
 /// Project-relative files a JS/TS import `specifier` (resolved relative to
 /// `rel_path`) could be defined in. Each resolved module key is expanded to the
 /// supported source extensions and the directory `index.*` form. No file reads;
@@ -99,7 +101,7 @@ fn normalize_module_path(path: &Path) -> String {
 }
 
 fn normalize_module_key(key: &str) -> String {
-    key.replace('\\', "/")
+    normalize_storage_path_str(key)
         .trim_matches('/')
         .split('/')
         .filter(|part| !part.is_empty() && *part != ".")

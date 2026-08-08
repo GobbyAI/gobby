@@ -4,6 +4,7 @@ use crate::models::{ImportRelation, Symbol};
 
 use super::super::context::{ExtractedImports, ImportBindings, LocalCallBinding};
 use super::super::helpers::{collapse_whitespace, extract_quoted_string};
+use crate::index::normalize_storage_path;
 
 pub(crate) fn parse_shell_import_statement(
     text: &str,
@@ -92,5 +93,5 @@ fn normalize_project_path(path: &Path) -> Option<String> {
         }
     }
 
-    (!normalized.as_os_str().is_empty()).then(|| normalized.to_string_lossy().replace('\\', "/"))
+    (!normalized.as_os_str().is_empty()).then(|| normalize_storage_path(&normalized))
 }

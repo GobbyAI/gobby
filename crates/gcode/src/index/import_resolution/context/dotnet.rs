@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use rayon::prelude::*;
 
 use super::super::predicates::csharp_declared_types;
+use crate::index::normalize_storage_path;
 
 pub(super) struct CsharpIndex {
     /// Namespace roots and simple type names declared by local files. Used to
@@ -33,7 +34,7 @@ pub(super) fn build_csharp_index(root_path: &Path, candidate_files: &[PathBuf]) 
                 return (local_roots, type_files);
             };
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             // Tracks the most recent `namespace` declaration so a declared type
             // is keyed by its fully-qualified name. File-scoped namespaces (the
             // common case) name the whole file; block-scoped namespaces apply to

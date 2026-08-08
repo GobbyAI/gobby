@@ -7,6 +7,7 @@ use rayon::prelude::*;
 
 use super::super::helpers::is_ruby_constant_name;
 use super::super::predicates::php_declared_symbols;
+use crate::index::normalize_storage_path;
 
 pub(super) fn build_lua_module_files(
     root_path: &Path,
@@ -23,7 +24,7 @@ pub(super) fn build_lua_module_files(
                 return None;
             }
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             let without_ext = rel_str.strip_suffix(".lua")?;
             let modules = lua_module_names_for_path(without_ext);
             if modules.is_empty() {
@@ -99,7 +100,7 @@ pub(in crate::index::import_resolution) fn build_php_symbol_files(
             }
             let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             // A symbol is keyed under both its bare name and (when the file
             // declares a namespace) its `namespace\name` qualified form, both
             // lowercased because PHP class/function names are case-insensitive.
@@ -165,7 +166,7 @@ pub(super) fn build_ruby_constant_files(
             }
             let file = File::open(path).ok()?;
             let rel = path.strip_prefix(root_path).unwrap_or(path);
-            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let rel_str = normalize_storage_path(rel);
             // A Ruby file can declare several top-level constants, and a
             // `class`/`module` line can appear anywhere, so scan every line
             // rather than stopping at the first declaration.

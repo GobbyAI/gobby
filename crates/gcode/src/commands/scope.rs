@@ -152,7 +152,7 @@ fn clean_relative_path(path: &Path) -> String {
             Component::Prefix(_) | Component::RootDir => {}
         }
     }
-    out.to_string_lossy().replace('\\', "/")
+    crate::index::normalize_storage_path(&out)
 }
 
 #[cfg(test)]

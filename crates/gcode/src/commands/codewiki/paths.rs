@@ -159,7 +159,7 @@ pub(crate) fn in_scope(file: &str, scopes: &[String]) -> bool {
 pub(crate) fn module_for_file(file: &str) -> String {
     Path::new(file)
         .parent()
-        .map(|path| path.to_string_lossy().replace('\\', "/"))
+        .map(crate::index::normalize_storage_path)
         .filter(|path| path != ".")
         .unwrap_or_default()
 }
