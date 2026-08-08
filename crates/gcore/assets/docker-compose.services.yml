@@ -29,7 +29,7 @@ services:
     profiles: [falkordb, all]
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     ports:
       - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_QDRANT_HTTP_PORT:-6333}:6333"
       - "${GOBBY_SERVICES_BIND_ADDRESS:-127.0.0.1}:${GOBBY_QDRANT_GRPC_PORT:-6334}:6334"
