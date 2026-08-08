@@ -26,6 +26,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
+from gobby.worktrees.executor import WorktreeDeleteExecutor, run_worktree_delete
 
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
@@ -48,6 +49,7 @@ class ServiceContainer:
     session_manager: SessionManager | None
     task_manager: LocalTaskManager
     db_executor: DatabaseExecutor | None = None
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None
     coverage_executor: CoverageExecutor | None = None
     database_concurrency: DatabaseConcurrencyResolution | None = None
     database_watchdog: DatabaseSaturationWatchdog | None = None
@@ -150,6 +152,16 @@ class ServiceContainer:
         if self.db_executor is None:
             return None
         return self.db_executor.stats().as_dict()
+
+    async def run_worktree_delete(self, operation: Callable[..., Any]) -> Any:
+        """Run a complete worktree deletion off the daemon event loop."""
+        return await run_worktree_delete(self.worktree_delete_executor, operation)
+
+    def worktree_delete_executor_stats(self) -> dict[str, int | float | bool] | None:
+        """Return worktree deletion executor diagnostics when configured."""
+        if self.worktree_delete_executor is None:
+            return None
+        return self.worktree_delete_executor.stats().as_dict()
 
     def get_git_manager(self, project_id: str) -> Any | None:
         """Get or create a WorktreeGitManager for a project.

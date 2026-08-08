@@ -30,6 +30,7 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.telemetry import init_telemetry
 from gobby.telemetry.logging import setup_file_logging
 from gobby.utils.machine_id import get_machine_id
+from gobby.worktrees.executor import WorktreeDeleteExecutor
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -133,6 +134,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner.db_executor = DatabaseExecutor(
         max_workers=runner.database_concurrency.executor_max_workers
     )
+    runner.worktree_delete_executor = WorktreeDeleteExecutor(max_workers=4)
     runner.coverage_executor = CoverageExecutor(
         max_concurrency=runner.database_concurrency.coverage_max_concurrency
     )

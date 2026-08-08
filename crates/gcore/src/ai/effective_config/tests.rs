@@ -67,6 +67,38 @@ fn spawn_delayed_json_response(delay: Duration) -> std::io::Result<(String, Requ
     Ok((base_url, handle))
 }
 
+fn spawn_stalled_json_body(delay: Duration) -> std::io::Result<(String, RequestHandle)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let base_url = format!("http://{}", listener.local_addr()?);
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        let request = read_http_request(&mut stream)?;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\n"
+        )?;
+        stream.flush()?;
+        thread::sleep(delay);
+        Ok(request)
+    });
+    Ok((base_url, handle))
+}
+
+fn spawn_truncated_json_body() -> std::io::Result<(String, RequestHandle)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let base_url = format!("http://{}", listener.local_addr()?);
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        let request = read_http_request(&mut stream)?;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 64\r\nConnection: close\r\n\r\n{{}}"
+        )?;
+        Ok(request)
+    });
+    Ok((base_url, handle))
+}
+
 #[test]
 #[serial_test::serial]
 fn fetch_carries_bearer_and_parses_effective_config_envelope() {
@@ -317,6 +349,29 @@ fn loopback_timeout_is_bounded_and_categorized() {
     );
     assert!(!error.to_string().contains(&base_url));
     let _ = request.join().expect("delayed daemon thread");
+}
+
+#[test]
+fn success_with_stalled_or_truncated_body_is_transport_failure() {
+    let (base_url, request) =
+        spawn_stalled_json_body(Duration::from_millis(100)).expect("spawn stalled daemon");
+    let error =
+        fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(10))
+            .expect_err("stalled response body must fail");
+    assert_eq!(
+        error,
+        EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Timeout,
+        }
+    );
+    join_request(request);
+
+    let (base_url, request) = spawn_truncated_json_body().expect("spawn truncated daemon");
+    let error =
+        fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(100))
+            .expect_err("truncated response body must fail");
+    assert!(matches!(error, EffectiveConfigError::Transport { .. }));
+    join_request(request);
 }
 
 #[test]

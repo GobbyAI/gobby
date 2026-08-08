@@ -84,6 +84,7 @@ def init_servers(runner: GobbyRunner) -> None:
         config=runner.config,
         database=runner.database,
         db_executor=runner.db_executor,
+        worktree_delete_executor=runner.worktree_delete_executor,
         coverage_executor=runner.coverage_executor,
         database_concurrency=runner.database_concurrency,
         database_watchdog=runner.database_watchdog,

@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -30,6 +31,7 @@ class RegistryContext:
     project_id: str | None = None
     session_manager: SessionManager | None = None
     task_manager: LocalTaskManager | None = None
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None
 
     def resolve_session_id(self, ref: str) -> str:
         """Resolve session reference (#N, N, UUID, or prefix) to UUID."""

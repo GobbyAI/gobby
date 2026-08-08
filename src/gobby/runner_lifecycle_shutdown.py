@@ -468,6 +468,7 @@ async def _shutdown_database_executor(
     *,
     label: str = "Database executor",
     join_thread_name: str = "gobby-db-join",
+    join_timeout_seconds: float | None = _DATABASE_EXECUTOR_JOIN_SECONDS,
 ) -> None:
     """Revoke queued thread work and join bounded operations off-loop."""
     if db_executor.is_joined():
@@ -499,7 +500,10 @@ async def _shutdown_database_executor(
 
     threading.Thread(target=join_executor, name=join_thread_name, daemon=True).start()
     try:
-        await asyncio.wait_for(joined, timeout=_DATABASE_EXECUTOR_JOIN_SECONDS)
+        if join_timeout_seconds is None:
+            await joined
+        else:
+            await asyncio.wait_for(joined, timeout=join_timeout_seconds)
     except TimeoutError:
         logger.error("%s did not settle before the shutdown deadline", label)
     except Exception as e:
@@ -510,6 +514,14 @@ async def _shutdown_database_concurrency(runner: GobbyRunner) -> None:
     watchdog = getattr(runner, "database_watchdog", None)
     if watchdog is not None:
         watchdog.stop()
+    worktree_delete_executor = getattr(runner, "worktree_delete_executor", None)
+    if worktree_delete_executor is not None:
+        await _shutdown_database_executor(
+            worktree_delete_executor,
+            label="Worktree delete executor",
+            join_thread_name="gobby-worktree-delete-join",
+            join_timeout_seconds=None,
+        )
     coverage_executor = getattr(runner, "coverage_executor", None)
     if coverage_executor is not None:
         await _shutdown_database_executor(
@@ -621,6 +633,35 @@ async def _settle_finalizers_under_cancellation(
                 "Database executor revocation failed after finalizer expiry", exc_info=True
             )
     reset_terminal_delivery_offload()
+    return cancellation
+
+
+async def _drain_worktree_deletes_under_cancellation(
+    runner: GobbyRunner,
+    cancellation: asyncio.CancelledError | None,
+) -> asyncio.CancelledError | None:
+    """Finish destructive work before the database can close."""
+    executor = getattr(runner, "worktree_delete_executor", None)
+    if executor is None or executor.is_joined():
+        return cancellation
+    try:
+        executor.shutdown(cancel_futures=True)
+    except Exception:
+        logger.warning("Worktree delete executor revocation failed", exc_info=True)
+
+    drain = asyncio.create_task(
+        asyncio.to_thread(executor.join),
+        name="worktree-delete-final-drain",
+    )
+    while not drain.done():
+        try:
+            await asyncio.shield(drain)
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+    try:
+        drain.result()
+    except Exception:
+        logger.warning("Worktree delete executor drain failed", exc_info=True)
     return cancellation
 
 
@@ -838,6 +879,10 @@ async def shutdown_daemon_services(
             )
     finally:
         deferred_cancellation = await _settle_finalizers_under_cancellation(runner)
+        deferred_cancellation = await _drain_worktree_deletes_under_cancellation(
+            runner,
+            deferred_cancellation,
+        )
 
         try:
             runner.database.close()

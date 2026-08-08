@@ -9,6 +9,7 @@ import pytest
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import Worktree, WorktreeStatus
+from gobby.worktrees.executor import WorktreeDeleteExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -40,11 +41,17 @@ def mock_git_manager():
 
 @pytest.fixture
 def registry(mock_worktree_storage, mock_git_manager):
-    return create_worktrees_registry(
-        worktree_storage=mock_worktree_storage,
-        git_manager=mock_git_manager,
-        project_id="11111111-1111-4111-8111-111111110001",
-    )
+    executor = WorktreeDeleteExecutor(thread_name_prefix="test-mcp-worktree-delete")
+    try:
+        yield create_worktrees_registry(
+            worktree_storage=mock_worktree_storage,
+            git_manager=mock_git_manager,
+            project_id="11111111-1111-4111-8111-111111110001",
+            worktree_delete_executor=executor,
+        )
+    finally:
+        executor.shutdown()
+        executor.join()
 
 
 @pytest.mark.asyncio
@@ -700,7 +707,7 @@ async def test_delete_worktree_success(registry, mock_worktree_storage, mock_git
     with (
         patch("pathlib.Path.exists", return_value=True),
         patch(
-            "gobby.mcp_proxy.tools.worktrees._lifecycle.emit_worktree_event",
+            "gobby.worktrees.deletion.emit_worktree_event",
             return_value={
                 "event_type": "worktree_deleted",
                 "worktree_id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",

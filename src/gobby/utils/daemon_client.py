@@ -156,7 +156,7 @@ class DaemonClient:
                     "Daemon not running during planned restart (%s): %s", restart_source, e
                 )
             else:
-                self.logger.warning("Daemon not running: %s", e)
+                self.logger.debug("Daemon not running: %s", e)
             return False, DaemonHealthError.NOT_RUNNING
         except httpx.TimeoutException as e:
             self._record_health_timeout(e)

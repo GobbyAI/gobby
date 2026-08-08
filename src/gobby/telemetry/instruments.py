@@ -213,6 +213,10 @@ class TelemetryMetrics:
             "Time database executor submissions wait before running",
         )
         self._register_histogram(
+            "worktree_delete_executor_queue_wait_seconds",
+            "Time worktree deletion submissions wait before running",
+        )
+        self._register_histogram(
             "database_pool_acquire_wait_seconds",
             "Time callers wait to acquire a PostgreSQL pool connection",
         )

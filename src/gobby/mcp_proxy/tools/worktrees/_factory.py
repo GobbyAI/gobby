@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
 
 
@@ -29,6 +30,7 @@ def create_worktrees_registry(
     project_id: str | None = None,
     session_manager: SessionManager | None = None,
     task_manager: LocalTaskManager | None = None,
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None,
 ) -> InternalToolRegistry:
     """Create a worktree tool registry with all worktree-related tools.
 
@@ -38,6 +40,7 @@ def create_worktrees_registry(
         project_id: Default project ID for operations.
         session_manager: Session manager for resolving session references.
         task_manager: LocalTaskManager for resolving task references.
+        worktree_delete_executor: Daemon-owned executor for deletion transactions.
 
     Returns:
         InternalToolRegistry with all worktree tools registered.
@@ -48,6 +51,7 @@ def create_worktrees_registry(
         project_id=project_id,
         session_manager=session_manager,
         task_manager=task_manager,
+        worktree_delete_executor=worktree_delete_executor,
     )
 
     registry = InternalToolRegistry(

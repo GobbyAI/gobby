@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -11,7 +10,13 @@ from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 from gobby.storage.worktrees import WorktreeStatus
+from gobby.worktrees.deletion import (
+    DeletionSurface,
+    WorktreeDeletionRequest,
+    delete_worktree_transaction,
+)
 from gobby.worktrees.events import emit_worktree_event
+from gobby.worktrees.executor import run_worktree_delete
 
 logger = logging.getLogger(__name__)
 
@@ -143,109 +148,52 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
             else force_delete_branch
         )
 
-        worktree = ctx.worktree_storage.get(worktree_id)
+        def resolve_git_manager(_worktree: Any) -> Any:
+            resolved = ctx.git_manager
+            if project_path:
+                try:
+                    manager, _, _ = resolve_project_context(project_path, resolved, None)
+                    if manager:
+                        resolved = manager
+                except (ValueError, OSError) as error:
+                    logger.debug(
+                        "Failed to resolve project context for project_path=%s: %s",
+                        project_path,
+                        error,
+                    )
+            return resolved
 
-        if not worktree:
-            return {"success": True, "already_deleted": True}
-
-        # Resolve git manager
-        resolved_git_mgr = ctx.git_manager
-        if project_path:
-            try:
-                mgr, _, _ = resolve_project_context(project_path, resolved_git_mgr, None)
-                if mgr:
-                    resolved_git_mgr = mgr
-            except (ValueError, OSError) as e:
-                logger.debug(
-                    "Failed to resolve project context for project_path=%s: %s", project_path, e
-                )
-
-        worktree_exists = Path(worktree.worktree_path).exists()
-
-        if worktree_exists and resolved_git_mgr is None:
-            return {
-                "success": False,
-                "error": (
-                    "Cannot delete an on-disk worktree without a resolved git manager; "
-                    "the worktree record was preserved"
-                ),
-            }
-
-        # Check for uncommitted changes if not forcing
-        if resolved_git_mgr and worktree_exists:
-            status = resolved_git_mgr.get_worktree_status(worktree.worktree_path)
-            if status and status.has_uncommitted_changes and not force:
-                return {
-                    "success": False,
-                    "error": "Worktree has uncommitted changes. Use force=True to delete anyway.",
-                    "uncommitted_changes": True,
-                }
-
-        # Delete or prune the git worktree registration.
-        if resolved_git_mgr:
-            result = resolved_git_mgr.delete_worktree(
-                worktree.worktree_path,
-                force=force,
-                delete_branch=True,
-                force_delete_branch=force_delete_branch,
-                branch_name=worktree.branch_name,
-                base_branch=worktree.base_branch,
-            )
-            if not result.success:
-                if Path(worktree.worktree_path).exists():
-                    return {
-                        "success": False,
-                        "error": result.error or "Failed to delete git worktree",
-                    }
-                prune = getattr(resolved_git_mgr, "prune_worktrees", None)
-                if not callable(prune):
-                    return {
-                        "success": False,
-                        "error": result.error or "Failed to prune missing git worktree",
-                    }
-                prune_result = prune()
-                if not prune_result.success:
-                    return {
-                        "success": False,
-                        "error": prune_result.error
-                        or result.error
-                        or "Failed to prune missing git worktree",
-                    }
-        elif not worktree_exists:
-            logger.info(
-                "Worktree path %s doesn't exist, cleaning up DB record only", worktree.worktree_path
-            )
-
-        deleted = ctx.worktree_storage.delete(worktree_id)
-        if not deleted:
-            return {"success": False, "error": "Failed to delete worktree record"}
-
-        artifact_refs_cleared = 0
-        if ctx.task_manager is not None:
-            try:
-                artifact_refs_cleared = ctx.task_manager.artifacts.clear_worktree_references(
-                    worktree_id
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to clear task artifact worktree references after deletion",
-                    extra={
-                        "operation": "delete_worktree",
-                        "worktree_id": worktree_id,
-                    },
-                    exc_info=True,
-                )
-                artifact_refs_cleared = 0
-
-        event = emit_worktree_event(
-            "worktree_deleted",
+        request = WorktreeDeletionRequest(
             worktree_id=worktree_id,
-            project_id=worktree.project_id,
-            branch_name=worktree.branch_name,
-            worktree_path=worktree.worktree_path,
-            artifact_refs_cleared=artifact_refs_cleared,
+            surface=DeletionSurface.MCP,
+            force=force,
+            force_delete_branch=force_delete_branch,
         )
-        return {"success": True, "artifact_refs_cleared": artifact_refs_cleared, "event": event}
+        result = await run_worktree_delete(
+            ctx.worktree_delete_executor,
+            lambda boundary: delete_worktree_transaction(
+                boundary,
+                request=request,
+                worktree_storage=ctx.worktree_storage,
+                resolve_git_manager=resolve_git_manager,
+                task_manager=ctx.task_manager,
+            ),
+        )
+        if not result.found:
+            return {"success": True, "already_deleted": True}
+        if not result.success:
+            response: dict[str, Any] = {
+                "success": False,
+                "error": result.error or "Worktree deletion was abandoned",
+            }
+            if result.uncommitted_changes:
+                response["uncommitted_changes"] = True
+            return response
+        return {
+            "success": True,
+            "artifact_refs_cleared": result.artifact_refs_cleared,
+            "event": result.event,
+        }
 
     @registry.tool(
         name="mark_worktree_merged",

@@ -1408,6 +1408,103 @@ class TestShutdownDaemonServices:
         assert join_calls == 1
 
     @pytest.mark.asyncio
+    async def test_worktree_delete_executor_drains_before_database_executor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        worktree_delete_executor = object()
+        coverage_executor = object()
+        db_executor = object()
+        shutdown_calls: list[tuple[object, dict[str, object]]] = []
+
+        async def record_shutdown(executor: object, **kwargs: object) -> None:
+            shutdown_calls.append((executor, kwargs))
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_shutdown_database_executor",
+            record_shutdown,
+        )
+
+        await runner_lifecycle_shutdown._shutdown_database_concurrency(
+            cast(
+                GobbyRunner,
+                SimpleNamespace(
+                    database_watchdog=None,
+                    worktree_delete_executor=worktree_delete_executor,
+                    coverage_executor=coverage_executor,
+                    db_executor=db_executor,
+                ),
+            )
+        )
+
+        assert [executor for executor, _ in shutdown_calls] == [
+            worktree_delete_executor,
+            coverage_executor,
+            db_executor,
+        ]
+        assert shutdown_calls[0][1]["join_timeout_seconds"] is None
+
+    async def test_overall_deadline_still_drains_active_worktree_delete_before_database_close(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import threading
+
+        from gobby.worktrees.executor import DestructiveBoundary, WorktreeDeleteExecutor
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
+            0.05,
+        )
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+
+        def blocked_delete(boundary: DestructiveBoundary) -> None:
+            assert boundary.begin_mutation()
+            worker_started.set()
+            release_worker.wait()
+
+        runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
+        runner.worktree_delete_executor = WorktreeDeleteExecutor(max_workers=1)
+        server = SimpleNamespace(should_exit=False)
+
+        async def completed_server() -> None:
+            return None
+
+        delete_task = asyncio.create_task(
+            runner.worktree_delete_executor.run_delete(blocked_delete)
+        )
+        try:
+            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=1.0)
+            shutdown_task = asyncio.create_task(
+                runner_lifecycle_shutdown.shutdown_daemon_services(
+                    runner,
+                    server,
+                    asyncio.create_task(completed_server()),
+                    1,
+                    await_critical_stop_hook_grace_window=AsyncMock(),
+                    shutdown_websocket_server=AsyncMock(),
+                    reap_remaining_child_processes=AsyncMock(),
+                    shutdown_telemetry=MagicMock(),
+                    cleanup_pid_file=MagicMock(),
+                )
+            )
+            await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
+            await asyncio.sleep(0.06)
+            runner.database.close.assert_not_called()
+
+            release_worker.set()
+            await asyncio.wait_for(shutdown_task, timeout=1.0)
+            await asyncio.wait_for(delete_task, timeout=1.0)
+
+            runner.database.close.assert_called_once_with()
+            assert runner.worktree_delete_executor.is_joined() is True
+        finally:
+            release_worker.set()
+
+    @pytest.mark.asyncio
     async def test_hung_db_call_does_not_block_database_close(self) -> None:
         import threading
 
@@ -2014,9 +2111,7 @@ class TestRunGobbyFunction:
                 "/tmp/config.yaml", resolve_database_url=True
             )
             mock_require_machine_id.assert_called_once_with()
-            mock_lease_cls.assert_called_once_with(
-                "postgresql://test", machine_id="machine-id"
-            )
+            mock_lease_cls.assert_called_once_with("postgresql://test", machine_id="machine-id")
             mock_verify_schema.assert_called_once_with("postgresql://test")
             assert lease.try_acquire.call_count == 1
             assert mock_monitor_lease.await_count == 1

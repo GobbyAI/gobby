@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from gobby.tasks.validation import TaskValidator
     from gobby.workflows.loader import WorkflowLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
     from gobby.worktrees.merge import MergeResolver
 
@@ -51,6 +52,7 @@ def setup_internal_registries(
     llm_service: LLMService | None = None,
     agent_runner: AgentRunner | None = None,
     worktree_storage: LocalWorktreeManager | None = None,
+    worktree_delete_executor: WorktreeDeleteExecutor | None = None,
     clone_storage: LocalCloneManager | None = None,
     git_manager: WorktreeGitManager | None = None,
     merge_storage: MergeResolutionManager | None = None,
@@ -334,6 +336,7 @@ def setup_internal_registries(
             project_id=project_id,
             session_manager=session_manager,
             task_manager=task_manager,
+            worktree_delete_executor=worktree_delete_executor,
         )
         manager.add_registry(worktrees_registry)
         logger.debug("Worktrees registry initialized")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
@@ -23,6 +24,7 @@ from gobby.servers.routes.source_control import (
     create_source_control_router,
 )
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.worktrees.executor import WorktreeDeleteExecutor
 
 pytestmark = pytest.mark.unit
 
@@ -51,8 +53,15 @@ def mock_server():
     server.services.worktree_storage = None
     server.services.clone_storage = None
     server.services.git_manager = None
+    server.services.task_manager = None
+    executor = WorktreeDeleteExecutor(thread_name_prefix="test-http-worktree-delete")
+    server.services.run_worktree_delete = executor.run_delete
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
-    return server
+    try:
+        yield server
+    finally:
+        executor.shutdown()
+        executor.join()
 
 
 @pytest.fixture
@@ -1552,6 +1561,10 @@ class TestDeleteWorktree:
         mock_storage.delete.return_value = True
         mock_server.services.worktree_storage = mock_storage
 
+        mock_artifacts = MagicMock()
+        mock_artifacts.clear_worktree_references.return_value = 2
+        mock_server.services.task_manager = SimpleNamespace(artifacts=mock_artifacts)
+
         mock_git_result = MagicMock()
         mock_git_result.success = True
         mock_git_manager = MagicMock()
@@ -1565,6 +1578,7 @@ class TestDeleteWorktree:
             patch(
                 "gobby.worktrees.git.WorktreeGitManager",
             ) as mock_wgm_cls,
+            patch("gobby.worktrees.deletion.emit_worktree_event") as emit_event,
         ):
             mock_wgm_cls.return_value.delete_worktree.return_value = mock_git_result
 
@@ -1578,8 +1592,19 @@ class TestDeleteWorktree:
             "/tmp/wt",
             force=True,
             delete_branch=True,
+            force_delete_branch=False,
             branch_name="feature",
             base_branch="main",
+        )
+        mock_storage.delete.assert_called_once_with("wt-1")
+        mock_artifacts.clear_worktree_references.assert_called_once_with("wt-1")
+        emit_event.assert_called_once_with(
+            "worktree_deleted",
+            worktree_id="wt-1",
+            project_id="proj-1",
+            branch_name="feature",
+            worktree_path="/tmp/wt",
+            artifact_refs_cleared=2,
         )
 
     def test_delete_git_deletion_fails(self, client, mock_server) -> None:

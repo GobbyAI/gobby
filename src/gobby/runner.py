@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.loader import WorkflowLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
+    from gobby.worktrees.executor import WorktreeDeleteExecutor
     from gobby.worktrees.git import WorktreeGitManager
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -143,6 +144,7 @@ class GobbyRunner:
     database: HubDatabase
     managed_credential_manager: ManagedCredentialManager
     db_executor: DatabaseExecutor
+    worktree_delete_executor: WorktreeDeleteExecutor
     coverage_executor: CoverageExecutor
     database_concurrency: DatabaseConcurrencyResolution
     database_watchdog: DatabaseSaturationWatchdog

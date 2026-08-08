@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::error::Error as StdError;
+use std::io;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -322,11 +323,24 @@ fn fetch_config_body(
     }
     let body = response
         .into_string()
-        .map_err(|_| EffectiveConfigError::Protocol {
-            status,
-            reason: "response body could not be read",
+        .map_err(|error| EffectiveConfigError::Transport {
+            kind: classify_response_body_error(&error),
         })?;
     Ok((status, body))
+}
+
+fn classify_response_body_error(error: &io::Error) -> EffectiveConfigTransportKind {
+    match error.kind() {
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock => {
+            EffectiveConfigTransportKind::Timeout
+        }
+        io::ErrorKind::ConnectionAborted
+        | io::ErrorKind::ConnectionRefused
+        | io::ErrorKind::ConnectionReset
+        | io::ErrorKind::NotConnected
+        | io::ErrorKind::UnexpectedEof => EffectiveConfigTransportKind::Unreachable,
+        _ => EffectiveConfigTransportKind::Other,
+    }
 }
 
 fn validate_managed_bundle(

@@ -115,8 +115,8 @@ class TestDaemonClientCheckHealth:
         assert error == "HTTP 503"
         logger.warning.assert_called_once_with("Daemon health check failed: status %s", 503)
 
-    def test_health_check_connection_refused(self) -> None:
-        """Test health check when daemon not running."""
+    def test_health_check_connection_refused_is_debug_only(self) -> None:
+        """A retryable connection refusal does not emit a warning."""
         logger = MagicMock()
         client = DaemonClient(logger=logger)
 
@@ -125,7 +125,8 @@ class TestDaemonClientCheckHealth:
 
         assert is_healthy is False
         assert error is DaemonHealthError.NOT_RUNNING
-        logger.warning.assert_called_once()
+        logger.warning.assert_not_called()
+        logger.debug.assert_called_once()
 
     def test_single_health_timeout_is_debug_only(self) -> None:
         """A transient timeout remains observable without warning noise."""

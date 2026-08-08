@@ -209,6 +209,7 @@ class HTTPServer:
             llm_service=services.llm_service,
             agent_runner=services.agent_runner,
             worktree_storage=services.worktree_storage,
+            worktree_delete_executor=services.worktree_delete_executor,
             clone_storage=services.clone_storage,
             git_manager=services.git_manager,
             merge_storage=merge_storage,

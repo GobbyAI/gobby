@@ -14,6 +14,11 @@ from fastapi import APIRouter, HTTPException, Query
 from gobby.integrations.github import GitHubIntegration
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+from gobby.worktrees.deletion import (
+    DeletionSurface,
+    WorktreeDeletionRequest,
+    delete_worktree_transaction,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -772,61 +777,50 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
     @router.delete("/worktrees/{worktree_id}")
     async def delete_worktree(worktree_id: str) -> dict[str, Any]:
         """Delete a worktree."""
-        if not server.services.worktree_storage:
+        worktree_storage = server.services.worktree_storage
+        if worktree_storage is None:
             raise HTTPException(503, "Worktree storage not available")
 
-        try:
-            wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
-        except MachineOwnershipMismatchError as exc:
-            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
-        if not wt:
-            raise HTTPException(404, "Worktree not found")
-
-        # Delete git worktree if git_manager is available
-        git_deleted = True
-        git_error = None
-        if server.services.git_manager:
+        def resolve_git_manager(worktree: Any) -> Any:
+            fallback = server.services.git_manager
+            if fallback is None:
+                return None
             from gobby.worktrees.git import WorktreeGitManager
 
-            # Determine the best git manager: project-scoped or fallback
-            git_mgr = None
             try:
-                repo_path, _ = await server.run_db(_resolve_project, server, wt.project_id)
+                repo_path, _ = _resolve_project(server, worktree.project_id)
                 if repo_path:
-                    git_mgr = WorktreeGitManager(repo_path)
+                    return WorktreeGitManager(repo_path)
             except (ValueError, OSError):
                 pass
+            return fallback
 
-            target = git_mgr or server.services.git_manager
-            try:
-                result = target.delete_worktree(
-                    wt.worktree_path,
-                    force=True,
-                    delete_branch=True,
-                    branch_name=wt.branch_name,
-                    base_branch=wt.base_branch,
-                )
-                git_deleted = result.success
-                if not result.success:
-                    logger.warning("Git worktree deletion failed: %s", result.message)
-                    git_error = result.message
-            except Exception as exc:
-                git_deleted = False
-                git_error = str(exc)
-                logger.warning("Git worktree deletion raised an exception", exc_info=True)
-
-        deleted = (
-            await server.run_db(server.services.worktree_storage.delete, worktree_id)
-            if git_deleted
-            else False
+        request = WorktreeDeletionRequest(
+            worktree_id=worktree_id,
+            surface=DeletionSurface.HTTP,
         )
+        try:
+            result = await server.services.run_worktree_delete(
+                lambda boundary: delete_worktree_transaction(
+                    boundary,
+                    request=request,
+                    worktree_storage=worktree_storage,
+                    resolve_git_manager=resolve_git_manager,
+                    task_manager=server.services.task_manager,
+                )
+            )
+        except MachineOwnershipMismatchError as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
+        if not result.found:
+            raise HTTPException(404, "Worktree not found")
+
         response: dict[str, Any] = {
-            "success": deleted,
+            "success": result.success,
             "id": worktree_id,
-            "git_deleted": git_deleted,
+            "git_deleted": result.git_deleted,
         }
-        if not git_deleted:
-            response["git_error"] = git_error
+        if not result.git_deleted:
+            response["git_error"] = result.error
             response["message"] = "Git worktree deletion failed; DB record was preserved"
         return response
 
