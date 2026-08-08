@@ -1,11 +1,11 @@
 header:
   plan_id: codewiki-ownership-move
-  plan_hash: a55e4791987cb50279332298766ce3dd9acfcaf918e4cb76e3ae175c46675e6e
+  plan_hash: d9d5e2097db9ab45c72a2cd27c72ef50ca316ff39c35848d36f38030d688b904
   root_task_ref: '#19668'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-08-08T05:03:47Z'
+  generated_at: '2026-08-08T15:50:45Z'
   task_tree_source: db
-  task_tree_source_hash: b0118eec1f5cc33230db07820022e83eb54082161aed74998a4dbc93c9fad98a
+  task_tree_source_hash: 228f346ab6da46edacbb18fe903c04ada6e5e7d84666a3875d37ac7a674700ee
   evidence_summary: []
   evidence: []
 rows:
@@ -44,7 +44,7 @@ rows:
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.4
-  plan_node_hash: c2ef59566573ef5a844834ff2a29461783ef12ee1c1a0a1ac79528ad9c89fd95
+  plan_node_hash: 0721dfb9d5a746a406d5a5f44ae721b0db3f2f6f80e8de66c97cb7830eaa337b
   status: covered
   leaves:
   - leaf_task_ref: '#19814'
@@ -55,7 +55,7 @@ rows:
   deferral_target: null
 - section_id: '1.1'
   item_id: 1.1.5
-  plan_node_hash: edbaaf3c98bea5313b375ca6cf8335d78d01fbbd9dd415ef4a66cd4a5f6f65b0
+  plan_node_hash: 48032226811de3e5eea6e6d0e328c65a7a000115fa605d80a10826bf19b1dd7b
   status: covered
   leaves:
   - leaf_task_ref: '#19814'
@@ -63,6 +63,17 @@ rows:
       hash manifest from an isolated temp vault and refuses to run against the configured
       production vault path. ...'
     matched_artifact_ref: scripts/codewiki_parity_baseline.sh
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 390cde02370f77135ab6a9c199de26d271a0f57ce47c65e5d2b0690fa3a417b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19814'
+    validation_criteria_snippet: '1.1.1: Baseline script produces a sorted normalized
+      hash manifest from an isolated temp vault and refuses to run against the configured
+      production vault path. ...'
+    matched_artifact_ref: crates/gwiki/tests/fixtures/codewiki_parity/project/src/lib.rs
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.1
@@ -88,7 +99,7 @@ rows:
   deferral_target: null
 - section_id: '1.2'
   item_id: 1.2.3
-  plan_node_hash: 3690d5208e03786227b80f2952e5a0c293e730653bebeff7dfaa9b9a8c014055
+  plan_node_hash: dd5a605a76d9ea82bd22402f54a1cb19a34c1d98af196810334df23af03cd724
   status: covered
   leaves:
   - leaf_task_ref: '#19815'
@@ -97,9 +108,31 @@ rows:
       `Context`, or credentials. file: ...'
     matched_artifact_ref: CodewikiFacts
   deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 1f6ae92f6e146d16e64a9ae4bf206a2e0c68bfb74fb22b8505c2b8692192d6b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19815'
+    validation_criteria_snippet: '1.2.1: Facade module exists with typed owned fact
+      structs and lazy read-only access; no public signature exposes connections,
+      `Context`, or credentials. file: ...'
+    matched_artifact_ref: tests/code_index/test_gcode_privilege_manifest.py
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 8c59b65f8df01f3b088b437f733f27deef6c90898ffaceea9533a27fa7c702cb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19815'
+    validation_criteria_snippet: '1.2.1: Facade module exists with typed owned fact
+      structs and lazy read-only access; no public signature exposes connections,
+      `Context`, or credentials. file: ...'
+    matched_artifact_ref: crates/gcode/src/codewiki_facts/tests.rs
+  deferral_target: null
 - section_id: '1.3'
   item_id: 1.3.1
-  plan_node_hash: 4b48d25fc9614fb83ff3584b35aabe0029349bc00a185b61db873a5d91b1bf4b
+  plan_node_hash: f98ba3b5d5459f5c52b828822dce97e6d55815d000b0e4cc5ffebe1cfc557570
   status: covered
   leaves:
   - leaf_task_ref: '#19816'
@@ -196,6 +229,39 @@ rows:
       the workspace builds with `...'
     matched_artifact_ref: crates/gwiki/tests/code_engine_boundary.rs::ownership_identities_moved
   deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.8
+  plan_node_hash: 0e4545bfdd92026c6d3c06438ad0f522d00f456d3ec3fd14d36e05698d30390a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19817'
+    validation_criteria_snippet: '2.1.1: Every file of the source tree has a counterpart
+      under `crates/gwiki/src/commands/code/` with no file left behind or dropped,
+      the workspace builds with `...'
+    matched_artifact_ref: crates/gwiki/tests/code_engine_boundary.rs::tool_executor_uses_only_facade
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.9
+  plan_node_hash: 0621aaec749c9c24186de2109b9f414783cb8662fb8e57b82b7b79383295faf6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19817'
+    validation_criteria_snippet: '2.1.1: Every file of the source tree has a counterpart
+      under `crates/gwiki/src/commands/code/` with no file left behind or dropped,
+      the workspace builds with `...'
+    matched_artifact_ref: crates/gwiki/tests/code_engine_boundary.rs::tool_timeout_does_not_block_subsequent_calls
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.10
+  plan_node_hash: b801d6f0c9ce3eafdd65b764c557a40c4f296ed750b2482c7c7554e14aa481b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19817'
+    validation_criteria_snippet: '2.1.1: Every file of the source tree has a counterpart
+      under `crates/gwiki/src/commands/code/` with no file left behind or dropped,
+      the workspace builds with `...'
+    matched_artifact_ref: crates/gwiki/tests/code_engine_boundary.rs::graph_outcomes_match_legacy_mapping
+  deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.1
   plan_node_hash: 3fa0d33d135b389c236f305f6b51121711d425f835bd8226ee00c794d90d922d
@@ -220,7 +286,7 @@ rows:
   deferral_target: null
 - section_id: '2.3'
   item_id: 2.3.3
-  plan_node_hash: 15d70b84972c0160fd27c9bfb546fbecd73947c58c12a08fddb889ef7b42aa9c
+  plan_node_hash: 07e915b3a8f4ccb4b478c52d7555dadcb9f4a25518091a282bd28d71c06a4fbc
   status: covered
   leaves:
   - leaf_task_ref: '#19818'
@@ -228,6 +294,17 @@ rows:
       flag surface with identical defaults and conflict matrix; the moved codewiki
       parse tests pass against the new p...'
     matched_artifact_ref: crates/gwiki/src/commands/project_admission/tests.rs
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 049299948d75f4495a0cbca9142215741a125fdec6740482eecfc8c7e17e6ddb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19818'
+    validation_criteria_snippet: '2.3.1: `gwiki code` parses the full legacy FLAT
+      flag surface with identical defaults and conflict matrix; the moved codewiki
+      parse tests pass against the new p...'
+    matched_artifact_ref: crates/gwiki/src/cli/tests/code.rs
   deferral_target: null
 - section_id: '2.4'
   item_id: 2.4.1
@@ -262,6 +339,28 @@ rows:
       entry; no file remains under `c...'
     matched_artifact_ref: crates/gcode/tests/facade_boundary.rs::public_surface_is_pinned
   deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: d2476cb86eab27c02298d9c4141767dae204038cc3b11d60e8ee428942c649b2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19819'
+    validation_criteria_snippet: '2.4.1: `gcode codewiki` is absent from CLI parse,
+      dispatch, and contract; `gcode --help` and the contract JSON show no codewiki
+      entry; no file remains under `c...'
+    matched_artifact_ref: crates/gcode/src/config/tests.rs
+  deferral_target: null
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: 1995053022485d78688bf33ec96535d64b7424c461cdef3ddf90b7ece0bc7fbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19819'
+    validation_criteria_snippet: '2.4.1: `gcode codewiki` is absent from CLI parse,
+      dispatch, and contract; `gcode --help` and the contract JSON show no codewiki
+      entry; no file remains under `c...'
+    matched_artifact_ref: crates/gcode/security/managed_postgres_privileges.json
+  deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.1
   plan_node_hash: bc3a8874e5f9f8a66d973f296eb59def5eea155e832401eb207fb556b4a71f6e
@@ -275,7 +374,7 @@ rows:
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.2
-  plan_node_hash: 82ad34d92dbdf00e424c1add0a894de3f9c40b31688d5cea30ae06dcfa631c2a
+  plan_node_hash: c9fb6414b1e836b6bfd765f53b44490373cd84cd0245898bcc91159374799814
   status: covered
   leaves:
   - leaf_task_ref: '#19820'
@@ -286,7 +385,7 @@ rows:
   deferral_target: null
 - section_id: '2.5'
   item_id: 2.5.3
-  plan_node_hash: 5e5c8a872e50f05b1cc0e2c81f9cc4be844d9bc2455bbc8cac772534d8ed29b9
+  plan_node_hash: bb4656b52ca1519b27a632b1aad88747c2af75947b6a9c4a14605ec3f5d4410c
   status: covered
   leaves:
   - leaf_task_ref: '#19820'
@@ -294,6 +393,17 @@ rows:
       is the only marker any production reader or writer recognizes; a scan of `crates`
       and `src` finds `gcode-co...'
     matched_artifact_ref: crates/gwiki/src/librarian/tests.rs::generated_code_namespace_not_curated
+  deferral_target: null
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 55a56bf9a7a48e25e240ec5f4c8b7a80f8fd859e1c0233c263d95a4b8e4d97cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19820'
+    validation_criteria_snippet: '2.5.1: The renamed constant with value `gwiki-code`
+      is the only marker any production reader or writer recognizes; a scan of `crates`
+      and `src` finds `gcode-co...'
+    matched_artifact_ref: crates/gwiki/src/upkeep/tests.rs::code_namespace_excluded_from_upkeep
   deferral_target: null
 - section_id: '2.6'
   item_id: 2.6.1
@@ -315,15 +425,55 @@ rows:
       to the committed pre-move baseline. test: `crates/gwiki/tests/code_parity.rs::deterministic_output_matches_...'
     matched_artifact_ref: crates/gwiki/tests/code_parity.rs::production_vault_untouched
   deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.3
+  plan_node_hash: d4ae70cc69c68c60edc997410f78f3d46d16256caee6f5dbf7178110e7af15f8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19821'
+    validation_criteria_snippet: '2.6.1: Normalized full-run output is byte-identical
+      to the committed pre-move baseline. test: `crates/gwiki/tests/code_parity.rs::deterministic_output_matches_...'
+    matched_artifact_ref: crates/gwiki/tests/code_parity.rs::gwiki_mode_capture_discipline
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.4
+  plan_node_hash: fe85881e9b78f286320c8cca15af60352289e652bd6f136d9797b2f5a68af682
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19821'
+    validation_criteria_snippet: '2.6.1: Normalized full-run output is byte-identical
+      to the committed pre-move baseline. test: `crates/gwiki/tests/code_parity.rs::deterministic_output_matches_...'
+    matched_artifact_ref: crates/gwiki/tests/code_parity.rs::legacy_mode_matrix
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.5
+  plan_node_hash: b1eed943f20f16065049f0eceefdb4d2fea0ce956a0088be78847866ba7ba585
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19821'
+    validation_criteria_snippet: '2.6.1: Normalized full-run output is byte-identical
+      to the committed pre-move baseline. test: `crates/gwiki/tests/code_parity.rs::deterministic_output_matches_...'
+    matched_artifact_ref: crates/gwiki/tests/code_parity.rs::lock_contention_matches_legacy
+  deferral_target: null
+- section_id: '2.6'
+  item_id: 2.6.6
+  plan_node_hash: c58608cfee5f425f7458c10cfc3fb72256b364c71192e22f549ec2729a62f3e4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19821'
+    validation_criteria_snippet: '2.6.1: Normalized full-run output is byte-identical
+      to the committed pre-move baseline. test: `crates/gwiki/tests/code_parity.rs::deterministic_output_matches_...'
+    matched_artifact_ref: crates/gwiki/tests/code_parity.rs::failure_paths_match_legacy
+  deferral_target: null
 - section_id: '3.1'
   item_id: 3.1.1
-  plan_node_hash: 8649dcabfaee4ea9346251c30cd595a7ee3a1bc34ae85c7cf04635bd65012430
+  plan_node_hash: fe4d378f2004b415edd4ee829afee0e5e7f4718205dc9637b47394c6d3e93b14
   status: covered
   leaves:
   - leaf_task_ref: '#19822'
     validation_criteria_snippet: '3.1.1: The three codewiki modules are gone and nothing
-      imports them; `gcode grep "codewiki_refresh\|codewiki_trigger\|codewiki_nightly"
-      src` returns zero produ...'
+      imports them: each of `gcode grep -w "codewiki_refresh" src`, `gcode grep -w
+      "codewiki_trigger" src`, an...'
     matched_artifact_ref: src/gobby/code_index/__init__.py
   deferral_target: null
 - section_id: '3.1'
@@ -333,8 +483,8 @@ rows:
   leaves:
   - leaf_task_ref: '#19822'
     validation_criteria_snippet: '3.1.1: The three codewiki modules are gone and nothing
-      imports them; `gcode grep "codewiki_refresh\|codewiki_trigger\|codewiki_nightly"
-      src` returns zero produ...'
+      imports them: each of `gcode grep -w "codewiki_refresh" src`, `gcode grep -w
+      "codewiki_trigger" src`, an...'
     matched_artifact_ref: GcodeGateway
   deferral_target: null
 - section_id: '3.1'
@@ -344,8 +494,8 @@ rows:
   leaves:
   - leaf_task_ref: '#19822'
     validation_criteria_snippet: '3.1.1: The three codewiki modules are gone and nothing
-      imports them; `gcode grep "codewiki_refresh\|codewiki_trigger\|codewiki_nightly"
-      src` returns zero produ...'
+      imports them: each of `gcode grep -w "codewiki_refresh" src`, `gcode grep -w
+      "codewiki_trigger" src`, an...'
     matched_artifact_ref: create_lifespan
   deferral_target: null
 - section_id: '3.2'
@@ -361,7 +511,7 @@ rows:
   deferral_target: null
 - section_id: '3.2'
   item_id: 3.2.2
-  plan_node_hash: d3d68de1e36f680f4a78aeb0e41fd7c1fc4fa0c8f6114b7faeaa1427199ad140
+  plan_node_hash: 68be6fbe0b225c897d8779feba7bef8571e8be6e88f7b1524b40ac78eb73b5a2
   status: covered
   leaves:
   - leaf_task_ref: '#19823'
@@ -402,6 +552,28 @@ rows:
       and registers no codewiki handler; the reconciler returns the disabled, failed,
       and residual row ids...'
     matched_artifact_ref: tests/test_runner_init.py::reconciliation_query_failure_does_not_block_startup
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 59f1e561d24046813bcab208e99832e274872561de3519135f804515f79438f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19823'
+    validation_criteria_snippet: '3.2.1: Startup disables existing nightly rows idempotently
+      and registers no codewiki handler; the reconciler returns the disabled, failed,
+      and residual row ids...'
+    matched_artifact_ref: tests/test_runner_init.py::reconciliation_independent_of_code_indexer
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: 174e06fc7da3dea21bf1374f43ba782dccb83ba7de7a3d04ae3b9a2c5518c9ee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19823'
+    validation_criteria_snippet: '3.2.1: Startup disables existing nightly rows idempotently
+      and registers no codewiki handler; the reconciler returns the disabled, failed,
+      and residual row ids...'
+    matched_artifact_ref: tests/wiki/test_codewiki_dormant.py::legacy_non_system_row_reconciled
   deferral_target: null
 - section_id: '3.3'
   item_id: 3.3.1
@@ -448,14 +620,14 @@ rows:
   deferral_target: null
 - section_id: '3.5'
   item_id: 3.5.1
-  plan_node_hash: f4d927b11b142e0675f91a12f0779c2afe5c997671ef47a8ae8e3dc363d930dd
+  plan_node_hash: 3aeebc000afcdccfdb8921f67cc0d0f7b4301a2331af6403d43492f2a9e2d05b
   status: covered
   leaves:
   - leaf_task_ref: '#19826'
-    validation_criteria_snippet: '3.5.1: Tool-chat whitelist has no codewiki entry
-      and whitelist tests pass. file: `src/gobby/ai/_tool_chat_tools.py`. 3.5.2: No
-      production comment cites codewik...'
-    matched_artifact_ref: src/gobby/ai/_tool_chat_tools.py
+    validation_criteria_snippet: '3.5.1: Tool-chat whitelist has no codewiki entry;
+      the whitelist tests include a mutation-enabled case proving codewiki is rejected
+      as unlisted when `allow_muta...'
+    matched_artifact_ref: tests/ai/test_tool_chat_tools.py
   deferral_target: null
 - section_id: '3.5'
   item_id: 3.5.2
@@ -463,9 +635,9 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#19826'
-    validation_criteria_snippet: '3.5.1: Tool-chat whitelist has no codewiki entry
-      and whitelist tests pass. file: `src/gobby/ai/_tool_chat_tools.py`. 3.5.2: No
-      production comment cites codewik...'
+    validation_criteria_snippet: '3.5.1: Tool-chat whitelist has no codewiki entry;
+      the whitelist tests include a mutation-enabled case proving codewiki is rejected
+      as unlisted when `allow_muta...'
     matched_artifact_ref: stale codewiki rationale removed
   deferral_target: null
 - section_id: '3.6'
@@ -503,13 +675,13 @@ rows:
   deferral_target: null
 - section_id: '3.7'
   item_id: 3.7.1
-  plan_node_hash: 6a02c67b109c48487f9ab83d9d3efaa542e74d752a5840ff7c057168f72892fd
+  plan_node_hash: 0cd8a0092334401cd96dedd19c4e58ff1e72a6c83e21ceded878d20d5bd1dfd5
   status: covered
   leaves:
   - leaf_task_ref: '#19828'
     validation_criteria_snippet: '3.7.1: Dream runs cleanly across the seen-frozen,
       absent, and first-sight digest cases with the pinned trigger behavior (quiet,
-      quiet, fire-once). test: `tests...'
+      quiet, fire-once); any crash th...'
     matched_artifact_ref: tests/memory/test_dream_frozen_digest.py::frozen_digest_is_tolerated
   deferral_target: null
 - section_id: '4.1'
@@ -547,7 +719,7 @@ rows:
   deferral_target: null
 - section_id: '4.2'
   item_id: 4.2.2
-  plan_node_hash: 05d11510d54fdf8a74d3f0527135eddb32487de8f9fa03332d50f226bbe46000
+  plan_node_hash: c62b4170cbdd71d5b616699a6bb6526c5eea072c55e0a23125f8f95409d5dc7b
   status: covered
   leaves:
   - leaf_task_ref: '#19830'

@@ -1,90 +1,313 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: codewiki-ownership-move
-plan_hash: "a55e4791987cb50279332298766ce3dd9acfcaf918e4cb76e3ae175c46675e6e"
-root_task_ref: "19668"
-
+plan_hash: d9d5e2097db9ab45c72a2cd27c72ef50ca316ff39c35848d36f38030d688b904
+root_task_ref: '19668'
 sections:
-  "1.1":
+  '1.1':
     acceptance_items:
-      "1.1.1": {expected_leaves: [{title: Capture the deterministic parity baseline, owner_agent: backend-developer}]}
-      "1.1.2": {expected_leaves: [{title: Capture the deterministic parity baseline, owner_agent: backend-developer}]}
-      "1.1.3": {expected_leaves: [{title: Capture the deterministic parity baseline, owner_agent: backend-developer}]}
-      "1.1.4": {expected_leaves: [{title: Capture the deterministic parity baseline, owner_agent: backend-developer}]}
-      "1.1.5": {expected_leaves: [{title: Capture the deterministic parity baseline, owner_agent: backend-developer}]}
-  "1.2":
+      1.1.1:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+      1.1.2:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+      1.1.3:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+      1.1.4:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+      1.1.5:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+      1.1.6:
+        expected_leaves:
+        - title: Capture the deterministic parity baseline
+          owner_agent: backend-developer
+  '1.2':
     acceptance_items:
-      "1.2.1": {expected_leaves: [{title: Implement the `codewiki_facts` facade in gobby-code, owner_agent: backend-developer}]}
-      "1.2.2": {expected_leaves: [{title: Implement the `codewiki_facts` facade in gobby-code, owner_agent: backend-developer}]}
-      "1.2.3": {expected_leaves: [{title: Implement the `codewiki_facts` facade in gobby-code, owner_agent: backend-developer}]}
-  "1.3":
+      1.2.1:
+        expected_leaves:
+        - title: Implement the `codewiki_facts` facade in gobby-code
+          owner_agent: backend-developer
+      1.2.2:
+        expected_leaves:
+        - title: Implement the `codewiki_facts` facade in gobby-code
+          owner_agent: backend-developer
+      1.2.3:
+        expected_leaves:
+        - title: Implement the `codewiki_facts` facade in gobby-code
+          owner_agent: backend-developer
+      1.2.4:
+        expected_leaves:
+        - title: Implement the `codewiki_facts` facade in gobby-code
+          owner_agent: backend-developer
+      1.2.5:
+        expected_leaves:
+        - title: Implement the `codewiki_facts` facade in gobby-code
+          owner_agent: backend-developer
+  '1.3':
     acceptance_items:
-      "1.3.1": {expected_leaves: [{title: Privatize gcode's datastore modules and pin the boundary, owner_agent: backend-developer}]}
-      "1.3.2": {expected_leaves: [{title: Privatize gcode's datastore modules and pin the boundary, owner_agent: backend-developer}]}
-  "2.1":
+      1.3.1:
+        expected_leaves:
+        - title: Privatize gcode's datastore modules and pin the boundary
+          owner_agent: backend-developer
+      1.3.2:
+        expected_leaves:
+        - title: Privatize gcode's datastore modules and pin the boundary
+          owner_agent: backend-developer
+  '2.1':
     acceptance_items:
-      "2.1.1": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.2": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.3": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.4": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.5": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.6": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-      "2.1.7": {expected_leaves: [{title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram composer, owner_agent: backend-developer}]}
-  "2.3":
+      2.1.1:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.2:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.3:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.4:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.5:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.6:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.7:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.8:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.10:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+      2.1.9:
+        expected_leaves:
+        - title: Move the codewiki engine under gobby-wiki behind the facade and decompose the diagram
+            composer
+          owner_agent: backend-developer
+  '2.3':
     acceptance_items:
-      "2.3.1": {expected_leaves: [{title: Add the `gwiki code` CLI, owner_agent: backend-developer}]}
-      "2.3.2": {expected_leaves: [{title: Add the `gwiki code` CLI, owner_agent: backend-developer}]}
-      "2.3.3": {expected_leaves: [{title: Add the `gwiki code` CLI, owner_agent: backend-developer}]}
-  "2.4":
+      2.3.1:
+        expected_leaves:
+        - title: Add the `gwiki code` CLI
+          owner_agent: backend-developer
+      2.3.2:
+        expected_leaves:
+        - title: Add the `gwiki code` CLI
+          owner_agent: backend-developer
+      2.3.3:
+        expected_leaves:
+        - title: Add the `gwiki code` CLI
+          owner_agent: backend-developer
+      2.3.4:
+        expected_leaves:
+        - title: Add the `gwiki code` CLI
+          owner_agent: backend-developer
+  '2.4':
     acceptance_items:
-      "2.4.1": {expected_leaves: [{title: Remove the `gcode codewiki` surface, owner_agent: backend-developer}]}
-      "2.4.2": {expected_leaves: [{title: Remove the `gcode codewiki` surface, owner_agent: backend-developer}]}
-      "2.4.3": {expected_leaves: [{title: Remove the `gcode codewiki` surface, owner_agent: backend-developer}]}
-  "2.5":
+      2.4.1:
+        expected_leaves:
+        - title: Remove the `gcode codewiki` surface
+          owner_agent: backend-developer
+      2.4.2:
+        expected_leaves:
+        - title: Remove the `gcode codewiki` surface
+          owner_agent: backend-developer
+      2.4.3:
+        expected_leaves:
+        - title: Remove the `gcode codewiki` surface
+          owner_agent: backend-developer
+      2.4.4:
+        expected_leaves:
+        - title: Remove the `gcode codewiki` surface
+          owner_agent: backend-developer
+      2.4.5:
+        expected_leaves:
+        - title: Remove the `gcode codewiki` surface
+          owner_agent: backend-developer
+  '2.5':
     acceptance_items:
-      "2.5.1": {expected_leaves: [{title: Flip the provenance marker with no reader compatibility, owner_agent: backend-developer}]}
-      "2.5.2": {expected_leaves: [{title: Flip the provenance marker with no reader compatibility, owner_agent: backend-developer}]}
-      "2.5.3": {expected_leaves: [{title: Flip the provenance marker with no reader compatibility, owner_agent: backend-developer}]}
-  "2.6":
+      2.5.1:
+        expected_leaves:
+        - title: Flip the provenance marker with no reader compatibility
+          owner_agent: backend-developer
+      2.5.2:
+        expected_leaves:
+        - title: Flip the provenance marker with no reader compatibility
+          owner_agent: backend-developer
+      2.5.3:
+        expected_leaves:
+        - title: Flip the provenance marker with no reader compatibility
+          owner_agent: backend-developer
+      2.5.4:
+        expected_leaves:
+        - title: Flip the provenance marker with no reader compatibility
+          owner_agent: backend-developer
+  '2.6':
     acceptance_items:
-      "2.6.1": {expected_leaves: [{title: Prove old-vs-new parity, owner_agent: backend-developer}]}
-      "2.6.2": {expected_leaves: [{title: Prove old-vs-new parity, owner_agent: backend-developer}]}
-  "3.1":
+      2.6.1:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+      2.6.2:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+      2.6.3:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+      2.6.4:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+      2.6.5:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+      2.6.6:
+        expected_leaves:
+        - title: Prove old-vs-new parity
+          owner_agent: backend-developer
+  '3.1':
     acceptance_items:
-      "3.1.1": {expected_leaves: [{title: Remove the active CodeWiki daemon machinery, owner_agent: backend-developer}]}
-      "3.1.2": {expected_leaves: [{title: Remove the active CodeWiki daemon machinery, owner_agent: backend-developer}]}
-      "3.1.3": {expected_leaves: [{title: Remove the active CodeWiki daemon machinery, owner_agent: backend-developer}]}
-  "3.2":
+      3.1.1:
+        expected_leaves:
+        - title: Remove the active CodeWiki daemon machinery
+          owner_agent: backend-developer
+      3.1.2:
+        expected_leaves:
+        - title: Remove the active CodeWiki daemon machinery
+          owner_agent: backend-developer
+      3.1.3:
+        expected_leaves:
+        - title: Remove the active CodeWiki daemon machinery
+          owner_agent: backend-developer
+  '3.2':
     acceptance_items:
-      "3.2.1": {expected_leaves: [{title: Reconcile CodeWiki cron rows to disabled at startup, owner_agent: backend-developer}]}
-      "3.2.2": {expected_leaves: [{title: Reconcile CodeWiki cron rows to disabled at startup, owner_agent: backend-developer}]}
-      "3.2.3": {expected_leaves: [{title: Reconcile CodeWiki cron rows to disabled at startup, owner_agent: backend-developer}]}
-      "3.2.4": {expected_leaves: [{title: Reconcile CodeWiki cron rows to disabled at startup, owner_agent: backend-developer}]}
-      "3.2.5": {expected_leaves: [{title: Reconcile CodeWiki cron rows to disabled at startup, owner_agent: backend-developer}]}
-  "3.3":
+      3.2.1:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.2:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.3:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.4:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.5:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.6:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+      3.2.7:
+        expected_leaves:
+        - title: Reconcile CodeWiki cron rows to disabled at startup
+          owner_agent: backend-developer
+  '3.3':
     acceptance_items:
-      "3.3.1": {expected_leaves: [{title: Register the dormant wiki-owned routes and retire the legacy routes, owner_agent: backend-developer}]}
-      "3.3.2": {expected_leaves: [{title: Register the dormant wiki-owned routes and retire the legacy routes, owner_agent: backend-developer}]}
-      "3.3.3": {expected_leaves: [{title: Register the dormant wiki-owned routes and retire the legacy routes, owner_agent: backend-developer}]}
-  "3.4":
+      3.3.1:
+        expected_leaves:
+        - title: Register the dormant wiki-owned routes and retire the legacy routes
+          owner_agent: backend-developer
+      3.3.2:
+        expected_leaves:
+        - title: Register the dormant wiki-owned routes and retire the legacy routes
+          owner_agent: backend-developer
+      3.3.3:
+        expected_leaves:
+        - title: Register the dormant wiki-owned routes and retire the legacy routes
+          owner_agent: backend-developer
+  '3.4':
     acceptance_items:
-      "3.4.1": {expected_leaves: [{title: Stop the installer emitting the codewiki git-hook trigger, owner_agent: backend-developer}]}
-  "3.5":
+      3.4.1:
+        expected_leaves:
+        - title: Stop the installer emitting the codewiki git-hook trigger
+          owner_agent: backend-developer
+  '3.5':
     acceptance_items:
-      "3.5.1": {expected_leaves: [{title: Clean up AI-surface coupling, owner_agent: backend-developer}]}
-      "3.5.2": {expected_leaves: [{title: Clean up AI-surface coupling, owner_agent: backend-developer}]}
-  "3.6":
+      3.5.1:
+        expected_leaves:
+        - title: Clean up AI-surface coupling
+          owner_agent: backend-developer
+      3.5.2:
+        expected_leaves:
+        - title: Clean up AI-surface coupling
+          owner_agent: backend-developer
+  '3.6':
     acceptance_items:
-      "3.6.1": {expected_leaves: [{title: Reflect dormancy in config descriptions and the web UI, owner_agent: fullstack-developer}]}
-      "3.6.2": {expected_leaves: [{title: Reflect dormancy in config descriptions and the web UI, owner_agent: fullstack-developer}]}
-      "3.6.3": {expected_leaves: [{title: Reflect dormancy in config descriptions and the web UI, owner_agent: fullstack-developer}]}
-  "3.7":
+      3.6.1:
+        expected_leaves:
+        - title: Reflect dormancy in config descriptions and the web UI
+          owner_agent: fullstack-developer
+      3.6.2:
+        expected_leaves:
+        - title: Reflect dormancy in config descriptions and the web UI
+          owner_agent: fullstack-developer
+      3.6.3:
+        expected_leaves:
+        - title: Reflect dormancy in config descriptions and the web UI
+          owner_agent: fullstack-developer
+  '3.7':
     acceptance_items:
-      "3.7.1": {expected_leaves: [{title: Pin dream tolerance of a frozen truth digest, owner_agent: backend-developer}]}
-  "4.1":
+      3.7.1:
+        expected_leaves:
+        - title: Pin dream tolerance of a frozen truth digest
+          owner_agent: backend-developer
+  '4.1':
     acceptance_items:
-      "4.1.1": {expected_leaves: [{title: Bump and align Rust crate versions, owner_agent: backend-developer}]}
-      "4.1.2": {expected_leaves: [{title: Bump and align Rust crate versions, owner_agent: backend-developer}]}
-  "4.2":
+      4.1.1:
+        expected_leaves:
+        - title: Bump and align Rust crate versions
+          owner_agent: backend-developer
+      4.1.2:
+        expected_leaves:
+        - title: Bump and align Rust crate versions
+          owner_agent: backend-developer
+  '4.2':
     acceptance_items:
-      "4.2.1": {expected_leaves: [{title: Update contracts, docs, and skill guidance, owner_agent: tech-writer}]}
-      "4.2.2": {expected_leaves: [{title: Update contracts, docs, and skill guidance, owner_agent: tech-writer}]}
+      4.2.1:
+        expected_leaves:
+        - title: Update contracts, docs, and skill guidance
+          owner_agent: tech-writer
+      4.2.2:
+        expected_leaves:
+        - title: Update contracts, docs, and skill guidance
+          owner_agent: tech-writer
