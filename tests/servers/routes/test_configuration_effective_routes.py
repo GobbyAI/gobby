@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
@@ -24,6 +25,14 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 LOCAL_RUNTIME_TOKEN = "effective-config-test-token"
+
+LOCAL_MACHINE_ID = "22000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture
@@ -57,7 +66,6 @@ def server(
     hub_db: HubDatabase,
     runtime_config: DaemonConfig,
     tmp_path: Path,
-    mock_machine_id: Any,
 ) -> Any:
     ConfigStore(hub_db).set(
         LOCAL_API_TOKEN_HASH_KEY,

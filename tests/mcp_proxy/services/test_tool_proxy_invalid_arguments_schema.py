@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,7 +19,15 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000016"
+
 ProxyParts = tuple[ToolProxyService, MagicMock, HubDatabase, str]
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

@@ -7,6 +7,7 @@ create_http_server() with a real LocalTaskManager backed by temp_db.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,14 @@ from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class FakeWakeDispatcher:

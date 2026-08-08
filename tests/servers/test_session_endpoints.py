@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from datetime import UTC
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -18,6 +18,14 @@ pytestmark = pytest.mark.unit
 
 # Valid-format UUID that doesn't exist in the database.
 UNKNOWN_SESSION_ID = "99999999-9999-4999-8999-999999999999"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSessionEndpoints:
@@ -60,14 +68,14 @@ class TestSessionEndpoints:
         for index in range(2):
             session_storage.register(
                 external_id=f"destination-{index}",
-                machine_id="21000000-0000-4000-8000-000000000001",
+                machine_id="21000000-0000-4000-8000-000000000003",
                 source="codex",
                 project_id=destination.id,
             )
         moved_sessions = [
             session_storage.register(
                 external_id=f"source-{index}",
-                machine_id="21000000-0000-4000-8000-000000000001",
+                machine_id="21000000-0000-4000-8000-000000000003",
                 source="codex",
                 project_id=test_project["id"],
             )
@@ -328,7 +336,11 @@ class TestSessionEndpoints:
         client = TestClient(server.app)
         response = client.post(
             "/api/sessions/register",
-            json={"external_id": "test", "machine_id": "21000000-0000-4000-8000-000000000002", "source": "claude"},
+            json={
+                "external_id": "test",
+                "machine_id": "21000000-0000-4000-8000-000000000002",
+                "source": "claude",
+            },
         )
         assert response.status_code == 503
 

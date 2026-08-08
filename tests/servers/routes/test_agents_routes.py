@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,14 @@ pytestmark = pytest.mark.unit
 # Valid-format UUID that doesn't exist in the database (id-based routes hit a
 # uuid column, so nonexistent-id probes must be uuid-shaped).
 UNKNOWN_ID = "99999999-9999-4999-8999-999999999999"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 # ---------------------------------------------------------------------------

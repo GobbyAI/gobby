@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from tests.storage.tasks._stage_test_helpers import stage_row
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.mark.asyncio
@@ -219,6 +228,7 @@ async def test_update_task_schema_rejects_unsupported_fields(
         "assigned_agent",
         "implementation_domain",
         "additional_skills",
+        "affected_files",
     }
 
     with pytest.raises(

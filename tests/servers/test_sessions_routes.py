@@ -5,6 +5,7 @@ This module tests edge cases, error paths, and validation that are not
 covered by the existing test_http_server.py tests.
 """
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -23,9 +24,17 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
 # ============================================================================
 # Fixtures
 # ============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture
@@ -104,7 +113,10 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test that git_branch is extracted from project_path when not provided."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
+            patch(
+                "gobby.utils.machine_id.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000002",
+            ),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             mock_git.return_value = {"git_branch": "feature/extracted-branch"}
@@ -131,7 +143,10 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test registration when git metadata has no branch."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
+            patch(
+                "gobby.utils.machine_id.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000002",
+            ),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             # Return empty dict - no git_branch key
@@ -160,7 +175,10 @@ class TestRegisterSessionEdgeCases:
     ) -> None:
         """Test that explicit git_branch skips metadata extraction."""
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
+            patch(
+                "gobby.utils.machine_id.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000002",
+            ),
             patch("gobby.utils.git.get_git_metadata") as mock_git,
         ):
             response = client.post(
@@ -194,7 +212,10 @@ class TestRegisterSessionEdgeCases:
         test_client = TestClient(server.app)
 
         with (
-            patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"),
+            patch(
+                "gobby.utils.machine_id.get_machine_id",
+                return_value="21000000-0000-4000-8000-000000000002",
+            ),
             patch.object(session_storage, "register", side_effect=RuntimeError("Database error")),
         ):
             response = test_client.post(
@@ -212,12 +233,19 @@ class TestRegisterSessionEdgeCases:
         assert "Internal server error" in data["detail"]
 
     @pytest.mark.parametrize("machine_id", [None, "", "   "])
-    def test_register_rejects_missing_or_blank_machine_id(
+    def test_register_ignores_client_machine_id_and_attributes_locally(
         self,
         client: TestClient,
+        session_storage: SessionManager,
         test_project: dict[str, Any],
         machine_id: str | None,
     ) -> None:
+        """Client-supplied machine identity is ignored (gobby-#19411).
+
+        SessionRegisterRequest no longer carries machine_id; the route always
+        attributes the session to the locally resolved machine identity, so a
+        missing or blank payload machine_id still registers successfully.
+        """
         payload = {
             "external_id": "unknown-machine-test",
             "source": "claude",
@@ -228,7 +256,12 @@ class TestRegisterSessionEdgeCases:
 
         response = client.post("/api/sessions/register", json=payload)
 
-        assert response.status_code == 422
+        assert response.status_code == 200
+        data = response.json()
+        assert data["machine_id"] == LOCAL_MACHINE_ID
+        stored = session_storage.get(data["id"])
+        assert stored is not None
+        assert stored.machine_id == LOCAL_MACHINE_ID
 
 
 # ============================================================================
@@ -304,7 +337,7 @@ class TestGetSessionEdgeCases:
         """Session detail payload should use effective context-window resolution."""
         session = session_storage.register(
             external_id="codex-stale-context",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             title="Codex stale context",
@@ -315,9 +348,9 @@ class TestGetSessionEdgeCases:
         )
         session_storage.db.execute(
             "INSERT INTO model_metadata "
-            "(provider, model, context_length, max_completion_tokens, source) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            ("codex", "gpt-5.4", 258_400, 128_000, "registry"),
+            "(model, context_length, max_completion_tokens, source) "
+            "VALUES (%s, %s, %s, %s)",
+            ("gpt-5.4", 258_400, 128_000, "registry"),
         )
         stored_before = session_storage.db.fetchone(
             "SELECT context_window FROM sessions WHERE id = %s",
@@ -344,7 +377,7 @@ class TestGetSessionEdgeCases:
     ) -> None:
         session = session_storage.register(
             external_id="codex-context-override",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             title="Codex context override",

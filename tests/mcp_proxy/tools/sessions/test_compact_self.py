@@ -9,7 +9,7 @@ send_keys; web_chat sessions go through the daemon-level ChatSession registry.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -37,6 +37,14 @@ from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-00000000000f"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class _TestRegistry(InternalToolRegistry):

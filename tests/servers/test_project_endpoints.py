@@ -1,5 +1,6 @@
 """Tests for project-aware HTTP endpoint behavior."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,14 @@ from fastapi.testclient import TestClient
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestProjectResolutionEndpoints:
@@ -21,7 +30,10 @@ class TestProjectResolutionEndpoints:
         temp_dir: Path,
     ) -> None:
         """Test session registration endpoint."""
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"):
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="21000000-0000-4000-8000-000000000002",
+        ):
             response = client.post(
                 "/api/sessions/register",
                 json={
@@ -49,7 +61,7 @@ class TestProjectResolutionEndpoints:
             "/api/sessions/register",
             json={
                 "external_id": "full-cli-key",
-                "machine_id": "custom-machine",
+                "machine_id": LOCAL_MACHINE_ID,
                 "source": "Claude Code",
                 "project_id": test_project["id"],
                 "title": "Full Session",
@@ -61,7 +73,7 @@ class TestProjectResolutionEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert data["external_id"] == "full-cli-key"
-        assert data["machine_id"] == "custom-machine"
+        assert data["machine_id"] == LOCAL_MACHINE_ID
 
     def test_find_current_session(
         self,
@@ -72,7 +84,7 @@ class TestProjectResolutionEndpoints:
         """Test finding current session by composite key."""
         session = session_storage.register(
             external_id="find-current",
-            machine_id="21000000-0000-4000-8000-000000000020",
+            machine_id=LOCAL_MACHINE_ID,
             source="qwen",
             project_id=test_project["id"],
         )
@@ -81,7 +93,7 @@ class TestProjectResolutionEndpoints:
             "/api/sessions/find_current",
             json={
                 "external_id": "find-current",
-                "machine_id": "21000000-0000-4000-8000-000000000020",
+                "machine_id": LOCAL_MACHINE_ID,
                 "source": "qwen",
                 "project_id": test_project["id"],
             },
@@ -129,7 +141,7 @@ class TestProjectResolutionEndpoints:
     ) -> None:
         """Test that session registered via HTTP is retrievable via get endpoint."""
         # Register via HTTP endpoint
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="persist-machine"):
+        with patch("gobby.utils.machine_id.get_machine_id", return_value=LOCAL_MACHINE_ID):
             register_response = client.post(
                 "/api/sessions/register",
                 json={
@@ -165,7 +177,10 @@ class TestProjectResolutionEndpoints:
         When cwd points to a path without .gobby/project.json, _resolve_project_id
         raises ValueError, which is caught and converted to HTTP 400 Bad Request.
         """
-        with patch("gobby.utils.machine_id.get_machine_id", return_value="21000000-0000-4000-8000-000000000002"):
+        with patch(
+            "gobby.utils.machine_id.get_machine_id",
+            return_value="21000000-0000-4000-8000-000000000002",
+        ):
             response = client.post(
                 "/api/sessions/register",
                 json={
