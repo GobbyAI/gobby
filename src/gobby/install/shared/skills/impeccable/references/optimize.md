@@ -1,13 +1,13 @@
-Identify and fix performance issues to create faster, smoother user experiences.
-
 > You are continuing a session under the `impeccable` skill; the design-context protocol and anti-pattern rules already apply.
+
+Performance is a feature. Identify the actual bottleneck for THIS interface, fix it, then measure. Don't optimize what isn't slow.
 
 ## Assess Performance Issues
 
 Understand current performance and identify problems:
 
 1. **Measure current state**:
-   - **Core Web Vitals**: LCP, FID/INP, CLS scores
+   - **Core Web Vitals**: LCP, INP, CLS scores
    - **Load time**: Time to interactive, first contentful paint
    - **Bundle size**: JavaScript, CSS, image sizes
    - **Runtime performance**: Frame rate, memory usage, CPU usage
@@ -36,7 +36,7 @@ Create systematic improvement plan:
 - Use CDN for faster delivery
 
 ```html
-<img
+<img 
   src="hero.webp"
   srcset="hero-400.webp 400w, hero-800.webp 800w, hero-1200.webp 1200w"
   sizes="(max-width: 400px) 400px, (max-width: 800px) 800px, 1200px"
@@ -53,8 +53,6 @@ Create systematic improvement plan:
 - Use dynamic imports for large components
 
 ```javascript
-import { lazy } from 'react';
-
 // Lazy load heavy component
 const HeavyChart = lazy(() => import('./HeavyChart'));
 ```
@@ -110,13 +108,13 @@ elements.forEach((el, i) => {
 - Minimize DOM depth (flatter is faster)
 - Reduce DOM size (fewer elements)
 - Use `content-visibility: auto` for long lists
-- Virtual scrolling for very long lists (react-window, react-virtualized)
+- Virtual scrolling for very long lists (react-window, TanStack Virtual)
 
 **Reduce Paint & Composite**:
-- Use `transform` and `opacity` for animations (GPU-accelerated)
-- Avoid animating layout properties (width, height, top, left)
+- Use `transform` and `opacity` for reliable movement, but allow blur, filters, masks, clip paths, shadows, and color shifts when they create meaningful polish
+- Avoid casual animation of layout-driving properties (`width`, `height`, `top`, `left`, margins)
 - Use `will-change` sparingly for known expensive operations
-- Minimize paint areas (smaller is faster)
+- Bound expensive paint areas for blur/filter/shadow effects (smaller and isolated is faster)
 
 ### Animation Performance
 
@@ -152,13 +150,6 @@ const observer = new IntersectionObserver((entries) => {
     }
   });
 });
-
-// Start observing a target element.
-const target = document.querySelector('.lazy-element');
-if (target) observer.observe(target);
-
-// When done (e.g., component unmount), release the observer.
-// observer.disconnect();
 ```
 
 ### React/Framework Optimization
@@ -207,7 +198,7 @@ if (target) observer.observe(target);
 - Use CDN
 - Server-side rendering
 
-### First Input Delay (FID < 100ms) / INP (< 200ms)
+### Interaction to Next Paint (INP < 200ms)
 - Break up long tasks
 - Defer non-critical JavaScript
 - Use web workers for heavy computation
@@ -237,7 +228,7 @@ if (target) observer.observe(target);
 - Performance monitoring (Sentry, DataDog, New Relic)
 
 **Key metrics**:
-- LCP, FID/INP, CLS (Core Web Vitals)
+- LCP, INP, CLS (Core Web Vitals; INP replaced FID in March 2024)
 - Time to Interactive (TTI)
 - First Contentful Paint (FCP)
 - Total Blocking Time (TBT)
@@ -266,4 +257,4 @@ Test that optimizations worked:
 - **No regressions**: Ensure functionality still works
 - **User perception**: Does it *feel* faster?
 
-Remember: Performance is a feature. Fast experiences feel more responsive, more polished, more professional. Optimize systematically, measure ruthlessly, and prioritize user-perceived performance.
+When the user-facing numbers move, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.

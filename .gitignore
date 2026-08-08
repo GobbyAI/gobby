@@ -275,3 +275,6 @@ gobby_yc_demo_script.md
 # Gobby local wiki vault; pre-push publishes it to branch `wiki`.
 /wiki/
 # <<< GOBBY WIKI END <<<
+
+# Impeccable critique snapshots and detector config (written by the vendored detector/critique scripts)
+.impeccable/

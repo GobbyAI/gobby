@@ -1,0 +1,117 @@
+project_id: d45545c5-ded5-4335-b115-0245752edacf
+plan_id: gobby-skills-scriptful-skills
+plan_hash: "9710eec086f243f0297224cb118e968510308231d399acd1b09dad6c9887fa75"
+root_task_ref: "#19809"
+
+sections:
+  "1.1":
+    acceptance_items:
+      "1.1.1": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.2": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.3": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.4": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.5": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.6": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.7": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.8": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.9": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.10": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.11": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.12": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+      "1.1.13": {expected_leaves: [{title: Fix bundled-skill drift detection and add runtime-metadata validation, owner_agent: backend-developer}]}
+  "1.2":
+    acceptance_items:
+      "1.2.1": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.2": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.3": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.4": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.5": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.6": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.7": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.8": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.10": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.11": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+      "1.2.9": {expected_leaves: [{title: Trim the get_skill manifest and add path_prefix file filtering, owner_agent: backend-developer}]}
+  "1.3":
+    acceptance_items:
+      "1.3.1": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.2": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.3": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.4": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.5": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.6": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.7": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.8": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.9": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.10": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.11": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.12": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.13": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.14": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.15": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+      "1.3.16": {expected_leaves: [{title: Install the pinned impeccable CLI as a Gobby-managed tool, owner_agent: backend-developer}]}
+  "2.1":
+    acceptance_items:
+      "2.1.1": {expected_leaves: [{title: Vendor the full impeccable 4.0.4 tree with runtime metadata, owner_agent: backend-developer}]}
+      "2.1.2": {expected_leaves: [{title: Vendor the full impeccable 4.0.4 tree with runtime metadata, owner_agent: backend-developer}]}
+      "2.1.3": {expected_leaves: [{title: Vendor the full impeccable 4.0.4 tree with runtime metadata, owner_agent: backend-developer}]}
+      "2.1.4": {expected_leaves: [{title: Vendor the full impeccable 4.0.4 tree with runtime metadata, owner_agent: backend-developer}]}
+  "2.2":
+    acceptance_items:
+      "2.2.1": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.2": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.3": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.4": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.5": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.6": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.7": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.8": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.9": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.10": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.11": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.12": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.13": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.14": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.15": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.16": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.17": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.18": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.19": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.20": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.21": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.22": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+      "2.2.23": {expected_leaves: [{title: Add the materialize_skill_scripts MCP tool, owner_agent: backend-developer}]}
+  "2.3":
+    acceptance_items:
+      "2.3.1": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+      "2.3.2": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+      "2.3.3": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+      "2.3.4": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+      "2.3.5": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+      "2.3.6": {expected_leaves: [{title: Add managed-tool uninstall behind gobby uninstall --tools, owner_agent: backend-developer}]}
+  "3.1":
+    acceptance_items:
+      "3.1.1": {expected_leaves: [{title: Rewrite the .upgrade transform tooling for the release channel, owner_agent: backend-developer}]}
+      "3.1.2": {expected_leaves: [{title: Rewrite the .upgrade transform tooling for the release channel, owner_agent: backend-developer}]}
+      "3.1.3": {expected_leaves: [{title: Rewrite the .upgrade transform tooling for the release channel, owner_agent: backend-developer}]}
+      "3.1.4": {expected_leaves: [{title: Rewrite the .upgrade transform tooling for the release channel, owner_agent: backend-developer}]}
+      "3.1.5": {expected_leaves: [{title: Rewrite the .upgrade transform tooling for the release channel, owner_agent: backend-developer}]}
+  "3.2":
+    acceptance_items:
+      "3.2.1": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+      "3.2.2": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+      "3.2.3": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+      "3.2.4": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+      "3.2.5": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+      "3.2.6": {expected_leaves: [{title: Adapt the eighteen non-live remaining reference files, owner_agent: tech-writer}]}
+  "3.3":
+    acceptance_items:
+      "3.3.1": {expected_leaves: [{title: Adapt the live-mode references to the agent-driven model, owner_agent: tech-writer}]}
+      "3.3.2": {expected_leaves: [{title: Adapt the live-mode references to the agent-driven model, owner_agent: tech-writer}]}
+      "3.3.3": {expected_leaves: [{title: Adapt the live-mode references to the agent-driven model, owner_agent: tech-writer}]}
+  "4.1":
+    acceptance_items:
+      "4.1.1": {expected_leaves: [{title: End-to-end validation pass and pin-consistency test, owner_agent: backend-developer}]}
+      "4.1.2": {expected_leaves: [{title: End-to-end validation pass and pin-consistency test, owner_agent: backend-developer}]}
+      "4.1.3": {expected_leaves: [{title: End-to-end validation pass and pin-consistency test, owner_agent: backend-developer}]}
+      "4.1.4": {expected_leaves: [{title: End-to-end validation pass and pin-consistency test, owner_agent: backend-developer}]}

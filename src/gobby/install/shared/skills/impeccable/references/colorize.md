@@ -1,132 +1,76 @@
-Strategically introduce color to designs that are too monochromatic, gray, or lacking in visual warmth and personality.
+> You are continuing a session under the `impeccable` skill; the design-context protocol and anti-pattern rules already apply. Additional context needed: existing brand colors.
 
-> You are continuing a session under the `impeccable` skill; the design-context protocol and anti-pattern rules already apply. Additionally gather: existing brand colors.
+Introduce color as hierarchy, meaning, and atmosphere. Preserve confirmed brand and semantic conventions; do not replace a visual world under the guise of colorizing it.
 
 ---
-## Assess Color Opportunity
 
-Analyze the current state and identify opportunities:
+## Visitor mode
 
-1. **Understand current state**:
-   - **Color absence**: Pure grayscale? Limited neutrals? One timid accent?
-   - **Missed opportunities**: Where could color add meaning, hierarchy, or delight?
-   - **Context**: What's appropriate for this domain and audience?
-   - **Brand**: Are there existing brand colors we should use?
+- **Persuade + Experience:** color may carry the voice and own large regions when the selected world calls for it.
+- **Operate + Read:** color primarily encodes action, selection, status, wayfinding, and reading hierarchy. Rarity gives an accent force.
 
-2. **Identify where color adds value**:
-   - **Semantic meaning**: Success (green), error (red), warning (yellow/orange), info (blue)
-   - **Hierarchy**: Drawing attention to important elements
-   - **Categorization**: Different sections, types, or states
-   - **Emotional tone**: Warmth, energy, trust, creativity
-   - **Wayfinding**: Helping users navigate and understand structure
-   - **Delight**: Moments of visual interest and personality
+## Audit before choosing
 
-If any of these are unclear from the codebase, Ask the user
+Read `.impeccable.md` (the project design contract at the repo root), tokens, assets, current themes, and representative states. Identify:
 
-**CRITICAL**: More color ≠ better. Strategic color beats rainbow vomit every time. Every color should have a purpose.
+- which colors are confirmed brand commitments;
+- current surface, text, action, and semantic roles;
+- places where grayscale obscures hierarchy or state;
+- contrast failures and color-only communication;
+- light/dark or data-visualization requirements;
+- whether the task asks for more color or a new identity.
 
-## Plan Color Strategy
+If a new identity is required, say so and confirm the direction with the user; do not replace the visual world under this command. Ask only when a binding brand decision cannot be inferred.
 
-Create a purposeful color introduction plan:
+## Choose a strategy
 
-- **Color palette**: What colors match the brand/context? (Choose 2-4 colors max beyond neutrals)
-- **Dominant color**: Which color owns 60% of colored elements?
-- **Accent colors**: Which colors provide contrast and highlights? (30% and 10%)
-- **Application strategy**: Where does each color appear and why?
+Name the intended emotional temperature, dominant relationship, contrast range, and color dosage before editing. The strategy may be restrained or immersive; it must follow the brief and selected world rather than a fixed percentage rule.
 
-**IMPORTANT**: Color should enhance hierarchy and meaning, not create chaos. Less is more when it matters more.
+Build roles, not a bag of swatches:
 
-## Introduce Color Strategically
+- canvas and elevated surfaces;
+- primary and secondary text;
+- action, focus, and selection;
+- borders and separators;
+- success, warning, error, and information;
+- data categories or scales when needed.
 
-Add color systematically across these dimensions:
+Use the project's existing color space. For a new web palette, prefer OKLCH because lightness and chroma can be adjusted predictably. Choose hue from product meaning and visual direction, never from a default category association.
 
-### Semantic Color
-- **State indicators**:
-  - Success: Green tones (emerald, forest, mint)
-  - Error: Red/pink tones (rose, crimson, coral)
-  - Warning: Orange/amber tones
-  - Info: Blue tones (sky, ocean, indigo)
-  - Neutral: Gray/slate for inactive states
+## Apply at system scale
 
-- **Status badges**: Colored backgrounds or borders for states (active, pending, completed, etc.)
-- **Progress indicators**: Colored bars, rings, or charts showing completion or health
+- Let the strongest color own a deliberate region or role instead of scattering tiny accents.
+- Keep the primary action easy to find; do not spend its color on decoration.
+- Tint neutrals only when the brand hue genuinely creates cohesion. Neutral gray is valid when it serves the world.
+- On colored surfaces, derive secondary text from the foreground or surface hue rather than using washed-out generic gray.
+- Keep semantic meanings consistent, but respect platform and domain conventions instead of assuming fixed hues.
+- For data, use distinct lightness, chroma, shape, label, or pattern so color is not the only code.
+- In dark mode, design surface elevation and contrast explicitly; do not invert the light theme mechanically.
+- Define primitive values and semantic tokens when the project has a token system. Theme changes should normally remap semantic roles.
 
-### Accent Color Application
-- **Primary actions**: Color the most important buttons/CTAs
-- **Links**: Add color to clickable text (maintain accessibility)
-- **Icons**: Colorize key icons for recognition and personality
-- **Headers/titles**: Add color to section headers or key labels
-- **Hover states**: Introduce color on interaction
+Decoration without a relationship to hierarchy, state, content, or the visual world is not a color strategy.
 
-### Background & Surfaces
-- **Tinted backgrounds**: Replace pure gray (`#f5f5f5`) with warm neutrals (`oklch(97% 0.01 60)`) or cool tints (`oklch(97% 0.01 250)`)
-- **Colored sections**: Use subtle background colors to separate areas
-- **Gradient backgrounds**: Add depth with subtle, intentional gradients (not generic purple-blue)
-- **Cards & surfaces**: Tint cards or surfaces slightly for warmth
+## Contrast and perception
 
-**Use OKLCH for color**: It's perceptually uniform, meaning equal steps in lightness *look* equal. Great for generating harmonious scales.
+Verify computed foreground/background pairs:
 
-### Data Visualization
-- **Charts & graphs**: Use color to encode categories or values
-- **Heatmaps**: Color intensity shows density or importance
-- **Comparison**: Color coding for different datasets or timeframes
+| Content | WCAG AA minimum |
+|---|---|
+| body text | 4.5:1 |
+| large text | 3:1 |
+| controls, icons, focus indicators | 3:1 |
 
-### Borders & Accents
-- **Accent borders**: Add colored left/top borders to cards or sections
-- **Underlines**: Color underlines for emphasis or active states
-- **Dividers**: Subtle colored dividers instead of gray lines
-- **Focus rings**: Colored focus indicators matching brand
+Do not rely on eyesight alone. Check interactive states, overlays, text on images, disabled content, and both themes. Simulate common vision deficiencies. Information conveyed by color also needs text, shape, iconography, or position.
 
-### Typography Color
-- **Colored headings**: Use brand colors for section headings (maintain contrast)
-- **Highlight text**: Color for emphasis or categories
-- **Labels & tags**: Small colored labels for metadata or categories
+When deriving OKLCH ramps, vary lightness and reduce chroma near white and black. Do not keep high chroma at extreme lightness merely to make the math uniform. Prefer explicit colors over chains of translucent overlays when alpha would make contrast context-dependent.
 
-### Decorative Elements
-- **Illustrations**: Add colored illustrations or icons
-- **Shapes**: Geometric shapes in brand colors as background elements
-- **Gradients**: Colorful gradient overlays or mesh backgrounds
-- **Blobs/organic shapes**: Soft colored shapes for visual interest
+## Verify
 
-## Balance & Refinement
+- Every color has a stable role or a world-specific atmospheric purpose.
+- Attention lands on the intended action, content, or state.
+- The palette works across quiet, dense, interactive, error, and empty states.
+- Light and dark themes are each composed, not mechanically inverted.
+- Contrast and non-color cues pass in all relevant states.
+- The result is recognizably this product, not a generic “colorful” treatment.
 
-Ensure color addition improves rather than overwhelms:
-
-### Maintain Hierarchy
-- **Dominant color** (60%): Primary brand color or most used accent
-- **Secondary color** (30%): Supporting color for variety
-- **Accent color** (10%): High contrast for key moments
-- **Neutrals** (remaining): Gray/black/white for structure
-
-### Accessibility
-- **Contrast ratios**: Ensure WCAG compliance (4.5:1 for text, 3:1 for UI components)
-- **Don't rely on color alone**: Use icons, labels, or patterns alongside color
-- **Test for color blindness**: Verify red/green combinations work for all users
-
-### Cohesion
-- **Consistent palette**: Use colors from defined palette, not arbitrary choices
-- **Systematic application**: Same color meanings throughout (green always = success)
-- **Temperature consistency**: Warm palette stays warm, cool stays cool
-
-**NEVER**:
-- Use every color in the rainbow (choose 2-4 colors beyond neutrals)
-- Apply color randomly without semantic meaning
-- Put gray text on colored backgrounds—it looks washed out; use a darker shade of the background color or transparency instead
-- Use pure gray for neutrals—add subtle color tint (warm or cool) for sophistication
-- Use pure black (`#000`) or pure white (`#fff`) for large areas
-- Violate WCAG contrast requirements
-- Use color as the only indicator (accessibility issue)
-- Make everything colorful (defeats the purpose)
-- Default to purple-blue gradients (AI slop aesthetic)
-
-## Verify Color Addition
-
-Test that colorization improves the experience:
-
-- **Better hierarchy**: Does color guide attention appropriately?
-- **Clearer meaning**: Does color help users understand states/categories?
-- **More engaging**: Does the interface feel warmer and more inviting?
-- **Still accessible**: Do all color combinations meet WCAG standards?
-- **Not overwhelming**: Is color balanced and purposeful?
-
-Remember: Color is emotional and powerful. Use it to create warmth, guide attention, communicate meaning, and express personality. But restraint and strategy matter more than saturation and variety. Be colorful, but be intentional.
+When the palette earns its place, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.

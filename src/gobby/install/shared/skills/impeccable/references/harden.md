@@ -1,6 +1,6 @@
-Strengthen interfaces against edge cases, errors, internationalization issues, and real-world usage scenarios that break idealized designs.
-
 > You are continuing a session under the `impeccable` skill; the design-context protocol and anti-pattern rules already apply.
+
+Designs that only work with perfect data aren't production-ready. Harden the interface against the inputs, errors, languages, and network conditions that real users will throw at it.
 
 ## Assess Hardening Needs
 
@@ -80,7 +80,7 @@ Systematically improve resilience:
 
 **Responsive text sizing**:
 - Use `clamp()` for fluid typography
-- Set minimum readable sizes (14px on mobile)
+- Set minimum readable sizes (16px body on mobile, the same floor the typography guidance sets; 14px only for genuinely secondary text. iOS Safari force-zooms focused inputs under 16px, which breaks form layouts)
 - Test text scaling (zoom to 200%)
 - Ensure containers expand with text
 
@@ -123,9 +123,9 @@ border-inline-end: 1px solid; /* Not border-right */
 new Intl.DateTimeFormat('en-US').format(date); // 1/15/2024
 new Intl.DateTimeFormat('de-DE').format(date); // 15.1.2024
 
-new Intl.NumberFormat('en-US', {
-  style: 'currency',
-  currency: 'USD'
+new Intl.NumberFormat('en-US', { 
+  style: 'currency', 
+  currency: 'USD' 
 }).format(1234.56); // $1,234.56
 ```
 
@@ -219,40 +219,6 @@ t('items', { count }) // Handles complex plural rules
 - Feature detection (not browser detection)
 - Test in target browsers
 
-### Onboarding & First-Run Experience
-
-Production-ready features work for first-time users, not just power users. Design the paths that get new users to value:
-
-**Empty states**: Every zero-data screen needs:
-- What will appear here (description or illustration)
-- Why it matters to the user
-- Clear CTA to create the first item or start from a template
-- Visual interest (not just blank space with "No items yet")
-
-Empty state types to handle:
-- **First use**: emphasize value, provide templates
-- **User cleared**: light touch, easy to recreate
-- **No results**: suggest a different query, offer to clear filters
-- **No permissions**: explain why, how to get access
-
-**First-run experience**: Get users to their "aha moment" as quickly as possible.
-- Show, don't tell -- working examples over descriptions
-- Progressive disclosure -- teach one thing at a time, not everything upfront
-- Make onboarding optional -- let experienced users skip
-- Provide smart defaults so required setup is minimal
-
-**Feature discovery**: Teach features when users need them, not upfront.
-- Contextual tooltips at point of use (brief, dismissable, one-time)
-- Badges or indicators on new or unused features
-- Celebrate activation events quietly (a toast, not a modal)
-
-**NEVER**:
-- Force long onboarding before users can touch the product
-- Show the same tooltip repeatedly (track and respect dismissals)
-- Block the entire UI during a guided tour
-- Create separate tutorial modes disconnected from the real product
-- Design empty states that just say "No items" with no next action
-
 ### Input Validation & Sanitization
 
 **Client-side validation**:
@@ -271,7 +237,7 @@ Empty state types to handle:
 **Constraint handling**:
 ```html
 <!-- Set clear constraints -->
-<input
+<input 
   type="text"
   maxlength="100"
   pattern="[A-Za-z0-9]+"
@@ -296,17 +262,6 @@ Empty state types to handle:
 - Announce dynamic changes (live regions)
 - Descriptive alt text
 - Semantic HTML
-
-**Motion sensitivity**:
-```css
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-```
 
 **High contrast mode**:
 - Test in Windows high contrast mode
@@ -380,4 +335,4 @@ Test thoroughly with edge cases:
 - **Errors**: Force API errors, test all error states
 - **Empty**: Remove all data, test empty states
 
-Remember: You're hardening for production reality, not demo perfection. Expect users to input weird data, lose connection mid-flow, and use your product in unexpected ways. Build resilience into every component.
+When edge cases are covered, hand off to the `polish` steering command (load via `get_skill_file(name="impeccable", path="references/polish.md")` on `gobby-skills`) for the final pass.

@@ -16,11 +16,15 @@ Impeccable — Copyright 2025-2026 Paul Bakaus. Licensed under Apache 2.0.
 Based on Anthropic's frontend-design skill (Copyright 2025 Anthropic, PBC, Apache 2.0).
 See NOTICE.md in this directory for attribution.
 
-Upstream: https://github.com/pbakaus/impeccable
+Upstream: https://github.com/pbakaus/impeccable (v3.5.0, commit a075d89b)
 The `impeccable` skill ships with all 17 steering-command reference files
-(shape, audit, polish, distill, animate, etc.) bundled under `references/`.
-The dispatch table below loads them via `get_skill_file(name="impeccable",
-path="references/<cmd>.md")` on `gobby-skills`.
+(shape, audit, polish, distill, animate, etc.) bundled under `references/`,
+plus the quality floor (`references/craft-floor.md`), Operate-mode depth
+(`references/operate.md`), and the dependency-free detector/critique scripts
+under `scripts/`. The dispatch table below loads references via
+`get_skill_file(name="impeccable", path="references/<cmd>.md")` on
+`gobby-skills`; scripts run from the cache directory returned by
+`materialize_skill_scripts(name="impeccable")`.
 -->
 
 This skill guides creation of distinctive, production-grade frontend interfaces that avoid generic "AI slop" aesthetics. Implement real working code with exceptional attention to aesthetic details and creative choices.
@@ -42,6 +46,17 @@ Individual skills may require additional context. Check the skill's preparation 
 1. **Check current instructions (instant)**: If your loaded instructions already contain a **Design Context** section, proceed immediately.
 2. **Check .impeccable.md (fast)**: If not in instructions, read `.impeccable.md` from the project root. It is the project's design contract — audience, tokens, color and contrast constraints, canonical components, per-surface rules — and this skill is written to be used with it, not instead of it. If it exists and contains the required context, proceed.
 3. **Run impeccable teach (REQUIRED)**: If neither source has context, you MUST run the impeccable skill in `teach` mode NOW before doing anything else. Do NOT skip this step. Do NOT attempt to infer context from the codebase instead.
+
+## Visitor Modes
+
+Every surface serves one visitor mode; name it before designing and let it steer which rules bind:
+
+- **Persuade** — marketing pages, landing pages, launch moments. The visitor is deciding; commit to a bold visual world. (Gobby: the gobby.ai marketing site.)
+- **Operate** — product UI where the user is in a task: app screens, dashboards, settings, tables, tools. Earned familiarity beats novelty. Load `references/operate.md` for extended depth. (Gobby: the `web/` product UI, installer, CLI/TUI surfaces.)
+- **Read** — docs, guides, long-form. Prose measure and navigation dominate; take the typography and consistency rules from `references/operate.md`. (Gobby: docs and wiki reading surfaces.)
+- **Experience** — playable or expressive pages where the visit itself is the product. The rarest mode; everything can be committed.
+
+**Quality floor**: before editing any surface in any mode, load `references/craft-floor.md` via `get_skill_file` — its Verify and Refuse lists are the floor every mode builds on. The steering references assume it.
 
 ---
 
@@ -87,6 +102,29 @@ When the argument matches one of the commands below, call `get_skill_file(name="
 - If the argument does not match any inline mode or steering command, tell the user the argument was not recognized and show them the menu above.
 - If `get_skill_file` returns `{"success": false, ...}`, surface the error and show the menu again.
 - If **no argument** was provided, introduce yourself as `impeccable`, explain that you have the modes and steering commands above, and ask which one the user wants. Do not silently proceed into design work.
+
+### Bundled detector and critique scripts
+
+The skill bundles dependency-free Node scripts under `scripts/` (anti-pattern
+detector plus critique snapshot storage), synced into the skill-files registry
+like every other skill file. Never run them from this skill's source tree —
+installed skills may have no on-disk tree at all. Resolve a runnable copy first:
+
+1. Call `materialize_skill_scripts(name="impeccable")` on `gobby-skills`. It
+   writes the canonical `scripts/**` bytes from the registry into a
+   content-addressed cache and returns `scripts_dir` (absolute path).
+2. Run entry points from there via Bash, e.g.
+   `node <scripts_dir>/detect.mjs --json <file-or-dir>` (domain filters:
+   `--scope type`, `--scope layout`) or
+   `node <scripts_dir>/critique-storage.mjs latest <target>`.
+3. Critique snapshots write to `.impeccable/critique/` in the project
+   (gitignored).
+
+The scripts are plain Node with no npm dependencies. Optional capabilities
+(URL scanning via puppeteer, full static-HTML parsing via htmlparser2) degrade
+gracefully when absent: the detector falls back to line-based text scanning.
+If Node or the tool is unavailable, skip detector runs and scan manually —
+never block design work on the detector.
 
 The rest of this file (below the `---` separator) is the design reference that grounds every mode and steering command. Keep it loaded: it's what `impeccable audit`, `impeccable polish`, etc. check against.
 
