@@ -231,6 +231,24 @@ def test_second_install_is_noop(
     assert calls == first_calls
 
 
+def test_first_install_accepts_canonicalized_generation_path(
+    impeccable_runtime: tuple[Path, list[list[str]]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    del impeccable_runtime
+    canonical_parent = tmp_path / "canonical-parent"
+    canonical_parent.mkdir()
+    alias_parent = tmp_path / "alias-parent"
+    alias_parent.symlink_to(canonical_parent, target_is_directory=True)
+    monkeypatch.setenv("GOBBY_HOME", str(alias_parent / "gobby-home"))
+
+    result = installer.install_impeccable_cli()
+
+    assert result.installed is True
+    assert result.chrome_ready is True
+
+
 @pytest.mark.parametrize(
     "artifact",
     [

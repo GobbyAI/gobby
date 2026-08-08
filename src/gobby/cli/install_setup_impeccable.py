@@ -148,7 +148,7 @@ def install_impeccable_cli() -> ImpeccableInstallResult:
         _ensure_path(home / "bin")
         chrome_ready, _ = _ensure_chrome(generation, home)
         verified = _verified_generation(pointer)
-        if verified != generation:
+        if verified != generation.resolve():
             raise ImpeccableInstallError("published Impeccable generation failed verification")
         return ImpeccableInstallResult(
             pointer,
