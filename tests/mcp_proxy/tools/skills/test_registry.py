@@ -89,6 +89,14 @@ class TestCreateSkillsRegistry:
         list_hubs_tool = registry.get_tool("list_hubs")
         assert list_hubs_tool is not None
 
+    def test_registry_exposes_materialize_skill_scripts(self, db: HubDatabase) -> None:
+        """The skills server exposes the script materialization boundary."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        registry = create_skills_registry(db)
+
+        assert registry.get_tool("materialize_skill_scripts") is not None
+
 
 class TestSkillsToolRegistry:
     """Tests for SkillsToolRegistry class."""

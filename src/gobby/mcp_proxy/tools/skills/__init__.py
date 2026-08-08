@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.skills import (
     hub_tools,
     install_skill,
     list_skills,
+    materialize_skill_scripts,
     move_skill,
     remove_skill,
     restore_skill,
@@ -113,6 +114,7 @@ def create_skills_registry(
     move_skill.register(ctx, registry)
     update_skill.register(ctx, registry)
     install_skill.register(ctx, registry)
+    materialize_skill_scripts.register(ctx, registry)
     hub_tools.register(ctx, registry)
 
     return registry

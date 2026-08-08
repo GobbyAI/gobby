@@ -492,6 +492,47 @@ class SkillFilesMixin:
             },
         }
 
+    def get_skill_with_scripts(
+        self,
+        *,
+        name: str,
+        project_id: str | None,
+    ) -> dict[str, Any] | None:
+        """Resolve a skill and its complete scripts inventory in one statement."""
+        resolver, params = self._resolved_skill_cte(
+            skill_id=None,
+            name=name,
+            project_id=project_id,
+        )
+        row = self.db.fetchone(
+            f"""WITH {resolver}
+                SELECT resolved_skill.*,
+                    COALESCE(
+                        (
+                            SELECT jsonb_agg(
+                                jsonb_build_object(
+                                    'path', files.path,
+                                    'content', files.content,
+                                    'content_hash', files.content_hash,
+                                    'size_bytes', files.size_bytes
+                                ) ORDER BY files.path
+                            )
+                            FROM skill_files files
+                            WHERE files.skill_id = resolved_skill.id
+                              AND files.deleted_at IS NULL
+                              AND files.file_type = 'script'
+                              AND files.path LIKE 'scripts/%%'
+                        ),
+                        '[]'::jsonb
+                    ) AS script_files
+                FROM resolved_skill""",  # nosec B608
+            tuple(params),
+        )
+        if row is None:
+            return None
+        files = list(_decode_json(row["script_files"]) or [])
+        return {"skill": Skill.from_row(row), "files": files}
+
     def get_skill_file(self, skill_id: str, path: str) -> SkillFile | None:
         """Get a single skill file with content.
 
