@@ -674,6 +674,57 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
+    async def test_update_task_replaces_affected_files(self, mock_task_manager: MagicMock) -> None:
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "affected_files": ["src/a.py", "src/b.py"],
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            affected_files=["src/a.py", "src/b.py"],
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_clears_affected_files(self, mock_task_manager: MagicMock) -> None:
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "update_task",
+            {
+                "task_id": "550e8400-e29b-41d4-a716-446655440000",
+                "affected_files": [],
+            },
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            affected_files=[],
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_update_task_omits_affected_files(self, mock_task_manager: MagicMock) -> None:
+        registry = create_task_registry(mock_task_manager)
+
+        result = await registry.call(
+            "update_task",
+            {"task_id": "550e8400-e29b-41d4-a716-446655440000", "title": "Updated Title"},
+        )
+
+        mock_task_manager.update_task.assert_called_with(
+            "550e8400-e29b-41d4-a716-446655440000",
+            title="Updated Title",
+        )
+        assert result == {}
+
+    @pytest.mark.asyncio
     async def test_update_task_partial_update(self, mock_task_manager: MagicMock) -> None:
         """Test update_task only includes provided metadata fields."""
         registry = create_task_registry(mock_task_manager)

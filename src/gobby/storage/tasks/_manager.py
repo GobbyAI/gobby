@@ -2,9 +2,10 @@ import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks._aggregates import (
     count_blocked_tasks as _count_blocked_tasks,
 )
@@ -345,11 +346,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         additional_skills: MaybeUnset[list[str] | None] = UNSET,
         start_date: MaybeUnset[str | None] = UNSET,
         due_date: MaybeUnset[str | None] = UNSET,
+        affected_files: MaybeUnset[list[str]] = UNSET,
         **kwargs: Any,
     ) -> Task:
-        """Update metadata fields only.
+        """Update metadata fields and optionally replace declared file scope.
 
-        Stage and ownership mutations must go through the dedicated task
+        Stage and task/session ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
         if task_type is not UNSET or validation_criteria is not UNSET:
@@ -415,6 +417,12 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
 
             if parent_changed:
                 self.update_descendant_paths(task_id)
+
+            if affected_files is not UNSET:
+                TaskAffectedFileManager(self.db).replace_declared_files(
+                    task_id,
+                    cast(list[str], affected_files),
+                )
 
         self._notify_listeners()
         return self.get_task(task_id)

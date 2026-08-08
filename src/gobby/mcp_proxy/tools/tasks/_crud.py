@@ -496,6 +496,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         assigned_agent: str | None = None,
         implementation_domain: str | None = None,
         additional_skills: list[str] | None = None,
+        affected_files: list[str] | None = None,
         escalation_reason: str | None = None,
     ) -> dict[str, Any]:
         """Update task fields."""
@@ -589,6 +590,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             kwargs["implementation_domain"] = implementation_domain
         if additional_skills is not None:
             kwargs["additional_skills"] = additional_skills
+        if affected_files is not None:
+            kwargs["affected_files"] = affected_files
         if escalation_reason is not None:
             kwargs["escalation_reason"] = escalation_reason
 
@@ -682,6 +685,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "items": {"type": "string"},
                     "description": "Skill names to load alongside the assigned agent's defaults (e.g. ['tech-writer']).",
                     "default": None,
+                },
+                "affected_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Replacement declared file scope. An empty array clears it.",
                 },
                 "escalation_reason": {
                     "type": "string",

@@ -1121,6 +1121,83 @@ class TestUpdateTaskCommand:
         assert "No such option" in result.output
         assert "--status" in result.output
 
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_replaces_affected_files(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "update",
+                "gt-abc123",
+                "--affected-file",
+                "src/a.py",
+                "--affected-file",
+                "src/b.py",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert mock_manager.update_task.call_args.kwargs["affected_files"] == [
+            "src/a.py",
+            "src/b.py",
+        ]
+
+    @patch("gobby.cli.tasks.crud.get_task_manager")
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_clears_affected_files(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.update_task.return_value = mock_task
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(
+            cli,
+            ["tasks", "update", "gt-abc123", "--clear-affected-files"],
+        )
+
+        assert result.exit_code == 0
+        assert mock_manager.update_task.call_args.kwargs["affected_files"] == []
+
+    @patch("gobby.cli.tasks.crud.resolve_task_id")
+    def test_update_task_rejects_combined_affected_file_options_before_resolution(
+        self,
+        mock_resolve: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "update",
+                "gt-abc123",
+                "--affected-file",
+                "src/a.py",
+                "--clear-affected-files",
+            ],
+        )
+
+        assert result.exit_code == 2
+        assert "cannot be used together" in result.output
+        mock_resolve.assert_not_called()
+
     def test_update_task_rejects_claimed_session_option(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli,

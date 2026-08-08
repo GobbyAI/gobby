@@ -121,6 +121,7 @@ class TestToolSchemas:
             "assigned_agent",
             "implementation_domain",
             "additional_skills",
+            "affected_files",
             "escalation_reason",
         }
 
@@ -133,6 +134,8 @@ class TestToolSchemas:
         assert set(props) <= manager_fields
         assert set(props["isolation"]["enum"]) == {"none", "worktree", "clone"}
         assert set(props["implementation_domain"]["enum"]) == {"backend", "frontend", "fullstack"}
+        assert props["affected_files"]["type"] == "array"
+        assert props["affected_files"]["items"]["type"] == "string"
 
     def test_close_task_schema_has_all_fields(self, task_registry) -> None:
         """Test close_task schema includes all options."""

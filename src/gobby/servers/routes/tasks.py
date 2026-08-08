@@ -100,6 +100,10 @@ class TaskUpdateRequest(BaseModel):
         default=None,
         description="Code task implementation domain.",
     )
+    affected_files: list[str] = Field(
+        default_factory=list,
+        description="Replacement declared file scope. An empty array clears it.",
+    )
     allow_automation: bool | None = Field(
         default=None,
         description="Enable or disable dispatcher automation for this task.",

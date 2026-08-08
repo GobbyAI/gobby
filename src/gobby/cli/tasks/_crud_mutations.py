@@ -102,6 +102,7 @@ def update_task_impl(
     parent_task_id: str | None,
     task_type: str | None,
     isolation: str | None,
+    affected_files: list[str] | None,
 ) -> None:
     manager = services.get_task_manager()
     resolved = services.resolve_task_id(manager, task_id)
@@ -126,6 +127,8 @@ def update_task_impl(
         kwargs["parent_task_id"] = resolved_parent_id
     if task_type is not None:
         kwargs["task_type"] = task_type
+    if affected_files is not None:
+        kwargs["affected_files"] = affected_files
 
     try:
         if isolation is not None:

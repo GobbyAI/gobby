@@ -15,8 +15,9 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     collect_commit_paths,
     evaluate_task_scope,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
-from gobby.storage.tasks import Task
+from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
@@ -113,6 +114,44 @@ def test_observed_annotations_do_not_expand_declared_scope() -> None:
 
     assert evaluation.declared_paths == ("tests/",)
     assert evaluation.out_of_scope_paths == ("src/gobby/service.py",)
+
+
+def test_rescope_immediately_replaces_close_and_review_scope(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = manager.create_task(
+        project_id=str(sample_project["id"]),
+        title="Rescope task",
+        task_type="task",
+        validation_criteria="Rescoping changes the close and review scope gate.",
+    )
+    files = TaskAffectedFileManager(temp_db)
+    files.set_files(task.id, ["src/old.py"], source="expansion")
+
+    manager.update_task(task.id, affected_files=["src/new.py"])
+    accepted = evaluate_task_scope(
+        db=temp_db,
+        task=task,
+        commit_shas=(),
+        attributed_paths={"src/new.py"},
+        repo_path=None,
+        scope_justification=None,
+    )
+    stale = evaluate_task_scope(
+        db=temp_db,
+        task=task,
+        commit_shas=(),
+        attributed_paths={"src/old.py"},
+        repo_path=None,
+        scope_justification=None,
+    )
+
+    assert accepted.accepted is True
+    assert accepted.declared_paths == ("src/new.py",)
+    assert stale.accepted is False
+    assert stale.out_of_scope_paths == ("src/old.py",)
 
 
 def test_no_declared_scope_skips_linked_commit_inspection() -> None:

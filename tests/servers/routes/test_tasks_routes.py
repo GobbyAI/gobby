@@ -17,6 +17,7 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.routes.tasks_assignment import MailboxService
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -609,6 +610,56 @@ class TestUpdateTask:
         )
         assert response.status_code == 200
         assert response.json()["category"] == "test"
+
+    def test_update_affected_files_replaces_declared_scope(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+    ) -> None:
+        files = TaskAffectedFileManager(task_manager.db)
+        files.set_files(sample_task["id"], ["src/old.py"], source="expansion")
+
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"affected_files": ["src/new.py"]},
+        )
+
+        assert response.status_code == 200
+        assert "affected_files" not in response.json()
+        assert [
+            (item.file_path, item.annotation_source) for item in files.get_files(sample_task["id"])
+        ] == [("src/new.py", "manual")]
+
+    def test_update_affected_files_clears_declared_scope(
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        sample_task: dict,
+    ) -> None:
+        files = TaskAffectedFileManager(task_manager.db)
+        files.set_files(sample_task["id"], ["src/old.py"], source="manual")
+
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"affected_files": []},
+        )
+
+        assert response.status_code == 200
+        assert "affected_files" not in response.json()
+        assert files.get_files(sample_task["id"]) == []
+
+    def test_update_affected_files_rejects_null(
+        self,
+        client: TestClient,
+        sample_task: dict,
+    ) -> None:
+        response = client.patch(
+            f"/api/tasks/{sample_task['id']}",
+            json={"affected_files": None},
+        )
+
+        assert response.status_code == 422
 
     def test_update_allow_automation(self, client: TestClient, sample_task: dict) -> None:
         response = client.patch(
@@ -1418,7 +1469,11 @@ class TestDependencies:
         response = client.delete(f"/api/tasks/{t1['id']}/dependencies/{t2['id']}")
         assert response.status_code == 404
 
-    def test_dependency_tree_with_direction(self, client: TestClient, two_tasks: tuple) -> None:
+    def test_dependency_tree_with_direction(
+        self,
+        client: TestClient,
+        two_tasks: tuple[dict[str, Any], dict[str, Any]],
+    ) -> None:
         t1, t2 = two_tasks
         client.post(
             f"/api/tasks/{t1['id']}/dependencies",
@@ -1471,7 +1526,11 @@ class TestDependencies:
         )
         assert response.status_code == 409
 
-    def test_add_dependency_self_reference(self, client: TestClient, sample_task: dict) -> None:
+    def test_add_dependency_self_reference(
+        self,
+        client: TestClient,
+        sample_task: dict[str, Any],
+    ) -> None:
         """A task cannot depend on itself."""
         response = client.post(
             f"/api/tasks/{sample_task['id']}/dependencies",
@@ -1480,7 +1539,7 @@ class TestDependencies:
         assert response.status_code == 400
 
     def test_add_dependency_nonexistent_blocker(
-        self, client: TestClient, sample_task: dict
+        self, client: TestClient, sample_task: dict[str, Any]
     ) -> None:
         response = client.post(
             f"/api/tasks/{sample_task['id']}/dependencies",

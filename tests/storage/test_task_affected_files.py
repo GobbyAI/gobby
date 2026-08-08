@@ -94,6 +94,46 @@ class TestSetFiles:
         }
 
 
+class TestReplaceDeclaredFiles:
+    def test_replaces_declared_scope_and_promotes_observed_overlap(
+        self, af_manager: TaskAffectedFileManager
+    ) -> None:
+        af_manager.set_files(TASK_1, ["src/old-manual.py"], source="manual")
+        af_manager.set_files(TASK_1, ["src/old-expansion.py"], source="expansion")
+        af_manager.set_files(
+            TASK_1,
+            ["src/evidence.py", "src/promoted.py"],
+            source="observed",
+        )
+
+        results = af_manager.replace_declared_files(
+            TASK_1,
+            ["src/new.py", "src/promoted.py", "src/new.py"],
+        )
+
+        assert [item.file_path for item in results] == ["src/new.py", "src/promoted.py"]
+        assert all(item.annotation_source == "manual" for item in results)
+        assert {
+            item.file_path: item.annotation_source for item in af_manager.get_files(TASK_1)
+        } == {
+            "src/evidence.py": "observed",
+            "src/new.py": "manual",
+            "src/promoted.py": "manual",
+        }
+
+    def test_empty_replacement_clears_only_declared_scope(
+        self, af_manager: TaskAffectedFileManager
+    ) -> None:
+        af_manager.set_files(TASK_1, ["src/manual.py"], source="manual")
+        af_manager.set_files(TASK_1, ["src/expansion.py"], source="expansion")
+        af_manager.set_files(TASK_1, ["src/evidence.py"], source="observed")
+
+        assert af_manager.replace_declared_files(TASK_1, []) == []
+        assert [
+            (item.file_path, item.annotation_source) for item in af_manager.get_files(TASK_1)
+        ] == [("src/evidence.py", "observed")]
+
+
 class TestGetFiles:
     def test_get_files_empty(self, af_manager: TaskAffectedFileManager) -> None:
         files = af_manager.get_files(TASK_1)

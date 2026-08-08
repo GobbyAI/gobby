@@ -236,6 +236,18 @@ def show_task(task_id: str) -> None:
     type=ISOLATION_CHOICE,
     help="New automation isolation mode",
 )
+@click.option(
+    "--affected-file",
+    "affected_files",
+    multiple=True,
+    metavar="PATH",
+    help="Replacement affected file path (repeatable)",
+)
+@click.option(
+    "--clear-affected-files",
+    is_flag=True,
+    help="Clear declared affected files",
+)
 def update_task(
     task_id: str,
     title: str | None,
@@ -244,11 +256,17 @@ def update_task(
     parent_task_id: str | None,
     task_type: str | None,
     isolation: str | None,
+    affected_files: tuple[str, ...],
+    clear_affected_files: bool,
 ) -> None:
     """Update a task.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
     """
+    if affected_files and clear_affected_files:
+        raise click.UsageError("--affected-file and --clear-affected-files cannot be used together")
+
+    replacement_files = [] if clear_affected_files else list(affected_files) or None
     update_task_impl(
         _services(),
         task_id,
@@ -258,6 +276,7 @@ def update_task(
         parent_task_id,
         task_type,
         isolation,
+        replacement_files,
     )
 
 

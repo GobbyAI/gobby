@@ -87,6 +87,36 @@ class TaskAffectedFileManager:
                     logger.debug("File %s already tracked for task %s", file_path, task_id)
             return results
 
+    def replace_declared_files(
+        self,
+        task_id: str,
+        files: list[str],
+    ) -> list[TaskAffectedFile]:
+        """Replace manual and expansion scope while preserving observed evidence."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                DELETE FROM task_affected_files
+                WHERE task_id = %s AND annotation_source IN (%s, %s)
+                """,
+                (task_id, "manual", "expansion"),
+            )
+            results = []
+            for file_path in dict.fromkeys(files):
+                row = conn.execute(
+                    """
+                    INSERT INTO task_affected_files (task_id, file_path, annotation_source)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (task_id, file_path) DO UPDATE
+                    SET annotation_source = EXCLUDED.annotation_source
+                    RETURNING id, task_id, file_path, annotation_source, created_at
+                    """,
+                    (task_id, file_path, "manual"),
+                ).fetchone()
+                if row is not None:
+                    results.append(TaskAffectedFile.from_row(row))
+            return results
+
     def get_files(self, task_id: str) -> list[TaskAffectedFile]:
         """Get all affected files for a task."""
         rows = self.db.fetchall(
