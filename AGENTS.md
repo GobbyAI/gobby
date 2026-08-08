@@ -9,21 +9,22 @@ These are enforced by hooks, rules and workflows.
 5. **NEVER close a task without a commit if there are diffs.** If you changed something, you have to commit it.
 6. **NEVER stop while you have a claimed task in progress.** Your stop hook is blocked while you have a claimed task. Task must be closed before stopping. If you claim a task, you finish a task.
 7. **Escalate only when the user explicitly needs to review your work, your agent skill/workflow/pipeline directs escalation, or you are genuinely stuck and need guidance.** Do not use escalation as a workaround for committing, closing, or completing required validation.
-8. **You found it, you own it — within clean or session-owned paths.** Every error,
-   test failure, lint warning, or type error you encounter in a path that was clean
-   when your task began, or that is attributed to your current session or task, is
-   yours to fix before closing. A path already dirty in the shared worktree when
-   your task begins is excluded and remains owned by the session or agent that
-   dirtied it: do not modify, format, stage, commit, or destructively roll back that
-   path. Resolve its holder from session/task file-attribution metadata and notify
-   that session or agent via `gobby-agents:send_message` with the exact failing
-   command, diagnostics, and affected paths. If no holder can be resolved, notify
-   the user or project operator.
-   Failures confined to excluded dirty paths do not block your task's validation or
-   close gates after a passing scoped rerun against owned or clean paths demonstrates
-   that confinement. The only exception for an owned path is something that genuinely
-   requires multi-session architectural planning; even then, investigate thoroughly
-   and attempt the fix before filing a task to defer it.
+8. **You found it, you fix it — in this session.** Every error, test failure,
+   lint warning, or type error you encounter is yours to fix before closing —
+   including breakage already present in committed code, no matter which task
+   or commit introduced it. Filing a task for a finding is deferral, not
+   fixing, and deferral is never yours to self-grant. The single exclusion is
+   another active session's or agent's uncommitted files in the shared
+   worktree, and it exists for exactly one reason: never destroy in-flight
+   work. It does not hand the finding off. Leave those paths untouched — do
+   not modify, format, stage, commit, or roll them back — and send the owner
+   (resolved from session/task file-attribution metadata) the exact failing
+   command, diagnostics, and affected paths via `gobby-agents:send_message`;
+   if no owner resolves, tell the user. Failures confined to those uncommitted
+   foreign paths are the only ones that do not block your close gates, and only
+   after a passing scoped rerun against owned or clean paths demonstrates that
+   confinement. If a fix is genuinely too large to land in this session, say so
+   and let the user decide — only the user can approve a deferral task.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
 11. **NEVER leave options or unanswered questions in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.
