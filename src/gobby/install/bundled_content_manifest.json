@@ -1,7 +1,6 @@
 {
   "files": {
     "CLAUDE.md": "8996e013ec09fad69e4ff2cc82415af0ac1adcb9f103fa3d8ffa71e2e16f7494",
-    "config/.mcp-template.json": "2caff1d30e32212fdef58c54cce1e13c825ed3684cceba1ad2a5c5726a377c51",
     "config/bootstrap.yaml": "ecf1ec34db3eade14c7b7220467d411213faf5458649083f67a2b12e3f7b43b5",
     "config/config.yaml": "8f1edfa8b7966940bf866a7fcc996ab5f38fd3205de58b4522b12a55bf46b097",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
@@ -131,10 +130,8 @@
     "skills/goal/SKILL.md": "a77dd912ab55d4bb54723c20dc558a834335335459cc781a8688d92f9410bd2f",
     "skills/gobby/SKILL.md": "b9b1e66283cf5a0d80dec69c580a6151a7241398c9d021c7820604f7a57451d6",
     "skills/ideate/SKILL.md": "4b65f059c2e91ba3d177b7f800cfbc7ca0d2c7b83cc2942ef9d358af28a19398",
-    "skills/impeccable/.upgrade/README.md": "81d976bcf0b23c7c1da49106278eed7b05256cb31d93c311d33c1c0a3fc3ad64",
-    "skills/impeccable/.upgrade/transform.py": "448d16cb6e1458477ae4393e333fc806a2d4e4fe8b4ab360c974001eb2fd3d3f",
     "skills/impeccable/NOTICE.md": "14702e007e4d7a78d2b66b8a65c0b7d98079947e4a54cb24736ffb4f99f08aa5",
-    "skills/impeccable/SKILL.md": "478f1d232fd2b5363e16f15795151d4241fd4e8f169cef631f20c68173f0e646",
+    "skills/impeccable/SKILL.md": "df4bb5bf6c8a96c4ea40a729d457ec661f7488f60cef959689bd979d710e6ed8",
     "skills/impeccable/references/adapt.md": "116d2f4c3c266d5e3d473541ebf2979656f11f1db922f4221f6eab99173588f6",
     "skills/impeccable/references/adapt.native.md": "6035bd34a8d40451558388eb694dd9892c39b377d98792e0643fb50e9e80577e",
     "skills/impeccable/references/android.md": "7f961f07b314a5c8881cd3f395e38f0eec6cd2210c2fb14576a799d5ee1ad394",
@@ -148,7 +145,7 @@
     "skills/impeccable/references/craft-floor.md": "9b8cf9e9caeb517a9dd85473c28531b3659b34fefc57ae80ee1821fe2dd5c680",
     "skills/impeccable/references/craft.md": "878a5bc6366baf49c6586a3135e25f5105d3e5ac1a8a20da0a43ab79689a4cae",
     "skills/impeccable/references/critique.md": "41a802a59fb546a01b5b7993ca98eb57881fdffb679d33894ccf012c9841d856",
-    "skills/impeccable/references/degraded/asset-producer.md": "69419be8287b2fdfaf3d4126131ec01739733b3801d55d7e30a06f0d0bda12e5",
+    "skills/impeccable/references/degraded/asset-producer.md": "28dd4499c1ca070095cbb5b8693b03e37605d0febfcee0da8a5dc4e7459ce6a9",
     "skills/impeccable/references/degraded/documenter.md": "97a09e350c383cb2f6bba027b83bedffd12a23b1b439ad4a045a48953eb19365",
     "skills/impeccable/references/degraded/finish-reviewer.md": "8b44ea009ac73e44a93005f4d5501b551a382889c7c99929ebd6bb6a6b59924f",
     "skills/impeccable/references/degraded/manual-edit-applier.md": "9aae8d5bfb72a8cf3473dca74d5046e28002c0b43a7f9b3c14cd0f1a06c8deb4",

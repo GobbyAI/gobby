@@ -133,7 +133,7 @@ def impeccable_runtime(
 def test_release_pin_and_node_floor() -> None:
     assert IMPECCABLE_RELEASE.package == "impeccable"
     assert IMPECCABLE_RELEASE.version == "3.5.0"
-    assert IMPECCABLE_NODE_MIN_VERSION == "22.18.0"
+    assert IMPECCABLE_NODE_MIN_VERSION == "22.12.0"
     lockfile = Path(installer.__file__).parents[1] / "install" / "impeccable-package-lock.json"
     assert hashlib.sha256(lockfile.read_bytes()).hexdigest() == IMPECCABLE_RELEASE.lockfile_sha256
     assert installer.PACKAGE_JSON == {
@@ -298,16 +298,16 @@ def test_node_floor_gate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home, _ = impeccable_runtime
-    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.17.9"))
-    with pytest.raises(installer.ImpeccableInstallError, match="22.18.0"):
+    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.11.9"))
+    with pytest.raises(installer.ImpeccableInstallError, match="22.12.0"):
         installer.install_impeccable_cli()
     assert not (home / "tools" / "impeccable").exists()
 
-    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.18.0"))
+    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.12.0"))
     installer.install_impeccable_cli()
     before = sorted(path.relative_to(home) for path in home.rglob("*"))
-    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.17.9"))
-    with pytest.raises(installer.ImpeccableInstallError, match="22.18.0"):
+    monkeypatch.setattr(installer, "_detect_node", lambda: (Path("/node"), "22.11.9"))
+    with pytest.raises(installer.ImpeccableInstallError, match="22.12.0"):
         installer.install_impeccable_cli()
     assert sorted(path.relative_to(home) for path in home.rglob("*")) == before
 

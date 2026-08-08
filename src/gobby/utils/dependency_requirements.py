@@ -84,9 +84,9 @@ class ImpeccableRelease:
 IMPECCABLE_RELEASE = ImpeccableRelease(
     package="impeccable",
     version="3.5.0",
-    lockfile_sha256="c6d77077e7001fbd4777bf564f92b6430a8df924424970a6eba959c571aa2fa3",
+    lockfile_sha256="a0aa57fb46ee4cbeb348e60f55df54c76eacc16fc8acc163a2b58c6b686d7ed6",
 )
-IMPECCABLE_NODE_MIN_VERSION = "22.18.0"
+IMPECCABLE_NODE_MIN_VERSION = "22.12.0"
 
 
 @dataclass(frozen=True)

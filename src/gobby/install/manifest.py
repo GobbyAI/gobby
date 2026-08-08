@@ -51,6 +51,8 @@ def should_include_bundled_file(path: Path, shared_dir: Path) -> bool:
         relative = path.relative_to(shared_dir)
     except ValueError:
         return False
+    if any(part.startswith(".") for part in relative.parts):
+        return False
     if any(part in _EXCLUDED_DIR_NAMES for part in relative.parts):
         return False
     if path.name in _EXCLUDED_FILE_NAMES:

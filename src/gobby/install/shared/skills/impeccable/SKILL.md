@@ -10,7 +10,7 @@ metadata:
     format_overrides:
       autonomous: full
     runtime:
-      node: ">=22.18.0"
+      node: ">=22.12.0"
       cli:
         npm: "impeccable"
         version: "3.5.0"
