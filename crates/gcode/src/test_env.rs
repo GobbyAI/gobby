@@ -5,11 +5,18 @@ const GOBBY_HOME_ENV: &str = "GOBBY_HOME";
 const GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV: &str = "GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE";
 
 pub fn postgres_test_database_url(purpose: &str) -> String {
-    match postgres_test_database_url_from_sources() {
-        Ok(Some(database_url)) => {
-            ensure_code_index_schema(&database_url);
-            database_url
-        }
+    let database_url = resolve_postgres_test_database_url(purpose);
+    ensure_code_index_schema(&database_url);
+    database_url
+}
+
+/// Resolve the test database URL and refuse non-`_test` database names unless
+/// `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` overrides the guard. Without this,
+/// a bare `cargo test -p gobby-code` silently falls back to the live hub DSN
+/// in `~/.gobby/bootstrap.yaml` and mutates real data.
+fn resolve_postgres_test_database_url(purpose: &str) -> String {
+    let database_url = match postgres_test_database_url_from_sources() {
+        Ok(Some(database_url)) => database_url,
         Ok(None) => {
             panic!(
                 "{purpose} requires a PostgreSQL test database URL; set \
@@ -21,7 +28,17 @@ pub fn postgres_test_database_url(purpose: &str) -> String {
         Err(error) => {
             panic!("{purpose} failed to read PostgreSQL test database URL sources: {error:#}")
         }
+    };
+    if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
+        panic!(
+            "{purpose} refused the resolved PostgreSQL database URL: {reason}. \
+             gcode DB tests only run against disposable `*_test` databases; set \
+             {GCODE_POSTGRES_TEST_DATABASE_URL_ENV} to a dedicated test database \
+             or set {GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV}=1 to bypass this \
+             guard"
+        );
     }
+    database_url
 }
 
 fn postgres_test_database_url_from_sources() -> anyhow::Result<Option<String>> {
@@ -149,6 +166,7 @@ mod tests {
         "GOBBY_POSTGRES_TEST_HOST",
         "GOBBY_POSTGRES_TEST_PORT",
         GOBBY_HOME_ENV,
+        GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV,
     ];
 
     fn with_postgres_test_env<R>(
@@ -235,6 +253,67 @@ mod tests {
                 Some("postgresql://bootstrap/gobby")
             );
         });
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn resolve_refuses_non_test_database_without_override() {
+        with_postgres_test_env(
+            &[(
+                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+                Some("postgresql://localhost/gobby"),
+            )],
+            || {
+                let panic =
+                    std::panic::catch_unwind(|| resolve_postgres_test_database_url("guard tests"))
+                        .expect_err("non-test database URL is refused");
+                let message = panic
+                    .downcast_ref::<String>()
+                    .expect("panic payload is a formatted String");
+                assert!(message.contains("does not end with `_test`"), "{message}");
+                assert!(
+                    message.contains(GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV),
+                    "{message}"
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn resolve_allows_non_test_database_with_override() {
+        with_postgres_test_env(
+            &[
+                (
+                    GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+                    Some("postgresql://localhost/gobby"),
+                ),
+                (GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV, Some("1")),
+            ],
+            || {
+                assert_eq!(
+                    resolve_postgres_test_database_url("guard tests"),
+                    "postgresql://localhost/gobby"
+                );
+            },
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn resolve_passes_explicit_test_database_unchanged() {
+        with_postgres_test_env(
+            &[(
+                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+                Some("postgresql://localhost/gcode_test"),
+            )],
+            || {
+                assert_eq!(
+                    resolve_postgres_test_database_url("guard tests"),
+                    "postgresql://localhost/gcode_test"
+                );
+            },
+        );
     }
 
     #[test]
