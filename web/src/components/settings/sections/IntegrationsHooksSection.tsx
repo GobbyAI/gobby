@@ -33,6 +33,8 @@ const OWNED_PATHS: readonly string[] = [
   'communications.channel_defaults.poll_interval_seconds',
   'communications.channel_defaults.retention_days',
   'communications.auto_create_sessions',
+  'hooks.adapter_timeout',
+  'hooks.provider_timeout',
   'hook_extensions.websocket.enabled',
   'hook_extensions.websocket.broadcast_events',
   'hook_extensions.websocket.include_payload',
@@ -159,6 +161,28 @@ function ChannelDefaultsGroup({ fields }: { fields: SettingsSectionFields }) {
         path="communications.channel_defaults.retention_days"
         label="Message retention (days)"
         ariaLabel="Channel message retention (days)"
+      />
+    </Subsection>
+  )
+}
+
+function HookTimeoutsGroup({ fields }: { fields: SettingsSectionFields }) {
+  return (
+    <Subsection
+      title="Hook timeouts"
+      hint="Timeout budgets for daemon hook adapters and provider hook clients. Changes require a daemon restart."
+    >
+      <NumberConfigField
+        fields={fields}
+        path="hooks.adapter_timeout"
+        label="Adapter timeout (seconds)"
+        ariaLabel="Hook adapter timeout (seconds)"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="hooks.provider_timeout"
+        label="Provider timeout (seconds)"
+        ariaLabel="Hook provider timeout (seconds)"
       />
     </Subsection>
   )
@@ -345,6 +369,7 @@ export function IntegrationsHooksSection() {
         <>
           <CommunicationsGroup fields={fields} />
           <ChannelDefaultsGroup fields={fields} />
+          <HookTimeoutsGroup fields={fields} />
           <WebSocketBroadcastGroup fields={fields} />
           <WebhooksGroup fields={fields} />
         </>

@@ -26,6 +26,10 @@ function makeConfigValues(): Record<string, unknown> {
       },
       auto_create_sessions: true,
     },
+    hooks: {
+      adapter_timeout: 105,
+      provider_timeout: 120,
+    },
     hook_extensions: {
       websocket: {
         enabled: true,
@@ -112,6 +116,30 @@ describe('IntegrationsHooksSection', () => {
     expect(
       screen.getByLabelText('Channel message retention (days)'),
     ).toHaveValue(90)
+  })
+
+  it('reads and persists the hook timeout rows', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    expect(screen.getByLabelText('Hook adapter timeout (seconds)')).toHaveValue(
+      105,
+    )
+    expect(screen.getByLabelText('Hook provider timeout (seconds)')).toHaveValue(
+      120,
+    )
+
+    fireEvent.change(screen.getByLabelText('Hook adapter timeout (seconds)'), {
+      target: { value: '89' },
+    })
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ 'hooks.adapter_timeout': 89 }),
+    )
   })
 
   it('renders broadcast_events as an editable string list, not a text fallback', () => {
