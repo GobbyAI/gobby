@@ -109,9 +109,10 @@ def _run_install_preflight(
                 "semantic features disabled."
             )
 
-    for port in (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT):
-        if not _port_available(port):
-            warnings.append(f"Port {port} is already in use.")
+    if is_full_install:
+        for port in (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT):
+            if not _port_available(port):
+                warnings.append(f"Port {port} is already in use.")
 
     return errors, warnings
 

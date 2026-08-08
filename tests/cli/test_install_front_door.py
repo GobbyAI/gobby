@@ -150,6 +150,34 @@ def test_targeted_preflight_still_requires_user_managed_dependencies(
     assert warnings == []
 
 
+def test_targeted_preflight_does_not_probe_daemon_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port_available = MagicMock(return_value=False)
+    monkeypatch.setattr(daemon_module, "_port_available", port_available)
+    monkeypatch.setattr(
+        daemon_module,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(
+            runtime={},
+            required={},
+            optional={},
+            services={},
+        ),
+    )
+
+    errors, warnings = daemon_module._run_install_preflight(
+        is_full_install=False,
+        install_dir=Path("/wheel/gobby/install"),
+        embedding_url=None,
+        embedding_provider=None,
+    )
+
+    assert errors == []
+    assert warnings == []
+    port_available.assert_not_called()
+
+
 def test_install_preflight_rejects_native_windows(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
