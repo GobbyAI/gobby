@@ -528,6 +528,12 @@ class TestMailboxBroadcast:
             repo_path="/tmp/other-all-project",
         ).id
         foreign = _register_session(session_manager, other_project_id, "foreign-active")
+        remote_system = _register_session(session_manager, sample_project["id"], "remote-system")
+        with temp_db.transaction() as conn:
+            conn.execute(
+                "UPDATE sessions SET source = 'system' WHERE id = %s",
+                (remote_system.id,),
+            )
 
         result = await _mailbox(temp_db, session_manager).send(
             from_session_id=sender.id,
@@ -537,6 +543,7 @@ class TestMailboxBroadcast:
 
         assert result.recipient_session_ids == [active.id, paused.id]
         assert foreign.id not in result.recipient_session_ids
+        assert remote_system.id not in result.recipient_session_ids
         assert result.broadcast_id
         assert result.selector_metadata == {
             "target": "all",

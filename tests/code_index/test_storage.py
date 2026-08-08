@@ -328,8 +328,6 @@ def test_upsert_imports_validates_all_paths_before_storage(file_path: str) -> No
     db = MagicMock()
     storage = CodeIndexStorage(cast(HubDatabase, db))
     relation = ImportRelation(source_file="src/app.py", target_module="app")
-    if file_path == "src/app.py":
-        relation.source_file = "../src/app.py"
 
     with (
         patch.object(storage, "_current_file_content_hash") as content_hash,

@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.storage.build_history import BuildHistoryStorage
-from gobby.storage.sessions import ensure_system_session, system_session_id
+from gobby.storage.sessions import (
+    SYSTEM_SESSION_SOURCE,
+    ensure_system_session,
+    system_session_id,
+)
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -475,11 +479,11 @@ class MailboxService:
               FROM sessions
              WHERE status IN ({status_placeholders})
                AND project_id = %s
-               AND id != %s
+               AND source != %s
                AND id != %s
              ORDER BY created_at ASC, id ASC
             """,
-            (*DELIVERABLE_SESSION_STATUSES, project_id, system_session_id(), from_session_id),
+            (*DELIVERABLE_SESSION_STATUSES, project_id, SYSTEM_SESSION_SOURCE, from_session_id),
         )
         return self._dedupe([str(row["id"]) for row in rows])
 
