@@ -174,6 +174,8 @@ mod serial_db {
             file_path: "src/keep.rs".to_string(),
             content_hash: "gc-hash-keep".to_string(),
             symbol_ids: Vec::new(),
+            graph_synced: true,
+            vectors_synced: true,
         });
         let services = test_context(&database_url, &project_id);
         let totals = prune_content_versions_with(&services, &candidates, |project_id| {
@@ -235,6 +237,12 @@ mod serial_db {
                 password: None,
                 graph_name: "gcode_gc_test".to_string(),
             });
+            // Both stores must be configured so the skip gate does not retain
+            // the candidate before the graph delete gets to fail.
+            ctx.qdrant = Some(crate::config::QdrantConfig {
+                url: Some("http://127.0.0.1:1".to_string()),
+                api_key: None,
+            });
             Ok(ctx)
         })
         .expect("prune isolates projection failures");
@@ -250,6 +258,69 @@ mod serial_db {
             .expect("read reset flags");
         assert!(!row.get::<_, bool>("graph_synced"));
         assert!(!row.get::<_, bool>("vectors_synced"));
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn unconfigured_projection_store_retains_synced_content() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-gc-store-skip");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
+        let root = git_init_root();
+        seed_project(&mut conn, &project_id, root.path());
+        let synced_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/lib.rs",
+            "gc-hash-synced",
+            60,
+            true,
+        );
+        seed_symbol(&mut conn, &project_id, "src/lib.rs", "gc-hash-synced");
+        let unsynced_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/other.rs",
+            "gc-hash-unsynced",
+            60,
+            false,
+        );
+        seed_symbol(&mut conn, &project_id, "src/other.rs", "gc-hash-unsynced");
+
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
+            .expect("discover GC candidates");
+        assert_eq!(candidates.len(), 2);
+
+        // test_context configures neither FalkorDB nor Qdrant.
+        let services = test_context(&database_url, &project_id);
+        let totals = prune_content_versions_with(&services, &candidates, |project_id| {
+            Ok(test_context(&database_url, project_id))
+        })
+        .expect("prune content versions");
+
+        assert_eq!(totals.skipped_versions, 1);
+        assert_eq!(totals.deleted_versions, 1);
+        assert_eq!(totals.failed_versions, 0);
+        // The synced version keeps its row and flags for a machine that can
+        // reach the stores; the never-projected version is deleted.
+        assert_eq!(content_row_count(&mut conn, &synced_id), 1);
+        assert_eq!(content_row_count(&mut conn, &unsynced_id), 0);
+        let row = conn
+            .query_one(
+                "SELECT graph_synced, vectors_synced FROM code_indexed_files WHERE id = $1",
+                &[&db::id_param(&synced_id).expect("file uuid")],
+            )
+            .expect("read retained row flags");
+        assert!(row.get::<_, bool>("graph_synced"));
+        assert!(row.get::<_, bool>("vectors_synced"));
     }
 
     #[test]
@@ -281,6 +352,8 @@ mod serial_db {
                 file_path: "src/lib.rs".to_string(),
                 content_hash: "gc-hash-old".to_string(),
                 symbol_ids: Vec::new(),
+                graph_synced: true,
+                vectors_synced: true,
             });
         }
 

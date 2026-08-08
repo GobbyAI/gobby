@@ -217,11 +217,12 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
 
 fn print_content_gc_totals(totals: &super::content_gc::ContentGcTotals) {
     eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
+        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s), {} skipped (store unconfigured)",
         totals.deleted_versions,
         totals.deleted_symbols,
         totals.busy_projects,
         totals.failed_versions,
+        totals.skipped_versions,
     );
 }
 

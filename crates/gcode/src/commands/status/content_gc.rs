@@ -20,6 +20,8 @@ pub(super) struct ContentGcCandidate {
     pub(super) file_path: String,
     pub(super) content_hash: String,
     pub(super) symbol_ids: Vec<String>,
+    pub(super) graph_synced: bool,
+    pub(super) vectors_synced: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +30,7 @@ pub(super) struct ContentGcTotals {
     pub(super) deleted_symbols: usize,
     pub(super) busy_projects: usize,
     pub(super) failed_versions: usize,
+    pub(super) skipped_versions: usize,
 }
 
 pub(super) fn discover_content_gc(
@@ -44,6 +47,8 @@ pub(super) fn discover_content_gc(
                 f.project_id::text AS project_id,
                 f.file_path,
                 f.content_hash,
+                f.graph_synced,
+                f.vectors_synced,
                 ps.root_path,
                 COALESCE(
                     array_agg(s.id::text ORDER BY s.id)
@@ -65,7 +70,8 @@ pub(super) fn discover_content_gc(
                  AND fs.file_path = f.file_path
                  AND fs.content_hash = f.content_hash
            )
-         GROUP BY f.id, f.project_id, f.file_path, f.content_hash, ps.root_path
+         GROUP BY f.id, f.project_id, f.file_path, f.content_hash,
+                  f.graph_synced, f.vectors_synced, ps.root_path
          ORDER BY f.project_id, f.file_path, f.content_hash",
         &[&machine_id, &retention_days, &project_filter],
     )?;
@@ -109,6 +115,8 @@ pub(super) fn discover_content_gc(
             file_path,
             content_hash,
             symbol_ids: row.try_get("symbol_ids")?,
+            graph_synced: row.try_get("graph_synced")?,
+            vectors_synced: row.try_get("vectors_synced")?,
         });
     }
     Ok(candidates)
@@ -167,6 +175,25 @@ fn prune_content_versions_with(
             totals.failed_versions += 1;
             continue;
         };
+
+        // A store that is not configured on this machine cannot be cleaned
+        // here. Deleting the SQL row anyway would strand this version's
+        // per-symbol projections in the shared store forever, so retain the
+        // row for a machine that has the store configured.
+        let has_projections = !candidate.symbol_ids.is_empty();
+        let graph_unreachable = has_projections && candidate.graph_synced && ctx.falkordb.is_none();
+        let vectors_unreachable =
+            has_projections && candidate.vectors_synced && ctx.qdrant.is_none();
+        if graph_unreachable || vectors_unreachable {
+            log::warn!(
+                "retaining content version {}:{}@{}: its projection store(s) are not configured on this machine",
+                candidate.project_id,
+                candidate.file_path,
+                candidate.content_hash,
+            );
+            totals.skipped_versions += 1;
+            continue;
+        }
 
         if let Err(error) = delete_candidate_projections(ctx, candidate) {
             // The projections are now partially deleted while the SQL row still
