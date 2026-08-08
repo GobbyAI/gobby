@@ -241,15 +241,14 @@ def register_lifecycle_routes(
 
             body = await request.json()
             external_id = body.get("external_id")
-            machine_id = body.get("machine_id")
             source = body.get("source")
             project_id = body.get("project_id")
             cwd = body.get("cwd")
 
-            if not external_id or not machine_id or not source:
+            if not external_id or not source:
                 raise HTTPException(
                     status_code=400,
-                    detail="Required fields: external_id, machine_id, source",
+                    detail="Required fields: external_id, source",
                 )
 
             # Resolve project_id from cwd if not provided
@@ -265,7 +264,6 @@ def register_lifecycle_routes(
             session = await server.run_db(
                 server.session_manager.find_by_external_id,
                 external_id,
-                machine_id,
                 project_id,
                 source,
             )

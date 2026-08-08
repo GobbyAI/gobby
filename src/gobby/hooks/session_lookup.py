@@ -344,6 +344,24 @@ class SessionLookupService:
             return None
 
         if is_gobby_acp_child(event.data.get("terminal_context")):
+            # An ACP child shares its external_id with the web_chat session that
+            # spawned it (#16002). Terminal-typed lookups above cannot see that
+            # parent, so bind to it explicitly before giving up.
+            web_chat_parent = self._session_manager.find_by_external_id(
+                external_id,
+                project_id,
+                event.source.value,
+                session_type="web_chat",
+            )
+            if web_chat_parent is not None:
+                self._logger.info(
+                    "Bound ACP child event to web_chat parent session %s "
+                    "(external_id=%s source=%s)",
+                    web_chat_parent.id,
+                    external_id,
+                    event.source.value,
+                )
+                return web_chat_parent.id
             self._logger.info(
                 "Skipping auto-registration for ACP child process: external_id=%s source=%s",
                 external_id,

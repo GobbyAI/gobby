@@ -24,6 +24,14 @@ class HookSessionManager(Protocol):
 
     def get(self, session_id: str) -> Session | None: ...
 
+    def find_by_external_id(
+        self,
+        external_id: str,
+        project_id: str | None,
+        source: str,
+        session_type: str | None = "terminal",
+    ) -> Session | None: ...
+
     def list(
         self,
         project_id: str | None = None,
