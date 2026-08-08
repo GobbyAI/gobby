@@ -69,46 +69,57 @@ Every surface serves one visitor mode; name it before designing and let it steer
 
 ## Sub-command Dispatch
 
-This skill is a **router** over 17 steering commands plus three inline modes. Evaluate the argument the user passed (after `/gobby impeccable`) and take the matching action below. If **no argument** was passed, render the menu at the bottom of this section and ask the user which one they want — do NOT start design work automatically.
+This skill is a **router** over 22 user arguments backed by 24 reference files, plus the inline `teach` mode. Evaluate the argument passed after `/gobby impeccable` and take the matching action below. With no argument, call `get_skill_file(name="impeccable", path="references/routing.md")` on `gobby-skills` and follow its context-aware menu flow.
 
-### Inline modes (handled later in this file)
+### Inline mode
+
 | Argument | What it does | See section |
 |----------|--------------|-------------|
-| `craft` | Shape-then-build flow: interview → design brief → implement → iterate | `## Craft Mode` |
-| `teach` | One-time design-context setup — writes `.impeccable.md` | `## Teach Mode` |
-| `extract` | Pull reusable components/tokens into the design system | `## Extract Mode` |
+| `teach` | Create or refresh the project design contract in `.impeccable.md` | `## Teach Mode` |
 
-For these three, skip the rest of this dispatch section and jump to the named section below.
+For `teach`, skip the reference dispatch and jump to the named section below.
 
-### Steering commands (load the reference file, then follow it)
+### Reference-backed flows
 
-When the argument matches one of the commands below, call `get_skill_file(name="impeccable", path="references/<cmd>.md")` on `gobby-skills` and follow that file's instructions. Treat any remaining words in the user's argument as the target of the operation (a file path, component name, or feature).
+When the argument matches a row below, call `get_skill_file(name="impeccable", path="<reference>")` on `gobby-skills` and follow the returned instructions. Treat remaining words as the operation target. For `audit` and `adapt`, choose the native variant for native applications and the general variant for other surfaces.
 
-| Argument | Purpose |
-|----------|---------|
-| `shape` | Plan UX/UI for a feature before writing code |
-| `polish` | Final-pass detail work against the design system |
-| `audit` | Structured review against impeccable's anti-patterns |
-| `critique` | Adversarial multi-persona design review |
-| `distill` | Strip a design to its essential elements |
-| `animate` | Add purposeful motion |
-| `layout` | Rework spatial composition and hierarchy |
-| `bolder` | Push aesthetic intensity up |
-| `quieter` | Pull aesthetic intensity down |
-| `harden` | Edge-state, i18n, overflow, and error handling |
-| `optimize` | Performance and payload pass |
-| `adapt` | Responsive/contextual adaptation |
-| `clarify` | UX-writing and hierarchy cleanup |
-| `colorize` | Color system rework |
-| `delight` | Targeted moments of interaction charm |
-| `overdrive` | Maximalist creative push |
-| `typeset` | Typography and type-scale pass |
+| Argument | Purpose | Reference |
+|----------|---------|-----------|
+| `craft` | Shape-then-build alias using normal dispatch | `references/craft.md` |
+| `shape` | Plan UX/UI before writing code | `references/shape.md` |
+| `init` | Route design-context setup to teach mode | `references/init.md` |
+| `document` | Maintain the project design contract | `references/document.md` |
+| `extract` | Consolidate reusable components and tokens | `references/extract.md` |
+| `critique` | Run an adversarial multi-persona review | `references/critique.md` |
+| `audit` | Review web or native quality | `references/audit.md`; native: `references/audit.native.md` |
+| `polish` | Run a final detail pass | `references/polish.md` |
+| `bolder` | Increase aesthetic intensity | `references/bolder.md` |
+| `quieter` | Reduce aesthetic intensity | `references/quieter.md` |
+| `distill` | Strip a design to its essentials | `references/distill.md` |
+| `harden` | Cover edge states, i18n, overflow, and errors | `references/harden.md` |
+| `onboard` | Improve time-to-value and onboarding | `references/onboard.md` |
+| `animate` | Add purposeful motion | `references/animate.md` |
+| `colorize` | Rework the color system | `references/colorize.md` |
+| `typeset` | Refine typography and type scale | `references/typeset.md` |
+| `layout` | Rework composition and hierarchy | `references/layout.md` |
+| `delight` | Add targeted interaction charm | `references/delight.md` |
+| `overdrive` | Apply a maximalist creative push | `references/overdrive.md` |
+| `clarify` | Improve UX writing and hierarchy | `references/clarify.md` |
+| `adapt` | Adapt across responsive or native contexts | `references/adapt.md`; native: `references/adapt.native.md` |
+| `optimize` | Improve performance and payload | `references/optimize.md` |
+
+### Supporting references
+
+- New or replacement visual work loads `references/new-work.md`, which loads `references/visualize.md` when image generation is available.
+- Native flows load `references/ios.md` and/or `references/android.md` before platform-specific adaptation or audit.
+- Hook documentation and lifecycle diagnostics load `references/hooks.md` and `references/doctor.md` directly.
+- Degraded in-thread fallbacks remain reachable with `get_skill_file` at `references/degraded/asset-producer.md`, `references/degraded/documenter.md`, `references/degraded/finish-reviewer.md`, and `references/degraded/manual-edit-applier.md`.
 
 ### Fallback
 
-- If the argument does not match any inline mode or steering command, tell the user the argument was not recognized and show them the menu above.
+- If the argument does not match the inline mode or a reference-backed flow, tell the user the argument was not recognized and show the menu from `references/routing.md`.
 - If `get_skill_file` returns `{"success": false, ...}`, surface the error and show the menu again.
-- If **no argument** was provided, introduce yourself as `impeccable`, explain that you have the modes and steering commands above, and ask which one the user wants. Do not silently proceed into design work.
+- If no argument was provided, use `references/routing.md`; do not silently proceed into design work.
 
 ### Bundled scripts
 
@@ -128,7 +139,7 @@ Resolve a runnable copy first:
 3. Critique snapshots write to `.impeccable/critique/` in the project
    (gitignored).
 
-Export the returned `PUPPETEER_CACHE_DIR` before invoking a browser engine.
+Export the returned `environment.PUPPETEER_CACHE_DIR` before invoking a browser engine.
 If Node or the tool is unavailable, skip detector runs and scan manually —
 never block design work on the detector.
 
@@ -375,12 +386,6 @@ Remember: you are capable of extraordinary creative work. Don't hold back. Show 
 
 ---
 
-## Craft Mode
-
-If this skill is invoked with the argument `craft` (e.g., the user asks to `impeccable craft [feature description]`), follow the [craft flow](references/craft.md). Pass any additional arguments as the feature description.
-
----
-
 ## Teach Mode
 
 If this skill is invoked with the argument `teach` (e.g., the user asks to `impeccable teach`), skip all design work above and instead run the teach flow below. This is a one-time setup that gathers design context for the project.
@@ -448,9 +453,3 @@ Write this section to `.impeccable.md` in the project root. If the file already 
 Then ask the user whether they'd also like the Design Context appended to the project instructions file (e.g. `CLAUDE.md` or `AGENTS.md`, whichever the project uses). If yes, append or update the section there as well.
 
 Confirm completion and summarize the key design principles that will now guide all future work.
-
----
-
-## Extract Mode
-
-If this skill is invoked with the argument `extract` (e.g., the user asks to `impeccable extract [target]`), follow the [extract flow](references/extract.md). Pass any additional arguments as the extraction target.

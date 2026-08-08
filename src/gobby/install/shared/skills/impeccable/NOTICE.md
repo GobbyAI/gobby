@@ -24,28 +24,79 @@ specific language governing permissions and limitations under the License.
   Gobby's pinned `impeccable@3.5.0` CLI.
 - Original vendor: 2026-04-15 from commit `f589ff0b6`.
 
-Upstream was rearchitected between our vendors: skill content now lives in
-`skill/` (`SKILL.src.md` + `reference/`) and is compiled into per-harness
-generated output (e.g. `.claude/skills/impeccable/`). Gobby vendors:
+Upstream skill content lives in `skill/` (`SKILL.src.md` + `reference/`) and is
+compiled into per-harness generated output. Gobby currently vendors 37 of the
+39 released reference files from the generated 4.0.4 output. The remaining
+`live.md` and `live-setup.md` are assigned to the live-mode adaptation leaf.
+Gobby also retains seven domain references removed upstream at v3.5.0.
 
-- The 17 steering-command references from `skill/reference/<cmd>.md`, shipped
-  as `references/<cmd>.md`. The main `SKILL.md` acts as a router dispatching to
-  them via `get_skill_file(name="impeccable", path="references/<cmd>.md")` on
-  `gobby-skills`.
-- The new `skill/reference/craft-floor.md` (quality floor: Verify + Refuse
-  lists) and `skill/reference/operate.md` (Operate/Read mode depth) as
-  `references/craft-floor.md` and `references/operate.md`.
+The main `SKILL.md` routes reference-backed flows through
+`get_skill_file(name="impeccable", path="references/<path>.md")` on
+`gobby-skills`. Gobby also vendors:
+
 - The full released script tree under `scripts/` — taken from the **generated**
   4.0.4 skill output at `.claude/skills/impeccable/scripts/`. See "Vendored
   scripts" below.
 
 Gobby keeps its own architecture: markdown references served by
 `get_skill_file`, project design context in `.impeccable.md` (written by teach
-mode), and script execution from a materialized cache. Upstream's
-CLI-orchestrated product machinery is deliberately not vendored (see "Not
-vendored").
+mode), Gobby-owned installation and updates, and script execution from a
+materialized cache.
 
 ## Modifications from upstream
+
+### Reference catalogue
+
+| Reference | Classification |
+|-----------|----------------|
+| `references/craft-floor.md` | Refreshed with catalogued adaptations |
+| `references/operate.md` | Refreshed with catalogued adaptations |
+| `references/adapt.md` | Refreshed with catalogued adaptations |
+| `references/animate.md` | Refreshed with catalogued adaptations |
+| `references/audit.md` | Refreshed with catalogued adaptations |
+| `references/bolder.md` | Refreshed with catalogued adaptations |
+| `references/clarify.md` | Refreshed with catalogued adaptations |
+| `references/colorize.md` | Refreshed with catalogued adaptations |
+| `references/critique.md` | Refreshed with catalogued adaptations |
+| `references/delight.md` | Refreshed with catalogued adaptations |
+| `references/distill.md` | Refreshed with catalogued adaptations |
+| `references/harden.md` | Refreshed with catalogued adaptations |
+| `references/layout.md` | Refreshed with catalogued adaptations |
+| `references/optimize.md` | Refreshed with catalogued adaptations |
+| `references/overdrive.md` | Refreshed with catalogued adaptations |
+| `references/polish.md` | Refreshed with catalogued adaptations |
+| `references/quieter.md` | Refreshed with catalogued adaptations |
+| `references/shape.md` | Refreshed with catalogued adaptations |
+| `references/typeset.md` | Refreshed with catalogued adaptations |
+| `references/init.md` | Named-default adaptation: routes to teach mode |
+| `references/document.md` | Named-default adaptation: maintains `.impeccable.md` |
+| `references/hooks.md` | Named-default adaptation: documentation only; Gobby rules own enforcement |
+| `references/routing.md` | Named-default adaptation: uses `SKILL.md` dispatch |
+| `references/craft.md` | Named-default adaptation: alias uses normal dispatch |
+| `references/new-work.md` | Named-default adaptation: `.impeccable.md` and teach own visual authority |
+| `references/onboard.md` | Standard adaptation |
+| `references/visualize.md` | Standard adaptation |
+| `references/extract.md` | Standard adaptation |
+| `references/doctor.md` | Standard adaptation: Gobby lifecycle diagnostics |
+| `references/ios.md` | Near-verbatim native reference |
+| `references/android.md` | Near-verbatim native reference |
+| `references/adapt.native.md` | Near-verbatim native reference |
+| `references/audit.native.md` | Near-verbatim native reference |
+| `references/degraded/asset-producer.md` | Vendored as-is |
+| `references/degraded/documenter.md` | Vendored as-is |
+| `references/degraded/finish-reviewer.md` | Vendored as-is |
+| `references/degraded/manual-edit-applier.md` | Vendored as-is |
+| `references/color-and-contrast.md` | Gobby-retained upstream domain reference |
+| `references/interaction-design.md` | Gobby-retained upstream domain reference |
+| `references/motion-design.md` | Gobby-retained upstream domain reference |
+| `references/responsive-design.md` | Gobby-retained upstream domain reference |
+| `references/spatial-design.md` | Gobby-retained upstream domain reference |
+| `references/typography.md` | Gobby-retained upstream domain reference |
+| `references/ux-writing.md` | Gobby-retained upstream domain reference |
+
+The four `references/degraded/*.md` files are byte-for-byte copies of the
+released 4.0.4 output. They remain reachable through `get_skill_file` for
+in-thread fallback when a harness cannot run the shipped agents.
 
 Main skill (`SKILL.md`):
 - Frontmatter rewritten to the Gobby shared-skill format.
@@ -58,8 +109,8 @@ Main skill (`SKILL.md`):
   `materialize_skill_scripts` execution flow.
 - `reference/` renamed `references/` (plural) per the Gobby loader convention.
 
-Standard adaptations applied to every refreshed reference
-(`references/<cmd>.md`, 17 files, from upstream `a075d89b`):
+Initial standard adaptations applied to the 17 steering references refreshed
+from upstream `a075d89b`:
 - Upstream's `> **Additional context needed**: X.` opening blockquote merged
   into the standard session-continuation preamble ("You are continuing a
   session under the `impeccable` skill; …"); files without one get the
@@ -77,24 +128,21 @@ Standard adaptations applied to every refreshed reference
   `{{command_prefix}}x` → bare `x` in code spans / expanded form in prose;
   `{{ask_instruction}}` → "ask the user" (or structured-question-tool wording);
   `{{config_file}}` → `.impeccable.md`.
-- References to non-vendored machinery (native variants, live mode, hooks,
-  doctor, `new-work.md`, `context.mjs`, PRODUCT.md artifacts) dropped or
-  rerouted to the nearest vendored equivalent.
-
 Per-file notes beyond the standard adaptations:
 - `adapt.md`: dropped the native-platform routing paragraph; noted upstream
   inlined its former responsive-design material while Gobby retains the
   standalone `references/responsive-design.md`.
-- `animate.md`, `typeset.md`, `layout.md`: dropped the **Native** visitor-mode
-  bullet (points to non-vendored `ios.md`/`android.md`).
-- `audit.md`: dropped the `audit.native.md` routing line; bundled-detector
-  prose made concrete as `node <scripts_dir>/detect.mjs --json <target>` with
-  the resolver paragraph.
+- `animate.md`, `typeset.md`, `layout.md`: the initial refresh dropped the
+  inline **Native** visitor-mode bullet; native dispatch now loads the platform
+  references directly.
+- `audit.md`: kept the general audit web-specific; native dispatch loads
+  `audit.native.md`. Bundled-detector prose uses
+  `node <scripts_dir>/detect.mjs --json <target>` with the resolver paragraph.
 - `colorize.md`: "use new-work.md for a new identity" → confirm the direction
   with the user instead; dropped the `## Live-mode signature params` section.
 - `critique.md`: dropped all 7 upstream `<codex>` harness blocks; live-overlay
-  injection flow rewritten as a plain browser-inspection flow (live-server is
-  not vendored) and report wording adjusted ("Browser evidence"); kept
+  injection flow rewritten as a plain browser-inspection flow because live mode
+  was outside that refresh, and report wording adjusted ("Browser evidence"); kept
   `.impeccable/critique/` storage, the degraded-banner protocol, and the full
   inline persona/heuristic material verbatim.
 - `layout.md`: `new-work.md` identity-replacement routing → the `craft` flow;
@@ -121,9 +169,15 @@ Domain references (`references/typography.md`, `color-and-contrast.md`,
 them unchanged as still-accurate depth; `.impeccable.md` references their
 material.
 
-Craft-mode references (`references/craft.md`, `references/extract.md`): kept
-from the original vendor (upstream's inline-mode flows), with the Step-1
-`get_skill_file` routing adaptation.
+The 4.0.4 additions use the same preamble, cross-reference expansion,
+`.impeccable.md` substitution, and materialized-script resolver where
+applicable. Named ownership adaptations route `init.md` to teach mode,
+`document.md` and `new-work.md` to `.impeccable.md`, `hooks.md` to
+documentation-only behavior under Gobby rules, `routing.md` and `craft.md` to
+the main dispatch, and `doctor.md` to Gobby lifecycle diagnostics. Native
+references retain upstream platform guidance with the session preamble and
+expanded loads. `onboard.md`, `visualize.md`, and `extract.md` receive the
+standard transforms.
 
 ## Vendored scripts
 
