@@ -276,10 +276,10 @@ class TestStatusUtils:
                         "git": _dependency("2.50.1", minimum_version="2.38.0"),
                         "node": _dependency("26.5.0", minimum_version="20.11.0"),
                         "srt": _dependency("0.0.66", expected_version="0.0.66"),
+                        "impeccable": _dependency("3.5.0", expected_version="3.5.0"),
                     },
                     "optional": {
                         "tailscale": _dependency(None, state="missing"),
-                        "impeccable": _dependency("3.5.0", expected_version="3.5.0"),
                     },
                 },
             },

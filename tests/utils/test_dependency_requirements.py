@@ -290,8 +290,9 @@ def test_managed_services_require_compose(monkeypatch: pytest.MonkeyPatch) -> No
     assert report.required["git"] == healthy
     assert report.required["node"] == healthy
     assert report.required["docker_compose"] == healthy
+    assert report.required["impeccable"] == healthy
     assert compose_minimums == ["2.7.0"]
-    assert report.optional == {"tailscale": healthy, "impeccable": healthy}
+    assert report.optional == {"tailscale": healthy}
     assert report.services["docker_running"] is True
 
 

@@ -347,7 +347,7 @@ def test_gobby_home_override_consistency(
     assert not (literal_home / ".gobby").exists()
 
 
-def test_preflight_succeeds_without_impeccable(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_preflight_fails_without_impeccable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "gobby.utils.dependency_requirements.impeccable_dependency_status",
         lambda: DependencyStatus("missing", None, None, IMPECCABLE_RELEASE.version, None, "repair"),
@@ -364,8 +364,8 @@ def test_preflight_succeeds_without_impeccable(monkeypatch: pytest.MonkeyPatch) 
 
     report = collect_dependency_report(managed_services=False, include_srt=False)
 
-    assert report.optional["impeccable"].state == "missing"
-    assert required_dependency_errors(report) == []
+    assert report.required["impeccable"].state == "missing"
+    assert required_dependency_errors(report) == ["repair"]
 
 
 def test_packaged_lockfile_is_shippable_and_resolvable(

@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
+import click
 import pytest
 import yaml
 
@@ -246,9 +247,11 @@ class TestRunDaemonSetup:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_srt.side_effect = SrtRuntimeError("Node.js 20.11 or newer is required")
-        from gobby.cli.install_setup_impeccable import ImpeccableInstallError
-
-        mock_impeccable.side_effect = ImpeccableInstallError("npm failed")
+        mock_impeccable.return_value = MagicMock(
+            installed=False,
+            version="3.5.0",
+            path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
+        )
         mock_init.return_value = MagicMock()
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
@@ -264,11 +267,54 @@ class TestRunDaemonSetup:
         output = capsys.readouterr().out
         assert "Node.js 20.11 or newer is required" in output
         assert "agent_sandbox.backend = provider-native" in output
-        assert "Warning: Failed to install managed Impeccable CLI (npm failed)" in output
+        mock_impeccable.assert_called_once_with()
         mock_gcode.assert_called_once()
         mock_ghook.assert_called_once()
         mock_ide.assert_called_once()
         mock_tmux.assert_called_once_with()
+
+    @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
+    @patch("gobby.cli.install_setup_srt.install_srt_runtime")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
+    @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
+    @patch("gobby.cli.installers.install_default_mcp_servers")
+    @patch("gobby.cli.install_setup._run_npm_install")
+    @patch("gobby.cli.install_setup._run_managed_native_binary_installs")
+    def test_run_daemon_setup_fails_when_impeccable_install_fails(
+        self,
+        mock_native: MagicMock,
+        mock_npm: MagicMock,
+        mock_mcp: MagicMock,
+        mock_sync: MagicMock,
+        mock_init: MagicMock,
+        mock_srt: MagicMock,
+        mock_impeccable: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.cli.install_setup_impeccable import ImpeccableInstallError
+
+        mock_init.return_value = MagicMock()
+        mock_sync.return_value = {"total_synced": 0, "errors": []}
+        mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
+        mock_srt.return_value = MagicMock(
+            installed=False,
+            version="0.0.66",
+            path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
+        mock_impeccable.side_effect = ImpeccableInstallError("npm failed")
+
+        with (
+            patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard"),
+            pytest.raises(click.ClickException) as exc_info,
+        ):
+            run_daemon_setup(tmp_path, configure_ide_settings=False)
+
+        assert str(exc_info.value) == "Failed to provision managed Impeccable CLI: npm failed"
+        mock_mcp.assert_called_once_with()
+        mock_srt.assert_called_once_with()
+        mock_impeccable.assert_called_once_with()
+        mock_npm.assert_not_called()
+        mock_native.assert_not_called()
 
     @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
@@ -344,7 +390,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
-    def test_homebrew_mode_installs_srt_but_skips_managed_helper_installs(
+    def test_homebrew_mode_installs_required_runtimes_but_skips_managed_helper_installs(
         self,
         mock_verify: MagicMock,
         mock_ide: MagicMock,
@@ -366,6 +412,11 @@ class TestRunDaemonSetup:
             installed=True,
             version="0.0.66",
             path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
+        mock_impeccable.return_value = MagicMock(
+            installed=True,
+            version="3.5.0",
+            path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
@@ -389,7 +440,7 @@ class TestRunDaemonSetup:
         assert mock_sync.return_value == {"total_synced": 0, "errors": []}
         assert mock_mcp.return_value["success"] is True
         mock_srt.assert_called_once_with()
-        mock_impeccable.assert_not_called()
+        mock_impeccable.assert_called_once_with()
         mock_verify.assert_called_once_with()
         mock_run.assert_not_called()
         mock_gcode.assert_not_called()

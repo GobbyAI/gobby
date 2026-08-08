@@ -389,6 +389,17 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")
 
     homebrew_mode = is_homebrew_distribution()
+    from .install_setup_impeccable import ImpeccableInstallError, install_impeccable_cli
+
+    try:
+        impeccable_result = install_impeccable_cli()
+    except ImpeccableInstallError as exc:
+        raise click.ClickException(f"Failed to provision managed Impeccable CLI: {exc}") from exc
+    action = "Installed" if impeccable_result.installed else "Verified"
+    click.echo(
+        f"{action} managed Impeccable CLI {impeccable_result.version}: {impeccable_result.path}"
+    )
+
     if homebrew_mode:
         try:
             statuses = verify_homebrew_managed_bins()
@@ -398,18 +409,6 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         click.echo(f"Verified Homebrew helper binaries: {helper_versions}")
         click.echo("Skipping global npm installs in Homebrew distribution mode")
     else:
-        from .install_setup_impeccable import ImpeccableInstallError, install_impeccable_cli
-
-        try:
-            impeccable_result = install_impeccable_cli()
-        except ImpeccableInstallError as exc:
-            click.echo(f"Warning: Failed to install managed Impeccable CLI ({exc})")
-        else:
-            action = "Installed" if impeccable_result.installed else "Verified"
-            click.echo(
-                f"{action} managed Impeccable CLI {impeccable_result.version}: "
-                f"{impeccable_result.path}"
-            )
         _run_npm_install("Playwright CLI", "@playwright/cli@latest", project_path)
         _run_npm_install("ClawHub CLI", "clawhub", project_path)
 

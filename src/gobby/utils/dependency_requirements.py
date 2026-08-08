@@ -257,6 +257,7 @@ def collect_dependency_report(
     required["node"] = node_dependency_status()
     if include_srt:
         required["srt"] = srt_dependency_status()
+    required["impeccable"] = impeccable_dependency_status()
 
     compose = _command_status(
         name="Docker Compose",
@@ -275,7 +276,6 @@ def collect_dependency_report(
             arguments=("version",),
             install_action="Reinstall Tailscale to restore version reporting.",
         ),
-        "impeccable": impeccable_dependency_status(),
     }
     docker = _command_status(
         name="Docker Engine",
