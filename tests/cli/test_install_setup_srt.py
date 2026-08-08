@@ -79,8 +79,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
     def fake_verify() -> SrtInstallation:
         nonlocal verify_calls
         verify_calls += 1
-        if verify_calls == 1:
-            raise SrtRuntimeError("not installed")
+        assert target.exists()
         return SrtInstallation(
             root=target,
             node=node,
@@ -124,7 +123,7 @@ def test_install_srt_runtime_uses_locked_npm_ci_and_promotes_atomically(
 
     assert result.installed is True
     assert result.path == target.resolve()
-    assert verify_calls == 2
+    assert verify_calls == 1
     assert len(npm_commands) == 1
     command, staging = npm_commands[0]
     assert command == [

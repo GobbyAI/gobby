@@ -57,10 +57,12 @@ def _install_srt_runtime() -> SrtInstallResult:
     target = srt_install_root()
     target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with srt_install_lock():
-        try:
-            existing = verify_srt_installation_locked()
-        except SrtRuntimeError:
-            existing = None
+        existing = None
+        if target.exists() or target.is_symlink():
+            try:
+                existing = verify_srt_installation_locked()
+            except SrtRuntimeError:
+                pass
         if existing is not None:
             return SrtInstallResult(existing.root, SRT_RELEASE.version, installed=False)
 
