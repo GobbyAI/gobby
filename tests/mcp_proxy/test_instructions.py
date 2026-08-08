@@ -104,3 +104,25 @@ class TestBuildGobbyInstructions:
 
         assert result == _FALLBACK_INSTRUCTIONS
         assert "<gobby_system>" in result
+
+    def test_prompt_and_fallback_have_identical_skill_loading_safeguards(self) -> None:
+        """Prompt and fallback should enforce the same complete-delivery contract."""
+        from gobby.mcp_proxy.instructions import (
+            _FALLBACK_INSTRUCTIONS,
+            build_gobby_instructions,
+        )
+
+        def skills_section(instructions: str) -> str:
+            return instructions.split("<skills>", maxsplit=1)[1].split("</skills>", maxsplit=1)[0]
+
+        prompt_section = skills_section(build_gobby_instructions())
+        fallback_section = skills_section(_FALLBACK_INSTRUCTIONS)
+
+        assert prompt_section == fallback_section
+        assert "Each `get_skill` request must use its own outer tool result" in prompt_section
+        assert "complete body is available in active context" in prompt_section
+        assert "Collapsed UI previews are presentation-only" in prompt_section
+        assert "Do not use `Promise.all`" in prompt_section
+        assert "`structuredContent.result.skill.content`" in prompt_section
+        assert "`…N tokens truncated…`" in prompt_section
+        assert "retry that skill individually" in prompt_section

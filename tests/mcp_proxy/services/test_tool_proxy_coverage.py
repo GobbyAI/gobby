@@ -97,6 +97,17 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
     [
         (
             "gobby-skills",
+            "get_skill",
+            {
+                "success": True,
+                "skill": {
+                    "name": "long-skill",
+                    "content": "skill-body-" + ("x" * 4_000),
+                },
+            },
+        ),
+        (
+            "gobby-skills",
             "get_skill_file",
             {"success": True, "content": "skill-file-" + ("x" * 4_000)},
         ),
@@ -157,6 +168,8 @@ async def test_wrapper_originated_single_item_retrieval_is_never_offloaded(
 
     assert result == {key: value for key, value in payload.items() if key != "success"}
     assert "offloaded" not in result
+    if tool_name == "get_skill":
+        assert result["skill"]["content"] == payload["skill"]["content"]
 
 
 class TestListServers:

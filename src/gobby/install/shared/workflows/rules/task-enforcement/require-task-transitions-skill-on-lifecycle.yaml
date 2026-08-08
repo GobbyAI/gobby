@@ -27,4 +27,4 @@ rules:
       and variables.get('_agent_type') != 'pipeline'
     effects:
       - type: block
-        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). Then continue.'
+        reason: '{{ skill_fetch_directive("tasks") }}'

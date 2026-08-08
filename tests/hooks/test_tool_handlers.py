@@ -12,6 +12,7 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.skills.formatting import skill_fetch_directive
 
 from ._event_handler_helpers import make_event
 
@@ -385,8 +386,9 @@ class TestToolHandlerEdgeCases:
         with patch(
             "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
         ) as record_files:
-            handlers.handle_after_tool(event)
+            response = handlers.handle_after_tool(event)
 
+        assert response.decision == "allow"
         record_files.assert_not_called()
         mock_dependencies["session_storage"].mark_had_edits.assert_not_called()
 
@@ -730,10 +732,7 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", '
-            '{"name":"build-coordinator"})' in (response.context or "")
-        )
+        assert skill_fetch_directive("build-coordinator") in (response.context or "")
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
         skill_manager.resolve_skill_name.assert_called_once_with(
@@ -752,10 +751,7 @@ class TestSkillToolInterception:
         response = handlers_with_skills.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", '
-            '{"name":"build-coordinator"})' in (response.context or "")
-        )
+        assert skill_fetch_directive("build-coordinator") in (response.context or "")
         skill_manager.resolve_skill_name.assert_called_once_with(
             "build-coordinator",
             project_id="",
@@ -915,9 +911,7 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
-            response.context or ""
-        )
+        assert skill_fetch_directive("playwright") in (response.context or "")
         assert "Browser automation" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
         mock_call_tool.assert_any_call("gobby-skills", "get_skill", {"name": "playwright"})
@@ -1003,6 +997,4 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
-            response.context or ""
-        )
+        assert skill_fetch_directive("playwright") in (response.context or "")

@@ -94,6 +94,10 @@ def _sync_bundled(db: HubDatabase) -> object:
     return result
 
 
+def _skill_fetch_template(name: str) -> str:
+    return f'{{{{ skill_fetch_directive("{name}") }}}}'
+
+
 SKILL_DISCOVERY_RULES = {
     "discover-skill-hubs-on-turn-start",
     "require-bash-skill",
@@ -465,7 +469,7 @@ class TestRequirePythonSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("python")
+        assert body.effects[0].reason == _skill_fetch_template("python")
 
 
 # --- require-python-skill condition evaluation ---
@@ -609,7 +613,7 @@ class TestRequireRustSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("rust")
+        assert body.effects[0].reason == _skill_fetch_template("rust")
 
 
 # --- require-rust-skill condition evaluation ---
@@ -728,7 +732,7 @@ class TestRequireJavaScriptSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("javascript")
+        assert body.effects[0].reason == _skill_fetch_template("javascript")
 
 
 # --- require-javascript-skill condition evaluation ---
@@ -850,7 +854,7 @@ class TestRequireDartSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("dart")
+        assert body.effects[0].reason == _skill_fetch_template("dart")
 
 
 # --- require-dart-skill condition evaluation ---
@@ -976,7 +980,7 @@ class TestRequireCSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("c")
+        assert body.effects[0].reason == _skill_fetch_template("c")
 
 
 # --- require-c-skill condition evaluation ---
@@ -1119,7 +1123,7 @@ class TestRequireCppSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("cpp")
+        assert body.effects[0].reason == _skill_fetch_template("cpp")
 
 
 # --- require-cpp-skill condition evaluation ---
@@ -1282,7 +1286,7 @@ class TestRequireElixirSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("elixir")
+        assert body.effects[0].reason == _skill_fetch_template("elixir")
 
 
 # --- require-elixir-skill condition evaluation ---
@@ -1423,7 +1427,7 @@ class TestRequireRubySkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("ruby")
+        assert body.effects[0].reason == _skill_fetch_template("ruby")
 
 
 # --- require-ruby-skill condition evaluation ---
@@ -1585,7 +1589,7 @@ class TestRequireCSharpSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("csharp")
+        assert body.effects[0].reason == _skill_fetch_template("csharp")
 
 
 # --- require-csharp-skill condition evaluation ---
@@ -1718,7 +1722,7 @@ class TestRequireGoSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("go")
+        assert body.effects[0].reason == _skill_fetch_template("go")
 
 
 # --- require-go-skill condition evaluation ---
@@ -1840,7 +1844,7 @@ class TestRequireJavaSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("java")
+        assert body.effects[0].reason == _skill_fetch_template("java")
 
 
 # --- require-java-skill condition evaluation ---
@@ -1970,7 +1974,7 @@ class TestRequireKotlinSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("kotlin")
+        assert body.effects[0].reason == _skill_fetch_template("kotlin")
 
 
 # --- require-kotlin-skill condition evaluation ---
@@ -2104,7 +2108,7 @@ class TestRequireScalaSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("scala")
+        assert body.effects[0].reason == _skill_fetch_template("scala")
 
 
 # --- require-scala-skill condition evaluation ---
@@ -2229,7 +2233,7 @@ class TestRequireLuaSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("lua")
+        assert body.effects[0].reason == _skill_fetch_template("lua")
 
 
 # --- require-lua-skill condition evaluation ---
@@ -2353,7 +2357,7 @@ class TestRequireObjcSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("objc")
+        assert body.effects[0].reason == _skill_fetch_template("objc")
 
 
 class TestRequireObjcSkillCondition:
@@ -2457,7 +2461,7 @@ class TestRequireSwiftSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("swift")
+        assert body.effects[0].reason == _skill_fetch_template("swift")
 
 
 # --- require-swift-skill condition evaluation ---
@@ -2596,7 +2600,7 @@ class TestRequireYamlSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("yaml")
+        assert body.effects[0].reason == _skill_fetch_template("yaml")
 
 
 class TestRequireYamlSkillCondition:
@@ -2748,7 +2752,7 @@ class TestRequirePlanSkillStructure:
         assert body.effects is not None
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("plan")
+        assert body.effects[0].reason == _skill_fetch_template("plan")
 
 
 class TestRequirePlanSkillCondition:
@@ -2853,7 +2857,7 @@ class TestRequireJsonSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("json")
+        assert body.effects[0].reason == _skill_fetch_template("json")
 
 
 class TestRequireJsonSkillCondition:
@@ -2980,7 +2984,7 @@ class TestRequirePhpSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("php")
+        assert body.effects[0].reason == _skill_fetch_template("php")
 
 
 # --- require-php-skill condition evaluation ---
@@ -3117,7 +3121,7 @@ class TestRequireTypeScriptSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("typescript")
+        assert body.effects[0].reason == _skill_fetch_template("typescript")
 
 
 # --- require-typescript-skill condition evaluation ---
@@ -3237,7 +3241,7 @@ class TestRequireBashSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("bash")
+        assert body.effects[0].reason == _skill_fetch_template("bash")
 
 
 # --- require-bash-skill condition evaluation ---
@@ -3444,7 +3448,7 @@ class TestRequireCodeIndexSkillStructure:
         assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert skill_fetch_directive("code-index") in body.effects[0].reason
+        assert _skill_fetch_template("code-index") in body.effects[0].reason
         assert "If that call fails, retry the code search" in body.effects[0].reason
         assert "list_tools" not in body.effects[0].reason
 

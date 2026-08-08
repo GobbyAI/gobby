@@ -23,6 +23,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import DirtyFiles
@@ -986,10 +987,7 @@ class TestVariablePersistence:
         response = await handler._evaluate_rules(after_event)
 
         assert before_response.decision == "block"
-        assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). '
-            "Then continue." in (before_response.reason or "")
-        )
+        assert skill_fetch_directive("tasks") in (before_response.reason or "")
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {
             "server_name": "gobby-tasks",

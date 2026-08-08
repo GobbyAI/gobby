@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -135,8 +134,13 @@ class TestBundledBlockReasonFraming:
 
     def test_redirect_reasons_open_with_frozen_action_marker(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
+        templated_skill_rules = {
+            name
+            for name, reason in reasons.items()
+            if reason.lstrip().startswith("{{ skill_fetch_directive(")
+        }
 
-        for rule_name in sorted(REDIRECT_RULES - {"require-claimed-task-required-skills"}):
+        for rule_name in sorted(REDIRECT_RULES - templated_skill_rules):
             reason = reasons[rule_name]
             assert is_action_first_reason(reason), f"{rule_name}: {reason!r}"
             assert not reason.lower().startswith(("do not", "blocked", "disabled"))
@@ -145,31 +149,24 @@ class TestBundledBlockReasonFraming:
         reasons = _bundled_before_tool_block_reasons()
 
         assert reasons["require-claimed-task-required-skills"] == _SKILL_FETCH_TEMPLATE
-        assert skill_fetch_directive("python").startswith("Load the skill:")
+        assert skill_fetch_directive("python").startswith("Load and fully read the skill")
 
     def test_critical_redirects_retain_literal_offset_zero_actions(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
 
         assert reasons["require-code-index-skill"].startswith(
-            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"code-index"})'
+            '{{ skill_fetch_directive("code-index") }}'
         )
-        assert reasons["require-java-skill"].startswith(
-            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"java"})'
-        )
+        assert reasons["require-java-skill"].startswith('{{ skill_fetch_directive("java") }}')
         assert reasons["no-invalid-git-flags"].startswith("Run the command without `--no-stat`")
 
     def test_bundled_skill_reasons_use_one_canonical_fetch_call(self) -> None:
         for reason in _bundled_before_tool_block_reasons().values():
-            if 'call_tool("gobby-skills", "get_skill"' not in reason:
+            if "skill_fetch_directive(" not in reason:
                 continue
 
-            match = re.search(r'\{"name":"([^"]+)"\}', reason)
-            assert match is not None
-            skill_name = match.group(1)
-            assert reason.count("call_tool") == 1
-            assert reason.count("get_skill") == 1
-            assert reason.count("gobby-skills") == 1
-            assert reason.count(f'{{"name":"{skill_name}"}}') == 1
+            assert reason.count("skill_fetch_directive(") == 1
+            assert 'call_tool("gobby-skills", "get_skill"' not in reason
 
 
 class TestMCPRewriteNesting:

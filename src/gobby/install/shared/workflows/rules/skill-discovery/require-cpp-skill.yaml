@@ -17,4 +17,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"cpp"}). Then continue.'
+        reason: '{{ skill_fetch_directive("cpp") }}'

@@ -43,7 +43,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"code-index"}). Then continue. If that call fails, retry the code search; its recorded failure activates fail-open behavior. After loading, retry with `gcode grep "pattern" [PATH...] -m 50`, `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol <id>`.'
+        reason: '{{ skill_fetch_directive("code-index") }} If that call fails, retry the code search; its recorded failure activates fail-open behavior. After loading, retry with `gcode grep "pattern" [PATH...] -m 50`, `gcode search-content "query" [PATH...]`, `gcode outline path/to/file`, or `gcode symbol <id>`.'
 
   prefer-gcode-for-code-search:
     description: "Block broad shell search in indexed projects after code-index is loaded"

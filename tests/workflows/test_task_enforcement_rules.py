@@ -55,6 +55,10 @@ def _sync_bundled(db):
     return result
 
 
+def _skill_fetch_template(name: str) -> str:
+    return f'{{{{ skill_fetch_directive("{name}") }}}}'
+
+
 def _close_task_event(
     task_id: str = "#1",
     *,
@@ -1348,7 +1352,7 @@ class TestRequireTaskCreationSkillOnSchema:
         assert "not skill_loaded('tasks')" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("tasks")
+        assert body.effects[0].reason == _skill_fetch_template("tasks")
 
 
 class TestRequireTaskTransitionsSkillOnLifecycle:
@@ -1382,7 +1386,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
         assert len(block_effects) == 1
-        assert block_effects[0].reason == skill_fetch_directive("tasks")
+        assert block_effects[0].reason == _skill_fetch_template("tasks")
         assert set_effects == []
 
 
@@ -1397,7 +1401,7 @@ class TestTaskLifecycleSkillGates:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert "skill_loaded('tasks')" in (body.when or "")
-        assert body.effects[0].reason == skill_fetch_directive("tasks")
+        assert body.effects[0].reason == _skill_fetch_template("tasks")
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
@@ -1408,7 +1412,7 @@ class TestTaskLifecycleSkillGates:
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
         assert "skill_loaded('tasks')" in (body.when or "")
-        assert body.effects[0].reason == skill_fetch_directive("tasks")
+        assert body.effects[0].reason == _skill_fetch_template("tasks")
 
     @pytest.mark.asyncio
     async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:

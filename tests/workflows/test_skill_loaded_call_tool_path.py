@@ -149,9 +149,10 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
         },
     )
     handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
+    oversized_content = "instructions-" + ("x" * 16_000)
     oversized_skill = {
         "success": True,
-        "skill": {"name": "tasks", "content": "instructions-" + ("x" * 16_000)},
+        "skill": {"name": "tasks", "content": oversized_content},
     }
 
     def get_oversized_skill(name: str) -> dict[str, object]:
@@ -197,6 +198,7 @@ async def test_oversized_get_skill_wrapper_result_survives_codex_normalization_a
             wrapper_originated=True,
         )
         assert full_result == {"skill": oversized_skill["skill"]}
+        assert full_result["skill"]["content"] == oversized_content
         assert "offloaded" not in full_result
         event = _event(
             HookEventType.AFTER_TOOL,

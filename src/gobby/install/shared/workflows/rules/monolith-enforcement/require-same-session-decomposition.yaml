@@ -13,7 +13,7 @@ rules:
     effects:
       - type: block
         reason: |
-          Load the skill: call_tool("gobby-skills", "get_skill", {"name":"decompose-monolith"}). Then continue.
+          {{ skill_fetch_directive("decompose-monolith") }}
           Use its required `code-index` dependency. Complete the decomposition in
           the current claimed task and session; deferred refactor tasks are prohibited.
           Threshold path(s): {{ projected_monolith_paths(tool_input, event.data) | join(', ') }}.

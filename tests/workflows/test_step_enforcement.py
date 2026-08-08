@@ -658,6 +658,8 @@ class TestStepToolBlocking:
         guidance = response.reason.split(delimiter, maxsplit=1)[1]
         assert "list_tools" not in guidance
         assert "get_tool_schema" not in guidance
+        assert "fully read the skill" in guidance
+        assert "own outer tool result" in guidance
         assert 'call_tool("gobby-skills", "get_skill", {"name":"plan-review"})' in guidance
         assert tool_name in response.reason
 

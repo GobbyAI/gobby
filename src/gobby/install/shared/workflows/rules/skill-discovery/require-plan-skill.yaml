@@ -15,4 +15,4 @@ rules:
       and '.gobby/plans/' in normalize_path(event.data.get('canonical_file_path', ''))
     effects:
       - type: block
-        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"}). Then continue.'
+        reason: '{{ skill_fetch_directive("plan") }}'

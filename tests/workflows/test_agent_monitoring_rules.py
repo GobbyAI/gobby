@@ -35,6 +35,10 @@ def _sync_bundled(db: HubDatabase) -> None:
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
 
 
+def _skill_fetch_template(name: str) -> str:
+    return f'{{{{ skill_fetch_directive("{name}") }}}}'
+
+
 def _event(
     data: dict[str, object],
     *,
@@ -67,10 +71,7 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
                     "effects": [
                         {
                             "type": "block",
-                            "reason": (
-                                'Load the skill: call_tool("gobby-skills", "get_skill", '
-                                '{"name":"build-coordinator"}). Then continue.'
-                            ),
+                            "reason": skill_fetch_directive("build-coordinator"),
                         }
                     ],
                 }
@@ -128,7 +129,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert "is_gobby_build_command" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("build-coordinator")
+        assert body.effects[0].reason == _skill_fetch_template("build-coordinator")
 
     @pytest.mark.asyncio
     async def test_blocks_tmux_agent_gobby_build_before_skill_load(
@@ -153,10 +154,7 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "block"
         assert response.reason is not None
         assert "require-build-coordinator-for-gobby-build" in response.reason
-        assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", '
-            '{"name":"build-coordinator"}). Then continue.'
-        ) in response.reason
+        assert skill_fetch_directive("build-coordinator") in response.reason
 
     @pytest.mark.asyncio
     async def test_normalized_bash_gobby_build_triggers_build_coordinator_rule(

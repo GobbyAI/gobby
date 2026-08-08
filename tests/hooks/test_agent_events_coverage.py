@@ -15,6 +15,7 @@ from gobby.hooks.event_handlers._agent import (
     AgentEventHandlerMixin,
 )
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -511,7 +512,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
+        assert skill_fetch_directive("expand") in result
         assert "# Expand skill" not in result
 
     def test_gobby_space_skill(self) -> None:
@@ -523,7 +524,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
+        assert skill_fetch_directive("expand") in result
         assert "User arguments:" not in result
         assert "some args" not in result
 
@@ -537,7 +538,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("$gobby expand some args")
 
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
+        assert skill_fetch_directive("expand") in result
         assert "User arguments:" not in result
         assert "some args" not in result
 
@@ -555,10 +556,7 @@ class TestInterceptSkillCommand:
         )
 
         assert result is not None
-        assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"coderabbit"})'
-            in result
-        )
+        assert skill_fetch_directive("coderabbit") in result
         assert "User arguments:" not in result
         assert "CodeRabbit finding 1" not in result
 
@@ -576,7 +574,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command(command)
 
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"})' in result
+        assert skill_fetch_directive("plan") in result
         assert "User arguments:" not in result
         assert "draft auth" not in result
         assert "<skill-context" not in result
@@ -631,7 +629,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"bridge"})' in result
+        assert skill_fetch_directive("bridge") in result
         assert "# Bridge skill" not in result
         handler._skill_manager.resolve_skill_name.assert_called_with("bridge")
 
@@ -644,7 +642,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
-        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"bridge"})' in result
+        assert skill_fetch_directive("bridge") in result
 
     def test_gobby_skills_namespace_with_args(self) -> None:
         handler = _TestHandler()

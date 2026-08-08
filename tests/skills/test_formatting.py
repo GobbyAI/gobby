@@ -22,8 +22,8 @@ class TestSkillFetchDirectives:
         rendered = skill_fetch_directive("plan")
 
         assert rendered == (
-            'Load the skill: call_tool("gobby-skills", "get_skill", '
-            '{"name":"plan"}). Then continue.'
+            "Load and fully read the skill in its own outer tool result: "
+            'call_tool("gobby-skills", "get_skill", {"name":"plan"}). Then continue.'
         )
         assert rendered.count("call_tool") == 1
         assert rendered.count("get_skill") == 1
@@ -34,8 +34,8 @@ class TestSkillFetchDirectives:
         rendered = format_skill_fetch_context("plan", "draft auth flow")
 
         assert (
-            'Load the skill: call_tool("gobby-skills", "get_skill", '
-            '{"name":"plan"}). Then continue.'
+            "Load and fully read the skill in its own outer tool result: "
+            'call_tool("gobby-skills", "get_skill", {"name":"plan"}). Then continue.'
         ) in rendered
         assert "User arguments: draft auth flow" in rendered
 
@@ -47,11 +47,17 @@ class TestSkillFetchDirectives:
         assert "list_mcp_servers" not in rendered
         assert "list_tools" not in rendered
         assert "get_tool_schema" not in rendered
+        assert "in order" in rendered
+        assert "one sequential tool call" in rendered
+        assert "one separate outer tool result per skill" in rendered
+        assert "Promise.all" in rendered
+        assert "aggregate responses" in rendered
         assert rendered.count('call_tool("gobby-skills", "get_skill"') == 3
         assert rendered.index('{"name":"loading-skills"}') < rendered.index('{"name":"python"}')
         assert rendered.index('{"name":"python"}') < rendered.index(
             '{"name":"development-discipline"}'
         )
+        assert rendered.rstrip().endswith("Then continue.")
 
 
 class TestRecommendSkillsForTask:

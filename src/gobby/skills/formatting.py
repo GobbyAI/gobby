@@ -34,7 +34,10 @@ def skill_fetch_call_path(name: str) -> str:
 
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
-    return f"Load the skill: {skill_fetch_proxy_path(name)}. Then continue."
+    return (
+        "Load and fully read the skill in its own outer tool result: "
+        f"{skill_fetch_proxy_path(name)}. Then continue."
+    )
 
 
 def skill_fetch_batch_directive(names: Sequence[str]) -> str:
@@ -45,7 +48,14 @@ def skill_fetch_batch_directive(names: Sequence[str]) -> str:
     if len(skills) == 1:
         return skill_fetch_directive(skills[0])
 
-    return "\n".join(f"- {skill_fetch_directive(skill)}" for skill in skills)
+    return "\n".join(
+        [
+            "Load and fully read these skills in order. Use one sequential tool call and one "
+            "separate outer tool result per skill; do not use Promise.all or aggregate responses:",
+            *(f"- {skill_fetch_proxy_path(skill)}" for skill in skills),
+            "Then continue.",
+        ]
+    )
 
 
 def format_skill_fetch_context(name: str, args: str | None = None) -> str:

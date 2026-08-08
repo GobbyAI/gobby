@@ -27,6 +27,12 @@ The proxy validates every `call_tool`. Invalid arguments always return the curre
 
 <skills>
 `list_skills`, `get_skill`, and `search_skills` on `gobby-skills` are bootstrap tools. Call them directly through `call_tool`; they are exempt from the schema gate.
+
+Each `get_skill` request must use its own outer tool result. A skill is loaded only after its complete body is available in active context. Collapsed UI previews are presentation-only.
+
+For multiple skills, call `get_skill` sequentially in required order after deduplicating names. Do not use `Promise.all` or aggregate full responses into one wrapper output.
+
+When using an execution wrapper, emit only `structuredContent.result.skill.content`. If the complete body is absent or the result contains an explicit truncation marker such as `…N tokens truncated…`, retry that skill individually before continuing.
 </skills>
 
 <leases>

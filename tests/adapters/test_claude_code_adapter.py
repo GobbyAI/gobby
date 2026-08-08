@@ -63,7 +63,7 @@ class TestBundledBlockReasonFraming:
             _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-claimed-task-required-skills"]
             == _SKILL_FETCH_REASON_TEMPLATE
         )
-        assert skill_fetch_directive("python").startswith("Load the skill:")
+        assert skill_fetch_directive("python").startswith("Load and fully read the skill")
 
 
 def test_deny_reason_not_compacted() -> None:

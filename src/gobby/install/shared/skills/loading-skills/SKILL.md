@@ -46,6 +46,18 @@ call_tool("gobby-skills", "get_skill", {"name": "brevity", "level": "max"})
 call_tool("gobby-skills", "install_skill", {"source": "hub:skill-slug"})
 ```
 
+## Complete Skill Delivery
+
+- Make one `get_skill` request per outer tool result and fully read its complete body before
+  continuing.
+- For multiple skills, deduplicate names while preserving order, then load them
+  sequentially in required order. Do not use `Promise.all` or aggregate full responses into one
+  wrapper output.
+- When using an execution wrapper, emit only `structuredContent.result.skill.content`.
+- If the complete body is absent or the result contains an explicit truncation marker such as
+  `…N tokens truncated…`, retry that skill individually before continuing.
+- Collapsed UI previews are presentation-only; they do not indicate incomplete delivery.
+
 ## When to Search
 
 Search proactively — don't wait to be told:
@@ -62,4 +74,5 @@ Search proactively — don't wait to be told:
 
 **Rule of thumb:** Search local first for "how do we do X here." Search hubs for "what's the best way to do X in general."
 
-Direct get_skill results load the skill body into your tool output; follow them before continuing.
+Direct `get_skill` results load the skill body into your tool output; follow the complete body
+before continuing.
