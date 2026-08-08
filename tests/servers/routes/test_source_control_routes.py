@@ -1545,6 +1545,7 @@ class TestDeleteWorktree:
         wt.worktree_path = "/tmp/wt"
         wt.project_id = "proj-1"
         wt.branch_name = "feature"
+        wt.base_branch = "main"
 
         mock_storage = MagicMock()
         mock_storage.get.return_value = wt
@@ -1577,8 +1578,8 @@ class TestDeleteWorktree:
             "/tmp/wt",
             force=True,
             delete_branch=True,
-            force_delete_branch=True,
             branch_name="feature",
+            base_branch="main",
         )
 
     def test_delete_git_deletion_fails(self, client, mock_server) -> None:

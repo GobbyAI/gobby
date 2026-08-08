@@ -803,8 +803,8 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
                     wt.worktree_path,
                     force=True,
                     delete_branch=True,
-                    force_delete_branch=True,
                     branch_name=wt.branch_name,
+                    base_branch=wt.base_branch,
                 )
                 git_deleted = result.success
                 if not result.success:

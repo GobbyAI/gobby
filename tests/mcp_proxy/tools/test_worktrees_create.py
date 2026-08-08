@@ -358,6 +358,7 @@ async def test_invalid_task_cleanup_preserves_preexisting_branch(
         "/tmp/wt/existing",
         force=True,
         delete_branch=False,
+        force_delete_branch=False,
         branch_name="feature/existing",
     )
 
@@ -384,6 +385,7 @@ async def test_database_failure_cleanup_preserves_preexisting_branch(
         "/tmp/wt/existing",
         force=True,
         delete_branch=False,
+        force_delete_branch=False,
         branch_name="feature/existing",
     )
 

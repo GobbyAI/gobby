@@ -5,6 +5,17 @@ from gobby.storage.worktrees import LocalWorktreeManager
 
 pytestmark = pytest.mark.unit
 
+_SEEDED_TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_test_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Treat the seeded test machine id as local for ownership guards."""
+    monkeypatch.setattr(
+        "gobby.utils.machine_id.get_machine_id",
+        lambda: _SEEDED_TEST_MACHINE_ID,
+    )
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_ref_kind", ["hash", "uuid"], ids=["hash-ref", "uuid-ref"])

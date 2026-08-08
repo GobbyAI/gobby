@@ -129,13 +129,17 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             try:
                 resolved_task_id = ctx.resolve_task_id(task_id)
             except ValueError as e:
-                # Clean up the git worktree we just created
+                # Clean up the git worktree we just created. The branch was
+                # never returned to any agent, so forced deletion is safe and
+                # avoids preflight failures when the branch was cut from a
+                # remote-tracking base.
                 try:
                     await asyncio.to_thread(
                         resolved_git_mgr.delete_worktree,
                         worktree_path,
                         force=True,
                         delete_branch=create_branch,
+                        force_delete_branch=create_branch,
                         branch_name=branch_name,
                     )
                 except Exception as cleanup_err:
@@ -154,12 +158,15 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 task_id=resolved_task_id,
             )
         except Exception as db_err:
+            # Partial-create rollback: the branch was never returned to any
+            # agent, so forced deletion is safe.
             try:
                 await asyncio.to_thread(
                     resolved_git_mgr.delete_worktree,
                     worktree_path,
                     force=True,
                     delete_branch=create_branch,
+                    force_delete_branch=create_branch,
                     branch_name=branch_name,
                 )
             except Exception as cleanup_err:

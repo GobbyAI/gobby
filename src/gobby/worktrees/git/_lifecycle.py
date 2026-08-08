@@ -147,6 +147,59 @@ def _is_branch_exists_error(stderr: str | None) -> bool:
     return "branch" in normalized and "already exists" in normalized
 
 
+def _refuse_unmerged_branch_deletion(
+    runner: GitRunner,
+    branch_name: str,
+    base_branch: str | None,
+) -> GitOperationResult | None:
+    """Refuse ordinary branch deletion unless the branch is merged into its base.
+
+    Ordinary deletion must prove refs/heads/<branch> is an ancestor of the
+    stored base. Fully qualified local refs only: a pushed-but-unmerged branch
+    or a stale remote ref must never authorize deleting local commits, and
+    git's own `-d` heuristic (merged into HEAD or upstream) checks the wrong
+    target entirely.
+    """
+    if base_branch is None:
+        return GitOperationResult(
+            success=False,
+            message=(
+                f"Refusing to delete branch '{branch_name}': no base_branch was "
+                "provided for the merge preflight. Pass the worktree's stored "
+                "base branch, or force_delete_branch=True to deliberately "
+                "abandon the branch."
+            ),
+            error="branch_deletion_requires_base_branch",
+        )
+    source_ref = f"refs/heads/{branch_name}"
+    target_ref = base_branch if base_branch.startswith("refs/") else f"refs/heads/{base_branch}"
+    result = runner._run_git(
+        ["merge-base", "--is-ancestor", source_ref, target_ref],
+        timeout=10,
+    )
+    if result.returncode == 0:
+        return None
+    if result.returncode == 1:
+        return GitOperationResult(
+            success=False,
+            message=(
+                f"Refusing to delete branch '{branch_name}': it is not merged "
+                f"into '{base_branch}'. Merge it first, or pass "
+                "force_delete_branch=True to deliberately abandon its commits."
+            ),
+            error="branch_not_merged_into_base",
+        )
+    detail = result.stderr.strip() or result.stdout.strip()
+    return GitOperationResult(
+        success=False,
+        message=(
+            f"Refusing to delete branch '{branch_name}': merge state against "
+            f"'{base_branch}' could not be verified: {detail}"
+        ),
+        error=detail or "merge_state_unresolvable",
+    )
+
+
 def delete_worktree(
     runner: GitRunner,
     worktree_path: str | Path,
@@ -154,16 +207,19 @@ def delete_worktree(
     delete_branch: bool = False,
     force_delete_branch: bool = False,
     branch_name: str | None = None,
+    base_branch: str | None = None,
 ) -> GitOperationResult:
     """
     Delete a git worktree.
 
     Args:
         worktree_path: Path to the worktree to delete
-        force: Force removal even if dirty
+        force: Force removal even if dirty (never implies branch force)
         delete_branch: Also delete the associated branch
         force_delete_branch: Force-delete the branch even if it is unmerged
         branch_name: Optional explicit branch name (if not provided, attempts to discover)
+        base_branch: Stored base branch the task branch must be merged into;
+            required for ordinary (non-forced) branch deletion
 
     Returns:
         GitOperationResult with success status and message
@@ -182,6 +238,13 @@ def delete_worktree(
                     worktree_path,
                     extra={"worktree_path": str(worktree_path), "delete_branch": True},
                 )
+
+        # Preflight before anything is removed: refusing here keeps the
+        # directory, the branch, and the caller's DB record fully intact.
+        if delete_branch and branch_name and not force_delete_branch:
+            refusal = _refuse_unmerged_branch_deletion(runner, branch_name, base_branch)
+            if refusal is not None:
+                return refusal
 
         # Remove worktree
         args = ["worktree", "remove"]
@@ -242,10 +305,14 @@ def delete_worktree(
                     error=result.stderr,
                 )
 
-        # Optionally delete the branch
+        # Optionally delete the branch. The ordinary path already passed the
+        # stored-base preflight above, so -D is used unconditionally here:
+        # git's own -d heuristic checks merged-into-HEAD/upstream, which is
+        # both weaker (upstream can be a pushed-but-unmerged remote ref) and
+        # wrong-target (HEAD is whatever the main checkout happens to be on).
         if delete_branch and branch_name:
             branch_result = runner._run_git(
-                ["branch", "-D" if force_delete_branch else "-d", branch_name],
+                ["branch", "-D", branch_name],
                 timeout=10,
             )
 

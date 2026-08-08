@@ -189,6 +189,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 delete_branch=True,
                 force_delete_branch=force_delete_branch,
                 branch_name=worktree.branch_name,
+                base_branch=worktree.base_branch,
             )
             if not result.success:
                 if Path(worktree.worktree_path).exists():

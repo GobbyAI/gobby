@@ -11,10 +11,13 @@ if TYPE_CHECKING:
     from gobby.worktrees.git import WorktreeGitManager
 
 
-def _branch_candidates(branch: str) -> tuple[str, ...]:
+def _qualified_ref(branch: str) -> str:
+    """Fully qualify a branch name so short-ref ambiguity cannot leak in."""
+    if branch.startswith("refs/"):
+        return branch
     if branch.startswith("origin/"):
-        return (branch,)
-    return (branch, f"origin/{branch}")
+        return f"refs/remotes/{branch}"
+    return f"refs/heads/{branch}"
 
 
 def _git_cwd(worktree: Worktree, git_manager: WorktreeGitManager) -> str:
@@ -30,17 +33,22 @@ def is_branch_ancestor(
     *,
     cwd: str,
 ) -> bool:
-    """Return whether source_branch is an ancestor of target_branch in git."""
-    for source_ref in _branch_candidates(source_branch):
-        for target_ref in _branch_candidates(target_branch):
-            result = git_manager.run_git_command(
-                ["merge-base", "--is-ancestor", source_ref, target_ref],
-                cwd=cwd,
-                timeout=10,
-            )
-            if result.returncode == 0:
-                return True
-    return False
+    """Return whether source_branch is an ancestor of target_branch in git.
+
+    Exactly one fully qualified check. No origin/* fallback: a stale-but-merged
+    remote ref must not report a diverged local branch as merged.
+    """
+    result = git_manager.run_git_command(
+        [
+            "merge-base",
+            "--is-ancestor",
+            _qualified_ref(source_branch),
+            _qualified_ref(target_branch),
+        ],
+        cwd=cwd,
+        timeout=10,
+    )
+    return result.returncode == 0
 
 
 def is_worktree_git_merged(

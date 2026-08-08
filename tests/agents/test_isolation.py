@@ -915,6 +915,7 @@ class TestWorktreeIsolationHandler:
             id="stale-wt-456",
             worktree_path="/tmp/worktrees/stale-branch",
             branch_name="stale-branch",
+            base_branch="main",
         )
         mock_worktree_storage.create.return_value = MagicMock(
             id="new-wt-789",
@@ -958,6 +959,7 @@ class TestWorktreeIsolationHandler:
             force=True,
             delete_branch=True,
             branch_name="stale-branch",
+            base_branch="main",
         )
         mock_worktree_storage.delete.assert_called_once_with("stale-wt-456")
         mock_git_manager.create_worktree.assert_called_once_with(

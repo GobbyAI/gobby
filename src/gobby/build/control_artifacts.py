@@ -270,9 +270,11 @@ def delete_artifacts(
                         path,
                         force=force,
                         delete_branch=True,
-                        force_delete_branch=force,
                         branch_name=(
                             stored_worktree.branch_name if stored_worktree is not None else None
+                        ),
+                        base_branch=(
+                            stored_worktree.base_branch if stored_worktree is not None else None
                         ),
                     )
                     if not worktree_result.success and path.exists():
