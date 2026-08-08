@@ -610,11 +610,16 @@ class TestCodexAppServerClientStop:
 
         mock_process = MagicMock()
         mock_process.stdin = MagicMock()
+        mock_process.stdout = MagicMock()
+        mock_process.stderr = MagicMock()
         mock_process.wait.return_value = 0
         client._process = mock_process
 
         await client.stop()
 
+        mock_process.stdin.close.assert_called_once()
+        mock_process.stdout.close.assert_called_once()
+        mock_process.stderr.close.assert_called_once()
         mock_process.terminate.assert_called_once()
         assert client._process is None
         assert client.state == CodexConnectionState.DISCONNECTED

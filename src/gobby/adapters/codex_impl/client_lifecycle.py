@@ -118,20 +118,24 @@ async def stop(client: CodexAppServerClient) -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
         client._incoming_request_tasks.clear()
 
-    # Terminate process
-    if client._process:
-        try:
-            if client._process.stdin:
-                client._process.stdin.close()
-            client._process.terminate()
-            loop = asyncio.get_running_loop()
-            await asyncio.wait_for(loop.run_in_executor(None, client._process.wait), timeout=5.0)
-        except Exception as e:
-            logger.warning("Error terminating Codex app-server: %s", e)
-            client._process.kill()
-        finally:
+    # Terminate process and release every pipe owned by Popen.
+    process = client._process
+    try:
+        if process:
+            try:
+                process.terminate()
+                loop = asyncio.get_running_loop()
+                await asyncio.wait_for(loop.run_in_executor(None, process.wait), timeout=5.0)
+            except Exception as e:
+                logger.warning("Error terminating Codex app-server: %s", e)
+                process.kill()
+    finally:
+        await client._stderr_drain.stop()
+        if process:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream:
+                    stream.close()
             client._process = None
-    await client._stderr_drain.stop()
 
     # Cancel pending requests
     with client._pending_requests_lock:
