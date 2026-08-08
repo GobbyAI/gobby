@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import textwrap
 import threading
 import time
@@ -13,7 +14,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.code_index.models import IndexedFile, IndexedProject
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.mcp_proxy.tools import plans as plans_tools
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.plans.review_evidence import PlanReviewEvidenceService
@@ -24,6 +28,7 @@ from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.project_context import reset_project_context, set_project_context
 
 pytestmark = pytest.mark.unit
 
@@ -36,13 +41,19 @@ def coverage_executor() -> Iterator[CoverageExecutor]:
     executor.join()
 
 
-def _write_plan(root: Path) -> Path:
+def _write_plan(
+    root: Path,
+    target: str = "docs/demo.md",
+    scope_reason: str | None = None,
+) -> Path:
     plan_dir = root / ".gobby" / "plans"
     plan_dir.mkdir(parents=True)
     path = plan_dir / "task-100-demo.md"
+    target_file = target.split("::", maxsplit=1)[0]
+    target_suffix = f" — scope-reason: {scope_reason}" if scope_reason else ""
     path.write_text(
         textwrap.dedent(
-            """
+            f"""
             > **Plan ID:** task-100-demo
 
             ## P1 Phase
@@ -51,17 +62,54 @@ def _write_plan(root: Path) -> Path:
             ### 1.1 Work [category: docs]
             `kind: deliverable`
 
-            Target: `docs/demo.md`
+            Target: `{target}`{target_suffix}
 
             Body.
 
             **Acceptance:**
-            - 1.1.1 — Docs exist. file: `docs/demo.md`
+            - 1.1.1 — Docs exist. file: `{target_file}`
             """
         ).lstrip(),
         encoding="utf-8",
     )
     return path
+
+
+def _create_indexed_project(db: HubDatabase, root: Path) -> str:
+    project_id = (
+        LocalProjectManager(db)
+        .create(
+            name=f"plans-validation-{root.name}",
+            repo_path=str(root),
+        )
+        .id
+    )
+    indexed_path = root / "docs" / "demo.md"
+    indexed_path.parent.mkdir(parents=True, exist_ok=True)
+    indexed_path.write_text("Demo.\n", encoding="utf-8")
+    content_hash = hashlib.sha256(indexed_path.read_bytes()).hexdigest()
+
+    code_index = CodeIndexStorage(db)
+    code_index.upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(root),
+            total_files=1,
+            total_symbols=0,
+        )
+    )
+    code_index.upsert_file(
+        IndexedFile(
+            id=IndexedFile.make_id(project_id, "docs/demo.md", content_hash),
+            project_id=project_id,
+            file_path="docs/demo.md",
+            language="markdown",
+            content_hash=content_hash,
+            symbol_count=0,
+            byte_size=indexed_path.stat().st_size,
+        )
+    )
+    return project_id
 
 
 def _write_large_plan(root: Path) -> Path:
@@ -558,19 +606,30 @@ async def test_create_plan_rejects_invalid_plan_kind(temp_db: HubDatabase, tmp_p
 
 @pytest.mark.asyncio
 async def test_validate_plan_returns_valid_for_canonical_plan(
-    temp_db: HubDatabase, tmp_path: Path
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     plan_path = _write_plan(tmp_path)
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    project_id = _create_indexed_project(temp_db, tmp_path)
+    monkeypatch.setattr(plans_tools, "get_project_context", lambda: None)
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
 
     assert "validate_plan" in {tool["name"] for tool in registry.list_tools()}
 
-    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+    result = await registry.call(
+        "validate_plan",
+        {"plan_file": str(plan_path.relative_to(tmp_path))},
+    )
 
     assert result["valid"] is True
     assert result["phase_count"] >= 1
     assert result["deliverable_count"] >= 1
     assert result["warnings"] == []
+    assert result["symbol_validation"] == {
+        "status": "passed",
+        "issues": [],
+        "checked_targets": ["docs/demo.md"],
+        "checked_symbols": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -578,20 +637,84 @@ async def test_validate_plan_returns_same_payload_as_tasks_ops(
     temp_db: HubDatabase, tmp_path: Path
 ) -> None:
     """gobby-plans:validate_plan must mirror gobby-tasks-ops:validate_plan_file."""
-    from unittest.mock import MagicMock
-
-    from gobby.storage.tasks import LocalTaskManager
     from gobby.tasks.expansion_service import ExpansionService
 
     plan_path = _write_plan(tmp_path)
-    registry = create_plan_registry(temp_db, default_project_id="project-1")
+    project_id = _create_indexed_project(temp_db, tmp_path)
+    registry = create_plan_registry(temp_db)
 
-    plans_result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+    token = set_project_context({"id": project_id, "project_path": str(tmp_path)})
+    try:
+        plans_result = await registry.call(
+            "validate_plan",
+            {"plan_file": str(plan_path.relative_to(tmp_path))},
+        )
+    finally:
+        reset_project_context(token)
 
     service = ExpansionService(task_manager=LocalTaskManager(temp_db), llm_service=MagicMock())
-    tasks_ops_result = service.validate_plan_file(plan_path)
+    tasks_ops_result = service.validate_plan_file(
+        plan_path,
+        project_id=project_id,
+        project_root=tmp_path,
+        code_index=CodeIndexStorage(temp_db),
+        require_symbol_validation=True,
+    )
 
     assert plans_result == tasks_ops_result
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_rejects_unindexed_wildcard_target(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    project_id = _create_indexed_project(temp_db, tmp_path)
+    unindexed_path = tmp_path / ".codex" / "rules.py"
+    unindexed_path.parent.mkdir(parents=True)
+    unindexed_path.write_text("RULES = {}\n", encoding="utf-8")
+    plan_path = _write_plan(
+        tmp_path,
+        ".codex/rules.py::*",
+        scope_reason="dot-directory configuration",
+    )
+    registry = create_plan_registry(temp_db)
+
+    token = set_project_context({"id": project_id, "project_path": str(tmp_path)})
+    try:
+        result = await registry.call(
+            "validate_plan",
+            {"plan_file": str(plan_path.relative_to(tmp_path))},
+        )
+    finally:
+        reset_project_context(token)
+
+    assert result["valid"] is False
+    assert result["symbol_validation"]["status"] == "failed"
+    assert result["symbol_validation"]["checked_targets"] == [
+        ".codex/rules.py::*",
+    ]
+    assert {issue["code"] for issue in result["symbol_validation"]["issues"]} == {
+        "target_symbol_unresolved",
+    }
+
+
+@pytest.mark.asyncio
+async def test_validate_plan_fails_closed_without_project_context(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_path = _write_plan(tmp_path)
+    monkeypatch.setattr(plans_tools, "get_project_context", lambda: None)
+    registry = create_plan_registry(temp_db)
+
+    result = await registry.call("validate_plan", {"plan_file": str(plan_path)})
+
+    assert result["valid"] is False
+    assert result["symbol_validation"]["status"] == "failed"
+    assert {issue["code"] for issue in result["symbol_validation"]["issues"]} == {
+        "symbol_index_unavailable",
+    }
 
 
 @pytest.mark.asyncio

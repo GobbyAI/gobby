@@ -9,12 +9,14 @@ from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
 
+from gobby.code_index.storage import CodeIndexStorage
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.plans.review_evidence import register_review_evidence_tools
 from gobby.storage.concurrency import CoverageExecutor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError, PlanRecord
 from gobby.storage.projects import LocalProjectManager
+from gobby.utils.project_context import get_project_context
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -39,6 +41,7 @@ def create_plan_registry(
         description="Plan management - DB-backed plan registry and coverage manifests",
     )
     manager = LocalPlanManager(db)
+    code_index = CodeIndexStorage(db)
 
     async def create_plan(
         plan_id: str,
@@ -273,18 +276,35 @@ def create_plan_registry(
     )
 
     def validate_plan(plan_file: str) -> dict[str, Any]:
-        from gobby.storage.tasks import LocalTaskManager
         from gobby.tasks.expansion._validate import validate_plan_file as _validate
 
+        project_id: str | None = None
+        project_root: Path | None = None
+        project_context = get_project_context()
+        if project_context is not None:
+            context_project_id = project_context.get("id")
+            if isinstance(context_project_id, str) and context_project_id:
+                project_id = context_project_id
+            context_project_path = project_context.get("project_path")
+            if isinstance(context_project_path, str) and context_project_path:
+                project_root = Path(context_project_path)
+        elif default_project_id:
+            project_id = default_project_id
+            project = LocalProjectManager(db).get(default_project_id)
+            if project is not None and project.repo_path:
+                project_root = Path(project.repo_path)
+
         plan_path = Path(plan_file)
-        if not plan_path.is_absolute():
-            plan_path = Path.cwd() / plan_path
-        # validate_plan_file is mounted as a method on ExpansionService for
-        # convenience but its body never touches `self`; calling it as a free
-        # function with `None` keeps gobby-plans free of the wider service
-        # construction (LLM service, run manager, dep manager) it does not need.
-        _ = LocalTaskManager  # imported for symmetry; not required for validation
-        return _validate(None, plan_path)
+        if project_root is not None and not plan_path.is_absolute():
+            plan_path = project_root / plan_path
+        return _validate(
+            None,
+            plan_path,
+            project_id=project_id,
+            project_root=project_root,
+            code_index=code_index,
+            require_symbol_validation=True,
+        )
 
     registry.register(
         name="validate_plan",
@@ -298,7 +318,9 @@ def create_plan_registry(
             "properties": {
                 "plan_file": {
                     "type": "string",
-                    "description": "Plan file path (absolute or relative to cwd)",
+                    "description": (
+                        "Plan file path (absolute or relative to the caller project root)"
+                    ),
                 },
             },
             "required": ["plan_file"],
