@@ -1369,12 +1369,66 @@ deferral:
 {"evidence_id":"3df23b57-5795-4dc8-86dd-30b3a6c2c5bb","plan_hash":"42bd4eda41f23ccc4af00a2a82c9c3342258ce1d6c92351dd869fb61a1a2defa","round_number":4,"round_result":{"accepted":["R4-F01","R4-F02","R4-F03","R4-F04","R4-F05","R4-F06"],"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"a7cd6c3e19f8c2bef209357323ea25503608bff7e08448fa6ba548c8c3efe704","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":0,"emitted_findings":6,"total":6},"evidence_id":"3df23b57-5795-4dc8-86dd-30b3a6c2c5bb","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":2,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":2,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":17,"manifest_digest":"4daf154560d231a6de468b1d754b2fbceaa8c60047b974002a34adbf8fe63c94","status":"valid"},"source_digest":"f739b8a007d6af0cf54ca1f1a157598c84dcc756e9b28b6ca8cb115cc17aafde","version":1},"declined":[],"findings":[{"category":"weak-testability","check_key":"parity-baseline-output-cleanliness","description":"The one-time gcode capture must write `crates/gwiki/tests/fixtures/codewiki_parity/README.md` and `baseline.sha256`, yet 1.1.5 and M1 require the tracked fixture tree to be clean after every engine mode. The baseline-producing mode therefore fails on its own required outputs even though `project/` remains immutable.","finding_id":"R4-F01","fix":"Specify that gcode mode leaves `project/` byte-identical and clean while allowing exactly the outer README and `baseline.sha256` as declared outputs; after those artifacts are committed, require gwiki mode to leave the entire tracked fixture tree clean. Update 1.1.5 and M1 to match.","location":"P1 / § 1.1","prevention":"For each parity mode, enumerate immutable inputs, permitted outputs, and the exact pre/post Git-state assertion.","principle":"A verification mode may permit only its declared outputs; its cleanliness assertion must exclude those outputs or run after they are committed.","root_cause":"The R3-F01 repair broadened the post-mode cleanliness check to the tracked fixture tree while the baseline mode is required to write the tracked outer README and baseline manifest.","section_id":"1.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"command-module-removal-atomicity","description":"Completing 2.1 removes `commands::codewiki`, but compiled `cli.rs` still names four types from that module and `dispatch.rs` still constructs `CodewikiAiOptions` and calls `run_compare`, `run_purge`, `run_repair`, and `run`. Those references are deleted only in 2.4, so the 2.1 boundary cannot compile.","finding_id":"R4-F02","fix":"Make 2.1 copy and decompose the engine into gwiki while retaining the gcode tree and module. After 2.3 adds the new CLI, make 2.4 atomically delete the old CLI/dispatch references, module declaration, tests, and source tree; make 2.5 depend on 2.4 before renaming the shared marker.","location":"P2 / §§ 2.1, 2.3, and 2.4","prevention":"At every module-removal boundary, compile the library and binary and trace all type, function, and test references to the leaf that removes them.","principle":"Every expanded leaf must leave all compiled consumers and their implementation modules present together.","root_cause":"The engine tree and module declaration are removed in 2.1, while gcode CLI types, dispatch calls, and tests that consume `commands::codewiki` remain until 2.4.","section_id":"2.1","severity":"blocking"},{"category":"gobby-format","check_key":"recursive-module-move-target-closure","description":"Section 2.1 inventories only two source files and a small subset of destinations for the complete CodeWiki tree relocation. The repository contract defines `::*` as every indexed symbol in one file, leaving 106 source paths and 103 destination paths outside coverage. The R3-F03 and R3-F05 bare paths themselves are valid because those files do not exist in the snapshot.","finding_id":"R4-F03","fix":"After applying R4-F02's copy-then-delete sequence, enumerate every destination file created by 2.1 and every source file deleted by 2.4. Use exact or justified `::*` Targets for existing symbol-bearing files and bare paths for snapshot-absent destinations, then rerun target and symbol validation.","location":"P2 / §§ 2.1 and 2.4","prevention":"Expand recursive moves into a source/destination file inventory and validate every existing symbol-bearing file plus every new path before manifest handoff.","principle":"A file-wide Target covers one file; every file created, moved, or deleted by a deliverable requires its own Target.","root_cause":"The plan describes a recursive 108-file tree move but treats `crates/gcode/src/commands/codewiki/mod.rs::*` as if it authorized the whole directory.","section_id":"2.1","severity":"blocking"},{"category":"bad-sequencing","check_key":"cargo-lock-dependency-atomicity","description":"The current gobby-wiki lock stanza lacks gobby-code. Adding that dependency in 2.1 makes `cargo build --locked` require a lockfile change, but 2.6 invokes the locked build before 4.1 regenerates `Cargo.lock`, so the engine and parity gate fail deterministically.","finding_id":"R4-F04","fix":"Add `Cargo.lock` to 2.1 Targets and regenerate it atomically with the new dependency. Keep 4.1 responsible for the later version-bump regeneration and require a focused `cargo build --locked` at the 2.1 boundary.","location":"P2 / §§ 2.1 and 2.6; P4 / § 4.1","prevention":"After every Cargo.toml dependency edit, inspect the affected lock stanza and run the leaf's locked build before accepting downstream dependencies.","principle":"A Cargo manifest dependency change and its lockfile update must land in the same buildable leaf when later validation uses `--locked`.","root_cause":"Section 2.1 adds gwiki's gobby-code dependency without targeting `Cargo.lock`, while lock regeneration is deferred to 4.1 after the 2.6 locked parity build.","section_id":"2.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"cron-reconciliation-query-failures","description":"`list_system_jobs_by_name_prefix` can fail both before the loop and during the residual re-query. Section 3.2 only specifies how `init_orchestration` reacts to a returned result; an exception can escape the cron setup block, bypass `codewiki_dormant_reconciliation` degradation, and skip scheduler construction despite the promised non-blocking startup.","finding_id":"R4-F05","fix":"Wrap the reconciliation call in a dedicated `init_orchestration` try/except that logs, marks `codewiki_dormant_reconciliation` degraded, and continues cron setup. Add initial-list and final-requery exception tests that also assert the scheduler is constructed.","location":"P3 / § 3.2","prevention":"Test initial read, each write outcome, final verification read, caller degradation, retry, and scheduler construction for every startup reconciler.","principle":"Every storage operation in startup reconciliation needs an explicit failure transition that preserves the required startup outcome.","root_cause":"The structured result covers per-row update failures and residual IDs, while initial enumeration and final verification queries can raise before any result reaches the caller.","section_id":"3.2","severity":"blocking"},{"category":"traceability","check_key":"reconciliation-result-contract-drift","description":"The section defines `CodewikiCronReconciliation` with disabled, failed, and residual-enabled ID tuples, then says the loop returns the count of successful transitions. That scalar instruction contradicts the accepted round-3 contract and leaves the implementation leaf ambiguous.","finding_id":"R4-F06","fix":"Replace the count sentence with explicit population rules: successful non-None updates append to `disabled`, raised or None updates append to `failed`, and the post-loop query populates `residual_enabled`. Keep acceptance 3.2.1/3.2.4 and M1 aligned.","location":"P3 / § 3.2","prevention":"After changing a planned interface, search the section, acceptance items, manifest criteria, and changelog for the superseded return type.","principle":"A self-contained deliverable must state one return shape consistently in its signature, prose, acceptance, and manifest.","root_cause":"The R3-F06 structured-result rewrite updated the code block, acceptance, and M1 but left the prior scalar-count sentence in the implementation instructions.","section_id":"3.2","severity":"blocking"}],"resolution":"All 6 findings accepted after independent verification (2026-08-07); edits applied to the plan artifact. Three were regressions from round 3's own fixes: R4-F01 (the 1.1.5 cleanliness assertion contradicted the capture mode's required tracked outputs — now scoped per mode) and R4-F06 (a stale scalar-count sentence surviving the structured-result rewrite — now explicit population rules). R4-F02 verified directly: crates/gcode/src/cli.rs:75,93,112,128 name four types from gobby_code::commands::codewiki and crates/gcode/src/dispatch.rs:143-144,600-609 construct CodewikiAiOptions and call run_compare/run_purge/run_repair/run, so removing the module in 2.1 could not compile; 2.1 now copies, 2.4 became the atomic deletion boundary for CLI references, dispatch sites, module declaration and source tree together, and 2.5 now depends on 2.4 because the shared marker constant is referenced by both engine copies until the old one is gone. R4-F04 verified against Cargo.lock: gobby-wiki's stanza lists gobby-core and no gobby-code, so Cargo.lock is now a 2.1 Target regenerated in the same leaf with a focused locked build at that boundary. R4-F05 applied as a dedicated init_orchestration try/except with new acceptance 3.2.5. R4-F03's under-declaration was accepted but resolved proportionally rather than by enumerating ~106 source and ~103 destination paths: the target-coverage lint is mention-driven and the contract defines no recursive or directory Target form, so per-file enumeration is not what makes a tree move conforming, encodes no decision, and would go stale the moment a file is added before implementation; instead 2.1 and 2.4 declare the wholesale move explicitly, the Targets enumerate files changed beyond pure relocation, and acceptance 2.1.1 and 2.4.1 pin the outcome on both sides.","reviewer_session":"#10280","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"89a747f7-16f8-4f17-a15e-81e23fb067e4"}
 ```
 
+**Human handoff** `kind: verification`
+
+- authorized_by: user (interactive)
+- after_round: 4
+- verdict_at_handoff: needs_review
+- completed_plan_review_rounds: 4
+- resolution_notes: The user authorized expansion at round-4 `needs_review`
+  with execution explicitly held. This plan is **not** converged and the
+  handoff does not claim it is. Round 4 accepted six blocking findings, of
+  which three (R4-F01, R4-F05, R4-F06) were regressions introduced by round
+  3's own repairs, and three (R4-F02, R4-F03, R4-F04) were independent
+  pre-existing defects — R4-F02 in particular would have left leaf 2.1
+  uncompilable. Round 4's repairs were applied in commit `5a16be85f` under
+  task #19756 and no round 5 confirmed them, so no round has yet closed with
+  zero independent defects. The independent-defect trend across rounds is
+  20 → 6 → 3, still declining and not yet zero. Expansion proceeds because it
+  is reversible: the resulting tree can be reset and re-expanded if a later
+  round changes the deliverable boundaries.
+  `## M1 Task Manifest` was written earlier by `apply_plan_handoff_manifest`
+  and re-derived during round 3 (R3-F08 domain corrections); it was verified
+  against the post-round-4 sections before expansion — 17 entries for 17
+  deliverables, every acceptance item carrying a `covers:` label and appearing
+  in its entry's `validation_criteria`, and the round-4 dependency rewiring
+  (2.5 → 2.4, 2.6 → 2.3/2.4/2.5) reflected.
+  This plan carries no adversary approval verdict and no `coverage_attestation`
+  for the current bytes; the last recorded verdict remains `needs_review` at
+  round 4.
+
 ## Task Mapping
 `kind: framing`
 
 <!-- Updated after task creation -->
 | Plan Item | Task Ref | Status |
 |-----------|----------|--------|
+| P1 | #19810 | open |
+| 1.1 | #19814 | open |
+| 1.2 | #19815 | open |
+| 1.3 | #19816 | open |
+| P2 | #19811 | open |
+| 2.1 | #19817 | open |
+| 2.3 | #19818 | open |
+| 2.4 | #19819 | open |
+| 2.5 | #19820 | open |
+| 2.6 | #19821 | open |
+| P3 | #19812 | open |
+| 3.1 | #19822 | open |
+| 3.2 | #19823 | open |
+| 3.3 | #19824 | open |
+| 3.4 | #19825 | open |
+| 3.5 | #19826 | open |
+| 3.6 | #19827 | open |
+| 3.7 | #19828 | open |
+| P4 | #19813 | open |
+| 4.1 | #19829 | open |
+| 4.2 | #19830 | open |
+| D1 | #18902 | deferred |
+| D2 | #19664 | deferred |
+| D3 | #19665 | deferred |
+| D4 | #18779 | deferred |
+| D5 | #17678 | deferred |
 
 ## M1 Task Manifest
 `kind: manifest`
