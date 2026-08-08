@@ -1,6 +1,7 @@
 """Additional tests for AgentLifecycleMonitor."""
 
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -30,6 +31,14 @@ DETECTION_REGISTRY = BundledDetectionRegistry()
 configure_tmux(ConfiguredTmuxConfig())
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _stage(state: str) -> dict[str, object]:

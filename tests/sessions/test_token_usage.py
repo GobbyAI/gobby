@@ -1,6 +1,8 @@
 import json
 import logging
+from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -13,6 +15,14 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = "00000000-0000-4000-8000-000000000101"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-00000000001a"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_typed_json_token_usage_warns_when_cache_read_exceeds_prompt(

@@ -4,7 +4,7 @@ Split from the test_pipeline_executor monolith (#12210).
 """
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,6 +23,14 @@ from gobby.workflows.pipeline.gatekeeper import ApprovalManager
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution, StepStatus
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestApprovalGateHandling:

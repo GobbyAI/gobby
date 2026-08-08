@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -17,6 +17,14 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _claimed_review_task(

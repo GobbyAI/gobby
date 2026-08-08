@@ -5,9 +5,11 @@ from __future__ import annotations
 import subprocess
 import textwrap
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import pytest
 
@@ -20,6 +22,14 @@ if TYPE_CHECKING:
     from gobby.build.service import BuildOptions, BuildResult
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 async def _build(input_ref: str, opts: object, db: object, project_id: str) -> BuildResult:
@@ -739,7 +749,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
 
 
 @pytest.mark.asyncio
-async def test_build_plan_file_planning_spawn_inherits_worktree_isolation(
+async def test_build_plan_file_planning_spawn_forces_main_context(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -789,13 +799,15 @@ async def test_build_plan_file_planning_spawn_inherits_worktree_isolation(
 
     assert task.isolation == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "planner"
-    assert spawn_kwargs["isolation"] == "worktree"
+    # Pre-development stages run in the main context; workspaces are
+    # provisioned lazily at development-forward spawns (#19573).
+    assert spawn_kwargs["isolation"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 
 
 @pytest.mark.asyncio
-async def test_build_plan_file_plan_adversary_spawn_inherits_worktree_isolation(
+async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -850,7 +862,9 @@ async def test_build_plan_file_plan_adversary_spawn_inherits_worktree_isolation(
 
     assert task.isolation == "worktree"
     assert spawn_kwargs["agent_lookup_name"] == "plan-adversary"
-    assert spawn_kwargs["isolation"] == "worktree"
+    # Pre-development stages run in the main context; workspaces are
+    # provisioned lazily at development-forward spawns (#19573).
+    assert spawn_kwargs["isolation"] == "none"
     assert spawn_kwargs["worktree_id"] is None
     assert spawn_kwargs["clone_id"] is None
 
@@ -1643,7 +1657,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
 
 
 @pytest.mark.asyncio
-async def test_build_epic_creates_integration_worktrees_and_targets_nearest_branch(
+async def test_build_epic_defers_integration_worktrees_to_spawn(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     tmp_path: Path,
@@ -1687,24 +1701,20 @@ async def test_build_epic_creates_integration_worktrees_and_targets_nearest_bran
     root_artifacts = task_manager.artifacts.get_artifacts(root.id)
     child_artifacts = task_manager.artifacts.get_artifacts(child_epic.id)
     leaf_artifacts = task_manager.artifacts.get_artifacts(leaf.id)
-    root_worktree = temp_db.fetchone(
-        "SELECT * FROM worktrees WHERE id = %s",
-        (root_artifacts.integration_workspace_id,),
-    )
-    child_worktree = temp_db.fetchone(
-        "SELECT * FROM worktrees WHERE id = %s",
-        (child_artifacts.integration_workspace_id,),
+    integration_worktrees = temp_db.fetchall(
+        "SELECT * FROM worktrees WHERE workspace_role = 'integration'",
     )
 
-    assert root_artifacts.integration_branch is not None
+    # Build only records the root target branch; integration branches and
+    # worktrees are provisioned lazily at development-forward spawns (#19573).
     assert root_artifacts.target_branch == "main"
-    assert child_artifacts.integration_branch is not None
-    assert child_artifacts.target_branch == root_artifacts.integration_branch
-    assert leaf_artifacts.target_branch == child_artifacts.integration_branch
-    assert root_worktree["workspace_role"] == "integration"
-    assert root_worktree["base_branch"] == "main"
-    assert child_worktree["workspace_role"] == "integration"
-    assert child_worktree["base_branch"] == root_artifacts.integration_branch
+    assert root_artifacts.integration_branch is None
+    assert root_artifacts.integration_workspace_id is None
+    assert child_artifacts.integration_branch is None
+    assert child_artifacts.integration_workspace_id is None
+    assert child_artifacts.target_branch is None
+    assert leaf_artifacts.target_branch is None
+    assert integration_worktrees == []
 
 
 @pytest.mark.asyncio
@@ -2371,7 +2381,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
 
 
 @pytest.mark.asyncio
-async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
+async def test_build_resume_cascades_skipped_pr_to_descendants(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -2460,21 +2470,12 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         created_task_ids=[child.id],
     )
 
-    def fail_workspace_refresh(**_kwargs: object) -> None:
-        raise RuntimeError("workspace refresh failed")
-
-    monkeypatch.setattr(
-        "gobby.build.lifecycle.ensure_epic_integration_workspaces",
-        fail_workspace_refresh,
+    await _build(
+        f"#{parent.seq_num}",
+        _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
+        db=temp_db,
+        project_id=sample_project["id"],
     )
-
-    with pytest.raises(RuntimeError, match="workspace refresh failed"):
-        await _build(
-            f"#{parent.seq_num}",
-            _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
-            db=temp_db,
-            project_id=sample_project["id"],
-        )
 
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
@@ -2482,7 +2483,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
 
 
 @pytest.mark.asyncio
-async def test_build_resume_development_epic_defers_workspace_refresh(
+async def test_build_resume_development_epic_defers_workspace_provisioning(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -2535,14 +2536,6 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     )
     task_manager.artifacts.set_artifacts_atomic(parent.id, target_branch="main")
 
-    def fail_workspace_refresh(**_kwargs: object) -> None:
-        raise RuntimeError("workspace refresh should be deferred during development")
-
-    monkeypatch.setattr(
-        "gobby.build.lifecycle.ensure_epic_integration_workspaces",
-        fail_workspace_refresh,
-    )
-
     result = await _build(
         f"#{parent.seq_num}",
         _options(isolation="worktree", skip_stages=["pr"], skip_stages_explicit=True),
@@ -2552,6 +2545,12 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
 
     assert result.initial_lifecycle == "development"
     assert task_manager.stage_states.current_stage(parent.id).stage_name == "development"
+    # Resume never provisions integration workspaces; provisioning happens
+    # lazily at development-forward spawns (#19573).
+    parent_artifacts = task_manager.artifacts.get_artifacts(parent.id)
+    assert parent_artifacts.integration_branch is None
+    assert parent_artifacts.integration_workspace_id is None
+    assert temp_db.fetchall("SELECT * FROM worktrees") == []
 
 
 @pytest.mark.asyncio

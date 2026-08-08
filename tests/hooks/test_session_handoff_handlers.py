@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -37,6 +38,15 @@ from gobby.workflows.state_manager import SessionVariableManager
 from ._event_handler_helpers import make_event
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
 
 COMPACT_EXTERNAL_ID = "cccccccc-0000-4000-8000-000000000001"
 CLI_EXTERNAL_IDS = {

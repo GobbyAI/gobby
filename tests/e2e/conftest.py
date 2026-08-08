@@ -547,6 +547,13 @@ def e2e_config(
     gobby_home = e2e_project_dir / ".gobby-home"
     gobby_home.mkdir(parents=True, exist_ok=True)
 
+    # Pin the daemon's machine identity to the synthetic id the e2e suite
+    # registers sessions with. Machine-ownership enforcement (c55fccf31)
+    # rejects explicit foreign machine ids at registration, and the daemon
+    # subprocess resolves identity from this home — test-side patches can't
+    # reach it.
+    (gobby_home / "machine_id").write_text("21000000-0000-4000-8000-000000000002")
+
     config_path = gobby_home / "config.yaml"
     db_path = gobby_home / "hub-postgres.db"
     log_dir = gobby_home / "logs"

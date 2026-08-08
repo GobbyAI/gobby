@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,6 +26,16 @@ from gobby.storage.tasks._updates import update_task
 from tests.storage.tasks.stage_test_helpers import initialize_manifest, set_stage_state, spec
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    # Patch the identity cache so every import style (including direct
+    # bindings like storage.agents._lifecycle) resolves the same id.
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _task(

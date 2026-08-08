@@ -1,6 +1,8 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
+from unittest.mock import patch
 
 import pytest
 
@@ -17,6 +19,14 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import add_claimed_task
 
 pytestmark = pytest.mark.integration
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_edit_history_flow(temp_db, tmp_path) -> None:
@@ -365,7 +375,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     )
     session = session_manager.register(
         external_id="codex-patch-ledger",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )
@@ -439,7 +449,7 @@ def test_codex_patch_ledger_survives_commit_observer_and_compaction_resume(
     handlers.handle_pre_compact(compact_event)
     resumed = session_manager.register(
         external_id="codex-patch-ledger",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project.id,
     )

@@ -333,9 +333,15 @@ class TestSpawnAgentWithCloneIsolation:
         result = unwrap_result(raw_result)
 
         assert result.get("success") is False
-        # May fail on missing parent_session_id ("required") or project context
+        # May fail on missing parent_session_id ("required"), project context,
+        # or provider resolution — which itself needs the missing spawning
+        # session ("configure a default provider for the spawning session").
         error = result.get("error", "").lower()
-        assert "require" in error or "could not resolve" in error
+        assert (
+            "require" in error
+            or "could not resolve" in error
+            or "unable to resolve a provider" in error
+        )
 
     def test_spawn_with_invalid_mode_fails(
         self,

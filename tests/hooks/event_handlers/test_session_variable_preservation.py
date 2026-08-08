@@ -8,6 +8,7 @@ internal/metadata keys that reflect current agent configuration.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,6 +24,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = [pytest.mark.unit]
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _make_event_handlers(
@@ -180,6 +189,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
             "gobby.hooks.event_handlers._session_start.flow."
             "_schedule_tmux_window_rename_for_session"
         ),
+        patch("gobby.hooks.terminal_context._record_parent_process_identity"),
     ):
         response = handlers.handle_session_start(event)
 

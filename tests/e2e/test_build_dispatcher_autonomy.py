@@ -6,6 +6,7 @@ import asyncio
 import os
 import subprocess
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +44,20 @@ from tests.storage.tasks._stage_test_helpers import stage_row
 DETECTION_REGISTRY = BundledDetectionRegistry()
 
 pytestmark = pytest.mark.e2e
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    from unittest.mock import patch
+
+    # Patch the cache rather than the function: production modules bind
+    # `get_machine_id` by direct import (e.g. storage/agents/_lifecycle.py),
+    # so a function patch on the source module misses them, while every
+    # import style flows through the cache.
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -356,7 +371,7 @@ class MiniBuildHarness:
         task_id = str(kwargs["task_id"])
         child = self.session_manager.register(
             external_id=f"mini-{agent_name}-{len(self.spawned) + 1}",
-            machine_id="21000000-0000-4000-8000-00000000001e",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=self.project_id,
             agent_depth=1,
@@ -642,7 +657,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     run_manager = LocalAgentRunManager(temp_db)
     worker = session_manager.register(
         external_id="planner-worker",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
         agent_depth=1,
@@ -765,14 +780,14 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
     run_manager = LocalAgentRunManager(temp_db)
     worker = session_manager.register(
         external_id="review-worker",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
         agent_depth=1,
     )
     reviewer_session = session_manager.register(
         external_id="stale-reviewer",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
         agent_depth=2,
@@ -905,13 +920,13 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     run_manager = LocalAgentRunManager(temp_db)
     parent = session_manager.register(
         external_id="build-coordinator",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
     )
     child = session_manager.register(
         external_id="planner-worker",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
         agent_depth=1,

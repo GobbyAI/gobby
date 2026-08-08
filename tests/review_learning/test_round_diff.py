@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
+from unittest.mock import patch
 
 import pytest
 
@@ -29,6 +31,14 @@ from tests.storage.stage_review_helpers import (
 PLAN_PATH = ".gobby/plans/review.md"
 TASK_ID = "task-lineage"
 STAGE = "planning"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _finding(

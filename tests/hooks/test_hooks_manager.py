@@ -22,6 +22,14 @@ from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000004"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
 
 @pytest.fixture
 def mock_daemon_client() -> Any:
@@ -1394,6 +1402,9 @@ class TestHookManagerSessionLookup:
         temp_dir: Path,
     ) -> None:
         manager = hook_manager_with_mocks
+        # A real UUID: the ACP branch now runs a genuine web_chat parent lookup
+        # against the sessions table before deciding to skip.
+        project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="acp-child-session",
@@ -1405,7 +1416,7 @@ class TestHookManagerSessionLookup:
                 "terminal_context": {"gobby_acp_child": "1"},
             },
             machine_id="21000000-0000-4000-8000-000000000004",
-            project_id="project-id",
+            project_id=project_id,
         )
 
         with (
@@ -1550,10 +1561,7 @@ class TestHookManagerSessionLookup:
         response = manager.handle(wrong_source_event)
 
         assert response.decision == "allow"
-        assert (
-            manager._session_manager.get_session_id("shared-session-id", "claude")
-            == existing_session_id
-        )
+        assert wrong_source_event.metadata["_platform_session_id"] == existing_session_id
         rows = manager._session_manager.db.fetchall(
             "SELECT id FROM sessions WHERE external_id = %s",
             ("shared-session-id",),
@@ -2262,19 +2270,20 @@ class TestHookManagerContextMerging:
 class TestHookManagerMachineIdFallback:
     """Tests for machine ID fallback behavior."""
 
-    def test_get_machine_id_returns_unknown_on_none(
+    def test_get_machine_id_returns_none_on_none(
         self, hook_manager_with_mocks: HookManager
     ) -> None:
-        """Test that get_machine_id returns 'unknown-machine' when underlying returns None."""
+        """get_machine_id propagates None instead of inventing a fallback identity.
+
+        The 'unknown-machine' fallback was removed by gobby-#19411 (UUID
+        machine attribution): a fabricated identity would defeat ownership
+        enforcement, so an unresolvable machine id must surface as None.
+        """
         manager = hook_manager_with_mocks
 
         with patch("gobby.utils.machine_id.get_machine_id", return_value=None):
-            # Since we can't easily mock the import inside the method,
-            # we verify the fallback logic exists by checking the return type
             result = manager.get_machine_id()
-            assert isinstance(result, str)
-            # When underlying returns None, should return "unknown-machine"
-            assert result == "unknown-machine"
+            assert result is None
 
     def test_get_machine_id_returns_value_when_available(
         self, hook_manager_with_mocks: HookManager

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
@@ -32,6 +33,15 @@ pytestmark = pytest.mark.unit
 # ids like AGENT_SESSION_ID would fail with `invalid input syntax for type uuid`.
 AGENT_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXPANSION_QA_AGENT_PATH = (

@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -35,6 +36,15 @@ from gobby.cli.utils import (
 from gobby.cli.utils_process import get_port_listener_pid
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000006"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
 
 # ==============================================================================
 # Tests for get_gobby_home()
@@ -175,7 +185,7 @@ class TestGetActiveSessionId:
         session = session_manager.register(
             source="test",
             external_id="ext-123",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000006",
             project_id=project.id,
         )
 

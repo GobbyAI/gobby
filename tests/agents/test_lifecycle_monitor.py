@@ -58,6 +58,12 @@ LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 REMOTE_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
 
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
+
 def _rid(label: str) -> str:
     """Deterministic uuid for a readable run label (agent_runs.id is uuid)."""
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby:test:{label}"))

@@ -1,6 +1,7 @@
 """Cross-CLI regressions for stateless ambient MCP session identity."""
 
 import uuid
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -21,6 +22,16 @@ pytestmark = pytest.mark.e2e
 PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
 TARGET_SERVER = "gobby-tasks"
 TARGET_TOOL = "list_ready_tasks"
+
+# Matches the identity seeded into the isolated daemon home by e2e_config, so
+# test-process registrations resolve the same machine as daemon-side ones.
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
+    yield
 
 
 @pytest.fixture
@@ -49,7 +60,6 @@ def _session_for(
 ) -> Session:
     session = manager.find_by_external_id(
         external_id,
-        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         cli_source,
     )
@@ -147,13 +157,11 @@ def test_session_start_accepts_distinct_cli_and_lifecycle_sources(
     manager = SessionManager(postgres_db)
     session_a = manager.find_by_external_id(
         external_a,
-        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         "codex",
     )
     session_b = manager.find_by_external_id(
         external_b,
-        "21000000-0000-4000-8000-000000000002",
         PROJECT_ID,
         "codex",
     )
@@ -441,7 +449,16 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     )
     assert project_result["status"] in {"success", "already_exists"}
 
-    terminal_context = _terminal_context("daemon-restart")
+    # No tmux keys: startup tmux repair detaches sessions bound to a missing
+    # tmux server, and this test's fabricated socket never exists. A tty-only
+    # terminal identity survives the daemon restart.
+    suffix = f"daemon-restart-{uuid.uuid4()}"
+    terminal_context = {
+        "parent_pid": 49230,
+        "tty": f"/dev/pts/{suffix}",
+        "term_program": "pytest",
+        "term_session_id": suffix,
+    }
     external_id = f"codex-daemon-restart-{uuid.uuid4()}"
     start = cli_events.session_start(
         external_id,

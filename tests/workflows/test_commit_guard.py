@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -28,6 +30,14 @@ from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rule
 pytestmark = pytest.mark.unit
 
 RULE_NAME = "block-cross-session-foreign-staged-commit"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_format_ref_preserves_full_uuid_fallback() -> None:

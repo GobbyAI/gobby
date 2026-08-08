@@ -215,7 +215,11 @@ def test_effective_context_window_ignores_non_reported_db_session_value() -> Non
         def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
             return []
 
-        def fetchone(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+        def fetchone(self, sql: str, *_args: object, **_kwargs: object) -> dict[str, object] | None:
+            # The capability resolver also queries config_store through this
+            # db; only the sessions lookup should return the canned row.
+            if "FROM sessions" not in sql:
+                return None
             return {"context_window": 200_000, "context_usage_confidence": "inferred"}
 
     session = SimpleNamespace(
@@ -274,6 +278,11 @@ class _BackfillFakeDb:
 
     def fetchall(self, *_args: object, **_kwargs: object) -> list[dict[str, object]]:
         return self.rows
+
+    def fetchone(self, *_args: object, **_kwargs: object) -> dict[str, object] | None:
+        # config_store lookups from the capability resolver land here; no
+        # aliases are configured in this fake.
+        return None
 
     def transaction(self) -> _BackfillFakeDb:
         return self

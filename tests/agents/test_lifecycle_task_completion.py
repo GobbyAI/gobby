@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +21,14 @@ from gobby.storage.tasks import LocalTaskManager
 from .detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = cast("DetectionManifestRegistry", BundledDetectionRegistry())
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

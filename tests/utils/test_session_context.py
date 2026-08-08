@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Iterator
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -30,6 +31,14 @@ from gobby.utils.session_context import (
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 # --- Fixtures / helpers ----------------------------------------------------

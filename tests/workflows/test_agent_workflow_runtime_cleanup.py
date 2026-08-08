@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,14 @@ CHILD_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 WF_INSTANCE_ID = "22222222-2222-4222-8222-222222222222"
 WF_SUBMIT_INSTANCE_ID = "33333333-3333-4333-8333-333333333333"
 PARKED_RUN_ID = "44444444-4444-4444-8444-444444444444"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.mark.asyncio

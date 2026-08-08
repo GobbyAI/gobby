@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -22,6 +23,14 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000000"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

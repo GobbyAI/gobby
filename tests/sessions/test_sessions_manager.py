@@ -1,5 +1,8 @@
 """Tests for the SessionManager service layer."""
 
+import itertools
+import uuid
+from collections.abc import Iterator
 from importlib import import_module
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +13,14 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture
@@ -51,7 +62,7 @@ class TestSessionManagerRegistration:
         """Test registering a new session."""
         session_id = session_mgr.register_session(
             external_id="test-cli-123",
-            machine_id="21000000-0000-4000-8000-000000000007",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -67,7 +78,7 @@ class TestSessionManagerRegistration:
         """Test registering session with all optional fields."""
         session_id = session_mgr.register_session(
             external_id="full-cli-123",
-            machine_id="21000000-0000-4000-8000-00000000000e",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="qwen",
             project_id=test_project["id"],
             parent_session_id=None,  # Use None instead of invalid UUID
@@ -151,7 +162,7 @@ class TestSessionManagerLookup:
         """Test looking up session_id from database."""
         session_id = session_mgr.register_session(
             external_id="db-lookup",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
         )
@@ -163,7 +174,6 @@ class TestSessionManagerLookup:
         result = session_mgr.lookup_session_id(
             external_id="db-lookup",
             source="codex",
-            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
         assert result == session_id
@@ -188,7 +198,6 @@ class TestSessionManagerLookup:
         session_mgr.lookup_session_id(
             external_id="cache-lookup",
             source="claude",
-            machine_id="21000000-0000-4000-8000-000000000003",
             project_id=test_project["id"],
         )
 
@@ -230,7 +239,7 @@ class TestSessionManagerLookup:
         """Cross-source recovery should prefer the candidate with transcript metadata."""
         preferred = session_storage.register(
             external_id="shared-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
             title="Canonical Session",
@@ -239,7 +248,7 @@ class TestSessionManagerLookup:
         )
         session_storage.register(
             external_id="shared-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
             title=None,
@@ -249,13 +258,19 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="shared-external-id",
             source="qwen",
-            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
 
         assert recovered is not None
         assert recovered.id == preferred.id
-        assert session_mgr.get_session_id("shared-external-id", "qwen") == preferred.id
+        # Cross-source recovery caches the mapping under the requesting source;
+        # the validated getter rejects cross-source reads, so assert the raw cache.
+        assert (
+            session_mgr._session_mapping[
+                ("shared-external-id", "qwen", test_project["id"], "terminal")
+            ]
+            == preferred.id
+        )
 
     def test_recover_session_rejects_score_ties_even_when_rank_differs(
         self,
@@ -266,13 +281,13 @@ class TestSessionManagerLookup:
         """Recovery should reject same-quality rows even when rank differs."""
         session_storage.register(
             external_id="ranked-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="ranked-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=test_project["id"],
         )
@@ -280,7 +295,6 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="ranked-external-id",
             source="qwen",
-            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=test_project["id"],
         )
 
@@ -295,7 +309,7 @@ class TestSessionManagerLookup:
     ) -> None:
         real_project = session_storage.register(
             external_id="real-project-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
         )
@@ -303,7 +317,6 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="real-project-external-id",
             source="qwen",
-            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=None,
         )
 
@@ -321,13 +334,13 @@ class TestSessionManagerLookup:
         other_project = project_storage.create(name="other-project", repo_path="/tmp/other")
         session_storage.register(
             external_id="colliding-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
         )
         session_storage.register(
             external_id="colliding-external-id",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id="21000000-0000-4000-8000-000000000003",
             source="claude",
             project_id=other_project.id,
         )
@@ -335,7 +348,6 @@ class TestSessionManagerLookup:
         recovered = session_mgr.recover_session(
             external_id="colliding-external-id",
             source="qwen",
-            machine_id="21000000-0000-4000-8000-000000000001",
             project_id=None,
         )
 
@@ -432,42 +444,66 @@ class TestSessionManagerStatus:
 class TestSessionManagerCaching:
     """Tests for session caching functionality."""
 
-    def test_cache_session_mapping(self, session_mgr: SessionManager) -> None:
+    def test_cache_session_mapping(
+        self,
+        session_mgr: SessionManager,
+        test_project: dict,
+    ) -> None:
         """Test manually caching session mapping."""
-        session_mgr.cache_session_mapping("manual-cli", "claude", "manual-session-id")
+        session_id = session_mgr.register_session(
+            external_id="manual-cli",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=test_project["id"],
+        )
+        session_mgr._session_mapping.clear()
+
+        session_mgr.cache_session_mapping(
+            "manual-cli", "claude", session_id, project_id=test_project["id"]
+        )
 
         result = session_mgr.get_session_id("manual-cli", "claude")
-        assert result == "manual-session-id"
+        assert result == session_id
 
-    def test_cache_session_mapping_is_scoped_by_machine_and_project(
-        self, session_mgr: SessionManager
+    def test_cache_session_mapping_is_scoped_by_project(
+        self,
+        temp_db: HubDatabase,
+        session_mgr: SessionManager,
+        project_storage: LocalProjectManager,
     ) -> None:
+        project_a = project_storage.create(name="project-a", repo_path="/tmp/project-a")
+        project_b = project_storage.create(name="project-b", repo_path="/tmp/project-b")
+        # register() unifies machine-neutral identity across projects, so seed
+        # two same-source rows in different projects directly.
+        session_a = str(uuid.uuid4())
+        session_b = str(uuid.uuid4())
+        with temp_db.transaction() as conn:
+            for session_id, project_id in ((session_a, project_a.id), (session_b, project_b.id)):
+                conn.execute(
+                    "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
+                    "VALUES (%s, %s, %s, %s, %s)",
+                    (session_id, "shared-cli", LOCAL_MACHINE_ID, "claude", project_id),
+                )
+        session_mgr._session_mapping.clear()
+
         session_mgr.cache_session_mapping(
             "shared-cli",
             "claude",
-            "session-a",
-            machine_id="21000000-0000-4000-8000-00000000000c",
-            project_id="project-a",
+            session_a,
+            project_id=project_a.id,
         )
         session_mgr.cache_session_mapping(
             "shared-cli",
             "claude",
-            "session-b",
-            machine_id="21000000-0000-4000-8000-00000000000d",
-            project_id="project-b",
+            session_b,
+            project_id=project_b.id,
         )
 
         assert (
-            session_mgr.get_session_id(
-                "shared-cli", "claude", machine_id="21000000-0000-4000-8000-00000000000c", project_id="project-a"
-            )
-            == "session-a"
+            session_mgr.get_session_id("shared-cli", "claude", project_id=project_a.id) == session_a
         )
         assert (
-            session_mgr.get_session_id(
-                "shared-cli", "claude", machine_id="21000000-0000-4000-8000-00000000000d", project_id="project-b"
-            )
-            == "session-b"
+            session_mgr.get_session_id("shared-cli", "claude", project_id=project_b.id) == session_b
         )
         assert session_mgr.get_session_id("shared-cli", "claude") is None
 
@@ -480,44 +516,48 @@ class TestSessionManagerCaching:
                 "expiring-cli",
                 "claude",
                 "session-id",
-                machine_id="21000000-0000-4000-8000-000000000003",
                 project_id="project",
             )
             assert (
-                session_mgr.get_session_id(
-                    "expiring-cli", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
-                )
-                is None
+                session_mgr.get_session_id("expiring-cli", "claude", project_id="project") is None
             )
 
-    def test_cache_session_mapping_evicts_oldest_entry(self, session_mgr: SessionManager) -> None:
+    def test_cache_session_mapping_evicts_oldest_entry(
+        self,
+        session_mgr: SessionManager,
+        test_project: dict,
+    ) -> None:
+        session_ids = {
+            suffix: session_mgr.register_session(
+                external_id=f"cli-{suffix}",
+                machine_id=LOCAL_MACHINE_ID,
+                source="claude",
+                project_id=test_project["id"],
+            )
+            for suffix in ("a", "b", "c")
+        }
+        session_mgr._session_mapping.clear()
         with (
             patch("gobby.storage.sessions._registration_cache._SESSION_MAPPING_MAX_ENTRIES", 2),
             patch(
                 "gobby.storage.sessions._registration_cache.time.monotonic",
-                side_effect=[0.0, 1.0, 2.0, 3.0, 4.0],
+                side_effect=itertools.count(0.0, 1.0),
             ),
         ):
             for suffix in ("a", "b", "c"):
                 session_mgr.cache_session_mapping(
                     f"cli-{suffix}",
                     "claude",
-                    f"session-{suffix}",
-                    machine_id="21000000-0000-4000-8000-000000000003",
-                    project_id="project",
+                    session_ids[suffix],
+                    project_id=test_project["id"],
                 )
 
             assert (
-                session_mgr.get_session_id(
-                    "cli-a", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
-                )
-                is None
+                session_mgr.get_session_id("cli-a", "claude", project_id=test_project["id"]) is None
             )
             assert (
-                session_mgr.get_session_id(
-                    "cli-c", "claude", machine_id="21000000-0000-4000-8000-000000000003", project_id="project"
-                )
-                == "session-c"
+                session_mgr.get_session_id("cli-c", "claude", project_id=test_project["id"])
+                == session_ids["c"]
             )
 
     def test_thread_safety(
@@ -535,7 +575,7 @@ class TestSessionManagerCaching:
             try:
                 session_id = session_mgr.register_session(
                     external_id=f"thread-{index}",
-                    machine_id=f"machine-{index}",
+                    machine_id=LOCAL_MACHINE_ID,
                     source="claude",
                     project_id=test_project["id"],
                 )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -28,6 +29,14 @@ DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
 _CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 _CAPACITY_PANE = "\x1b[31mSelected model is at\ncapacity. Please try a different model.\x1b[0m\n›\n"
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture
@@ -725,7 +734,12 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
     assert handled == 1
     assert session_after.transcript_path is None
     assert session_after.updated_at == session_before.updated_at
-    mock_discover.assert_called_once_with("codex", f"child-{run_id}")
+    mock_discover.assert_called_once_with(
+        "codex",
+        f"child-{run_id}",
+        owner_machine_id=LOCAL_MACHINE_ID,
+        local_machine_id=LOCAL_MACHINE_ID,
+    )
 
 
 @pytest.mark.asyncio
