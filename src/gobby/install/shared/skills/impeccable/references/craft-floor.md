@@ -4,7 +4,7 @@
 
 Load this after the direction is settled, and build without announcing the checklist. A pinned brief or the committed visual world overrides anything here; your own habit does not. The bundled detector already enforces many of the mechanical checks below (`node <scripts_dir>/detect.mjs --json <target>`): act on its findings instead of re-auditing each rule by hand. <!-- rule:skill-craft-floor -->
 
-Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. If the tool or Node is unavailable, skip detector runs and scan manually.
+Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. Export the returned `environment.PUPPETEER_CACHE_DIR` before any browser-engine invocation. If the tool or Node is unavailable, skip detector runs and scan manually.
 
 ## Verify
 
@@ -16,7 +16,6 @@ Each of these is a check on the built result, not an intention. Run them togethe
 - **Type:** body measure 65–75ch, display max 6rem, tracking floor -0.04em, balanced headings, obvious scale and weight steps. Run the real copy at every breakpoint and fix what overflows. <!-- rule:skill-typo-floor --> <!-- rule:skill-ban-text-overflow -->
 - **Motion:** one authored moment, not scattered effects and not one identical entrance on every section. Exponential ease-out from an already-visible default. Reach past transform and opacity: blur, backdrop-filter, clip-path, mask, and shadow belong to the palette when they stay smooth. <!-- rule:skill-motion-floor --> <!-- rule:skill-motion-materials-palette --> <!-- rule:skill-motion-no-section-fade -->
 - **States:** hover, disabled, loading, error, empty. Plus real content, working controls, responsive composition, keyboard focus. <!-- rule:skill-floor-shipping -->
-- **Browser surfaces:** the parts you did not draw still carry the design. Text selection, the caret, custom scrollbars, focus rings, underline offset, and the numerals in tabular data all ship with browser defaults that belong to no design system. Theme them from the palette. This is the cheapest signal that a page was built rather than assembled, and the one models skip most reliably. <!-- rule:skill-craft-browser-surfaces -->
 - **Copy:** the product's own language. Controls name their action; errors name the problem and the recovery. <!-- rule:skill-copy-design-material -->
 - **Coverage:** every brief requirement present and findable within seconds. <!-- rule:skill-floor-brief-coverage -->
 

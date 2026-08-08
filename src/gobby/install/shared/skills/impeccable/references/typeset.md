@@ -28,7 +28,7 @@ When a sub-agent tool is available and permitted, run these independently; other
 node <scripts_dir>/detect.mjs --json --scope type [target files or dirs]
 ```
 
-Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. If the tool or Node is unavailable, skip detector runs and scan manually.
+Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. Export the returned `environment.PUPPETEER_CACHE_DIR` before any browser-engine invocation. If the tool or Node is unavailable, skip detector runs and scan manually.
 
 Also inspect dynamic or arbitrary font values the detector cannot interpret. Synthesize both assessments before editing, noting what each caught alone. A clean scan is a floor, not proof of good typography.
 

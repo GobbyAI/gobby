@@ -89,7 +89,7 @@ def impeccable_runtime(
                 encoding="utf-8",
             )
             core = cwd / "node_modules" / "puppeteer-core"
-            revisions = core / "lib" / "cjs" / "puppeteer" / "revisions.js"
+            revisions = core / "lib" / "puppeteer" / "revisions.js"
             revisions.parent.mkdir(parents=True, exist_ok=True)
             revisions.write_text(
                 f"exports.PUPPETEER_REVISIONS = {{chrome: '{_BROWSER_BUILD}'}};\n",

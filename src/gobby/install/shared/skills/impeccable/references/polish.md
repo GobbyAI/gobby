@@ -32,7 +32,7 @@ If a prior critique exists, use it as one input:
 node <scripts_dir>/critique-storage.mjs latest "<resolved target>"
 ```
 
-Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. If the tool or Node is unavailable, skip detector runs and scan manually.
+Resolve `<scripts_dir>` by calling `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; it returns the absolute path of the skill's materialized `scripts/` directory. Export the returned `environment.PUPPETEER_CACHE_DIR` before any browser-engine invocation. If the tool or Node is unavailable, skip detector runs and scan manually.
 
 Exit 0 returns the latest snapshot; incorporate relevant P0/P1 findings and name the snapshot read. Exit 2 means none exists. Perform an independent pass either way.
 

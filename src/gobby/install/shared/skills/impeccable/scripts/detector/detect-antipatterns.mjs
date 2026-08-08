@@ -35,7 +35,6 @@ export { detectUrl, createBrowserDetector } from './engines/browser/detect-url.m
 export { detectText, extractStyleBlocks, extractCSSinJS } from './engines/regex/detect-text.mjs';
 export {
   walkDir,
-  hasScannableExtension,
   SCANNABLE_EXTENSIONS,
   SKIP_DIRS,
   buildImportGraph,

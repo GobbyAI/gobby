@@ -9,6 +9,13 @@ metadata:
     audience: all
     format_overrides:
       autonomous: full
+    runtime:
+      node: ">=22.18.0"
+      cli:
+        npm: "impeccable"
+        version: "3.5.0"
+        bin: "impeccable"
+      skill_release: "4.0.4"
 ---
 
 <!--
@@ -20,8 +27,8 @@ Upstream: https://github.com/pbakaus/impeccable (v3.5.0, commit a075d89b)
 The `impeccable` skill ships with all 17 steering-command reference files
 (shape, audit, polish, distill, animate, etc.) bundled under `references/`,
 plus the quality floor (`references/craft-floor.md`), Operate-mode depth
-(`references/operate.md`), and the dependency-free detector/critique scripts
-under `scripts/`. The dispatch table below loads references via
+(`references/operate.md`), and the full 4.0.4 script release under `scripts/`.
+The dispatch table below loads references via
 `get_skill_file(name="impeccable", path="references/<cmd>.md")` on
 `gobby-skills`; scripts run from the cache directory returned by
 `materialize_skill_scripts(name="impeccable")`.
@@ -103,16 +110,17 @@ When the argument matches one of the commands below, call `get_skill_file(name="
 - If `get_skill_file` returns `{"success": false, ...}`, surface the error and show the menu again.
 - If **no argument** was provided, introduce yourself as `impeccable`, explain that you have the modes and steering commands above, and ask which one the user wants. Do not silently proceed into design work.
 
-### Bundled detector and critique scripts
+### Bundled scripts
 
-The skill bundles dependency-free Node scripts under `scripts/` (anti-pattern
-detector plus critique snapshot storage), synced into the skill-files registry
-like every other skill file. Never run them from this skill's source tree —
-installed skills may have no on-disk tree at all. Resolve a runnable copy first:
+The skill bundles the full 4.0.4 Node script tree under `scripts/`, synced into
+the skill-files registry like every other skill file. Never run scripts from
+this skill's source tree — installed skills may have no on-disk tree at all.
+Resolve a runnable copy first:
 
 1. Call `materialize_skill_scripts(name="impeccable")` on `gobby-skills`. It
    writes the canonical `scripts/**` bytes from the registry into a
-   content-addressed cache and returns `scripts_dir` (absolute path).
+   content-addressed cache, installs the locked dependencies, and returns
+   `scripts_dir` plus `environment.PUPPETEER_CACHE_DIR`.
 2. Run entry points from there via Bash, e.g.
    `node <scripts_dir>/detect.mjs --json <file-or-dir>` (domain filters:
    `--scope type`, `--scope layout`) or
@@ -120,9 +128,7 @@ installed skills may have no on-disk tree at all. Resolve a runnable copy first:
 3. Critique snapshots write to `.impeccable/critique/` in the project
    (gitignored).
 
-The scripts are plain Node with no npm dependencies. Optional capabilities
-(URL scanning via puppeteer, full static-HTML parsing via htmlparser2) degrade
-gracefully when absent: the detector falls back to line-based text scanning.
+Export the returned `PUPPETEER_CACHE_DIR` before invoking a browser engine.
 If Node or the tool is unavailable, skip detector runs and scan manually —
 never block design work on the detector.
 

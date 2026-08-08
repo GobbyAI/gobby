@@ -19,8 +19,10 @@ specific language governing permissions and limitations under the License.
 - Source: https://github.com/pbakaus/impeccable
 - License: Apache License 2.0
 - Copyright: 2025-2026 Paul Bakaus
-- Vendored version: v3.5.0, commit `a075d89b` (re-vendored 2026-08-05; original
-  vendor 2026-04-15 from `f589ff0b6`)
+- Reference adaptation baseline: commit `a075d89b` (refreshed 2026-08-05).
+- Script release: 4.0.4, staged 2026-08-08 through the release channel with
+  Gobby's pinned `impeccable@3.5.0` CLI.
+- Original vendor: 2026-04-15 from commit `f589ff0b6`.
 
 Upstream was rearchitected between our vendors: skill content now lives in
 `skill/` (`SKILL.src.md` + `reference/`) and is compiled into per-harness
@@ -33,10 +35,9 @@ generated output (e.g. `.claude/skills/impeccable/`). Gobby vendors:
 - The new `skill/reference/craft-floor.md` (quality floor: Verify + Refuse
   lists) and `skill/reference/operate.md` (Operate/Read mode depth) as
   `references/craft-floor.md` and `references/operate.md`.
-- The runnable script subset under `scripts/` — taken from the **generated**
-  skill output at `.claude/skills/impeccable/scripts/` at the same commit (the
-  generated tree is the dependency-free compiled form). See "Vendored scripts"
-  below.
+- The full released script tree under `scripts/` — taken from the **generated**
+  4.0.4 skill output at `.claude/skills/impeccable/scripts/`. See "Vendored
+  scripts" below.
 
 Gobby keeps its own architecture: markdown references served by
 `get_skill_file`, project design context in `.impeccable.md` (written by teach
@@ -68,8 +69,9 @@ Standard adaptations applied to every refreshed reference
   fenced code blocks untouched.
 - `{{scripts_path}}` → `<scripts_dir>`, with a resolver paragraph after the
   first script invocation per file: resolve via
-  `materialize_skill_scripts(name="impeccable")` on `gobby-skills`; degrade to
-  a manual scan when Node or the tool is unavailable.
+  `materialize_skill_scripts(name="impeccable")` on `gobby-skills`, export its
+  returned `environment.PUPPETEER_CACHE_DIR`, and degrade to a manual scan when
+  Node or the tool is unavailable.
 - `DESIGN.md` → `.impeccable.md` (the project design contract).
 - Placeholders: `{{available_commands}}` → backticked 17-command list;
   `{{command_prefix}}x` → bare `x` in code spans / expanded form in prose;
@@ -107,7 +109,8 @@ Per-file notes beyond the standard adaptations:
   section verbatim.
 - `craft-floor.md` (new): dropped upstream's `<codex>` and `<gemini>`
   calibration blocks; the design-hook sentence rewritten to reference the
-  bundled detector; upstream `rule:` anchor comments retained.
+  bundled detector; upstream `rule:` anchor comments retained; reconciled with
+  4.0.4's removal of the Browser-surfaces floor.
 - `operate.md` (new): near-verbatim; the `craft-floor.md` link expanded to the
   `get_skill_file` load instruction.
 
@@ -124,51 +127,33 @@ from the original vendor (upstream's inline-mode flows), with the Step-1
 
 ## Vendored scripts
 
-`scripts/` contains 32 files copied **unmodified** from the generated skill
-output at `.claude/skills/impeccable/scripts/` at commit `a075d89b`:
+`scripts/` contains all 107 files copied **unmodified** from the generated
+4.0.4 release output staged at `.claude/skills/impeccable/scripts/`. The
+inventory includes detector, critique, live-mode, hook, image, context, and
+shared-library entry points exactly as released.
 
-- `detect.mjs` — anti-pattern detector CLI entry point.
-- `detector/` — the full detector tree (20 files: CLI, registry, rules,
-  regex/static-html/browser/visual engines, shared helpers, browser-inject
-  bundle).
-- `critique-storage.mjs` — critique snapshot persistence
-  (slug/write/latest/trend); snapshots live in `.impeccable/critique/`
-  (gitignored in the Gobby repo).
-- `lib/` — the exact static import closure of the above (9 files:
-  `artifact-schema`, `impeccable-config`, `impeccable-paths`, `provider`,
-  `staleness-notice`, `staleness`, `surface-briefs`, `target-args`,
-  `target-slug`).
-- `context.mjs` — vendored **solely** as a static library dependency of
-  `lib/impeccable-paths.mjs` (`resolveProjectRoot`). It is main-module guarded
-  (importing it has no side effects); its CLI/setup workflow is not part of the
-  Gobby flow.
+`scripts/package.json` and `scripts/package-lock.json` are Gobby additions.
+They record the parser dependencies and optional Puppeteer dependency exposed
+by `impeccable@3.5.0` and lock the complete materialization-time dependency
+graph. They are excluded from the 107-file upstream count.
 
 Properties and rules:
-- Zero npm dependencies. Optional capabilities are lazily imported and degrade
-  gracefully when absent: `puppeteer` (URL scanning), `htmlparser2`/
-  `css-select`/`css-tree`/`domutils` (full static-HTML parsing). Without them
-  the detector falls back to line-based text scanning — multi-line CSS rule
-  correlations may be missed, and most layout-scope rules require the browser
-  or parser engines.
-- Never hand-edit these files. Refresh wholesale from the upstream generated
-  output at a newer pinned commit.
+- Dependencies install only inside the content-addressed materialization cache
+  with `npm ci`; browser binaries use the shared `PUPPETEER_CACHE_DIR` returned
+  by the materializer.
+- Never hand-edit the 107 released files. Refresh them wholesale from a staged
+  release-channel artifact.
 - Execution model: scripts are synced into the skill-files registry and run
   from the content-addressed cache returned by
   `materialize_skill_scripts(name="impeccable")` — never from this source tree
   (installed skills may have no disk tree).
 
-## Not vendored
+## Integration boundary
 
-Upstream product machinery tied to its CLI-orchestrated PRODUCT.md/DESIGN.md
-artifact model is deliberately not vendored: live mode (`live-*`,
-`live.md`, `live-setup.md`), design-detector hooks (`hook-*`, `hooks.md`),
-`doctor`, `context.mjs` as a workflow (see above), `concept-seed`,
-`serve-question`, `generate-image`, `palette`, `pin`, `surface-brief`,
-`embed-prompt`, `context-signals`, `detect-csp`, `modern-screenshot.umd.js`,
-native variants (`ios.md`, `android.md`, `adapt.native.md`,
-`audit.native.md`), and the `init`/`onboard`/`routing`/`document`/
-`visualize`/`new-work` references. `new-work.md` should be reconsidered when
-gobby.ai marketing-site work starts.
+Vendoring a released script does not install its upstream lifecycle or hook
+wiring. Gobby owns skill installation, updates, rules, materialization, and
+cache cleanup. References are adapted and routed separately through
+`gobby-skills`.
 
 ## Anthropic frontend-design Skill
 

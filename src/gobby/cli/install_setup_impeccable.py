@@ -465,7 +465,6 @@ def _browser_readiness(generation: Path) -> BrowserCacheReadiness:
         / "node_modules"
         / "puppeteer-core"
         / "lib"
-        / "cjs"
         / "puppeteer"
         / "revisions.js"
     )
