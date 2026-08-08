@@ -8,7 +8,7 @@
 
 Phase 1 (#19128–#19146) consolidated primitives in `web/src/components/ui/`, shipped the cva `Button` at `.btn` parity, migrated ~106 call sites, deleted `buttons.css`, and installed the style-debt ratchet. Phase 2 takes the remaining debt to its end state: **all styling in Tailwind utilities + cva recipes + `ui/` primitives, with only token-infrastructure stylesheets surviving** (`index.css`, `tokens.css`, `tailwind-theme.css`, `base.css`, `markdown.css`, `accessibility.css`). Hook sheets (`app-shell.css`, `segmented-control.css`, `dropdown-caret.css`) and `settings-overlay.css` retire too, sequenced last. `important: true` leaves `tailwind.config.ts` behind a fixed Playwright screenshot gate. The ratchet ends as a pure ban plus a pinned sanctioned-exception floor.
 
-Current debt (live inventory, re-read `web/src/__tests__/styleRatchet.allowlist.ts` at execution time — attrition shrinks it): 373 raw interactive elements (219 button / 96 input / 39 select / 19 textarea) across 168 file-entries; 332 `*_CLS` constants across 11 files; 35 recorded stylesheets, 7,216 CSS lines under ceiling 7,274; 6 `!important` in 3 files.
+Current debt (live inventory 2026-08-08, re-read `web/src/__tests__/styleRatchet.allowlist.ts` at execution time — attrition shrinks it): 358 raw interactive elements (210 button / 93 input / 37 select / 18 textarea) across 164 file-entries; 332 `*_CLS` constants across 12 files; 35 recorded stylesheets, 7,251 scanner-counted CSS lines under ceiling 7,274; 6 `!important` in 3 files.
 
 Design elevation (type-ladder collapse to ~5–6 steps at ≥1.25×, per-surface impeccable audit/polish, signature moments) is **out of scope** — it runs as a follow-up epic on the consolidated primitives this plan produces.
 
@@ -81,10 +81,10 @@ Targets:
 
 Targets:
 - `styles/index.css`
-- `web/src/__tests__/mobileChromeCss.test.ts`
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/chat/styles/sessions-tab.css`
-- `web/src/components/shared/executions/execution-utils.tsx`
+- `web/src/components/shared/executions/execution-utils.tsx::*` — scope-reason: workflow-trace icon utilities and the execution card/badge/button styling both migrate onto ui primitives
 - `web/src/styles/index.css`
 - `web/src/styles/session-primitives.css`
 
@@ -134,12 +134,12 @@ A checked-in capture harness producing the fixed screenshot matrix used as befor
 
 Targets:
 - `web/src/styles/tailwind-theme.css`
-- `web/src/hooks/useIsMobile.ts`
-- `web/src/utils/platform.ts`
+- `web/src/hooks/useIsMobile.ts::useIsMobile`
+- `web/src/utils/platform.ts::*` — scope-reason: the hardcoded 768 viewport check folds onto the shared tier-token read; the file's indexed symbols are types only
 - `web/src/styles/app-shell.css`
 - `web/src/components/chat/styles/files-tab.css`
-- `web/src/__tests__/cssTokenIntegrity.test.ts`
-- `web/src/__tests__/mobileChromeCss.test.ts`
+- `web/src/__tests__/cssTokenIntegrity.test.ts::*` — scope-reason: gains the compiled-variant-vs-emitted-property drift guard for the tier tokens
+- `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 - `.impeccable.md`
 
 **The one deliverable exempt from visual parity** (see Constraints). `.impeccable.md` "Responsive Tiers (Product UI)" already settles the model: mobile tier is viewport width ≤ 767px **or** height ≤ 500px, desktop is everything else (768px exact is desktop), the threshold "lives in a single **token** consumed by both CSS media queries and `useIsMobile`" with identical inclusivity on both sides, and the legacy 480px/430px one-offs collapse into the tier model. The code does not implement that contract, so every sheet migrated in P5–P7 would carry the drift into the end state and the 932×430 capture would keep exercising a tier clause that does not exist.
@@ -184,10 +184,10 @@ Work:
 Targets:
 - `./styles/settings.css`
 - `styles/settings.css`
-- `web/src/__tests__/settingsSliderFocus.test.ts`
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/Settings.tsx`
-- `web/src/components/app/useAppCommandPalette.ts`
+- `web/src/__tests__/settingsSliderFocus.test.ts::*` — scope-reason: replaced wholesale with render-based focus assertions against the overlay slider
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/Settings.tsx::*` — scope-reason: the whole file is deleted
+- `web/src/components/app/useAppCommandPalette.ts::useAppCommandPalette`
 - `web/src/main.tsx`
 - `web/src/styles/settings.css`
 - `App.tsx`
@@ -222,7 +222,6 @@ Targets:
 - `tasks/TaskBadges.tsx`
 - `web/src/components/chat/styles/sessions-tab.css`
 - `web/src/components/ui/Chip.tsx`
-- `wiki/WikiAskMode.tsx`
 - `activity-panel.css`
 - `chipVariants.ts`
 - `mcp-tab.css`
@@ -231,7 +230,7 @@ Targets:
 Five parallel chip implementations exist. Create `Chip.tsx` + `chipVariants.ts`:
 
 - API: `tone: neutral | accent | info | warning | error` (state palette, icon/lightness-first per `.impeccable.md`), `uppercase?: boolean` (default false — preserves the session-chip `text-transform: uppercase` delta over task chips), `size?: sm | md` if call sites need it, `asChild` via Radix Slot. Base look from the current shared rule: `height 1.25rem; padding-inline .375rem; border-radius 9999px; font-size var(--text-2xs); font-weight 600; white-space nowrap`.
-- Adopt at all chip renderers: `.chip`/`.chip--*` in `activity/SessionsTab.helpers.tsx:104-153` (uppercase tone chips + inline warning chip); `.activity-chip`/`--accent/--info/--warning/--error` across the 14+ list/detail components (agents, integrations, memory, pipelines, rules, skills, stages surfaces); `AGENT_RULES_CHIP*` and `STEP_CHIP*` constants from `agents/agents-styles.ts` (chip *display* usages — editable chip-input rows may compose Chip with a remove Button); task chips in `tasks/TaskBadges.tsx` (`TASK_BADGE_CLS` + `.chip--state/--priority/--type` modifiers become tone + className); `.activity-mcp-chip` (`mcp-tab.css:72`); wiki citation `chipClass` (`wiki/WikiAskMode.tsx:64`).
+- Adopt at all chip renderers: `.chip`/`.chip--*` in `activity/SessionsTab.helpers.tsx:104-153` (uppercase tone chips + inline warning chip); `.activity-chip`/`--accent/--info/--warning/--error` across the 14+ list/detail components (agents, integrations, memory, pipelines, rules, skills, stages surfaces); `AGENT_RULES_CHIP*` and `STEP_CHIP*` constants from `agents/agents-styles.ts` (chip *display* usages — editable chip-input rows may compose Chip with a remove Button); task chips in `tasks/TaskBadges.tsx` (`TASK_BADGE_CLS` + `.chip--state/--priority/--type` modifiers become tone + className); `.activity-mcp-chip` (`mcp-tab.css:72`). (Wiki citation chips are out of scope with the Ask surface — see 4.11.)
 - Delete the `.chip` rule blocks from `sessions-tab.css` and `task-execution.css` and `.activity-chip` from `activity-panel.css` as their consumers migrate (the sheets themselves retire in P5; deleting the rules here resolves the import-order-dependent duplicate).
 - Ratchet/guards: shrink `CLS_CONSTANT_ALLOWLIST` for `TaskBadges.tsx`; visual parity per surface; `ActivityRowStatusDot` untouched (dots are not chips).
 
@@ -247,7 +246,7 @@ Five parallel chip implementations exist. Create `Chip.tsx` + `chipVariants.ts`:
 `kind: deliverable`
 
 Targets:
-- `web/src/components/activity/wiki/WikiQuickOpen.tsx`
+- `web/src/components/activity/wiki/WikiQuickOpen.tsx::*` — scope-reason: skeleton shells and result cards adopt the Card primitive across the component
 - `web/src/components/ui/Card.tsx`
 - `cardVariants.ts`
 
@@ -270,7 +269,7 @@ Targets:
 
 Targets:
 - `fields/DateTimeField.tsx`
-- `web/src/components/activity/fields/FieldPrimitives.tsx`
+- `web/src/components/activity/fields/FieldPrimitives.tsx::*` — scope-reason: every field primitive is rebuilt on FormField + ui controls
 - `web/src/components/ui/FormField.tsx`
 - `web/src/components/ui/NativeSelect.tsx`
 
@@ -324,7 +323,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/agents/agents-styles.ts`
 
 The heaviest single surface: `AgentEditForm.tsx` (8 btn / 7 input / 9 select / 1 textarea), `AgentRulesEditor.tsx` (11 btn / 2 input / 3 select), `AgentStepsEditor.tsx` (10 btn / 4 input / 3 select / 3 textarea), `AgentVariablesEditor.tsx` (5 btn / 2 input), `AgentSkillsEditor.tsx`, `AgentToolBlocksEditor.tsx`, `IsolationTargetSelector.tsx`. Styling from `agents-styles.ts` (113 `*_CLS`, ~258 lines): `AGENT_BTN*` → `Button` variants; `AGENT_EDIT_FIELD/LABEL/HINT/INPUT` → FormField + ui controls; chips already on Chip (3.1); step cards → Card; selects per the 3.3 rule. Delete `agents-styles.ts` sections as they empty; the editor-facing sections should empty here.
@@ -339,8 +338,8 @@ The heaviest single surface: `AgentEditForm.tsx` (8 btn / 7 input / 9 select / 1
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/agents/AgentPortfolioPage.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/agents/AgentPortfolioPage.tsx::*` — scope-reason: portfolio-wide sweep of raw elements and card/filter styling onto primitives
 - `web/src/components/agents/agents-styles.ts`
 
 `AgentPortfolioPage.tsx` (2 btn / 2 select incl. `.agent-filter-select`), the `AGENT_DEF_CARD_*` / `STEP_CARD_*` families → Card, remaining `agents-styles.ts` content deleted, file removed entirely with its `CLS_CONSTANT_ALLOWLIST` entry (113 → 0). `SidebarPanel.tsx` (1 btn) composes Button; with `SidebarPanel.css` already gone (3.4), fold the remaining panel shell into utilities and retire `shared/SidebarPanel.tsx` if `AgentEditForm` is its only consumer.
@@ -356,10 +355,10 @@ Targets:
 
 Targets:
 - `shared/executions/execution-utils.tsx`
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/activity/pipelines/PipelineEditor.styles.ts`
-- `web/src/components/shared/executions/execution-utils.tsx`
-- `web/src/components/activity/PipelinesTab.tsx`
+- `web/src/components/shared/executions/execution-utils.tsx::*` — scope-reason: workflow-trace icon utilities and the execution card/badge/button styling both migrate onto ui primitives
+- `web/src/components/activity/PipelinesTab.tsx::*` — scope-reason: tab raw buttons and execution styling migrate to primitives
 
 `PipelineEditor.tsx` (3 btn / 1 input / 1 textarea), `PipelineStepFields.tsx` (2 btn / 10 input / 2 textarea), `PipelineStepList.tsx` (6 btn / 1 input / 1 select), `PipelinesDefsList.tsx` (1 btn), `web/src/components/activity/PipelinesTab.tsx` (3 btn — `RAW_ELEMENT_ALLOWLIST` line 33; owned here so it does not survive into the endgame floor). `PipelineEditor.styles.ts` (47 `*_CLS`): `BTN_CLS`/`BTN_PRIMARY_CLS` → Button; `FIELD_*` → FormField; `STEP_CLS`/`ADD_DROPDOWN_CLS` → Card; `KV_*` rows → utilities. Delete the file (removes both its `CLS_CONSTANT_ALLOWLIST` entry and its `inputFocusAdoption` entry). `shared/executions/execution-utils.tsx` (20 `*_CLS`: run buttons, badges → Button/Badge/Chip, step cards → Card) sweeps here too since PipelinesTab consumes it.
 
@@ -374,23 +373,37 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/activity/wiki/WikiResearchMode.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 
-~35 buttons + ~10 other controls: `WikiResearchMode.tsx` (9 btn / 3 input / 2 select / 1 textarea), `WikiAskMode.tsx` (7 btn / 1 textarea), `WikiPageReader.tsx` (7 btn), `WikiBacklinks.tsx` (3), `WikiSourcesManager.tsx` (3), `WikiTab.tsx` (3 btn / 3 input), `WikiPageTree.tsx` (2), `WikiTabToolbar.tsx` (1), `WikiSourceRemovalDialog.tsx` (2 btn / 1 input), `WikiGraphView.tsx` (2 input), `WikiPageEditor.tsx` (1 input), `WikiQuickOpen.tsx` (1 input + `inputFocusAdoption` entry). Buttons → Button (ghost/secondary per role); inputs → Input; selects per rule; citation chips already on Chip.
+~21 buttons + ~8 other controls. `WikiResearchMode.tsx` no longer exists (deleted with #19683), and `WikiAskMode.tsx` is excluded from this sweep — its surface is being replaced (see 4.11). In scope: `WikiPageReader.tsx` (7 btn), `WikiBacklinks.tsx` (3), `WikiSourcesManager.tsx` (3), `WikiTab.tsx` (3 btn / 3 input), `WikiPageTree.tsx` (2), `WikiTabToolbar.tsx` (1), `WikiSourceRemovalDialog.tsx` (2 btn / 1 input), `WikiGraphView.tsx` (2 input), `WikiPageEditor.tsx` (1 input), `WikiQuickOpen.tsx` (1 input + `inputFocusAdoption` entry). Buttons → Button (ghost/secondary per role); inputs → Input; selects per rule.
 
 **Acceptance:**
 
-- 4.4.1 - All wiki/ raw-element allowlist entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+- 4.4.1 - All wiki/ raw-element allowlist entries are zero except the deferral-covered `WikiAskMode.tsx` entries (7 button / 1 textarea), which carry a comment naming the 4.11 deferral. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.4.2 - The WikiQuickOpen `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
+
+### 4.11 Wiki Ask-surface migration (deferred)
+
+`kind: deferred`
+
+The wiki Ask and Research modes are being replaced by agent-native exploration (#19672); Research mode is already deleted (#19683). Migrating `WikiAskMode.tsx`'s raw elements inside Phase 2 would style a surface scheduled for replacement, so that slice of 4.4.1 moves to the replacement work, which builds on the ui/ primitives this plan ships.
+
+```yaml
+deferral:
+  task_ref: "#19672"
+  reason: "WikiAskMode is replaced by agent-native exploration; its raw-element migration (7 button / 1 textarea) lands with the replacement surface, built on ui/ primitives."
+  owner: "wiki-exploration retool (#19672)"
+  original_acceptance_items:
+    - 4.4.1
+```
 
 ### 4.5 Graph explorers sweep [category: refactor] (depends: P3)
 
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/code-graph/CodeGraphExplorer.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/code-graph/CodeGraphExplorer.tsx::*` — scope-reason: explorer chrome sweep folds 32 _CLS constants and raw controls into primitives; graph logic untouched but interleaved through the file
 
 `CodeGraphExplorer.tsx` (32 `*_CLS`, 6 btn, 5 input) and `activity/memory/KnowledgeGraph.tsx` (19 `*_CLS`, 5 btn, 5 input): controls/search/legend/physics panels → Button, Input, Card, utilities at call site. Both files carry `inputFocusAdoption` entries — removed on migration. Canvas/graph rendering logic untouched.
 
@@ -404,8 +417,8 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/FilesPage.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/FilesPage.tsx::*` — scope-reason: page-wide sweep of 49 _CLS constants, tab strip, toolbar, and dialogs onto primitives
 - `files-tab.css`
 
 49 `*_CLS` + 4 buttons: page shell/sidebar/tree/toolbar/viewers → utilities + Card; tab strip → TabBar (3.4); `CONFIRM_KEEP_CLS`/`CONFIRM_DISCARD_CLS` dialog → `ConfirmDialog` + Button; git-status color constants stay as data maps (they are token lookups, not style strings — rename away from `_CLS` if the ratchet pattern catches them). `.file-viewer-btn` usage ties into `files-tab.css` retirement (5.5).
@@ -420,8 +433,8 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/tasks/TaskCreateForm.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/tasks/TaskCreateForm.tsx::*` — scope-reason: form-wide migration of fields, selects, and buttons onto FormField/ui controls
 - `TaskCloseDialog.tsx`
 - `TaskTreeRow.tsx`
 
@@ -437,8 +450,8 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/activity/RulesTab.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/activity/RulesTab.tsx::*` — scope-reason: filter-panel selects, the local filter dropdown, and rules-tab styling all migrate to SelectField/primitives
 
 The 1–4-count long tail across activity surfaces: `RulesTab.tsx` (1 btn / 4 select), `SkillsTab.tsx` (1 btn / 2 select), `SkillsHubView.tsx` (1 btn / 1 input / 1 select), `SkillsInstalledList.tsx`, `MemoryTab.tsx` (1 btn / 3 input), `MemoryDetailPanel.tsx`, `MemoryTabList.tsx`, `IntegrationsTab.tsx`, `IntegrationsFilterPanel.tsx` (2 select), `ChannelDetailPanel.tsx` (1 btn / 1 input), `ChannelsList.tsx`, `StagesTab.tsx`, `StagesList.tsx`, `ProfilesList.tsx`, `TracesTab.tsx` (2 btn), `CronTab.tsx` (2 btn), `FileChangesTab.tsx` (2 btn), `ActivityMcpTab.tsx` (4 btn), `WikiTab` covered by 4.4, `TaskDetailKV.tsx`, `TaskDetailRelationships.tsx`, `TasksTabDetailPanel.tsx`, `AgentsTabList.tsx`, `PlanReviewCard.tsx`, `RulesTabList.tsx`, `KeyValueField.tsx` (2 btn / 2 input), `DateTimeField.tsx` (1 input). Unclassed selects styled by `.activity-filter-panel__field select` descend from the filter panels — migrate to `SelectField` so 5.5 can delete those descendant rules.
 
@@ -452,10 +465,10 @@ The 1–4-count long tail across activity surfaces: `RulesTab.tsx` (1 btn / 4 se
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/activity/ActivityFilterDropdown.tsx`
-- `web/src/components/activity/ActivityPanel.tsx`
-- `web/src/components/activity/FilterPrimitives.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/activity/ActivityFilterDropdown.tsx::*` — scope-reason: becomes the single shared filter-dropdown implementation absorbing three sibling variants
+- `web/src/components/activity/ActivityPanel.tsx::*` — scope-reason: panel chrome, local dropdown, and sheet-import relocation all land here
+- `web/src/components/activity/FilterPrimitives.tsx::*` — scope-reason: filter controls rebuilt on ui primitives inside the consolidated dropdown
 
 Panel chrome and popup dropdowns: `ActivityPanel.tsx` (2 btn, local `ActivityDropdown`), `ActivityFilterDropdown.tsx` (1 btn), `SessionsFilterDropdown.tsx` (1 btn / 5 input), `TasksTabFilters.tsx` (`FilterDropdown` mirror), the local `RulesFilterDropdown` (`RulesTab.tsx:44`), `ActivityPanelSearch.tsx` (1 input), `web/src/components/activity/FilterPrimitives.tsx` (1 input — `RAW_ELEMENT_ALLOWLIST` line 119; the shared filter-dropdown consolidation below is its natural owner), `QuickMenu.tsx` (2 btn), `SessionInteractionModal.tsx` (2 btn / 1 textarea), `SessionsTab*.tsx` (3 btn), `terminal/TerminalKeysBar.tsx` (2 btn / 1 input), `terminal/TerminalView.tsx` (2 btn). Consolidate the three near-identical filter dropdowns (`ActivityFilterDropdown`, `SessionsFilterDropdown`, `TasksTabFilters.FilterDropdown`, `RulesFilterDropdown`) into one shared filter-dropdown component composing Button + DropdownCaret + FormField controls — four implementations to one.
 
@@ -469,17 +482,17 @@ Panel chrome and popup dropdowns: `ActivityPanel.tsx` (2 btn, local `ActivityDro
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/chat/ProviderPicker.tsx`
-- `web/src/components/chat/CommandBar.tsx`
-- `web/src/components/chat/PlanApprovalActions.tsx`
-- `web/src/components/chat/ChatInput.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/chat/ProviderPicker.tsx::*` — scope-reason: picker buttons and dialog chrome migrate to primitives
+- `web/src/components/chat/CommandBar.tsx::*` — scope-reason: raw button migrates to Button with the bar-sizing hook class
+- `web/src/components/chat/PlanApprovalActions.tsx::*` — scope-reason: its textarea migrates to ui/Textarea within the approval flow
+- `web/src/components/chat/ChatInput.tsx::*` — scope-reason: the composer textarea migrates to ui/Textarea; the sanctioned icon-button moat keeps its pinned entries
 
 Remaining files: `App.tsx` (1 btn), `ProjectSelector.tsx` (2 btn / 1 input), `web/src/components/chat/CommandBar.tsx` (1 btn — `RAW_ELEMENT_ALLOWLIST` line 96), `web/src/components/chat/PlanApprovalActions.tsx` (1 textarea — line 191), `ValidationDetectionEditor.tsx` (9 `*_CLS`, 1 btn / 1 input / 1 textarea, `inputFocusAdoption` entry), `auth/LoginPage.tsx` (1 btn / 3 input), `AppErrorBoundary.tsx` (2 btn), chat: `ProviderPicker.tsx` (3 btn), `BranchIndicator.tsx` (3 btn), `AgentPickerDropdown.tsx` (11 `*_CLS`, 4 btn — scope toggle → SegmentedControl per 3.4), `ChatCommandPalette.tsx` (1 btn), `CommandPalette.tsx` (1 input), `ResumeSessionModal.tsx` (1 btn / 2 input), `ActiveAgentIndicator.tsx` (1 btn), `CodeBlockRenderers.tsx` (1 btn), `ToolResultImage.tsx` (1 btn), `ChatInputModelControls.tsx`/`ChatInputToolbar.tsx` (non-composer entries), command-browser: `ToolBrowserModal.tsx` (4 btn), `SkillBrowserModal.tsx` (3 btn), `ToolArgumentForm.tsx` (1 each btn/input/select/textarea), settings: `SettingsOverlay.tsx` (2 btn), `PromptsTemplatesSection.tsx` (1 btn / 1 input), remaining section inputs, `shared/DiffBlock.tsx`, `shared/MermaidBlock.tsx` (1 btn each), `chat/ToolCallCard.tsx` (1 input — its 2 sanctioned header buttons stay). **Sanctioned exceptions keep pinned entries**: `FilesTab.tsx` composite-row buttons, `ToolCallCard.tsx` header buttons, composer icon buttons (`ChatInput.tsx`, `ChatInputQueuedFiles.tsx`, `ChatInputPrimaryButton.tsx`, `ChatInputModelControls.tsx` composer instances — moat 05198494). The moat covers **buttons only**: `web/src/components/chat/ChatInput.tsx` also carries a textarea entry (`RAW_ELEMENT_ALLOWLIST` line 190) sitting beside its sanctioned button entry (line 91). That textarea migrates to `ui/Textarea` here; only the button entry survives.
 
 **Acceptance:**
 
-- 4.10.1 - `RAW_ELEMENT_ALLOWLIST` input, select, and textarea maps are empty, and the button map contains only the named sanctioned exceptions. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+- 4.10.1 - `RAW_ELEMENT_ALLOWLIST` input and select maps are empty; the textarea map holds only the deferral-covered `WikiAskMode.tsx` entry; the button map contains only the named sanctioned exceptions plus the deferral-covered `WikiAskMode.tsx` entry (see 4.11). file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.10.2 - `CLS_CONSTANT_ALLOWLIST` is empty. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.10.3 - The ValidationDetectionEditor `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
 - 4.10.4 - The composer textarea renders through `ui/Textarea` with the composer look preserved. file: `web/src/components/chat/ChatInput.tsx`.
@@ -495,8 +508,8 @@ Remaining files: `App.tsx` (1 btn), `ProjectSelector.tsx` (2 btn / 1 input), `we
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/chat/MessageItem.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/chat/MessageItem.tsx::*` — scope-reason: markdown typography utilities are applied at the component as message.css retires
 - `web/src/components/chat/styles/message.css`
 - `ActivityPanelEmpty.test.tsx`
 - `MessageList.tsx`
@@ -515,7 +528,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/chat/styles/input-base.css`
 - `web/src/styles/accessibility.css`
 - `input-voice.css`
@@ -536,7 +549,7 @@ Targets:
 
 Targets:
 - `chat/styles.css`
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/chat/styles/layout.css`
 - `web/src/styles/base.css`
 
@@ -553,7 +566,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/chat/styles/activity-panel.css`
 
 `activity-panel.css` (622): `.activity-panel*` shell/tabs/toolbar/status-bar/mobile chrome → utilities on `ActivityPanel`/`ActivityActionsContext`; `.activity-panel-tab-strip` → TabBar; `.activity-chip` already dead (3.1); `.activity-filter-button` consolidates to a single authoring site (Button variant + utilities; its `task-execution.css` and `rules-tab.css` fragments die with those sheets). `sessions-tab.css` (561): `.session-entry*` and remaining rules → utilities on `SessionsTabList`/helpers. Guard updates: `mobileChromeCss` activity-toolbar pins, `typographyLadder` `.activity-row-*`/status-bar pins re-point to components, `planApprovalDesign` `.activity-panel-tabs` assertion, `coarsePointerTouchTargets` hooks (`.activity-panel-mobile-menu__item`) move to compiled utilities.
@@ -569,8 +582,8 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/components/activity/RulesTab.tsx`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/components/activity/RulesTab.tsx::*` — scope-reason: filter-panel selects, the local filter dropdown, and rules-tab styling all migrate to SelectField/primitives
 - `web/src/components/chat/styles/files-tab.css`
 
 `files-tab.css` (300), `mcp-tab.css` (239), `rules-tab.css` (212 incl. `.activity-filter-panel` used by Skills + Integrations — becomes a shared filter-panel component or utilities), `cron-tab.css` (61), `traces-tab.css` (36), `pipelines-tab.css` (35), plus `activity/skills/SkillsTab.css` (3). Consumers: FilesTab/FilesPage/FileChangesTab, McpDetailPanel/ActivityMcpTab, RulesTab, CronTab, TracesTab, PipelinesTab. Guard updates: `typographyLadder` file-tree and cron pins re-point; `coarsePointerTouchTargets` hooks from these sheets move to utilities.
@@ -585,7 +598,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/tasks/task-execution.css`
 
 `task-execution.css` (738 — largest sheet): `.chip` block already dead (3.1); `.activity-task-*` rows/panes/toolbars → utilities on TaskTreeRow/TasksTab components; `.activity-filter-*` fragments consolidated per 5.4. `activity/taskdetail/task-detail.css` (346): detail header/KV/relationships → utilities; `.task-inline-edit--select` already migrated (4.7). Guard updates: `typographyLadder` task pins and `PRIORITY_TEXT_WEIGHTS` stay component-side; `coarsePointerTouchTargets` `.task-more-btn`/`.activity-task-row-toggle`/`.activity-task-detail-edit-error__dismiss` hooks move to compiled utilities; `mobileChromeCss`/`planApprovalDesign` references re-point.
@@ -636,7 +649,7 @@ Update `docs/guides/frontend-style-guide.md` anti-patterns wording ("Tailwind ut
 `kind: deliverable`
 
 Targets:
-- `web/src/components/ui/SegmentedControl.tsx`
+- `web/src/components/ui/SegmentedControl.tsx::*` — scope-reason: the primitive absorbs its stylesheet as utilities/cva while keeping the control-height contract
 - `web/src/main.tsx`
 - `web/src/styles/segmented-control.css`
 - `DropdownCaret.tsx`
@@ -655,7 +668,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/styles/app-shell.css`
 
 157 lines of header-cluster hooks (`app-*` classes sizing the theme-toggle/cog/logout cluster, project-selector responsive swap, health badge). Express as utilities/cva on the App header components while preserving the canonical-cluster contract from `.impeccable.md` (equal icon widths via `size="icon"`, `--status-bar-control-height` row, coarse-pointer hit-area expansion, mobile collapse to a single settings entry). `mobileChromeCss` app-header pins convert to JSX/component assertions. The style guide's "sanctioned exception" paragraph for hook sheets is rewritten in 8.2.
@@ -670,7 +683,7 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/styles/settings-overlay.css`
 - `main.tsx`
 
@@ -708,11 +721,11 @@ End state: `main.tsx` imports the two font packages and `./styles/index.css` onl
 `kind: deliverable`
 
 Targets:
-- `web/src/__tests__/styleRatchet.allowlist.ts`
-- `web/src/__tests__/styleRatchet.test.ts`
+- `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
+- `web/src/__tests__/styleRatchet.test.ts::*` — scope-reason: ratchet mechanics simplify to ban-plus-pinned-floor while keeping the target-branch parser
 
 - `CLS_CONSTANT_ALLOWLIST = {}` and `BTN_CLASS_ALLOWLIST = {}` — pure bans.
-- `RAW_ELEMENT_ALLOWLIST` reduces to the pinned sanctioned-exception floor (FilesTab composite rows, ToolCallCard header, composer icon buttons) with a comment linking each entry to its `.impeccable.md` moat; the test's remedy strings note additions require an explicit moat.
+- `RAW_ELEMENT_ALLOWLIST` reduces to the pinned sanctioned-exception floor (FilesTab composite rows, ToolCallCard header, composer icon buttons) with a comment linking each entry to its `.impeccable.md` moat, plus the deferral-covered `WikiAskMode.tsx` entries comment-linked to the 4.11 deferral (#19672) and removed when that surface ships; the test's remedy strings note additions require an explicit moat.
 - `IMPORTANT_ALLOWLIST` reduces to exactly two infra-sheet entries carrying the same six declarations it records today: `src/styles/base.css: 5` (the four-declaration reduced-motion block plus the `.tool-code-surface` background relocated in 5.3) and `src/styles/accessibility.css: 1` (the voice `animation: none` relocated in 5.2). The `chat/styles.css` and `input-voice.css` entries are removed as those sheets retire, and each surviving entry gets a justification comment naming what inline style or media query it beats.
 - `CSS_FILE_ALLOWLIST` pins exactly the six infra sheets: `index.css`, `tokens.css`, `tailwind-theme.css`, `base.css`, `markdown.css`, `accessibility.css`.
 - `CSS_TOTAL_LINE_CEILING` pins to the final infra total with slack reduced to a small fixed value (or the two-sided band replaced by an exact-pin assertion) — decide in-code with a comment; the ceiling stops being a burn-down metric.
