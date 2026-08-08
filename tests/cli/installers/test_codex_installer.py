@@ -5,7 +5,7 @@ import os
 import tomllib
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 from unittest.mock import patch
 
 import pytest
@@ -176,6 +176,66 @@ trusted_hash = "sha256:user-tool"
     assert f"{hooks_prefix}:pre_tool_use:1:0" in trusted_keys
     assert f"{hooks_prefix}:pre_tool_use:0:0" not in state
     assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
+
+
+def test_codex_hook_trust_state_reenables_disabled_gobby_hooks(tmp_path: Path) -> None:
+    from gobby.cli.installers.codex import (
+        _ensure_codex_hook_trust_state,
+        _load_toml_config,
+        _normalized_codex_command_hook_hash,
+    )
+
+    # Codex disables a hook by writing enabled=false into its trust entry; a
+    # disabled Gobby hook deadlocks enforcement gates and must be re-enabled.
+    gobby_hook = {
+        "type": "command",
+        "command": "ghook --gobby-owned --cli=codex --type=PostToolUse",
+    }
+    gobby_group = {"matcher": ".*", "hooks": [gobby_hook]}
+    hooks_path = tmp_path / "hooks.json"
+    hooks_path.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "PostToolUse": [
+                        gobby_group,
+                        {
+                            "matcher": ".*",
+                            "hooks": [{"type": "command", "command": "python3 /tmp/user.py"}],
+                        },
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    hooks_prefix = str(hooks_path.resolve())
+    config = _load_toml_config(
+        f"""
+[hooks.state."{hooks_prefix}:post_tool_use:0:0"]
+enabled = false
+trusted_hash = "sha256:stale"
+
+[hooks.state."{hooks_prefix}:post_tool_use:1:0"]
+enabled = false
+trusted_hash = "sha256:user-tool"
+"""
+    )
+
+    trusted_keys = _ensure_codex_hook_trust_state(config, hooks_path)
+
+    hooks_table = cast(dict[str, Any], config["hooks"])
+    state = cast(dict[str, Any], hooks_table["state"])
+    gobby_key = f"{hooks_prefix}:post_tool_use:0:0"
+    gobby_entry = cast(dict[str, Any], state[gobby_key])
+    assert gobby_key in trusted_keys
+    assert "enabled" not in gobby_entry
+    assert gobby_entry["trusted_hash"] == _normalized_codex_command_hook_hash(
+        "PostToolUse", gobby_group, gobby_hook
+    )
+    user_entry = cast(dict[str, Any], state[f"{hooks_prefix}:post_tool_use:1:0"])
+    assert user_entry["enabled"] is False
+    assert user_entry["trusted_hash"] == "sha256:user-tool"
 
 
 def test_codex_dispatcher_hook_detects_posix_string_command() -> None:

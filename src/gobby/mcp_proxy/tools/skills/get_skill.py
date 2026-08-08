@@ -234,6 +234,26 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         "Best-effort skill tracking failed for session %s: %s", session_id, e
                     )
 
+            if resolved_session_id is not None:
+                # Grant the skill load at serve time. Gate rules read loaded_skills,
+                # and the CLI's PostToolUse echo can silently disappear (#19891) —
+                # the daemon served the skill body, so the daemon records the load.
+                try:
+                    from gobby.workflows.state_manager import SessionVariableManager
+
+                    await ctx.run_db(
+                        SessionVariableManager(ctx.db).append_to_set_variable,
+                        resolved_session_id,
+                        "loaded_skills",
+                        [skill.name],
+                    )
+                except Exception as e:
+                    logger.debug(
+                        "Best-effort loaded_skills append failed for session %s: %s",
+                        session_id,
+                        e,
+                    )
+
             content = skill.content
             if effective_level is not None:
                 content = f"Active level: {effective_level}\n\n{content}"

@@ -30,7 +30,7 @@ import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
@@ -49,6 +49,7 @@ from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
 from gobby.mcp_proxy.schema_hash import SchemaHashManager, compute_schema_hash
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_FINGERPRINT_HEADER,
     MCP_WRAPPER_STALE_ERROR_CODE,
@@ -1112,6 +1113,112 @@ class TestGetToolSchema:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
+
+    def test_get_schema_internal_success_records_lease(
+        self, session_storage: SessionManager
+    ) -> None:
+        """A successfully served internal schema grants the unlocked_tools lease."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server._internal_manager = FakeInternalManager(
+            [
+                FakeInternalRegistry(name="gobby-tasks"),
+            ]
+        )
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with patch("gobby.servers.routes.mcp.endpoints.execution.record_schema_shown") as record:
+            with TestClient(server.app) as client:
+                response = client.post(
+                    "/api/mcp/tools/schema",
+                    json={
+                        "server_name": "gobby-tasks",
+                        "tool_name": "list_tasks",
+                        "session_id": "#77",
+                    },
+                )
+
+        assert response.status_code == 200
+        record.assert_called_once_with(
+            server.tool_proxy,
+            "#77",
+            server_name="gobby-tasks",
+            tool_name="list_tasks",
+        )
+
+    def test_get_schema_external_success_records_lease(
+        self, session_storage: SessionManager
+    ) -> None:
+        """A successfully served external schema grants the unlocked_tools lease."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        mcp_manager.get_tool_info = AsyncMock(
+            return_value={
+                "name": "get_item",
+                "inputSchema": {"type": "object"},
+            }
+        )
+        server.mcp_manager = mcp_manager
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with patch("gobby.servers.routes.mcp.endpoints.execution.record_schema_shown") as record:
+            with TestClient(server.app) as client:
+                response = client.post(
+                    "/api/mcp/tools/schema",
+                    json={
+                        "server_name": "external-server",
+                        "tool_name": "get_item",
+                        "session_id": "#77",
+                    },
+                )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["name"] == "get_item"
+        assert data["inputSchema"] == {"type": "object"}
+        record.assert_called_once_with(
+            server.tool_proxy,
+            "#77",
+            server_name="external-server",
+            tool_name="get_item",
+        )
+
+    def test_get_schema_failure_records_no_lease(self, session_storage: SessionManager) -> None:
+        """A failed schema lookup must not grant a lease."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager._configs["external-server"] = FakeServerConfig(name="external-server")
+        mcp_manager.get_tool_info = AsyncMock(side_effect=ValueError("Tool not found"))
+        server.mcp_manager = mcp_manager
+        server._tools_handler = MagicMock(tool_proxy=MagicMock())
+
+        with patch("gobby.servers.routes.mcp.endpoints.execution.record_schema_shown") as record:
+            with TestClient(server.app) as client:
+                response = client.post(
+                    "/api/mcp/tools/schema",
+                    json={
+                        "server_name": "external-server",
+                        "tool_name": "missing",
+                        "session_id": "#77",
+                    },
+                )
+
+        assert response.status_code == 200
+        assert response.json()["success"] is False
+        record.assert_not_called()
 
 
 # ============================================================================
@@ -2809,10 +2916,13 @@ class TestRefreshMCPTools:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager(
-            [
-                FakeInternalRegistry(name="gobby-tasks"),
-            ]
+        server._internal_manager = cast(
+            InternalRegistryManager,
+            FakeInternalManager(
+                [
+                    FakeInternalRegistry(name="gobby-tasks"),
+                ]
+            ),
         )
 
         mock_db = MagicMock()
@@ -2857,7 +2967,7 @@ class TestRefreshMCPTools:
             test_mode=True,
             session_manager=session_storage,
         )
-        server._internal_manager = FakeInternalManager([registry])
+        server._internal_manager = cast(InternalRegistryManager, FakeInternalManager([registry]))
 
         mock_mcp_db_manager = MagicMock()
         mock_mcp_db_manager.db = MagicMock()
@@ -3053,8 +3163,8 @@ class TestHooksEndpoints:
         )
 
         with TestClient(server.app) as client:
-            if hasattr(client.app.state, "hook_manager"):
-                del client.app.state.hook_manager
+            if hasattr(server.app.state, "hook_manager"):
+                del server.app.state.hook_manager
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(hook_type="session-start", source="claude"),
@@ -3412,7 +3522,7 @@ class TestHooksEndpoints:
             await asyncio.to_thread(stalled_dependency)
             return HookResponse(decision="allow")
 
-        handler._evaluate_rules = evaluate  # type: ignore[method-assign]
+        cast(Any, handler)._evaluate_rules = evaluate
 
         def run_workflow(payload: dict[str, Any], _manager: Any) -> dict[str, bool]:
             session_id = str(payload.get("session_id") or "workflow-stall")

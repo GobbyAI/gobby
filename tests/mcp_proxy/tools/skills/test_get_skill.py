@@ -275,6 +275,31 @@ class TestGetSkillTool:
         assert row["skill_name"] == "git-commit"
 
     @pytest.mark.asyncio
+    async def test_get_skill_appends_loaded_skills_variable(self, populated_db, project_id):
+        """A served skill is granted in loaded_skills without a PostToolUse echo."""
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        session_mgr = SessionManager(populated_db)
+        session = session_mgr.register(
+            external_id="test-ext-id",
+            machine_id=None,
+            source="codex",
+            project_id=project_id,
+        )
+
+        registry = create_skills_registry(populated_db)
+        tool = registry.get_tool("get_skill")
+
+        result = await tool(name="git-commit", session_id=session.id)
+        assert result["success"] is True
+        # A repeat load stays deduplicated (set semantics).
+        await tool(name="git-commit", session_id=session.id)
+
+        variables = SessionVariableManager(populated_db).get_variables(session.id)
+        assert variables["loaded_skills"] == ["git-commit"]
+
+    @pytest.mark.asyncio
     async def test_get_skill_without_session_id_skips_tracking(self, populated_db):
         """Test that omitting session_id does not record skill usage."""
         from gobby.mcp_proxy.tools.skills import create_skills_registry
@@ -718,6 +743,7 @@ class TestSkillFileManifest:
             "get_skill_with_manifest",
             "resolve_session_reference",
             "record_skills_used",
+            "append_to_set_variable",
             "set_variable",
             "get_skill_file_page",
         ]
@@ -934,6 +960,7 @@ class TestGetSkillLevelsRemaining:
 
         registry = create_skills_registry(leveled_db)
         tool = registry.get_tool("get_skill")
+        assert tool is not None
 
         result = await tool(name="plain-skill")
 
@@ -950,6 +977,7 @@ class TestGetSkillLevelsRemaining:
         session = _make_level_session(leveled_db, project_id)
         registry = create_skills_registry(leveled_db)
         tool = registry.get_tool("get_skill")
+        assert tool is not None
 
         with session_context_for_test(session.id):
             result = await tool(name="leveled-skill", level="max")

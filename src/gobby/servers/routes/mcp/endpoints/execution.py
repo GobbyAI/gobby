@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import Depends, HTTPException, Request
 
+from gobby.mcp_proxy.services.schema_guidance import record_schema_shown
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_FINGERPRINT_HEADER,
@@ -22,6 +23,7 @@ from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
+from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -344,6 +346,34 @@ async def list_mcp_tools(
         request_context._reset_context(ctx_token)
 
 
+def _record_schema_lease(
+    server: "HTTPServer",
+    body: dict[str, Any],
+    server_name: str,
+    tool_name: str,
+) -> None:
+    """Grant the schema lease for a successfully served tool schema.
+
+    The daemon must not depend on the CLI's PostToolUse hook echoing this call
+    back — a dropped hook channel would otherwise deadlock the
+    progressive-discovery gates (#19891). Best-effort: never fails the response.
+    """
+    if not server.tool_proxy:
+        return
+    session_id = body.get("session_id") or get_current_session_id()
+    if not session_id:
+        return
+    try:
+        record_schema_shown(
+            server.tool_proxy,
+            session_id,
+            server_name=server_name,
+            tool_name=tool_name,
+        )
+    except Exception as exc:
+        logger.debug("Failed to record schema lease for %s:%s: %s", server_name, tool_name, exc)
+
+
 async def get_tool_schema(
     request: Request,
     server: "HTTPServer" = Depends(get_server),
@@ -399,6 +429,7 @@ async def get_tool_schema(
                         }
                         if schema.get("description"):
                             result["description"] = schema["description"]
+                        _record_schema_lease(server, body, server_name, tool_name)
                         return result
                     raise HTTPException(
                         status_code=404,
@@ -429,6 +460,7 @@ async def get_tool_schema(
                 }
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
+                _record_schema_lease(server, body, server_name, tool_name)
                 return response
 
             except (KeyError, ValueError) as e:

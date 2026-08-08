@@ -373,6 +373,17 @@ def _ensure_codex_hook_trust_state(
     for key, trusted_hash in entries:
         existing = state_table.get(key)
         entry = existing if isinstance(existing, Table) else tomlkit.table()
+        if "enabled" in entry:
+            # Codex disables a hook by writing enabled=false (e.g. after repeated
+            # timeouts). A disabled Gobby hook starves the daemon of its events and
+            # deadlocks enforcement gates, so restore the default-enabled state.
+            if not entry["enabled"]:
+                logger.warning(
+                    "Codex had disabled the Gobby hook %s; re-enabling it. "
+                    "Gobby enforcement depends on this hook.",
+                    key,
+                )
+            del entry["enabled"]
         entry["trusted_hash"] = trusted_hash
         state_table[key] = entry
         trusted_keys.add(key)
