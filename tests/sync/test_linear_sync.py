@@ -959,6 +959,52 @@ class TestLinearSyncServiceSync:
         assert mock_mcp_manager.call_tool.call_count == 0
         assert not mock_mcp_manager.call_tool.called
 
+    async def test_sync_task_graphql_preserves_active_state_when_escalated(
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
+    ) -> None:
+        """Waiting escalations remain in their active Linear workflow state."""
+        mock_task = MagicMock()
+        mock_task.id = "test-task-id"
+        mock_task.seq_num = 42
+        mock_task.linear_issue_id = "lin-42"
+        mock_task.linear_team_id = "team-123"
+        mock_task.title = "Waiting for organic data"
+        mock_task.description = "Collection remains active"
+        _set_task_state(mock_task, "in_progress")
+        mock_task.escalated_at = datetime.now(UTC)
+        mock_task.is_escalated = True
+        mock_task.escalation_reason = "Waiting for organic data"
+        mock_task.priority = 2
+
+        client = MagicMock()
+        client.list_team_states = AsyncMock(
+            return_value=[
+                {"id": "state-canceled", "name": "Canceled"},
+                {"id": "state-progress", "name": "In Progress"},
+            ]
+        )
+        client.update_issue = AsyncMock(return_value={"id": "lin-42"})
+        get_graphql_client_mock = AsyncMock(return_value=client)
+        _replace_for_test(sync_service, "_get_graphql_client", get_graphql_client_mock)
+        _replace_for_test(sync_service.task_manager.get_task, "return_value", mock_task)
+
+        result = await sync_service.sync_task_to_linear(task_id="test-task-id")
+
+        assert result == {"id": "lin-42"}
+        client.list_team_states.assert_awaited_once_with("team-123")
+        client.update_issue.assert_awaited_once_with(
+            issue_id="lin-42",
+            title="#42: Waiting for organic data",
+            description="Collection remains active",
+            priority=3,
+            state_id="state-progress",
+        )
+        assert client.update_issue.await_count == 1
+        assert client.update_issue.await_args is not None
+        assert mock_task.is_escalated is True
+        assert mock_task.escalation_reason == "Waiting for organic data"
+        mock_mcp_manager.call_tool.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_sync_task_raises_when_no_issue_id(
         self, sync_service: LinearSyncService, mock_task_manager: MagicMock
@@ -1037,6 +1083,57 @@ class TestLinearSyncServiceSync:
             closed_commit_sha=None,
             escalated_at=None,
             escalation_reason=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_pull_active_state_preserves_local_escalation(
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+    ) -> None:
+        """Active Linear states do not clear internal waiting escalations."""
+        mock_task_manager.db.fetchall.return_value = [
+            {
+                "id": "task-1",
+                "linear_issue_id": "issue-1",
+                "title": "Old checkpoint title",
+                "description": "Collection remains active",
+                "priority": 1,
+                "updated_at": "2026-02-10T12:34:56Z",
+                "closed_at": None,
+                "closed_reason": None,
+                "closed_in_session_id": None,
+                "closed_commit_sha": None,
+                "escalated_at": "2026-02-09T12:34:56+00:00",
+                "escalation_reason": "Waiting for organic data",
+            }
+        ]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Updated checkpoint title",
+                    "description": "Collection remains active",
+                    "priority": 2,
+                    "state": {"name": "In Progress"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 1, "skipped": 0, "errors": 0, "deferred": 0}
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-1",
+            title="Updated checkpoint title",
+            description="Collection remains active",
+            priority=1,
+            closed_at=None,
+            closed_reason=None,
+            closed_in_session_id=None,
+            closed_commit_sha=None,
         )
 
     @pytest.mark.asyncio
@@ -1899,6 +1996,12 @@ class TestStateMapping:
         """map_gobby_state_to_linear defaults to Todo for unknown state."""
         assert sync_service.map_gobby_state_to_linear("unknown") == "Todo"
 
+    def test_map_gobby_state_to_linear_escalated_defaults_to_todo(
+        self, sync_service: LinearSyncService
+    ) -> None:
+        """Internal escalation is not a Linear cancellation state."""
+        assert sync_service.map_gobby_state_to_linear("escalated") == "Todo"
+
     def test_map_linear_state_to_gobby_todo(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts Todo to ready."""
         assert sync_service.map_linear_state_to_gobby("Todo") == "ready"
@@ -1914,6 +2017,10 @@ class TestStateMapping:
     def test_map_linear_state_to_gobby_done(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts Done to closed."""
         assert sync_service.map_linear_state_to_gobby("Done") == "closed"
+
+    def test_map_linear_state_to_gobby_canceled(self, sync_service: LinearSyncService) -> None:
+        """Explicit inbound Linear cancellation remains an escalation."""
+        assert sync_service.map_linear_state_to_gobby("Canceled") == "escalated"
 
     def test_map_linear_state_to_gobby_unknown(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby defaults to ready for unknown state."""

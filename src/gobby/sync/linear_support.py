@@ -9,7 +9,7 @@ from typing import Any, cast
 import httpx
 
 from gobby.integrations.mcp_result import MCPToolResultError, parse_mcp_tool_result
-from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_task_escalated
+from gobby.tasks.state_semantics import current_stage_state, is_task_closed
 
 logger = logging.getLogger("gobby.sync.linear")
 
@@ -261,7 +261,6 @@ def map_gobby_state_to_linear(gobby_state: str) -> str:
         "needs_review": "In Review",
         "review_approved": "Done",
         "closed": "Done",
-        "escalated": "Canceled",
     }
     return state_map.get(gobby_state, "Todo")
 
@@ -269,8 +268,6 @@ def map_gobby_state_to_linear(gobby_state: str) -> str:
 def project_gobby_state_for_linear(task: Any) -> str:
     if is_task_closed(task):
         return "closed"
-    if is_task_escalated(task):
-        return "escalated"
     return current_stage_state(task) or "ready"
 
 

@@ -166,8 +166,6 @@ def _linear_lifecycle_fields(
         "closed_reason": None,
         "closed_in_session_id": None,
         "closed_commit_sha": None,
-        "escalated_at": None,
-        "escalation_reason": None,
     }
 
 
