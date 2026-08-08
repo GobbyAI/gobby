@@ -102,7 +102,6 @@ class PlanReviewEvidenceService:
                 transaction=transaction,
                 project_id=project_id,
                 plan_path=relative_path,
-                session_id=session_id,
                 checkpoints=checkpoints,
             )
             active = self.store.active_for_path(

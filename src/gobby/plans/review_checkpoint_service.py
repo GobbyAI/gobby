@@ -140,7 +140,6 @@ class ReviewCheckpointService:
         transaction: Transaction,
         project_id: str,
         plan_path: str,
-        session_id: str | None,
         checkpoints: tuple[dict[str, object], ...],
     ) -> None:
         if not checkpoints:
@@ -158,10 +157,12 @@ class ReviewCheckpointService:
                     "checkpoint_reconciliation_error",
                     f"checkpoint references unresolved evidence {evidence_id}",
                 ) from exc
+            # Lineage binds the fence to the durable row, not to the caller:
+            # any session may drain checkpoints left by an expired session.
             lineage_matches = (
                 evidence.project_id == project_id
                 and evidence.plan_path == plan_path
-                and evidence.session_id == session_id
+                and evidence.session_id == checkpoint["session_id"]
                 and evidence.round_number == checkpoint["round_number"]
                 and evidence.plan_hash == checkpoint["plan_hash"]
             )

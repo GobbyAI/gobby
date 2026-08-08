@@ -13,6 +13,7 @@ from gobby.plans.review_evidence_io import (
     build_section_manifest,
     ensure_checkpoint,
     manifest_key,
+    render_checkpoint,
 )
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.agents import LocalAgentRunManager
@@ -20,6 +21,7 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.utils.machine_id import require_machine_id
 from tests.review_coverage_helpers import coverage_attestation
 
 
@@ -34,7 +36,7 @@ def review_setup(
     )
     session = SessionManager(temp_db).register(
         external_id="review-evidence-parent",
-        machine_id="21000000-0000-4000-8000-000000000002",
+        machine_id=require_machine_id(),
         source="codex",
         project_id=project.id,
     )
@@ -173,6 +175,89 @@ def test_prepare_finalized_interactive_round_returns_canonical_evidence(
     )
 
     assert replay.evidence_id == prepared.evidence_id
+
+
+def test_prepare_next_round_after_finalized_checkpoint_from_other_session(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    run = LocalAgentRunManager(service.db).create(
+        parent_session_id=session_id,
+        provider="codex",
+        prompt="review",
+    )
+    service.bind_evidence_run(prepared.evidence_id, run.id)
+    round_result = {
+        "verdict": "needs_review",
+        "findings": [],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
+    }
+    ensure_checkpoint(
+        plan_path,
+        service.render_v1_round_checkpoint(prepared.evidence_id, round_result),
+    )
+    service.finalize_plan_review_evidence(prepared.evidence_id, round_result)
+
+    successor = SessionManager(service.db).register(
+        external_id="review-evidence-successor",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+    )
+    next_round = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=3,
+        session_id=successor.id,
+    )
+
+    assert next_round.evidence_id != prepared.evidence_id
+    assert service.get_evidence(next_round.evidence_id).session_id == successor.id
+
+
+def test_reconcile_rejects_checkpoint_session_forgery(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+) -> None:
+    service, project_id, session_id, plan_path = review_setup
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=2,
+        session_id=session_id,
+    )
+    forged = render_checkpoint(
+        evidence_id=prepared.evidence_id,
+        round_number=2,
+        plan_hash=prepared.plan_hash,
+        session_id="00000000-0000-4000-8000-00000000dead",
+        round_result={
+            "verdict": "needs_review",
+            "findings": [],
+            "coverage_attestation": coverage_attestation(
+                evidence_id=prepared.evidence_id,
+                shadow_valid=False,
+            ),
+        },
+    )
+    ensure_checkpoint(plan_path, forged)
+
+    with pytest.raises(ReviewEvidenceError, match="lineage mismatch") as forgery:
+        service.prepare_plan_review_round(
+            project_id=project_id,
+            plan_path=plan_path,
+            round_number=2,
+            session_id=session_id,
+        )
+    assert forgery.value.code == "checkpoint_reconciliation_error"
 
 
 def test_section_hash_canonicalization() -> None:
@@ -731,7 +816,7 @@ def test_two_phase_run_binding(
     )
     other_session = SessionManager(service.db).register(
         external_id="other-review-parent",
-        machine_id="21000000-0000-4000-8000-000000000002",
+        machine_id=require_machine_id(),
         source="codex",
         project_id=project_id,
     )
