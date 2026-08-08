@@ -47,6 +47,31 @@ This is a test skill.
     return skill_dir
 
 
+@pytest.mark.asyncio
+async def test_install_publishes_files_atomically(
+    db: HubDatabase,
+    storage: LocalSkillManager,
+    skill_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "run.sh").write_text("#!/bin/sh\necho safe\n")
+
+    def fail_file_write(*_args: Any, **_kwargs: Any) -> int:
+        raise RuntimeError("forced file publication failure")
+
+    monkeypatch.setattr(LocalSkillManager, "_set_skill_files", fail_file_write)
+    tool = create_skills_registry(db).get_tool("install_skill")
+
+    result = await tool(source=str(skill_dir))
+
+    assert result == {"success": False, "error": "forced file publication failure"}
+    assert storage.get_by_name("test-skill") is None
+
+
 @pytest.fixture
 def skill_zip(tmp_path: Path) -> Path:
     """Create a ZIP archive containing a skill."""
@@ -619,6 +644,7 @@ Content here.
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="unknown-hub:some-skill")
 

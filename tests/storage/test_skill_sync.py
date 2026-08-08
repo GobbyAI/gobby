@@ -4,8 +4,29 @@ from pathlib import Path
 
 import pytest
 
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.skills import LocalSkillManager, SkillScopeConflictError
+from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.skills import LocalSkillManager, SkillFile, SkillScopeConflictError
+
+
+def _write_bundled_skill(root: Path, *, scripts: dict[str, str]) -> Path:
+    skill_dir = root / "scriptful"
+    skill_dir.mkdir(exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: scriptful\n"
+        "description: Scriptful fixture\n"
+        "metadata:\n"
+        "  gobby:\n"
+        "    audience: all\n"
+        "---\n"
+        "Body\n"
+    )
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    for name, content in scripts.items():
+        (scripts_dir / name).write_text(content)
+    return skill_dir
+
 
 pytestmark = pytest.mark.unit
 
@@ -656,3 +677,180 @@ class TestSourceTaxonomy:
         assert storage.count_skills(source="installed") == 2
         assert storage.count_skills(source="project", project_id=project_id) == 1
         assert storage.count_skills(project_id=project_id) == 3
+
+
+def test_scripts_only_change_marks_updated(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(tmp_path, scripts={"run.js": "console.log('v1')\n"})
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    sync_bundled_skills(temp_db)
+
+    (skill_dir / "scripts" / "run.js").write_text("console.log('v2')\n")
+    result = sync_bundled_skills(temp_db)
+
+    skill = storage.get_by_name("scriptful")
+    assert skill is not None
+    stored = storage.get_skill_file(skill.id, "scripts/run.js")
+    assert result["updated"] == 1
+    assert stored is not None
+    assert stored.content == "console.log('v2')\n"
+
+
+def test_removed_script_purges_stale_rows(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(
+        tmp_path,
+        scripts={"keep.js": "keep\n", "remove.js": "remove\n"},
+    )
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    sync_bundled_skills(temp_db)
+
+    (skill_dir / "scripts" / "remove.js").unlink()
+    result = sync_bundled_skills(temp_db)
+
+    skill = storage.get_by_name("scriptful")
+    assert skill is not None
+    assert result["updated"] == 1
+    assert {item.path for item in storage.get_skill_files(skill.id)} == {"scripts/keep.js"}
+
+
+def test_sole_script_deletion_purges_all_rows(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(tmp_path, scripts={"run.js": "run\n"})
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    sync_bundled_skills(temp_db)
+
+    (skill_dir / "scripts" / "run.js").unlink()
+    result = sync_bundled_skills(temp_db)
+
+    skill = storage.get_by_name("scriptful")
+    assert skill is not None
+    assert result["updated"] == 1
+    assert storage.get_skill_files(skill.id) == []
+
+
+def test_sync_updates_full_owned_fields_and_applies_enabled_policy(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(tmp_path, scripts={"run.js": "v1\n"})
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    assert sync_bundled_skills(temp_db)["synced"] == 1
+    skill = storage.get_by_name("scriptful")
+    assert skill is not None
+    storage.update_skill(skill.id, enabled=False)
+    (skill_dir / "SKILL.md").write_text(
+        (skill_dir / "SKILL.md")
+        .read_text()
+        .replace(
+            "description: Scriptful fixture\n",
+            "description: Scriptful fixture\nalwaysApply: true\ninjectionFormat: full\n",
+        )
+    )
+
+    assert sync_bundled_skills(temp_db)["updated"] == 1
+
+    active = storage.get_skill(skill.id)
+    assert active.enabled is False
+    assert active.always_apply is True
+    assert active.injection_format == "full"
+
+    storage.delete_skill(skill.id)
+    assert sync_bundled_skills(temp_db)["updated"] == 1
+
+    restored = storage.get_skill(skill.id)
+    assert restored.deleted_at is None
+    assert restored.enabled is True
+    assert restored.always_apply is True
+    assert restored.injection_format == "full"
+
+
+@pytest.mark.parametrize("branch", ["create", "update", "restore"])
+def test_sync_publishes_revision_atomically(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    branch: str,
+) -> None:
+    from gobby.skills.sync import sync_bundled_skills
+
+    skill_dir = _write_bundled_skill(tmp_path, scripts={"run.js": "v1\n"})
+    monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
+    storage = LocalSkillManager(temp_db)
+    if branch != "create":
+        assert sync_bundled_skills(temp_db)["synced"] == 1
+        skill = storage.get_by_name("scriptful")
+        assert skill is not None
+        storage.update_skill(skill.id, enabled=False)
+        if branch == "restore":
+            storage.delete_skill(skill.id)
+        (skill_dir / "SKILL.md").write_text(
+            (skill_dir / "SKILL.md")
+            .read_text()
+            .replace(
+                "description: Scriptful fixture\n",
+                "description: Changed\nalwaysApply: true\ninjectionFormat: full\n",
+            )
+        )
+        (skill_dir / "scripts" / "run.js").write_text("v2\n")
+
+    original_write = LocalSkillManager._set_skill_files
+
+    def fail_after_file_write(
+        manager: LocalSkillManager,
+        conn: Transaction,
+        skill_id: str,
+        files: list[SkillFile],
+    ) -> int:
+        original_write(manager, conn, skill_id, files)
+        raise RuntimeError("injected publication failure")
+
+    monkeypatch.setattr(LocalSkillManager, "_set_skill_files", fail_after_file_write)
+
+    result = sync_bundled_skills(temp_db)
+
+    assert result["errors"]
+    stored = storage.get_by_name("scriptful", include_deleted=True)
+    if branch == "create":
+        assert stored is None
+        return
+    assert stored is not None
+    assert stored.enabled is False
+    assert stored.always_apply is False
+    assert stored.injection_format == "summary"
+    if branch == "restore":
+        assert stored.deleted_at is not None
+        deleted_files = temp_db.fetchone(
+            "SELECT COUNT(*) AS count FROM skill_files "
+            "WHERE skill_id = %s AND deleted_at IS NOT NULL",
+            (stored.id,),
+        )
+        assert deleted_files is not None
+        assert deleted_files["count"] == 1
+    else:
+        assert stored.description == "Scriptful fixture"
+        current_file = storage.get_skill_file(stored.id, "scripts/run.js")
+        assert current_file is not None
+        assert current_file.content == "v1\n"

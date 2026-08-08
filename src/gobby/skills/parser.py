@@ -358,6 +358,46 @@ def extract_audience_config(metadata: dict[str, Any] | None) -> SkillAudienceCon
     return SkillAudienceConfig(**ac_kwargs)
 
 
+_RUNTIME_NODE_CONSTRAINT = re.compile(r"^>=\d+\.\d+\.\d+$")
+_RUNTIME_RELEASE_VERSION = re.compile(
+    r"^\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?"
+    r"(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$"
+)
+
+
+def validate_runtime_metadata(metadata: dict[str, Any] | None) -> None:
+    """Validate the optional metadata.gobby.runtime declaration."""
+    if not metadata or not isinstance(metadata, dict):
+        return
+    gobby_metadata = metadata.get("gobby")
+    if not isinstance(gobby_metadata, dict) or "runtime" not in gobby_metadata:
+        return
+
+    runtime = gobby_metadata["runtime"]
+    if not isinstance(runtime, dict):
+        raise SkillParseError("metadata.gobby.runtime must be a mapping")
+
+    if "cli" in runtime:
+        cli = runtime["cli"]
+        if not isinstance(cli, dict):
+            raise SkillParseError("metadata.gobby.runtime.cli must be a mapping")
+        for key in ("npm", "version", "bin"):
+            if key in cli and (not isinstance(cli[key], str) or not cli[key].strip()):
+                raise SkillParseError(
+                    f"metadata.gobby.runtime.cli.{key} must be a non-empty string"
+                )
+
+    if "node" in runtime:
+        node = runtime["node"]
+        if not isinstance(node, str) or not _RUNTIME_NODE_CONSTRAINT.fullmatch(node):
+            raise SkillParseError("metadata.gobby.runtime.node must match >=MAJOR.MINOR.PATCH")
+
+    if "skill_release" in runtime:
+        release = runtime["skill_release"]
+        if not isinstance(release, str) or not _RUNTIME_RELEASE_VERSION.fullmatch(release):
+            raise SkillParseError("metadata.gobby.runtime.skill_release must be a semantic version")
+
+
 def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
     """Parse a skill from text content.
 
@@ -412,6 +452,7 @@ def parse_skill_text(text: str, source_path: str | None = None) -> ParsedSkill:
 
     # Extract metadata (may contain version, skillport, gobby namespaces)
     metadata = frontmatter.get("metadata")
+    validate_runtime_metadata(metadata)
 
     # Handle top-level alwaysApply and category by including them in metadata
     # This allows both top-level and nested formats to work

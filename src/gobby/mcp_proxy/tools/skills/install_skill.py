@@ -77,7 +77,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
             # Determine source type and load skill
             from gobby.skills.parser import ParsedSkill
-            from gobby.storage.skills import SkillSourceType
+            from gobby.storage.skills import SkillFile, SkillSourceType
 
             parsed_skill: ParsedSkill | list[ParsedSkill] | None = None
             source_type: SkillSourceType | None = None
@@ -285,8 +285,26 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             # Determine project ID for the skill
             skill_project_id = ctx.project_id if project_scoped else None
 
-            # Store the skill
-            skill = ctx.storage.create_skill(
+            loaded_files = parsed_skill.loaded_files
+            skill_files = (
+                None
+                if loaded_files is None
+                else [
+                    SkillFile(
+                        id="",
+                        skill_id="",
+                        path=loaded_file.path,
+                        file_type=loaded_file.file_type,
+                        content=loaded_file.content,
+                        content_hash=loaded_file.content_hash,
+                        size_bytes=loaded_file.size_bytes,
+                    )
+                    for loaded_file in loaded_files
+                ]
+            )
+
+            # Publish the skill and its loaded file inventory atomically.
+            skill = ctx.storage.create_skill_with_files(
                 name=parsed_skill.name,
                 description=parsed_skill.description,
                 content=parsed_skill.content,
@@ -300,26 +318,9 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 source_ref=getattr(parsed_skill, "source_ref", None),
                 project_id=skill_project_id,
                 enabled=True,
+                files=skill_files,
             )
-            # Notifier triggers re-indexing automatically via create_skill
-
-            # Persist skill files if loaded
-            if hasattr(parsed_skill, "loaded_files") and parsed_skill.loaded_files:
-                from gobby.storage.skills import SkillFile
-
-                skill_files = [
-                    SkillFile(
-                        id="",
-                        skill_id=skill.id,
-                        path=lf.path,
-                        file_type=lf.file_type,
-                        content=lf.content,
-                        content_hash=lf.content_hash,
-                        size_bytes=lf.size_bytes,
-                    )
-                    for lf in parsed_skill.loaded_files
-                ]
-                ctx.storage.set_skill_files(skill.id, skill_files)
+            # Notifier triggers re-indexing after the publication commits.
 
             return {
                 "success": True,

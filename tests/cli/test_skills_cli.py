@@ -6,6 +6,26 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.skills import LocalSkillManager
+
+
+def test_metadata_set_rejects_malformed_runtime(temp_db: HubDatabase) -> None:
+    storage = LocalSkillManager(temp_db)
+    storage.create_skill(name="runtime-cli-test", description="test", content="safe")
+
+    with patch("gobby.cli.skills.get_skill_storage", return_value=storage):
+        result = CliRunner().invoke(
+            cli,
+            ["skills", "meta", "set", "runtime-cli-test", "gobby.runtime", "[]"],
+        )
+
+    assert result.exit_code == 1
+    assert "metadata.gobby.runtime" in result.output
+    stored = storage.get_by_name("runtime-cli-test")
+    assert stored is not None
+    assert stored.metadata is None
+
 
 pytestmark = pytest.mark.cli
 

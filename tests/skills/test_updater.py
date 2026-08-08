@@ -1,11 +1,12 @@
 """Tests for SkillUpdater (TDD - written before implementation)."""
 
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.skills import LocalSkillManager
+from gobby.storage.skills import LocalSkillManager, SkillFile
 
 pytestmark = pytest.mark.unit
 
@@ -484,3 +485,138 @@ class TestSkillUpdaterSkipNoSource:
         assert result.updated is False
         assert result.skipped is True
         assert "no source" in result.skip_reason.lower()
+
+
+def test_empty_parsed_inventory_clears_stored_files(
+    storage: LocalSkillManager,
+    tmp_path: Path,
+) -> None:
+    from gobby.skills.loader import SkillLoader
+    from gobby.skills.updater import SkillUpdater
+
+    skill_dir = tmp_path / "scriptful-update"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: scriptful-update\ndescription: Scriptful update\n---\nBody\n"
+    )
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    script_path = scripts_dir / "run.js"
+    script_path.write_text("run\n")
+    parsed = SkillLoader(default_source_type="local").load_skill(skill_dir)
+    assert parsed.loaded_files
+    files = [
+        SkillFile(
+            id="",
+            skill_id="",
+            path=item.path,
+            file_type=item.file_type,
+            content=item.content,
+            content_hash=item.content_hash,
+            size_bytes=item.size_bytes,
+        )
+        for item in parsed.loaded_files
+    ]
+    skill = storage.create_skill_with_files(
+        name=parsed.name,
+        description=parsed.description,
+        content=parsed.content,
+        metadata=parsed.metadata,
+        source_path=str(skill_dir),
+        source_type="local",
+        files=files,
+    )
+
+    script_path.unlink()
+    result = SkillUpdater(storage).update_skill(skill.id)
+
+    assert result.success is True
+    assert result.updated is True
+    assert storage.get_skill_files(skill.id) == []
+
+
+def test_partial_parsed_inventory_replaces_exact_stored_file_set(
+    storage: LocalSkillManager,
+    tmp_path: Path,
+) -> None:
+    from gobby.skills.loader import SkillLoader
+    from gobby.skills.updater import SkillUpdater
+
+    skill_dir = tmp_path / "partial-inventory"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: partial-inventory\ndescription: Partial inventory\n---\nBody\n"
+    )
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir()
+    keep_path = scripts_dir / "keep.js"
+    remove_path = scripts_dir / "remove.js"
+    keep_path.write_text("keep\n")
+    remove_path.write_text("remove\n")
+    parsed = SkillLoader(default_source_type="local").load_skill(skill_dir)
+    assert parsed.loaded_files
+    files = [
+        SkillFile(
+            id="",
+            skill_id="",
+            path=item.path,
+            file_type=item.file_type,
+            content=item.content,
+            content_hash=item.content_hash,
+            size_bytes=item.size_bytes,
+        )
+        for item in parsed.loaded_files
+    ]
+    skill = storage.create_skill_with_files(
+        name=parsed.name,
+        description=parsed.description,
+        content=parsed.content,
+        metadata=parsed.metadata,
+        source_path=str(skill_dir),
+        source_type="local",
+        files=files,
+    )
+
+    remove_path.unlink()
+    result = SkillUpdater(storage).update_skill(skill.id)
+
+    assert result.success is True
+    assert result.updated is True
+    assert [item.path for item in storage.get_skill_files(skill.id)] == ["scripts/keep.js"]
+
+
+def test_unloaded_inventory_leaves_stored_files_untouched(
+    storage: LocalSkillManager,
+    tmp_path: Path,
+) -> None:
+    from gobby.skills.loader import SkillLoader
+    from gobby.skills.updater import SkillUpdater
+
+    skill_dir = tmp_path / "unloaded-inventory"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: unloaded-inventory\ndescription: Unloaded inventory\n---\nBody\n"
+    )
+    parsed = SkillLoader(default_source_type="local").load_skill(skill_dir)
+    skill = storage.create_skill(
+        name=parsed.name,
+        description=parsed.description,
+        content=parsed.content,
+        source_path=str(skill_dir),
+        source_type="local",
+    )
+    stored_file = SkillFile(
+        id="",
+        skill_id=skill.id,
+        path="scripts/run.js",
+        file_type="script",
+        content="run\n",
+        content_hash="manual-hash",
+        size_bytes=4,
+    )
+    storage.set_skill_files(skill.id, [stored_file])
+    parsed.loaded_files = None
+
+    SkillUpdater(storage)._apply_update(skill, parsed)
+
+    assert [item.path for item in storage.get_skill_files(skill.id)] == ["scripts/run.js"]

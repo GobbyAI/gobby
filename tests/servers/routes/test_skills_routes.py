@@ -15,7 +15,11 @@ from gobby.config.app import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
-from gobby.storage.skills import SkillScopeConflictError
+from gobby.storage.skills import (
+    DuplicateSkillError,
+    SkillMetadataValidationError,
+    SkillScopeConflictError,
+)
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -80,10 +84,116 @@ def skill_project(temp_db: HubDatabase, tmp_path: Path) -> Project:
     return LocalProjectManager(temp_db).create(name="skills-project", repo_path=str(repo_path))
 
 
+@pytest.mark.parametrize(
+    ("source", "loader_method", "project_scoped"),
+    [
+        ("github:user/repo", "load_from_github", False),
+        ("skill.zip", "load_from_zip", True),
+        (".", "load_skill", True),
+    ],
+)
+@pytest.mark.parametrize("outcome", ["success", "duplicate", "validation", "mixed"])
+def test_import_distinguishes_duplicate_from_validation_failure(
+    client: TestClient,
+    skill_manager: MagicMock,
+    skill_project: Project,
+    source: str,
+    loader_method: str,
+    project_scoped: bool,
+    outcome: str,
+) -> None:
+    names = {
+        "success": ["stored"],
+        "duplicate": ["duplicate"],
+        "validation": ["invalid"],
+        "mixed": ["stored", "duplicate", "invalid"],
+    }[outcome]
+    parsed_skills = []
+    for name in names:
+        parsed = MagicMock()
+        parsed.name = name
+        parsed.description = "safe"
+        parsed.content = "Safe imported skill"
+        parsed.version = None
+        parsed.license = None
+        parsed.compatibility = None
+        parsed.allowed_tools = None
+        parsed.metadata = None
+        parsed.source_path = source
+        parsed.source_type = "local"
+        parsed.source_ref = None
+        parsed.always_apply = False
+        parsed.injection_format = "summary"
+        parsed.loaded_files = []
+        parsed_skills.append(parsed)
+
+    def publication_results() -> list[object]:
+        results: list[object] = []
+        for name in names:
+            if name == "duplicate":
+                results.append(DuplicateSkillError("duplicate scope"))
+            elif name == "invalid":
+                results.append(
+                    SkillMetadataValidationError(
+                        "metadata.gobby.runtime.cli.npm must be a nonempty string"
+                    )
+                )
+            else:
+                skill = MagicMock()
+                skill.to_dict.return_value = {"name": name}
+                results.append(skill)
+        return results
+
+    skill_manager.create_skill.side_effect = publication_results()
+    skill_manager.create_skill_with_files.side_effect = publication_results()
+
+    with patch("gobby.skills.loader.SkillLoader") as loader_class:
+        setattr(loader_class.return_value, loader_method, MagicMock(return_value=parsed_skills))
+        payload: dict[str, object] = {"source": source}
+        if project_scoped:
+            payload["project_id"] = skill_project.id
+        response = client.post("/api/skills/import", json=payload)
+
+    expected_errors = []
+    if outcome in {"duplicate", "mixed"}:
+        expected_errors.append(
+            {
+                "name": "duplicate",
+                "code": "duplicate",
+                "status": 409,
+                "detail": "duplicate scope",
+            }
+        )
+    if outcome in {"validation", "mixed"}:
+        expected_errors.append(
+            {
+                "name": "invalid",
+                "code": "validation_error",
+                "status": 422,
+                "detail": "metadata.gobby.runtime.cli.npm must be a nonempty string",
+            }
+        )
+    expected_skills = [{"name": "stored"}] if outcome in {"success", "mixed"} else []
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "imported": len(expected_skills),
+        "skills": expected_skills,
+        "errors": expected_errors,
+    }
+    assert skill_manager.create_skill_with_files.call_count == len(names)
+    assert all(
+        call.kwargs["files"] == [] for call in skill_manager.create_skill_with_files.call_args_list
+    )
+
+
 class TestListSkills:
     def test_list_skills(self, client: TestClient, skill_manager: MagicMock) -> None:
         skill_mock = MagicMock()
-        skill_mock.to_dict.return_value = {"id": "21000000-0000-4000-8000-00000000001c", "name": "test-skill"}
+        skill_mock.to_dict.return_value = {
+            "id": "21000000-0000-4000-8000-00000000001c",
+            "name": "test-skill",
+        }
         skill_manager.list_skills.return_value = [skill_mock]
 
         response = client.get("/api/skills")
@@ -270,7 +380,7 @@ class TestImportSkill:
 
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"name": "git-skill"}
-        skill_manager.create_skill.return_value = skill_mock
+        skill_manager.create_skill_with_files.return_value = skill_mock
 
         response = client.post("/api/skills/import", json={"source": "github:user/repo"})
         assert response.status_code == 200
@@ -290,7 +400,7 @@ class TestImportSkill:
 
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"name": "zip-skill"}
-        skill_manager.create_skill.return_value = skill_mock
+        skill_manager.create_skill_with_files.return_value = skill_mock
 
         response = client.post(
             "/api/skills/import",
@@ -309,7 +419,7 @@ class TestImportSkill:
         parsed_mock.source_type = "agent"
         mock_loader.load_skill.return_value = parsed_mock
 
-        skill_manager.create_skill.side_effect = ValueError("duplicate")
+        skill_manager.create_skill_with_files.side_effect = DuplicateSkillError("duplicate")
 
         response = client.post(
             "/api/skills/import",
@@ -333,7 +443,7 @@ class TestImportSkill:
 
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"name": "local-skill"}
-        skill_manager.create_skill.return_value = skill_mock
+        skill_manager.create_skill_with_files.return_value = skill_mock
 
         response = client.post(
             "/api/skills/import",
@@ -393,7 +503,7 @@ class TestImportSkill:
 
         assert response.status_code == 422
         assert "failed security scan" in response.json()["detail"]
-        skill_manager.create_skill.assert_not_called()
+        skill_manager.create_skill_with_files.assert_not_called()
 
 
 class TestScanSkill:
@@ -594,18 +704,27 @@ class TestHubs:
         parsed_mock.metadata = None
         parsed_mock.always_apply = False
         parsed_mock.injection_format = "format"
+        loaded_file = MagicMock()
+        loaded_file.path = "scripts/run.sh"
+        loaded_file.file_type = "script"
+        loaded_file.content = "echo safe"
+        loaded_file.content_hash = "hash"
+        loaded_file.size_bytes = 9
+        parsed_mock.loaded_files = [loaded_file]
         mock_loader.load_skill.return_value = parsed_mock
 
         skill_mock = MagicMock()
         skill_mock.id = "did"
         skill_mock.to_dict.return_value = {"name": "hub-skill"}
-        skill_manager.create_skill.return_value = skill_mock
+        skill_manager.create_skill_with_files.return_value = skill_mock
 
         response = client.post(
             "/api/skills/hubs/install", json={"hub_name": "hubbi", "slug": "sluggi"}
         )
         assert response.status_code == 200
         assert response.json()["installed"] is True
+        published_files = skill_manager.create_skill_with_files.call_args.kwargs["files"]
+        assert [file.path for file in published_files] == ["scripts/run.sh"]
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_created", "did")
 
     @patch("gobby.skills.loader.SkillLoader")
@@ -632,7 +751,7 @@ class TestHubs:
 
         assert response.status_code == 422
         assert "failed security scan" in response.json()["detail"]
-        skill_manager.create_skill.assert_not_called()
+        skill_manager.create_skill_with_files.assert_not_called()
 
     def test_install_from_hub_none(self, client: TestClient, server) -> None:
         server.hub_manager = None
@@ -665,7 +784,7 @@ class TestHubs:
         parsed_mock.content = "Safe hub skill content"
         mock_loader.load_skill.return_value = parsed_mock
 
-        skill_manager.create_skill.side_effect = ValueError("exists")
+        skill_manager.create_skill_with_files.side_effect = ValueError("exists")
         response = client.post("/api/skills/hubs/install", json={"hub_name": "h", "slug": "s"})
         assert response.status_code == 409
         assert "exists" in response.text
@@ -828,21 +947,25 @@ class TestMoveToInstalled:
 
 
 class TestRestoreSkill:
-    def test_restore_skill(self, client: TestClient, skill_manager, websocket_server) -> None:
+    def test_restore_route_uses_production_manager_api(
+        self, client: TestClient, skill_manager, websocket_server
+    ) -> None:
         skill_mock = MagicMock()
         skill_mock.to_dict.return_value = {"id": "1"}
-        skill_manager.restore_skill.return_value = skill_mock
+        skill_manager.restore.return_value = skill_mock
         response = client.post("/api/skills/1/restore")
         assert response.status_code == 200
+        skill_manager.restore.assert_called_once_with("1")
+        skill_manager.restore_skill.assert_not_called()
         websocket_server.broadcast_skill_event.assert_awaited_once_with("skill_updated", "1")
 
     def test_restore_skill_not_found(self, client: TestClient, skill_manager) -> None:
-        skill_manager.restore_skill.side_effect = ValueError("E")
+        skill_manager.restore.side_effect = ValueError("E")
         response = client.post("/api/skills/1/restore")
         assert response.status_code == 404
 
     def test_restore_skill_err(self, client: TestClient, skill_manager) -> None:
-        skill_manager.restore_skill.side_effect = Exception("E")
+        skill_manager.restore.side_effect = Exception("E")
         response = client.post("/api/skills/1/restore")
         assert response.status_code == 500
 
@@ -970,3 +1093,27 @@ class TestSkillFiles:
         response = client.put("/api/skills/1/files/references/usage.md", json={})
         assert response.status_code == 422
         skill_manager.update_skill_file.assert_not_called()
+
+
+@pytest.mark.parametrize("method,path", [("post", "/api/skills"), ("put", "/api/skills/1")])
+def test_rest_writes_reject_malformed_runtime(
+    client: TestClient,
+    skill_manager: MagicMock,
+    method: str,
+    path: str,
+) -> None:
+    error = SkillMetadataValidationError(
+        "metadata.gobby.runtime.node must match >=MAJOR.MINOR.PATCH"
+    )
+    payload: dict[str, object]
+    if method == "post":
+        skill_manager.create_skill.side_effect = error
+        payload = {"name": "runtime", "description": "Runtime", "content": "Body"}
+    else:
+        skill_manager.update_skill.side_effect = error
+        payload = {"metadata": {"gobby": {"runtime": {"node": "^22"}}}}
+
+    response = client.request(method, path, json=payload)
+
+    assert response.status_code == 422
+    assert "runtime.node" in response.json()["detail"]

@@ -17,7 +17,12 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from gobby.storage.skills import SkillScopeConflictError
+from gobby.storage.skills import (
+    DuplicateSkillError,
+    SkillFile,
+    SkillMetadataValidationError,
+    SkillScopeConflictError,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -53,6 +58,24 @@ def _scan_skill_install(parsed_skill: "ParsedSkill", source_type: str | None) ->
                 f"(max severity: {scan_result['max_severity']})"
             ),
         )
+
+
+def _loaded_skill_files(parsed_skill: "ParsedSkill") -> list[SkillFile] | None:
+    """Translate a loaded inventory while preserving unavailable versus empty."""
+    if parsed_skill.loaded_files is None:
+        return None
+    return [
+        SkillFile(
+            id="",
+            skill_id="",
+            path=loaded_file.path,
+            file_type=loaded_file.file_type,
+            content=loaded_file.content,
+            content_hash=loaded_file.content_hash,
+            size_bytes=loaded_file.size_bytes,
+        )
+        for loaded_file in parsed_skill.loaded_files
+    ]
 
 
 # =============================================================================
@@ -240,6 +263,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             )
             await _broadcast_skill("skill_created", skill.id)
             return skill.to_dict()
+        except SkillMetadataValidationError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
@@ -365,11 +390,12 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             # Handle single skill or list
             skills_list = parsed if isinstance(parsed, list) else [parsed]
             imported = []
+            errors = []
 
             for ps in skills_list:
                 try:
                     _scan_skill_install(ps, scan_source_type)
-                    skill = server.skill_manager.create_skill(
+                    skill = server.skill_manager.create_skill_with_files(
                         name=ps.name,
                         description=ps.description,
                         content=ps.content,
@@ -385,10 +411,27 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                         always_apply=ps.always_apply,
                         injection_format=ps.injection_format,
                         project_id=request_data.project_id,
+                        files=_loaded_skill_files(ps),
                     )
                     imported.append(skill.to_dict())
+                except DuplicateSkillError as e:
+                    errors.append(
+                        {
+                            "name": ps.name,
+                            "code": "duplicate",
+                            "status": 409,
+                            "detail": str(e),
+                        }
+                    )
                 except ValueError as e:
-                    logger.warning("Skipping duplicate skill '%s': %s", ps.name, e)
+                    errors.append(
+                        {
+                            "name": ps.name,
+                            "code": "validation_error",
+                            "status": 422,
+                            "detail": str(e),
+                        }
+                    )
 
             if imported:
                 await _broadcast_skill("skills_bulk_changed", "bulk")
@@ -396,6 +439,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             return {
                 "imported": len(imported),
                 "skills": imported,
+                "errors": errors,
             }
         except HTTPException:
             raise
@@ -518,7 +562,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             parsed = loader.load_skill(download.path, validate=True, check_dir_name=False)
 
             _scan_skill_install(parsed, "hub")
-            skill = server.skill_manager.create_skill(
+            skill = server.skill_manager.create_skill_with_files(
                 name=parsed.name,
                 description=parsed.description,
                 content=parsed.content,
@@ -536,11 +580,14 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
                 always_apply=parsed.always_apply,
                 injection_format=parsed.injection_format,
                 project_id=request_data.project_id,
+                files=_loaded_skill_files(parsed),
             )
             await _broadcast_skill("skill_created", skill.id)
             return {"installed": True, "skill": skill.to_dict()}
         except HTTPException:
             raise
+        except SkillMetadataValidationError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e)) from e
         except Exception as e:
@@ -579,6 +626,8 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
             )
             await _broadcast_skill("skill_updated", skill_id)
             return skill.to_dict()
+        except SkillMetadataValidationError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
@@ -650,7 +699,7 @@ def create_skills_router(server: "HTTPServer") -> APIRouter:
     async def restore_skill(skill_id: str) -> dict[str, Any]:
         """Restore a soft-deleted skill."""
         try:
-            skill = server.skill_manager.restore_skill(skill_id)
+            skill = server.skill_manager.restore(skill_id)
             await _broadcast_skill("skill_updated", skill_id)
             return {"restored": True, "skill": skill.to_dict()}
         except ValueError as e:

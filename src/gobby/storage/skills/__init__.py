@@ -9,7 +9,11 @@ from gobby.storage.skills._bundled import (
     BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR,
     is_bundled_template_path,
 )
-from gobby.storage.skills._errors import SkillScopeConflictError
+from gobby.storage.skills._errors import (
+    DuplicateSkillError,
+    SkillMetadataValidationError,
+    SkillScopeConflictError,
+)
 from gobby.storage.skills._manager import LocalSkillManager
 from gobby.storage.skills._models import ChangeEvent, Skill, SkillFile, SkillSourceType
 from gobby.storage.skills._notifier import SkillChangeNotifier, get_skill_change_notifier
@@ -17,8 +21,10 @@ from gobby.storage.skills._notifier import SkillChangeNotifier, get_skill_change
 __all__ = [
     "BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR",
     "ChangeEvent",
+    "DuplicateSkillError",
     "Skill",
     "SkillFile",
+    "SkillMetadataValidationError",
     "SkillSourceType",
     "SkillScopeConflictError",
     "SkillChangeNotifier",

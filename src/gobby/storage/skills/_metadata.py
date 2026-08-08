@@ -15,7 +15,11 @@ from gobby.storage.skills._bundled import (
     BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR,
     is_bundled_template_path,
 )
-from gobby.storage.skills._errors import SkillScopeConflictError
+from gobby.storage.skills._errors import (
+    DuplicateSkillError,
+    SkillMetadataValidationError,
+    SkillScopeConflictError,
+)
 from gobby.storage.skills._models import Skill, SkillSourceType, SkillUsageStats
 from gobby.storage.sql_dialect import json_text_expr
 from gobby.utils.datetime import utc_now
@@ -25,7 +29,7 @@ from gobby.utils.datetime import utc_now
 _NS_SKILLS = uuid.uuid5(uuid.NAMESPACE_URL, "gobby:skills")
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +50,8 @@ class _SkillMetadataHost(Protocol):
     def delete_skill_files(self, skill_id: str) -> int: ...
 
     def restore_skill_files(self, skill_id: str) -> int: ...
+
+    def _restore_skill_files(self, conn: Transaction, skill_id: str) -> int: ...
 
 
 class SkillMetadataMixin:
@@ -78,6 +84,91 @@ class SkillMetadataMixin:
         with self.db.transaction() as conn:
             rows: list[Mapping[str, Any]] = conn.execute(query, params).fetchall()
             return rows
+
+    def _create_skill_in_transaction(
+        self,
+        conn: Transaction,
+        *,
+        name: str,
+        description: str,
+        content: str,
+        version: str | None,
+        license: str | None,
+        compatibility: str | None,
+        allowed_tools: list[str] | None,
+        metadata: dict[str, Any] | None,
+        source_path: str | None,
+        source_type: SkillSourceType | None,
+        source_ref: str | None,
+        hub_name: str | None,
+        hub_slug: str | None,
+        hub_version: str | None,
+        enabled: bool,
+        always_apply: bool,
+        injection_format: str,
+        project_id: str | None,
+        source: str,
+    ) -> str:
+        """Create a skill row using an existing publication transaction."""
+        from gobby.skills.parser import SkillParseError, validate_runtime_metadata
+
+        try:
+            validate_runtime_metadata(metadata)
+        except SkillParseError as exc:
+            raise SkillMetadataValidationError(str(exc)) from exc
+
+        if project_id is not None:
+            source = "project"
+            if is_bundled_template_path(source_path):
+                raise ValueError(f"Skill '{name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
+
+        skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
+        if self.skill_exists(skill_id, include_deleted=True):
+            skill_id = str(uuid.uuid4())
+        now = utc_now()
+
+        try:
+            conn.execute(
+                """
+                INSERT INTO skills (
+                    id, name, description, content, version, license,
+                    compatibility, allowed_tools, metadata, source_path,
+                    source_type, source_ref, hub_name, hub_slug, hub_version,
+                    enabled, always_apply, injection_format, project_id,
+                    source, created_at, updated_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    skill_id,
+                    name,
+                    description,
+                    content,
+                    version,
+                    license,
+                    compatibility,
+                    json.dumps(allowed_tools) if allowed_tools else None,
+                    json.dumps(metadata) if metadata else None,
+                    source_path,
+                    source_type,
+                    source_ref,
+                    hub_name,
+                    hub_slug,
+                    hub_version,
+                    enabled,
+                    always_apply,
+                    injection_format,
+                    project_id,
+                    source,
+                    now,
+                    now,
+                ),
+            )
+        except UniqueViolation as exc:
+            raise DuplicateSkillError(
+                f"Skill '{name}' (source={source}) already exists"
+                + (f" in project {project_id}" if project_id else " globally")
+            ) from exc
+        return skill_id
 
     def create_skill(
         self,
@@ -131,63 +222,29 @@ class SkillMetadataMixin:
         Raises:
             ValueError: If a skill with the same name and source exists in scope
         """
-        # Auto-set source to 'project' for project-scoped skills
-        if project_id is not None:
-            source = "project"
-            if is_bundled_template_path(source_path):
-                raise ValueError(f"Skill '{name}': {BUNDLED_TEMPLATE_PROJECT_SKILL_ERROR}")
-
-        now = utc_now()
-        skill_id = str(uuid.uuid5(_NS_SKILLS, f"{name}:{project_id or 'global'}:{source}"))
-        if self.skill_exists(skill_id, include_deleted=True):
-            skill_id = str(uuid.uuid4())
-
-        # Serialize JSON fields
-        allowed_tools_json = json.dumps(allowed_tools) if allowed_tools else None
-        metadata_json = json.dumps(metadata) if metadata else None
-
         with self.db.transaction() as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO skills (
-                        id, name, description, content, version, license,
-                        compatibility, allowed_tools, metadata, source_path,
-                        source_type, source_ref, hub_name, hub_slug, hub_version,
-                        enabled, always_apply, injection_format, project_id,
-                        source, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        skill_id,
-                        name,
-                        description,
-                        content,
-                        version,
-                        license,
-                        compatibility,
-                        allowed_tools_json,
-                        metadata_json,
-                        source_path,
-                        source_type,
-                        source_ref,
-                        hub_name,
-                        hub_slug,
-                        hub_version,
-                        enabled,
-                        always_apply,
-                        injection_format,
-                        project_id,
-                        source,
-                        now,
-                        now,
-                    ),
-                )
-            except UniqueViolation as e:
-                raise ValueError(
-                    f"Skill '{name}' (source={source}) already exists"
-                    + (f" in project {project_id}" if project_id else " globally")
-                ) from e
+            skill_id = self._create_skill_in_transaction(
+                conn,
+                name=name,
+                description=description,
+                content=content,
+                version=version,
+                license=license,
+                compatibility=compatibility,
+                allowed_tools=allowed_tools,
+                metadata=metadata,
+                source_path=source_path,
+                source_type=source_type,
+                source_ref=source_ref,
+                hub_name=hub_name,
+                hub_slug=hub_slug,
+                hub_version=hub_version,
+                enabled=enabled,
+                always_apply=always_apply,
+                injection_format=injection_format,
+                project_id=project_id,
+                source=source,
+            )
 
         skill = self.get_skill(skill_id)
         self._host()._notify_change("create", skill_id, name)
@@ -385,6 +442,12 @@ class SkillMetadataMixin:
             updates.append("allowed_tools = %s")
             params.append(json.dumps(allowed_tools) if allowed_tools else None)
         if metadata is not _UNSET:
+            from gobby.skills.parser import SkillParseError, validate_runtime_metadata
+
+            try:
+                validate_runtime_metadata(metadata)
+            except SkillParseError as exc:
+                raise SkillMetadataValidationError(str(exc)) from exc
             updates.append("metadata = %s")
             params.append(json.dumps(metadata) if metadata else None)
         if source_path is not _UNSET:
@@ -531,9 +594,9 @@ class SkillMetadataMixin:
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Skill {skill_id} not found")
+            self._host()._restore_skill_files(conn, skill_id)
 
         host = self._host()
-        host.restore_skill_files(skill_id)
         skill = self.get_skill(skill_id)
         host._notify_change("create", skill_id, skill.name)
         return skill

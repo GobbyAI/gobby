@@ -268,11 +268,14 @@ class SkillFilesMixin:
         Returns:
             Number of files restored
         """
-        now = utc_now()
         with self.db.transaction() as conn:
-            cursor = conn.execute(
-                "UPDATE skill_files SET deleted_at = NULL, updated_at = %s "
-                "WHERE skill_id = %s AND deleted_at IS NOT NULL",
-                (now, skill_id),
-            )
-            return cursor.rowcount
+            return self._restore_skill_files(conn, skill_id)
+
+    def _restore_skill_files(self, conn: Transaction, skill_id: str) -> int:
+        """Restore soft-deleted files using an existing transaction."""
+        cursor = conn.execute(
+            "UPDATE skill_files SET deleted_at = NULL, updated_at = %s "
+            "WHERE skill_id = %s AND deleted_at IS NOT NULL",
+            (utc_now(), skill_id),
+        )
+        return cursor.rowcount

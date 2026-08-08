@@ -384,7 +384,7 @@ class SkillUpdater:
             return True
 
         # Check file hashes
-        if parsed.loaded_files:
+        if parsed.loaded_files is not None:
             try:
                 existing_files = self._storage.get_skill_files(
                     skill.id, include_content=False, exclude_license=False
@@ -434,7 +434,7 @@ class SkillUpdater:
     def _apply_update(self, skill: Skill, parsed: ParsedSkill) -> None:
         """Apply parsed skill data to storage."""
         skill_files = None
-        if parsed.loaded_files:
+        if parsed.loaded_files is not None:
             from gobby.storage.skills import SkillFile
 
             skill_files = [

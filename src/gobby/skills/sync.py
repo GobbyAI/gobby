@@ -49,17 +49,6 @@ def _loaded_to_skill_files(
     ]
 
 
-def _persist_skill_files(
-    storage: LocalSkillManager,
-    skill_id: str,
-    loaded_files: list[LoadedSkillFile] | None,
-) -> None:
-    """Convert loaded files and persist to storage."""
-    skill_files = _loaded_to_skill_files(skill_id, loaded_files)
-    if skill_files:
-        storage.set_skill_files(skill_id, skill_files)
-
-
 def get_bundled_skills_path() -> Path:
     """Get the path to bundled skills directory.
 
@@ -102,7 +91,7 @@ def _sync_single_skill(
         return
 
     # No existing skill — create new installed row
-    new_skill = storage.create_skill(
+    storage.create_skill_with_files(
         name=parsed.name,
         description=parsed.description,
         content=parsed.content,
@@ -119,8 +108,12 @@ def _sync_single_skill(
         always_apply=parsed.always_apply,
         injection_format=parsed.injection_format,
         source="installed",
+        files=(
+            _loaded_to_skill_files("", parsed.loaded_files)
+            if parsed.loaded_files is not None
+            else None
+        ),
     )
-    _persist_skill_files(storage, new_skill.id, parsed.loaded_files)
     result["synced"] += 1
 
 
@@ -135,33 +128,24 @@ def _handle_existing_gobby_skill(
     Restores soft-deleted skills and overwrites content from template.
     Preserves the user's enabled toggle.
     """
-    # Restore soft-deleted skills
-    if existing.deleted_at is not None:
-        storage.restore(existing.id)
-        storage.update_skill(
-            skill_id=existing.id,
-            description=parsed.description,
-            content=parsed.content,
-            version=parsed.version,
-            license=parsed.license,
-            compatibility=parsed.compatibility,
-            allowed_tools=parsed.allowed_tools,
-            metadata=parsed.metadata,
-            enabled=True,
-            always_apply=parsed.always_apply,
-            injection_format=parsed.injection_format,
-        )
-        logger.debug(
-            "Restored soft-deleted bundled skill",
-            extra={"skill_name": parsed.name, "path": str(parsed.source_path)},
-        )
-        _persist_skill_files(storage, existing.id, parsed.loaded_files)
-        result["updated"] += 1
-        return
+    skill_files = (
+        _loaded_to_skill_files(existing.id, parsed.loaded_files)
+        if parsed.loaded_files is not None
+        else None
+    )
+    existing_files = storage.get_skill_files(
+        existing.id, include_content=False, exclude_license=False
+    )
+    existing_hashes = {item.path: item.content_hash for item in existing_files}
+    incoming_hashes = (
+        {item.path: item.content_hash for item in parsed.loaded_files}
+        if parsed.loaded_files is not None
+        else existing_hashes
+    )
 
-    # Check if content changed
     needs_update = (
-        existing.description != parsed.description
+        existing.deleted_at is not None
+        or existing.description != parsed.description
         or existing.content != parsed.content
         or existing.version != parsed.version
         or existing.license != parsed.license
@@ -170,14 +154,15 @@ def _handle_existing_gobby_skill(
         or existing.metadata != parsed.metadata
         or existing.always_apply != parsed.always_apply
         or existing.injection_format != parsed.injection_format
+        or existing_hashes != incoming_hashes
     )
 
     if not needs_update:
         result["skipped"] += 1
         return
 
-    # Overwrite from template, preserving user's enabled toggle
-    storage.update_skill(
+    restoring = existing.deleted_at is not None
+    storage.update_skill_with_files(
         skill_id=existing.id,
         description=parsed.description,
         content=parsed.content,
@@ -186,11 +171,17 @@ def _handle_existing_gobby_skill(
         compatibility=parsed.compatibility,
         allowed_tools=parsed.allowed_tools,
         metadata=parsed.metadata,
-        enabled=existing.enabled,
+        enabled=True if restoring else existing.enabled,
         always_apply=parsed.always_apply,
         injection_format=parsed.injection_format,
+        clear_deleted_at=restoring,
+        files=skill_files,
     )
-    _persist_skill_files(storage, existing.id, parsed.loaded_files)
+    if restoring:
+        logger.debug(
+            "Restored soft-deleted bundled skill",
+            extra={"skill_name": parsed.name, "path": str(parsed.source_path)},
+        )
     result["updated"] += 1
 
 

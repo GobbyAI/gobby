@@ -360,6 +360,75 @@ Content
         assert skill.source_path == "/path/to/skill.md"
 
 
+@pytest.mark.parametrize(
+    ("runtime_yaml", "offending_key"),
+    [
+        ("runtime: nope", "metadata.gobby.runtime"),
+        ("runtime:\n      cli: []", "metadata.gobby.runtime.cli"),
+        ("runtime:\n      cli: {npm: '', version: 1.0.0, bin: impeccable}", "cli.npm"),
+        ("runtime:\n      cli: {npm: impeccable, version: '', bin: impeccable}", "cli.version"),
+        ("runtime:\n      cli: {npm: impeccable, version: 1.0.0, bin: ''}", "cli.bin"),
+        ("runtime:\n      node: ^22.18.0", "runtime.node"),
+        ("runtime:\n      skill_release: latest", "runtime.skill_release"),
+    ],
+)
+def test_malformed_runtime_cli_raises(runtime_yaml: str, offending_key: str) -> None:
+    text = f"""---
+name: runtime-test
+description: Runtime validation fixture
+metadata:
+  gobby:
+    {runtime_yaml}
+---
+Body
+"""
+
+    with pytest.raises(SkillParseError, match=offending_key.replace(".", r"\.")):
+        parse_skill_text(text)
+
+
+def test_valid_runtime_metadata_parses() -> None:
+    text = """---
+name: runtime-test
+description: Runtime validation fixture
+metadata:
+  gobby:
+    runtime:
+      node: ">=22.18.0"
+      cli: {npm: impeccable, version: 3.5.0, bin: impeccable}
+      skill_release: 4.0.4
+---
+Body
+"""
+
+    parsed = parse_skill_text(text)
+
+    assert parsed.metadata == {
+        "gobby": {
+            "runtime": {
+                "node": ">=22.18.0",
+                "cli": {"npm": "impeccable", "version": "3.5.0", "bin": "impeccable"},
+                "skill_release": "4.0.4",
+            }
+        }
+    }
+
+
+@pytest.mark.parametrize("runtime_yaml", ["", "runtime: {}", "runtime:\n      cli: {}"])
+def test_absent_runtime_metadata_keys_parse_unchanged(runtime_yaml: str) -> None:
+    text = f"""---
+name: runtime-test
+description: Runtime validation fixture
+metadata:
+  gobby:
+    {runtime_yaml}
+---
+Body
+"""
+
+    assert parse_skill_text(text).name == "runtime-test"
+
+
 class TestParsedSkillHelpers:
     """Tests for ParsedSkill helper methods."""
 
