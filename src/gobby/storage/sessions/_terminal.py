@@ -10,6 +10,7 @@ from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.session_models import Session
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.datetime import to_aware_utc, utc_now
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -222,6 +223,14 @@ class _TerminalMixin:
         current = self.get(session_id)
         if current is None or current.session_type != "terminal" or current.status == "deleted":
             return None
+        machine_id = require_machine_id()
+        if current.machine_id != machine_id:
+            raise MachineOwnershipMismatchError(
+                resource_kind="session",
+                resource_id=current.id,
+                owner_machine_id=current.machine_id,
+                current_machine_id=machine_id,
+            )
 
         now = utc_now()
         with self.db.transaction() as conn:
@@ -238,10 +247,19 @@ class _TerminalMixin:
                     sandbox_policy_hash = %s,
                     updated_at = %s
                 WHERE id = %s
+                  AND machine_id = %s
                   AND session_type = 'terminal'
                   AND status != 'deleted'
                 """,
-                (source, model, project_id, sandbox_policy_hash, now, session_id),
+                (
+                    source,
+                    model,
+                    project_id,
+                    sandbox_policy_hash,
+                    now,
+                    session_id,
+                    machine_id,
+                ),
             )
             if cursor.rowcount <= 0:
                 return None

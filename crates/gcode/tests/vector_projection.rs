@@ -107,7 +107,11 @@ fn ensure_creates_missing_and_reuses_compatible() {
     assert!(qdrant_requests[2].contains(r#""source_line_start":3"#));
     assert!(qdrant_requests[2].contains(r#""source_byte_end":40"#));
     assert!(qdrant_requests[3].contains("GET /collections/code_symbols_project-1 HTTP/1.1"));
-    assert!(!qdrant_requests[3].contains("DELETE"));
+    assert!(
+        qdrant_requests
+            .iter()
+            .all(|request| !request.contains("DELETE"))
+    );
     assert!(
         qdrant_requests[4]
             .contains("PUT /collections/code_symbols_project-1/points?wait=true HTTP/1.1")

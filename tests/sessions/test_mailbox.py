@@ -16,7 +16,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+from gobby.storage.sessions import SessionManager, system_session_id
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -49,7 +49,7 @@ def _register_session(
 ) -> Session:
     return session_manager.register(
         external_id=external_id,
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=project_id,
         title=external_id,
@@ -223,7 +223,7 @@ class TestMailboxDirectSend:
         recipient = _register_session(session_manager, sample_project["id"], "recipient")
 
         result = await _mailbox(temp_db, session_manager).send(
-            from_session_id=SYSTEM_SESSION_ID,
+            from_session_id=system_session_id(),
             target="session",
             target_id=recipient.id,
             project_id=sample_project["id"],
@@ -235,7 +235,7 @@ class TestMailboxDirectSend:
             "SELECT from_session, to_session, content FROM inter_session_messages"
         )
         assert row == {
-            "from_session": SYSTEM_SESSION_ID,
+            "from_session": system_session_id(),
             "to_session": recipient.id,
             "content": "System notice",
         }
@@ -255,7 +255,7 @@ class TestMailboxDirectSend:
 
         monkeypatch.setattr(mailbox, "_resolve_project_ref", resolve_project_ref)
 
-        assert mailbox._resolve_project_id(SYSTEM_SESSION_ID, "") == "resolved-project"
+        assert mailbox._resolve_project_id(system_session_id(), "") == "resolved-project"
         assert seen_refs == [""]
 
     @pytest.mark.asyncio

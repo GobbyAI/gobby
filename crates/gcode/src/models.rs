@@ -193,7 +193,9 @@ impl Symbol {
             parent_symbol_id: row
                 .try_get::<_, Option<Uuid>>("parent_symbol_id")?
                 .map(|id| id.to_string()),
-            file_content_hash: row.try_get("file_content_hash")?,
+            file_content_hash: row
+                .try_get::<_, Option<String>>("file_content_hash")?
+                .unwrap_or_default(),
             content_hash: row
                 .try_get::<_, Option<String>>("content_hash")?
                 .unwrap_or_default(),

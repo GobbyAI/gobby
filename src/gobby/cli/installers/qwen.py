@@ -133,6 +133,7 @@ def install_qwen(
         cli_name="qwen",
         hooks_dir=hooks_dir,
     )
+    # Qwen hook settings use milliseconds; Gobby installer configuration uses seconds.
     set_gobby_hook_timeouts(gobby_settings, timeout=hook_timeout_seconds * 1000)
 
     if "hooks" not in existing_settings:

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
@@ -52,7 +53,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         MockProjManager.return_value = mock_proj_instance
         mock_git.return_value = "abc123"
 
-        registry = create_task_registry(mock_task_manager)
+        registry: InternalToolRegistry = create_task_registry(mock_task_manager)
 
         now = datetime.now(UTC)
         mock_task = Task(

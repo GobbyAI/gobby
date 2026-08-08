@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::Context as _;
 use postgres::Client;
@@ -282,9 +283,9 @@ fn recent_content_hashes_in_git_history(
         );
     }
 
-    // --objects lists each blob once, so ping-ponging content versions cost one
-    // cat-file per unique blob instead of one git show per revision.
-    let mut hashes = HashSet::new();
+    // --objects lists each blob once, so ping-ponging content versions are
+    // deduplicated before one filtered batch is read.
+    let mut requests = Vec::new();
     for line in String::from_utf8(objects.stdout)?.lines() {
         let Some((object_id, path)) = line.split_once(' ') else {
             continue;
@@ -292,17 +293,68 @@ fn recent_content_hashes_in_git_history(
         if path != file_path {
             continue;
         }
-        let blob = Command::new("git")
-            .arg("-C")
-            .arg(root_path)
-            .args(["cat-file", "blob", object_id])
-            .output()
-            .with_context(|| format!("read git blob {object_id} for {file_path}"))?;
-        if blob.status.success() {
-            hashes.insert(hasher::content_hash(&blob.stdout));
-        }
+        requests.push(object_id.to_string());
     }
-    Ok(hashes)
+    if requests.is_empty() {
+        return Ok(HashSet::new());
+    }
+
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(root_path)
+        .args(["cat-file", "--batch", "--filters"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("start filtered git blob batch for {file_path}"))?;
+    let mut stdin = child.stdin.take().context("open git cat-file stdin")?;
+    let request_input = requests
+        .iter()
+        .map(|object_id| format!("{object_id} {file_path}\n"))
+        .collect::<String>();
+    let writer = std::thread::spawn(move || stdin.write_all(request_input.as_bytes()));
+    let stdout = child.stdout.take().context("open git cat-file stdout")?;
+    let mut reader = BufReader::new(stdout);
+    let parsed = (|| -> anyhow::Result<HashSet<String>> {
+        let mut hashes = HashSet::new();
+        for object_id in &requests {
+            let mut header = String::new();
+            if reader.read_line(&mut header)? == 0 {
+                anyhow::bail!("git cat-file ended before returning blob {object_id}");
+            }
+            let fields = header.split_whitespace().collect::<Vec<_>>();
+            if fields.len() != 3 || fields[1] != "blob" {
+                anyhow::bail!("unexpected git cat-file response for {object_id}: {header:?}");
+            }
+            let size = fields[2]
+                .parse::<usize>()
+                .with_context(|| format!("parse git blob size for {object_id}"))?;
+            let mut blob = vec![0; size];
+            reader.read_exact(&mut blob)?;
+            let mut delimiter = [0_u8; 1];
+            reader.read_exact(&mut delimiter)?;
+            if delimiter[0] != b'\n' {
+                anyhow::bail!("git cat-file blob {object_id} lacked a trailing newline delimiter");
+            }
+            hashes.insert(hasher::content_hash(&blob));
+        }
+        Ok(hashes)
+    })();
+    writer
+        .join()
+        .map_err(|_| anyhow::anyhow!("git cat-file input writer panicked"))?
+        .context("write git cat-file batch input")?;
+    let output = child
+        .wait_with_output()
+        .context("wait for git cat-file batch")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git cat-file failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    parsed
 }
 
 #[cfg(test)]

@@ -32,7 +32,14 @@ mod serial_db {
             &indexed_file(&project_id, rel, "file-hash", 1, 16),
         )
         .expect("seed indexed file");
-        let mut symbol = test_symbol(&project_id, rel, "tracked", 0, "content-hash-v1");
+        let mut symbol = test_symbol(
+            &project_id,
+            rel,
+            "file-hash",
+            "tracked",
+            0,
+            "content-hash-v1",
+        );
         symbol.summary = Some("daemon summary".to_string());
         assert_eq!(
             api::upsert_symbols(&mut conn, &[symbol.clone()]).expect("insert symbol"),
@@ -256,6 +263,55 @@ mod serial_db {
         not(gcode_postgres_tests),
         ignore = "requires a PostgreSQL test database URL"
     )]
+    fn incomplete_projection_content_version_is_not_adopted() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_id = unique_test_project_id("gcode-api-incomplete-adoption");
+        let machine_id = unique_test_project_id("gcode-api-incomplete-adoption-machine");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean test project rows");
+        let _cleanup = ProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        seed_project_for_machine(&mut conn, &machine_id, &project_id);
+
+        let file = indexed_file(&project_id, "src/lib.rs", "file-hash", 1, 16);
+        api::upsert_file(&mut conn, &file).expect("seed incomplete content version");
+        assert!(
+            !api::adopt_file_state(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                &file.content_hash,
+            )
+            .expect("reject incomplete adoption")
+        );
+
+        conn.execute(
+            "UPDATE code_indexed_files
+             SET graph_synced = TRUE, vectors_synced = TRUE
+             WHERE id = $1",
+            &[&uuid::Uuid::parse_str(&file.id).expect("valid file id")],
+        )
+        .expect("complete projection state");
+        assert!(
+            api::adopt_file_state(
+                &mut conn,
+                &machine_id,
+                &project_id,
+                &file.file_path,
+                &file.content_hash,
+            )
+            .expect("adopt complete content version")
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
     fn api_upsert_imports_and_calls_report_rows_inserted_not_input_len() {
         let (mut conn, database_url) = connect_test_db();
         let project_id = unique_test_project_id("gcode-api-relation-upsert");
@@ -377,6 +433,7 @@ fn indexed_file(
 fn test_symbol(
     project_id: &str,
     file_path: &str,
+    file_content_hash: &str,
     name: &str,
     byte_start: usize,
     content_hash: &str,
@@ -385,7 +442,7 @@ fn test_symbol(
         id: Symbol::make_id(
             project_id,
             file_path,
-            "file-hash",
+            file_content_hash,
             name,
             "function",
             byte_start,
@@ -403,7 +460,7 @@ fn test_symbol(
         signature: Some(format!("fn {name}()")),
         docstring: None,
         parent_symbol_id: None,
-        file_content_hash: "file-hash".to_string(),
+        file_content_hash: file_content_hash.to_string(),
         content_hash: content_hash.to_string(),
         summary: None,
         created_at: String::new(),

@@ -1,7 +1,8 @@
 """Tests for git worktree operations manager."""
 
 import subprocess
-from unittest.mock import Mock, patch
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
@@ -238,6 +239,28 @@ class TestWorktreeGitManagerCreateWorktree:
 
         assert result.success is False
         assert "already exists" in result.message
+
+    @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
+    @patch("subprocess.run")
+    def test_create_rejects_remote_base_before_side_effects(
+        self,
+        mock_run: MagicMock,
+        manager: WorktreeGitManager,
+        tmp_path: Path,
+        base_branch: str,
+    ) -> None:
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+
+        result = manager.create_worktree(
+            worktree_path,
+            "feature/test",
+            base_branch=base_branch,
+        )
+
+        assert result.success is False
+        assert result.error == "remote_base_branch_not_allowed"
+        assert not worktree_path.parent.exists()
+        mock_run.assert_not_called()
 
     @patch("subprocess.run")
     def test_create_with_new_branch(self, mock_run, manager, tmp_path) -> None:
@@ -484,6 +507,30 @@ class TestWorktreeGitManagerDeleteWorktree:
 
         assert result.success is False
         assert result.error == "branch_deletion_requires_base_branch"
+        assert worktree_path.exists()
+        mock_run.assert_not_called()
+
+    @pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
+    @patch("subprocess.run")
+    def test_delete_rejects_remote_merge_proof_before_side_effects(
+        self,
+        mock_run: MagicMock,
+        manager: WorktreeGitManager,
+        tmp_path: Path,
+        base_branch: str,
+    ) -> None:
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
+
+        result = manager.delete_worktree(
+            worktree_path,
+            delete_branch=True,
+            branch_name="feature/test",
+            base_branch=base_branch,
+        )
+
+        assert result.success is False
+        assert result.error == "remote_base_branch_not_allowed"
         assert worktree_path.exists()
         mock_run.assert_not_called()
 

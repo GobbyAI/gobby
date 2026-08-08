@@ -13,6 +13,7 @@ Contains task-related Pydantic config models:
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
 
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -553,7 +554,7 @@ class WorkflowConfig(BaseModel):
     )
     timeout: float = Field(
         default=DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
-        description="Positive timeout in seconds for workflow execution",
+        description="Finite workflow timeout in seconds; zero selects the default",
     )
     debug_echo_context: bool = Field(
         default=False,
@@ -563,9 +564,11 @@ class WorkflowConfig(BaseModel):
     @field_validator("timeout")
     @classmethod
     def validate_timeout(cls, v: float) -> float:
-        """Reject non-positive workflow timeouts."""
-        if v <= 0:
-            raise ValueError("Timeout must be positive")
+        """Normalize the bundled zero sentinel and reject invalid deadlines."""
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("Timeout must be finite and non-negative")
+        if v == 0:
+            return DEFAULT_WORKFLOW_TIMEOUT_SECONDS
         return v
 
 

@@ -97,7 +97,7 @@ pub(super) fn clamp_limit(limit: usize) -> usize {
 }
 
 pub(super) fn clamp_offset(offset: usize) -> usize {
-    typed_query::clamp_offset(offset, MAX_GRAPH_LIMIT)
+    offset
 }
 pub(in crate::graph::code_graph) fn dedupe_limited_blast_rows(
     mut rows: Vec<Row>,

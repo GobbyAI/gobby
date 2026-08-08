@@ -138,6 +138,7 @@ step_variables:
   merge_worker_ready_to_terminate: false
   merge_succeeded: false
   worktree_cleanup_done: false
+  worktree_cleanup_failures: 0
 
 workflows:
   rule_selectors:
@@ -312,11 +313,11 @@ steps:
          reports the branch or record as not merged, call
          gobby-worktrees:mark_worktree_merged with the worktree_id, then
          retry delete_worktree once.
-      2. If delete_worktree still refuses (for example files created during
-         the merge), do NOT use force flags. Call mcp__gobby__set_variable
-         with variable="worktree_cleanup_done" and value=true, and report the
-         refusal reason in your final output — the stale-worktree detector
-         will surface the leftover.
+      2. If delete_worktree refuses or fails, do not use force flags. Retry
+         cleanup until three delete_worktree attempts have failed. After the
+         third failure the workflow transitions to terminate; report the last
+         refusal reason in your final output so the stale-worktree detector
+         can surface the leftover.
 
       CLONE (no worktree_id): clone cleanup is handled by the coordinator.
       Call mcp__gobby__set_variable with variable="worktree_cleanup_done" and
@@ -342,9 +343,23 @@ steps:
         action: set_variable
         variable: worktree_cleanup_done
         value: true
+      - server: gobby-worktrees
+        tool: delete_worktree
+        when: "not bool(tool_output.get('success'))"
+        action: set_variable
+        variable: worktree_cleanup_failures
+        value: "vars.get('worktree_cleanup_failures', 0) + 1"
+    on_mcp_error:
+      - server: gobby-worktrees
+        tool: delete_worktree
+        action: set_variable
+        variable: worktree_cleanup_failures
+        value: "vars.get('worktree_cleanup_failures', 0) + 1"
     transitions:
       - to: terminate
         when: "vars.worktree_cleanup_done"
+      - to: terminate
+        when: "vars.get('worktree_cleanup_failures', 0) >= 3"
 
   - name: terminate
     description: "Safety net: self-terminate via gobby-agents:end_agent_run"

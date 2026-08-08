@@ -164,10 +164,9 @@ fn normalized_components(path: &Path) -> Vec<OsString> {
 pub(super) fn relative_path(path: &Path, root: &Path) -> anyhow::Result<String> {
     let abs = path.canonicalize()?;
     let root_abs = root.canonicalize()?;
-    Ok(abs
-        .strip_prefix(&root_abs)?
-        .to_string_lossy()
-        .replace('\\', "/"))
+    Ok(crate::index::normalize_storage_path(
+        abs.strip_prefix(&root_abs)?,
+    ))
 }
 
 pub(super) fn epoch_secs_str() -> String {

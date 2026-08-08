@@ -15,7 +15,7 @@ import pytest
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
-from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+from gobby.storage.sessions import SessionManager, system_session_external_id, system_session_id
 from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _session_metadata_update as session_metadata_update
 from gobby.storage.sessions import _upsert as session_upsert
@@ -720,10 +720,10 @@ class TestSessionManagerRegistration:
         sample_project: dict,
     ) -> None:
         """Register self-heals the system parent row before inserting children."""
-        session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
+        session_manager.db.execute("DELETE FROM sessions WHERE id = %s", (system_session_id(),))
         assert (
             session_manager.db.fetchone(
-                "SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,)
+                "SELECT id FROM sessions WHERE id = %s", (system_session_id(),)
             )
             is None
         )
@@ -733,17 +733,17 @@ class TestSessionManagerRegistration:
             machine_id=LOCAL_MACHINE_ID,
             source="pipeline",
             project_id=sample_project["id"],
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
         )
 
         repaired = session_manager.db.fetchone(
             "SELECT id, external_id, source FROM sessions WHERE id = %s",
-            (SYSTEM_SESSION_ID,),
+            (system_session_id(),),
         )
         assert repaired is not None
-        assert repaired["external_id"] == "system"
+        assert repaired["external_id"] == system_session_external_id()
         assert repaired["source"] == "system"
-        assert session.parent_session_id == SYSTEM_SESSION_ID
+        assert session.parent_session_id == system_session_id()
 
     def test_register_session_has_stats_columns(
         self,
@@ -883,7 +883,7 @@ class TestSessionManagerRegistration:
             (session.id,),
         )
         assert row is not None
-        assert row["transcript_processed"] == 1
+        assert row["transcript_processed"] is True
 
     def test_expired_cache_mapping_cannot_route_to_detached_duplicate(
         self,

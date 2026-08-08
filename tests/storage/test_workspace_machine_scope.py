@@ -18,6 +18,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 
+pytestmark = pytest.mark.integration
+
 
 def _insert_machine(db: HubDatabase, machine_id: str) -> None:
     db.execute(

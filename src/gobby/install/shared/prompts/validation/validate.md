@@ -67,5 +67,6 @@ Return only one JSON object:
 "gap":null|"one actionable gap"}],"feedback":"short overall assessment"}
 
 Use each numbered criterion index once. Return `valid` when the work is coherent
-with all criteria. Return `invalid` only for a concrete implementation gap and
-make every gap directly actionable.
+with all criteria. Return `invalid` for a concrete implementation gap or a
+disposition justification that is missing, vague, or contradicted. Make every
+gap directly actionable.

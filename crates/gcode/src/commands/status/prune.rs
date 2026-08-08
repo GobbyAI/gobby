@@ -147,16 +147,10 @@ fn prune_project_scoped(
         return Ok(());
     }
     let stale_totals = mutate_stale_projects(&discovery);
+    print_reconcile_totals("Stale project reconciliation", &stale_totals);
     let content_gc_totals =
         prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
-    print_reconcile_totals("Stale project reconciliation", &stale_totals);
-    eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
-        content_gc_totals.deleted_versions,
-        content_gc_totals.deleted_symbols,
-        content_gc_totals.busy_projects,
-        content_gc_totals.failed_versions,
-    );
+    print_content_gc_totals(&content_gc_totals);
     if stale_totals.has_failures() || content_gc_totals.failed_versions > 0 {
         anyhow::bail!(
             "gcode prune completed with {} reconciliation failure(s)",
@@ -174,20 +168,13 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
         return Ok(());
     }
 
-    let stale_totals = mutate_stale_projects(&discovery);
-    let content_gc_totals =
-        prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
     let collection_totals = mutate_orphan_collections(&discovery);
     let graph_totals = mutate_orphan_graph_scopes(&discovery);
-
+    let stale_totals = mutate_stale_projects(&discovery);
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
-    eprintln!(
-        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
-        content_gc_totals.deleted_versions,
-        content_gc_totals.deleted_symbols,
-        content_gc_totals.busy_projects,
-        content_gc_totals.failed_versions,
-    );
+    let content_gc_totals =
+        prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
+    print_content_gc_totals(&content_gc_totals);
     print_optional_reconcile_totals(
         "Qdrant collection reconciliation",
         discovery.services.qdrant.is_some(),
@@ -226,6 +213,16 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
         anyhow::bail!("gcode prune completed with {failed} reconciliation failure(s)");
     }
     Ok(())
+}
+
+fn print_content_gc_totals(totals: &super::content_gc::ContentGcTotals) {
+    eprintln!(
+        "Content GC: {} version(s), {} symbol(s) deleted, {} busy project(s), {} failed version(s)",
+        totals.deleted_versions,
+        totals.deleted_symbols,
+        totals.busy_projects,
+        totals.failed_versions,
+    );
 }
 
 fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<GlobalPruneDiscovery> {

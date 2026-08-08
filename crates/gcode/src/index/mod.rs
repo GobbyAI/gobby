@@ -11,6 +11,18 @@ pub mod security;
 pub mod semantic;
 pub mod walker;
 
+pub(crate) fn normalize_storage_path(path: &std::path::Path) -> String {
+    let path = path.to_string_lossy();
+    #[cfg(windows)]
+    {
+        path.replace('\\', "/")
+    }
+    #[cfg(not(windows))]
+    {
+        path.into_owned()
+    }
+}
+
 /// Maximum file size to index (10 MB).
 pub(crate) const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 
@@ -23,3 +35,17 @@ pub(crate) const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
 /// (`Cargo.lock`, `package.json`, CI YAML) stay well under 1 MiB and keep their
 /// per-key symbols (gobby-cli #678).
 pub(crate) const MAX_DATA_LANGUAGE_AST_SIZE: u64 = 1024 * 1024;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(not(windows))]
+    fn storage_path_preserves_unix_filename_backslashes() {
+        let path = std::path::Path::new(r"src/name\with-backslash.rs");
+
+        assert_eq!(
+            super::normalize_storage_path(path),
+            r"src/name\with-backslash.rs"
+        );
+    }
+}

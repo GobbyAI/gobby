@@ -60,6 +60,27 @@ class TestInstallClaude:
         home.mkdir()
         return home
 
+    @pytest.mark.parametrize("hook_timeout_seconds", [0, -1])
+    def test_rejects_nonpositive_hook_timeout_before_filesystem_changes(
+        self,
+        hook_timeout_seconds: int,
+    ) -> None:
+        from gobby.cli.installers.claude import install_claude
+
+        with (
+            patch("gobby.cli.installers.claude.get_install_dir") as get_install_dir,
+            patch.object(Path, "mkdir") as mkdir,
+        ):
+            result = install_claude(
+                Path("/unused/project"),
+                hook_timeout_seconds=hook_timeout_seconds,
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "hook_timeout_seconds must be positive"
+        get_install_dir.assert_not_called()
+        mkdir.assert_not_called()
+
     @patch("gobby.cli.installers.claude.install_global_hooks")
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.install_shared_content")

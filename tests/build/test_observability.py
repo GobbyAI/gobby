@@ -36,12 +36,13 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     from gobby.build.observability import get_build_status
     from gobby.failure_categories import FailureCategory
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
     from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
 
     project_id = _project(temp_db)
+    ensure_system_session(temp_db)
     manager = LocalTaskManager(temp_db)
     task = _automated_task(temp_db, project_id)
     manager.lifecycle_events.record_lifecycle_event(
@@ -67,7 +68,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
         base_commit_sha="abc123",
     )
     LocalAgentRunManager(temp_db).create(
-        parent_session_id=SYSTEM_SESSION_ID,
+        parent_session_id=system_session_id(),
         provider="codex",
         prompt="work",
         agent_name="backend-developer",
@@ -153,13 +154,14 @@ def test_get_build_status_reports_invalid_integration_worktree_artifact(
 def test_get_build_status_reports_active_run_expired_mutex_lease(temp_db) -> None:
     from gobby.build.observability import explain_dispatch, get_build_status
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
+    ensure_system_session(temp_db)
     project_id = _project(temp_db, "observability-active-expired")
     task = _automated_task(temp_db, project_id)
     run = LocalAgentRunManager(temp_db).create(
-        parent_session_id=SYSTEM_SESSION_ID,
+        parent_session_id=system_session_id(),
         provider="codex",
         prompt="work",
         agent_name="backend-developer",
@@ -554,16 +556,17 @@ def test_list_build_history_resolves_task_refs(temp_db) -> None:
 
 def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> None:
     from gobby.build.observability import explain_dispatch
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
+    ensure_system_session(temp_db)
     project_id = _project(temp_db, "observability-explain")
     manager = LocalTaskManager(temp_db)
     disabled = _automated_task(temp_db, project_id, "Disabled")
     manager.update_task(disabled.id, allow_automation=False)
     claimed = _automated_task(temp_db, project_id, "Claimed")
-    manager.claim_task(claimed.id, SYSTEM_SESSION_ID)
+    manager.claim_task(claimed.id, system_session_id())
     mutexed = _automated_task(temp_db, project_id, "Mutexed")
     TaskDispatchMutexManager(temp_db).acquire_mutex(
         mutexed.id,

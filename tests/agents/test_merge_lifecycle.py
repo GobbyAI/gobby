@@ -61,7 +61,13 @@ def _create_session(
         "INSERT INTO sessions "
         "(id, external_id, machine_id, source, project_id, created_at, updated_at) "
         "VALUES (%s, %s, %s, %s, %s, NOW(), NOW()) ON CONFLICT (id) DO NOTHING",
-        (session_id, "ext-1", "21000000-0000-4000-8000-000000000001", "claude", "11111111-1111-4111-8111-111111110001"),
+        (
+            session_id,
+            "ext-1",
+            "21000000-0000-4000-8000-000000000001",
+            "claude",
+            "11111111-1111-4111-8111-111111110001",
+        ),
     )
 
 
@@ -112,6 +118,7 @@ def _mcp_event(
     *,
     event_type: HookEventType,
     arguments: dict[str, Any] | None = None,
+    tool_output: dict[str, Any] | None = None,
     session_id: str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
     is_error: bool = False,
 ) -> HookEvent:
@@ -126,6 +133,8 @@ def _mcp_event(
     }
     if is_error:
         data["is_error"] = True
+    if tool_output is not None:
+        data["tool_output"] = tool_output
     return HookEvent(
         event_type=event_type,
         session_id=session_id,
@@ -305,6 +314,26 @@ def test_merge_worker_allows_end_agent_run_only_in_terminate_step() -> None:
     assert terminate["allowed_mcp_tools"] == ["gobby-agents:end_agent_run"]
 
 
+def test_merge_worker_retries_worktree_cleanup_three_times_before_termination() -> None:
+    agent = _agent("merge-worker")
+    cleanup = _step(agent, "cleanup")
+
+    assert agent["step_variables"]["worktree_cleanup_failures"] == 0
+    failure_updates = [
+        update
+        for update in [*cleanup["on_mcp_success"], *cleanup["on_mcp_error"]]
+        if update.get("variable") == "worktree_cleanup_failures"
+    ]
+    assert len(failure_updates) == 2
+    assert all(
+        update["value"] == "vars.get('worktree_cleanup_failures', 0) + 1"
+        for update in failure_updates
+    )
+    assert {(transition["to"], transition["when"]) for transition in cleanup["transitions"]} >= {
+        ("terminate", "vars.get('worktree_cleanup_failures', 0) >= 3")
+    }
+
+
 @pytest.mark.asyncio
 async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: HubDatabase) -> None:
     db = temp_db
@@ -379,7 +408,7 @@ async def test_merge_worker_tool_failure_without_durable_result_stays_in_merge(
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_success_waits_for_issue_close_before_terminate(
+async def test_merge_worker_success_waits_for_issue_close_then_cleanup(
     temp_db: HubDatabase,
 ) -> None:
     db = temp_db
@@ -413,11 +442,25 @@ async def test_merge_worker_success_waits_for_issue_close_before_terminate(
 
     instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
+    assert instance.current_step == "cleanup"
+
+    await engine.evaluate(
+        _mcp_event(
+            "gobby-worktrees:delete_worktree",
+            event_type=HookEventType.AFTER_TOOL,
+            tool_output={"success": True},
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    assert instance is not None
     assert instance.current_step == "terminate"
 
 
 @pytest.mark.asyncio
-async def test_merge_worker_issue_close_error_after_durable_result_terminates(
+async def test_merge_worker_issue_close_error_after_durable_result_enters_cleanup(
     temp_db: HubDatabase,
 ) -> None:
     instance_manager = _install_merge_worker_workflow(temp_db)
@@ -445,7 +488,7 @@ async def test_merge_worker_issue_close_error_after_durable_result_terminates(
 
     instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
-    assert instance.current_step == "terminate"
+    assert instance.current_step == "cleanup"
     assert instance.variables["merge_result_recorded"] is True
 
 

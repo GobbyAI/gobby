@@ -134,6 +134,7 @@ class MemoryRecallConfig(FeatureDefaultConfig):
     timeout: int = Field(
         default=60,
         gt=0,
+        le=89,
         description="Timeout in seconds for the FEATURE_LOW substantive classifier.",
     )
     candidate_limit: int = Field(

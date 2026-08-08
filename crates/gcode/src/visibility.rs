@@ -76,7 +76,13 @@ pub(super) fn local_machine_uuid() -> anyhow::Result<Uuid> {
 }
 
 pub(super) fn local_machine_uuid_or_invisible() -> Option<Uuid> {
-    local_machine_uuid().ok()
+    match local_machine_uuid() {
+        Ok(machine_id) => Some(machine_id),
+        Err(error) => {
+            log::warn!("local machine identity is unavailable; results are invisible: {error:#}");
+            None
+        }
+    }
 }
 
 /// SQL condition restricting `row_alias` rows to the content versions selected
@@ -468,6 +474,15 @@ pub fn filter_visible_graph_results(
         .into_iter()
         .map(|symbol| symbol.id)
         .collect::<HashSet<_>>();
+    let path_candidates = results
+        .iter()
+        .filter(|result| db::id_param(&result.id).is_err())
+        .map(|result| result.file_path.clone())
+        .filter(|path| !path.is_empty())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let visible_paths = visible_graph_paths(conn, ctx, &path_candidates)?;
 
     Ok(results
         .into_iter()
@@ -475,10 +490,92 @@ pub fn filter_visible_graph_results(
             if db::id_param(&result.id).is_ok() {
                 visible_ids.contains(&result.id)
             } else {
-                !result.file_path.is_empty() && indexed_file_exists(conn, ctx, &result.file_path)
+                visible_paths.contains(&result.file_path)
             }
         })
         .collect())
+}
+
+fn visible_graph_paths(
+    conn: &mut Client,
+    ctx: &Context,
+    file_paths: &[String],
+) -> anyhow::Result<HashSet<String>> {
+    if file_paths.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return Ok(HashSet::new());
+    };
+    let rows = match &ctx.index_scope {
+        ProjectIndexScope::Single => {
+            let Some(project_id) = project_uuid_or_invisible(&ctx.project_id) else {
+                return Ok(HashSet::new());
+            };
+            let active = machine_state_condition("f", "content_hash", "$1");
+            conn.query(
+                &format!(
+                    "SELECT DISTINCT f.file_path
+                     FROM code_indexed_files f
+                     WHERE f.project_id = $2
+                       AND f.file_path = ANY($3)
+                       AND f.language != $4
+                       AND {active}"
+                ),
+                &[&machine_id, &project_id, &file_paths, &TOMBSTONE_LANGUAGE],
+            )?
+        }
+        ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => {
+            let (Some(overlay_project_id), Some(parent_project_id)) = (
+                project_uuid_or_invisible(overlay_project_id),
+                project_uuid_or_invisible(parent_project_id),
+            ) else {
+                return Ok(HashSet::new());
+            };
+            let overlay_active = machine_state_condition("of", "content_hash", "$1");
+            let parent_active = machine_state_condition("pf", "content_hash", "$1");
+            conn.query(
+                &format!(
+                    "SELECT of.file_path
+                     FROM code_indexed_files of
+                     WHERE of.project_id = $2
+                       AND of.file_path = ANY($4)
+                       AND of.language != $5
+                       AND {overlay_active}
+                     UNION
+                     SELECT pf.file_path
+                     FROM code_indexed_files pf
+                     WHERE pf.project_id = $3
+                       AND pf.file_path = ANY($4)
+                       AND pf.language != $5
+                       AND {parent_active}
+                       AND NOT EXISTS (
+                           SELECT 1 FROM code_indexed_file_states shadow
+                           WHERE shadow.machine_id = $1
+                             AND shadow.project_id = $2
+                             AND shadow.file_path = pf.file_path
+                       )"
+                ),
+                &[
+                    &machine_id,
+                    &overlay_project_id,
+                    &parent_project_id,
+                    &file_paths,
+                    &TOMBSTONE_LANGUAGE,
+                ],
+            )?
+        }
+    };
+    rows.into_iter()
+        .map(|row| {
+            row.try_get::<_, String>("file_path")
+                .map_err(anyhow::Error::from)
+        })
+        .collect()
 }
 
 pub(crate) fn filter_visible_symbols(
@@ -537,7 +634,11 @@ fn indexed_file_states(
         return Ok(HashMap::new());
     }
 
-    let machine_id = local_machine_uuid()?;
+    // Unresolvable local identity makes every candidate invisible. Returning
+    // an empty map keeps that contract explicit for all in-memory filtering.
+    let Some(machine_id) = local_machine_uuid_or_invisible() else {
+        return Ok(HashMap::new());
+    };
     let rows = conn.query(
         "SELECT fs.project_id, fs.file_path, fs.content_hash, f.language
          FROM code_indexed_file_states fs
@@ -672,41 +773,35 @@ fn query_overlay_symbols_for_files(
 
 fn symbols_for_files_sql() -> String {
     let columns = db::symbol_select_columns("cs");
+    let machine_state = machine_state_condition("cs", "file_content_hash", "$1");
     format!(
         "SELECT {columns}
          FROM code_symbols cs
-         JOIN code_indexed_file_states fs
-           ON fs.project_id = cs.project_id
-          AND fs.file_path = cs.file_path
-          AND fs.content_hash = cs.file_content_hash
          JOIN code_indexed_files cf
-           ON cf.project_id = fs.project_id
-          AND cf.file_path = fs.file_path
-          AND cf.content_hash = fs.content_hash
-         WHERE fs.machine_id = $1
-           AND cs.project_id = $2
+           ON cf.project_id = cs.project_id
+          AND cf.file_path = cs.file_path
+          AND cf.content_hash = cs.file_content_hash
+         WHERE cs.project_id = $2
            AND cs.file_path = ANY($3)
            AND cf.language != $4
+           AND {machine_state}
          ORDER BY cs.file_path, cs.line_start, cs.byte_start"
     )
 }
 
 fn overlay_symbols_for_files_sql() -> String {
     let columns = db::symbol_select_columns("cs");
+    let machine_state = machine_state_condition("cs", "file_content_hash", "$1");
     format!(
         "SELECT {columns}
          FROM code_symbols cs
-         JOIN code_indexed_file_states fs
-           ON fs.project_id = cs.project_id
-          AND fs.file_path = cs.file_path
-          AND fs.content_hash = cs.file_content_hash
          JOIN code_indexed_files cf
-           ON cf.project_id = fs.project_id
-          AND cf.file_path = fs.file_path
-          AND cf.content_hash = fs.content_hash
-         WHERE fs.machine_id = $1
-           AND cs.file_path = ANY($4)
+           ON cf.project_id = cs.project_id
+          AND cf.file_path = cs.file_path
+          AND cf.content_hash = cs.file_content_hash
+         WHERE cs.file_path = ANY($4)
            AND cf.language != $5
+           AND {machine_state}
            AND (
                cs.project_id = $2
                OR (

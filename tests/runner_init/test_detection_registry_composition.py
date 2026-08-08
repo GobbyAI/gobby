@@ -17,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.unit
 def test_one_registry_across_all_roots(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,

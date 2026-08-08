@@ -318,7 +318,7 @@ mod serial_db {
         seed_project_with_child_rows(&mut conn, &unrelated_orphan_id, false);
 
         let stale_context = prune_test_context(database_url.clone(), &target_stale_id, false);
-        let stale_discovery = discover_project_scoped_records(&stale_context, 30)
+        let stale_discovery = discover_project_scoped_records(&stale_context, 17)
             .expect("discover target stale project");
         assert_eq!(
             stale_discovery
@@ -330,7 +330,7 @@ mod serial_db {
         );
 
         let orphan_context = prune_test_context(database_url, &target_orphan_id, false);
-        let orphan_discovery = discover_project_scoped_records(&orphan_context, 30)
+        let orphan_discovery = discover_project_scoped_records(&orphan_context, 17)
             .expect("discover target orphan project");
         assert!(orphan_discovery.stale_projects.is_empty());
     }

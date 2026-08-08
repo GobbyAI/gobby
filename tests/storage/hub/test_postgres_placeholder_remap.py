@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import ClassVar
 
 import pytest
@@ -431,8 +431,10 @@ class _FakePostgresConnection:
         self.execute_calls.append((sql, params))
         return object()
 
-    def executemany(self, sql: str, rows) -> None:
-        self.executemany_calls.append((sql, [tuple(row) for row in rows]))
+    def executemany(self, sql: str, rows) -> SimpleNamespace:
+        materialized = [tuple(row) for row in rows]
+        self.executemany_calls.append((sql, materialized))
+        return SimpleNamespace(rowcount=len(materialized))
 
 
 def test_postgres_transaction_execute_passes_sql_and_params_directly() -> None:
@@ -461,7 +463,7 @@ def test_postgres_transaction_executemany_passes_rows_directly() -> None:
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
 
-    tx.executemany(
+    cursor = tx.executemany(
         "INSERT INTO direct_rows (a, b) VALUES (%s, %s)",
         [("left", "right"), ("first", "second")],
     )
@@ -472,6 +474,7 @@ def test_postgres_transaction_executemany_passes_rows_directly() -> None:
             [("left", "right"), ("first", "second")],
         )
     ]
+    assert cursor.rowcount == 2
 
 
 def test_postgres_transaction_executemany_empty_rows_skips_driver() -> None:

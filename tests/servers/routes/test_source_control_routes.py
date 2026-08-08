@@ -1498,7 +1498,9 @@ class TestWorktreeStats:
 
 
 class TestDeleteWorktree:
-    def test_foreign_worktree_returns_conflict_without_effects(self, client, mock_server) -> None:
+    def test_foreign_worktree_returns_conflict_without_effects(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_storage = MagicMock()
         mock_storage.get.side_effect = MachineOwnershipMismatchError(
             resource_kind="worktree",
@@ -1736,6 +1738,27 @@ class TestCleanupWorktrees:
 
 
 class TestSyncWorktree:
+    def test_foreign_worktree_returns_conflict_before_sync(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_storage = MagicMock()
+        mock_storage.get.side_effect = MachineOwnershipMismatchError(
+            resource_kind="worktree",
+            resource_id="10000000-0000-4000-8000-000000000001",
+            owner_machine_id="20000000-0000-4000-8000-000000000002",
+            current_machine_id="20000000-0000-4000-8000-000000000001",
+        )
+        mock_server.services.worktree_storage = mock_storage
+        mock_server.services.git_manager = MagicMock()
+
+        response = client.post(
+            "/api/source-control/worktrees/10000000-0000-4000-8000-000000000001/sync"
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "machine_ownership_mismatch"
+        mock_server.services.git_manager.sync_from_main.assert_not_called()
+
     def test_sync_no_storage(self, client, mock_server) -> None:
         mock_server.services.worktree_storage = None
         response = client.post("/api/source-control/worktrees/wt-1/sync")
@@ -1831,7 +1854,9 @@ class TestListClones:
 
 
 class TestDeleteClone:
-    def test_foreign_clone_returns_conflict_without_effects(self, client, mock_server) -> None:
+    def test_foreign_clone_returns_conflict_without_effects(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
         mock_storage = MagicMock()
         mock_storage.get.side_effect = MachineOwnershipMismatchError(
             resource_kind="clone",
@@ -1892,6 +1917,26 @@ class TestDeleteClone:
 
 
 class TestSyncClone:
+    def test_foreign_clone_returns_conflict_before_sync(
+        self, client: TestClient, mock_server: MagicMock
+    ) -> None:
+        mock_storage = MagicMock()
+        mock_storage.get.side_effect = MachineOwnershipMismatchError(
+            resource_kind="clone",
+            resource_id="10000000-0000-4000-8000-000000000002",
+            owner_machine_id="20000000-0000-4000-8000-000000000002",
+            current_machine_id="20000000-0000-4000-8000-000000000001",
+        )
+        mock_server.services.clone_storage = mock_storage
+
+        response = client.post(
+            "/api/source-control/clones/10000000-0000-4000-8000-000000000002/sync"
+        )
+
+        assert response.status_code == 409
+        assert response.json()["detail"]["error_code"] == "machine_ownership_mismatch"
+        mock_storage.record_sync.assert_not_called()
+
     def test_sync_no_storage(self, client, mock_server) -> None:
         mock_server.services.clone_storage = None
         response = client.post("/api/source-control/clones/clone-1/sync")

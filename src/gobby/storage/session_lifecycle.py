@@ -16,7 +16,7 @@ from gobby.sessions.status_events import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
-from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS, SYSTEM_SESSION_ID
+from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS, SYSTEM_SESSION_SOURCE
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 from gobby.utils.datetime import utc_now
 
@@ -139,7 +139,7 @@ def expire_stale_sessions(
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
             WHERE status IN ('active', 'paused', 'handoff_ready')
-            AND id != %s
+            AND source != %s
             AND NOT ({tmux_target_sql})
             AND (
                 {updated_stale_sql}
@@ -152,7 +152,7 @@ def expire_stale_sessions(
             )
             RETURNING *
             """,  # nosec B608 # cutoff expressions are selected by storage dialect.
-            (SYSTEM_SESSION_ID, timeout_hours, timeout_hours, timeout_hours),
+            (SYSTEM_SESSION_SOURCE, timeout_hours, timeout_hours, timeout_hours),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:
@@ -191,11 +191,11 @@ def expire_orphaned_handoff_sessions(
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
             WHERE status = 'handoff_ready'
-              AND id != %s
+              AND source != %s
               AND {updated_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, timeout_minutes),
+            (SYSTEM_SESSION_SOURCE, timeout_minutes),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:
@@ -233,11 +233,11 @@ def prune_stale_compact_workflow_instances(
         WHERE wi.session_id = s.id
           AND sv.session_id = s.id
           AND s.status = 'expired'
-          AND s.id != %s
+          AND s.source != %s
           AND sv.variables ? 'handoff_source'
           AND {updated_stale_sql}
         """,  # nosec B608 # cutoff expression is selected by storage dialect.
-        (SYSTEM_SESSION_ID, retention_hours),
+        (SYSTEM_SESSION_SOURCE, retention_hours),
     )
     count = cursor.rowcount or 0
     if count > 0:
@@ -266,10 +266,10 @@ def cleanup_expired_session_state(
             WHERE pi.session_id = s.id
               AND pi.status = 'pending'
               AND s.status IN ('expired', 'deleted')
-              AND s.id != %s
+              AND s.source != %s
               AND {stale_sql}
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, horizon_hours),
+            (SYSTEM_SESSION_SOURCE, horizon_hours),
         )
         variables_cursor = conn.execute(
             f"""
@@ -277,10 +277,10 @@ def cleanup_expired_session_state(
             USING sessions s
             WHERE sv.session_id = s.id
               AND s.status IN ('expired', 'deleted')
-              AND s.id != %s
+              AND s.source != %s
               AND {stale_sql}
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, horizon_hours),
+            (SYSTEM_SESSION_SOURCE, horizon_hours),
         )
 
     result = SessionStateCleanupResult(
@@ -326,11 +326,11 @@ def pause_inactive_active_sessions(
             UPDATE sessions
             SET status = 'paused'
             WHERE status = 'active'
-            AND id != %s
+            AND source != %s
             AND {updated_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, timeout_minutes),
+            (SYSTEM_SESSION_SOURCE, timeout_minutes),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:
@@ -373,12 +373,12 @@ def expire_empty_sessions(
             UPDATE sessions
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
             WHERE status IN ('active', 'paused')
-            AND id != %s
+            AND source != %s
             AND COALESCE(message_count, 0) = 0
             AND {updated_stale_sql}
             RETURNING *
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, timeout_hours),
+            (SYSTEM_SESSION_SOURCE, timeout_hours),
         ).fetchall()
         if status_notifier is not None:
             for row in rows:
@@ -410,7 +410,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "hour")
     base_where = f"""
         status = 'expired'
-        AND id != %s
+        AND source != %s
         AND COALESCE(message_count, 0) = 0
         AND transcript_path IS NULL
         AND {updated_stale_sql}
@@ -421,7 +421,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         FROM sessions
         WHERE {base_where}
         """,
-        (SYSTEM_SESSION_ID, *params),
+        (SYSTEM_SESSION_SOURCE, *params),
     )
     candidate_count = row["count"] if row else 0
     reference_guards = "\n        AND ".join(_build_empty_session_prune_reference_guards(db))
@@ -431,7 +431,7 @@ def prune_empty_sessions(db: HubDatabase, min_age_hours: int = 1) -> int:
         WHERE {base_where}
         {f"AND {reference_guards}" if reference_guards else ""}
         """,
-        (SYSTEM_SESSION_ID, *params),
+        (SYSTEM_SESSION_SOURCE, *params),
     )
     count = cursor.rowcount or 0
     skipped = max(candidate_count - count, 0)

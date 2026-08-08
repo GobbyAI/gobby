@@ -290,8 +290,7 @@ class _PostgresTransaction:
 
         driver_executemany = getattr(self._conn, "executemany", None)
         if callable(driver_executemany):
-            driver_executemany(sql, materialized)
-            return PostgresCursor(None)
+            return PostgresCursor(driver_executemany(sql, materialized))
         with self._conn.cursor() as cursor:
             cursor.executemany(sql, materialized)
             return PostgresCursor(None, rowcount=cursor.rowcount)

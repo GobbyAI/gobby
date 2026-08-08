@@ -855,7 +855,10 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.worktree_storage:
             raise HTTPException(503, "Worktree storage not available")
 
-        wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
+        try:
+            wt = await server.run_db(server.services.worktree_storage.get, worktree_id)
+        except MachineOwnershipMismatchError as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
         if not wt:
             raise HTTPException(404, "Worktree not found")
 
@@ -912,7 +915,10 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         if not server.services.clone_storage:
             raise HTTPException(503, "Clone storage not available")
 
-        clone = await server.run_db(server.services.clone_storage.get, clone_id)
+        try:
+            clone = await server.run_db(server.services.clone_storage.get, clone_id)
+        except MachineOwnershipMismatchError as exc:
+            raise HTTPException(status_code=409, detail=exc.to_dict()) from exc
         if not clone:
             raise HTTPException(404, "Clone not found")
 

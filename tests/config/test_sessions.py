@@ -38,6 +38,9 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     with pytest.raises(ValueError):
         MemoryRecallConfig(timeout=0)
     assert MemoryRecallConfig(timeout=75).timeout == 75
+    assert MemoryRecallConfig(timeout=89).timeout == 89
+    with pytest.raises(ValueError):
+        MemoryRecallConfig(timeout=90)
 
     disabled_config_file = temp_dir / "disabled.yaml"
     disabled_config_file.write_text(

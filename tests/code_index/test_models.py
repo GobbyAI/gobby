@@ -31,9 +31,11 @@ def test_symbol_make_id_varies_with_inputs() -> None:
     id_b = Symbol.make_id("proj", "file.py", "hash-a", "foo", "function", 20)
     id_c = Symbol.make_id("proj", "file.py", "hash-a", "bar", "function", 10)
     id_d = Symbol.make_id("proj", "file.py", "hash-b", "foo", "function", 10)
+    id_e = Symbol.make_id("proj", "other.py", "hash-a", "foo", "function", 10)
     assert id_a != id_b
     assert id_a != id_c
     assert id_a != id_d
+    assert id_a != id_e
 
 
 def test_symbol_make_id_is_valid_uuid() -> None:

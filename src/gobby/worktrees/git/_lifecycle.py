@@ -37,6 +37,12 @@ def create_worktree(
     Returns:
         GitOperationResult with success status and message
     """
+    if base_branch.startswith(("origin/", "refs/remotes/")):
+        return GitOperationResult(
+            success=False,
+            message=f"Remote-style base branch is not allowed: {base_branch}",
+            error="remote_base_branch_not_allowed",
+        )
     worktree_path = Path(worktree_path)
 
     # Check if path already exists
@@ -170,6 +176,15 @@ def _refuse_unmerged_branch_deletion(
                 "abandon the branch."
             ),
             error="branch_deletion_requires_base_branch",
+        )
+    if base_branch.startswith(("origin/", "refs/remotes/")):
+        return GitOperationResult(
+            success=False,
+            message=(
+                f"Refusing to delete branch '{branch_name}': remote-style base branch "
+                f"'{base_branch}' cannot prove local merge state."
+            ),
+            error="remote_base_branch_not_allowed",
         )
     source_ref = f"refs/heads/{branch_name}"
     target_ref = base_branch if base_branch.startswith("refs/") else f"refs/heads/{base_branch}"

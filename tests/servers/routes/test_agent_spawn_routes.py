@@ -97,7 +97,7 @@ class TestSpawnAgent:
         client: TestClient,
         task_manager: LocalTaskManager,
         session_manager: SessionManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         task = _create_task(task_manager, test_project.id, "Machine-owned chat")
         machine_id = require_machine_id()
@@ -134,7 +134,7 @@ class TestSpawnAgent:
         web_identity.assert_called_once_with()
         launcher_identity.assert_called_once_with()
 
-    def test_spawn_missing_task(self, client: TestClient, test_project) -> None:
+    def test_spawn_missing_task(self, client: TestClient, test_project: Any) -> None:
         """Spawn with nonexistent task_id returns 400."""
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -151,7 +151,7 @@ class TestSpawnAgent:
         client: TestClient,
         task_manager: LocalTaskManager,
         session_manager: SessionManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         """Web chat mode returns conversation_id without spawning."""
         task = _create_task(task_manager, test_project.id, "Chat task")
@@ -176,7 +176,7 @@ class TestSpawnAgent:
         self,
         client: TestClient,
         task_manager: LocalTaskManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         task = _create_task(task_manager, test_project.id, "Chat task")
         with patch(
@@ -192,7 +192,7 @@ class TestSpawnAgent:
         assert response.json()["prompt"] == "Custom prompt"
 
     def test_spawn_terminal_no_runner(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
     ) -> None:
         """Terminal spawn without agent_runner returns 400."""
         task = _create_task(task_manager, test_project.id, "Terminal task")
@@ -213,7 +213,7 @@ class TestSpawnAgent:
         client: TestClient,
         task_manager: LocalTaskManager,
         session_manager: SessionManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         """Web-chat task spawn claims the task without seeding its title."""
         task = _create_task(task_manager, test_project.id, "Status task")
@@ -236,7 +236,7 @@ class TestSpawnAgent:
         assert conversation.title_source == "provisional"
 
     def test_spawn_web_chat_preserves_review_status(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
     ) -> None:
         """Web chat spawn on needs_review should set claimed_by_session_id without regressing status."""
         task = _create_task(task_manager, test_project.id, "Review task")
@@ -262,7 +262,7 @@ class TestSpawnAgent:
         client: TestClient,
         task_manager: LocalTaskManager,
         session_manager: SessionManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         """Web chat spawn should not overwrite a non-open task already owned elsewhere."""
         existing_owner = session_manager.register(
@@ -294,7 +294,7 @@ class TestSpawnAgent:
         client: TestClient,
         server,
         task_manager: LocalTaskManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         """Web launcher terminal spawns should defer sandbox defaults to daemon config."""
         task = _create_task(task_manager, test_project.id, "Sandboxed terminal task")
@@ -334,7 +334,7 @@ class TestSpawnAgent:
         client: TestClient,
         server,
         task_manager: LocalTaskManager,
-        test_project,
+        test_project: Any,
     ) -> None:
         """Plan 1.4.10: the HTTP spawn surface passes its registry into
         spawn_agent_impl, so a deferred-health failure after a successful
@@ -390,7 +390,7 @@ class TestBatchSpawn:
         assert response.status_code == 400
 
     def test_batch_web_chat(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
     ) -> None:
         """Batch spawn in web_chat mode returns correct counts."""
         t1 = _create_task(task_manager, test_project.id, "Batch 1")
@@ -416,7 +416,7 @@ class TestBatchSpawn:
         assert len(data["results"]) == 2
 
     def test_batch_mixed_success_failure(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self, client: TestClient, task_manager: LocalTaskManager, test_project: Any
     ) -> None:
         """Batch with one valid and one invalid task_id returns mixed results."""
         t1 = _create_task(task_manager, test_project.id, "Valid task")

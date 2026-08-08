@@ -89,6 +89,34 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("base_branch", ["origin/main", "refs/remotes/origin/main"])
+async def test_create_worktree_rejects_remote_base_before_side_effects(
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    base_branch: str,
+) -> None:
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._create.resolve_project_context"
+    ) as resolve_project_context:
+        result = await registry.call(
+            "create_worktree",
+            {"branch_name": "feature/test", "base_branch": base_branch},
+        )
+
+    assert result == {
+        "success": False,
+        "error": f"Remote-style base branch is not allowed: {base_branch}",
+        "error_code": "remote_base_branch_not_allowed",
+    }
+    resolve_project_context.assert_not_called()
+    mock_git_manager.has_unpushed_commits.assert_not_called()
+    mock_git_manager.create_worktree.assert_not_called()
+    mock_worktree_storage.get_by_branch.assert_not_called()
+    mock_worktree_storage.create.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_create_worktree_preserves_project_json_trailing_newline(
     registry, mock_worktree_storage, mock_git_manager, tmp_path: Path
 ) -> None:

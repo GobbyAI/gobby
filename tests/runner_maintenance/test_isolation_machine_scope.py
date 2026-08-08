@@ -28,9 +28,12 @@ class _CrossMachineFixture:
     clones: LocalCloneManager
     local_worktree: Worktree
     remote_worktree: Worktree
+    remote_missing_worktree: Worktree
     local_clone: Clone
     remote_clone: Clone
-    remote_sentinel: Path
+    remote_missing_clone: Clone
+    remote_worktree_path: Path
+    remote_clone_path: Path
 
 
 def _seed_cross_machine_records(
@@ -38,7 +41,7 @@ def _seed_cross_machine_records(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> _CrossMachineFixture:
-    """Seed one local and one remote missing-path record per isolation kind."""
+    """Seed local-missing plus remote-existing and remote-missing records."""
     local_machine_id = str(uuid.uuid4())
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
@@ -53,8 +56,8 @@ def _seed_cross_machine_records(
     )
     worktrees = LocalWorktreeManager(temp_db)
     clones = LocalCloneManager(temp_db)
-    worktree_owners = iter((local_machine_id, remote_machine_id))
-    clone_owners = iter((local_machine_id, remote_machine_id))
+    worktree_owners = iter((local_machine_id, remote_machine_id, remote_machine_id))
+    clone_owners = iter((local_machine_id, remote_machine_id, remote_machine_id))
     monkeypatch.setattr(
         worktrees_module,
         "require_machine_id",
@@ -67,9 +70,16 @@ def _seed_cross_machine_records(
         branch_name="task/local-worktree",
         worktree_path=str(tmp_path / "missing-local-worktree"),
     )
+    remote_worktree_path = tmp_path / "remote-worktree"
+    remote_worktree_path.mkdir()
     remote_worktree = worktrees.create(
         project_id=project.id,
         branch_name="task/remote-worktree",
+        worktree_path=str(remote_worktree_path),
+    )
+    remote_missing_worktree = worktrees.create(
+        project_id=project.id,
+        branch_name="task/remote-missing-worktree",
         worktree_path=str(tmp_path / "missing-remote-worktree"),
     )
     local_clone = clones.create(
@@ -77,25 +87,31 @@ def _seed_cross_machine_records(
         branch_name="task/local-clone",
         clone_path=str(tmp_path / "missing-local-clone"),
     )
+    remote_clone_path = tmp_path / "remote-clone"
+    remote_clone_path.mkdir()
     remote_clone = clones.create(
         project_id=project.id,
         branch_name="task/remote-clone",
+        clone_path=str(remote_clone_path),
+    )
+    remote_missing_clone = clones.create(
+        project_id=project.id,
+        branch_name="task/remote-missing-clone",
         clone_path=str(tmp_path / "missing-remote-clone"),
     )
     monkeypatch.setattr(worktrees_module, "require_machine_id", lambda: local_machine_id)
     monkeypatch.setattr(clones_module, "require_machine_id", lambda: local_machine_id)
-    remote_sentinel = tmp_path / "remote-filesystem"
-    remote_sentinel.mkdir()
-    (remote_sentinel / "owned-by-remote").write_text("keep", encoding="utf-8")
-
     return _CrossMachineFixture(
         worktrees=worktrees,
         clones=clones,
         local_worktree=local_worktree,
         remote_worktree=remote_worktree,
+        remote_missing_worktree=remote_missing_worktree,
         local_clone=local_clone,
         remote_clone=remote_clone,
-        remote_sentinel=remote_sentinel,
+        remote_missing_clone=remote_missing_clone,
+        remote_worktree_path=remote_worktree_path,
+        remote_clone_path=remote_clone_path,
     )
 
 
@@ -108,8 +124,15 @@ def _assert_only_local_records_swept(
     assert fixture.worktrees.get(fixture.local_worktree.id) is None
     assert fixture.clones.get(fixture.local_clone.id) is None
     assert temp_db.fetchone("SELECT id FROM worktrees WHERE id = %s", (fixture.remote_worktree.id,))
+    assert temp_db.fetchone(
+        "SELECT id FROM worktrees WHERE id = %s", (fixture.remote_missing_worktree.id,)
+    )
     assert temp_db.fetchone("SELECT id FROM clones WHERE id = %s", (fixture.remote_clone.id,))
-    assert (fixture.remote_sentinel / "owned-by-remote").read_text(encoding="utf-8") == "keep"
+    assert temp_db.fetchone(
+        "SELECT id FROM clones WHERE id = %s", (fixture.remote_missing_clone.id,)
+    )
+    assert fixture.remote_worktree_path.is_dir()
+    assert fixture.remote_clone_path.is_dir()
 
 
 def test_missing_path_sweep_ignores_remote_rows(
@@ -125,6 +148,7 @@ def test_missing_path_sweep_ignores_remote_rows(
     _assert_only_local_records_swept(temp_db, fixture, counts)
 
 
+@pytest.mark.asyncio
 async def test_async_missing_path_sweep_ignores_remote_rows(
     temp_db: HubDatabase,
     tmp_path: Path,

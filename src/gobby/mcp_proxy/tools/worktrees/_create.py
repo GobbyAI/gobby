@@ -65,6 +65,12 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Returns:
             Dict with worktree ID, path, and branch info.
         """
+        if base_branch.startswith(("origin/", "refs/remotes/")):
+            return {
+                "success": False,
+                "error": f"Remote-style base branch is not allowed: {base_branch}",
+                "error_code": "remote_base_branch_not_allowed",
+            }
         resolved_git_mgr, resolved_project_id, error = resolve_project_context(
             project_path, ctx.git_manager, ctx.project_id
         )

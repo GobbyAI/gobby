@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.sessions import SYSTEM_SESSION_ID
+from gobby.storage.sessions import system_session_id
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -99,7 +99,7 @@ class TaskAssignmentNotifier:
         )
         try:
             send_result = await mailbox.send(
-                from_session_id=SYSTEM_SESSION_ID,
+                from_session_id=system_session_id(),
                 target="session",
                 target_id=target_session_id,
                 content=content,

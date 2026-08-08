@@ -20,8 +20,7 @@ registered Gobby runtime keys.
 - Bootstrap owns only `daemon_port`, `bind_host`, `websocket_port`, `ui_port`,
   `services_bind_address`, `daemon_url`, `datastore_mode`, `database_url`, and
   `postgres_pool`.
-- `auth_mode` becomes restart-required registry configuration. Configurable
-  `hub_backend` is removed.
+- Configurable `hub_backend` is removed.
 - Dotted ConfigStore primary keys remain; no generalized scope columns.
 - Public configuration includes daemon settings, UI preferences, global rule toggles,
   global approval policy, launch defaults, provider/model choices, feature flags,
@@ -30,8 +29,8 @@ registered Gobby runtime keys.
   templates, and executable definitions.
 - `auth.*` credential payloads and embedding lifecycle journals use restricted specs and
   are excluded from public schema, public values, YAML, and exports.
-- Live is the default activation policy. Restart-required keys are `auth_mode`,
-  `cors_origins`, `test_mode`, `database_concurrency.*`, `databases.*`, `telemetry.*`,
+- Live is the default activation policy. Restart-required keys are `cors_origins`,
+  `test_mode`, `database_concurrency.*`, `databases.*`, `telemetry.*`,
   `memory.backend`, `websocket.enabled`, `ui.enabled`, `ui.mode`, and `ui.web_dir`.
 - Structural `ai.embeddings.*` changes use the existing switch coordinator.
   `ai.embeddings.api_key` remains live.
@@ -112,7 +111,6 @@ metadata for namespace, secrecy, visibility, activation, and machine export.
 - 1.1.1 - Every non-bootstrap daemon leaf resolves to exactly one spec. test: `tests/config/test_config_registry.py::test_every_daemon_leaf_has_one_spec`.
 - 1.1.2 - Every mapping leaf has an explicit non-overlapping pattern adapter. test: `tests/config/test_config_registry.py::test_mapping_patterns_are_complete`.
 - 1.1.3 - Public and machine schemas expose only their declared visibility classes. test: `tests/config/test_config_registry.py::test_visibility_partitions_are_disjoint`.
-- 1.1.4 - `auth_mode` is absent from bootstrap and registered as restart-required. symbol: `BootstrapConfig`.
 
 ### 1.2 Extend baseline 375 with revisioned configuration state [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -450,7 +448,7 @@ Targets:
 - `tests/config/test_restart_config_consumers.py`
 
 Daemon/WS/UI ports, bind addresses, service bind address, daemon URL, database URL, and
-pool sizing come from bootstrap. Auth mode, CORS, test mode, WebSocket enablement, UI
+pool sizing come from bootstrap. CORS, test mode, WebSocket enablement, UI
 lifecycle, database services, telemetry, and memory backend come from the startup active
 snapshot and do not mutate running topology.
 

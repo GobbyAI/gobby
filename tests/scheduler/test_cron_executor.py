@@ -12,7 +12,7 @@ import pytest
 from gobby.scheduler.executor import CronExecutor
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
-from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+from gobby.storage.sessions import SessionManager, system_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -482,8 +482,8 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
 
-    temp_db.execute("DELETE FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
-    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,)) is None
+    temp_db.execute("DELETE FROM sessions WHERE id = %s", (system_session_id(),))
+    assert temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (system_session_id(),)) is None
 
     job = _make_job(
         cron_storage,
@@ -498,7 +498,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
     assert result.status == "dispatched"
     assert result.pipeline_execution_id == "eeeeeeee-eeee-4eee-8eee-eeeeeeee0201"
-    repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
+    repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (system_session_id(),))
     assert repaired is not None
 
     cron_session_id = pipeline_executor.execute.await_args.kwargs["session_id"]
@@ -508,7 +508,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
     )
     assert cron_session is not None
     assert cron_session["source"] == "cron"
-    assert cron_session["parent_session_id"] == SYSTEM_SESSION_ID
+    assert cron_session["parent_session_id"] == system_session_id()
     pipeline_executor.loader.load_pipeline.assert_awaited_once_with(
         "cron-test-pipeline", job.project_id
     )

@@ -35,7 +35,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
     // Qdrant, and FalkorDB with deduplication, so source counts aren't additive.
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
 
-    let exact_outcome = fts::search_symbols_exact_first_visible(
+    let exact_results = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
         ctx,
@@ -44,11 +44,10 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &expanded_paths,
         fetch_limit,
     )?;
-    let exact_results = exact_outcome;
     let exact_ids: Vec<String> = exact_results.iter().map(|s| s.id.clone()).collect();
 
     // Source 1: BM25 via required pg_search indexes.
-    let fts_outcome = fts::search_symbols_fts_visible(
+    let mut fts_results = fts::search_symbols_fts_visible(
         &mut conn,
         query,
         ctx,
@@ -57,7 +56,6 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
         &expanded_paths,
         fetch_limit,
     )?;
-    let mut fts_results = fts_outcome;
     if fts_results.is_empty() {
         fts_results = fts::search_symbols_by_name_visible(
             &mut conn,
@@ -205,7 +203,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
     let expanded_paths = fts::expand_paths(options.paths);
     let path_patterns = fts::compile_patterns(&expanded_paths)?;
     let fetch_limit = ((options.offset + options.limit) * 3).max(200);
-    let exact_outcome = fts::search_symbols_exact_first_visible(
+    let exact_results = fts::search_symbols_exact_first_visible(
         &mut conn,
         query,
         ctx,
@@ -214,7 +212,6 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         &expanded_paths,
         fetch_limit,
     )?;
-    let exact_results = exact_outcome;
 
     if options.with_graph {
         return search_symbol_with_graph(

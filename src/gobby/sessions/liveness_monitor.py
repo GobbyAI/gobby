@@ -21,6 +21,7 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
 from gobby.config.tmux import TmuxConfig
 from gobby.sessions.tmux_context import (
     get_tmux_manager_for_context,
@@ -287,14 +288,21 @@ class SessionLivenessMonitor:
         if context is None or target is None:
             return
         manager = get_tmux_manager_for_context(context)
-        try:
-            await manager.release_window_title_ownership(target)
-        except Exception:
-            logger.debug(
-                "SessionLivenessMonitor: failed to release tmux title for %s",
-                record.session_id,
-                exc_info=True,
-            )
+        for _attempt in range(2):
+            try:
+                outcome = await manager.release_window_title_ownership(target)
+            except Exception:
+                logger.debug(
+                    "SessionLivenessMonitor: failed to release tmux title for %s",
+                    record.session_id,
+                    exc_info=True,
+                )
+                return
+            if outcome in {
+                TmuxReleaseOutcome.RELEASED,
+                TmuxReleaseOutcome.ALREADY_RELEASED,
+            }:
+                return
 
     async def _repair_tmux_target(
         self,

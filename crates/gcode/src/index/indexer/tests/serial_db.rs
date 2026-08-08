@@ -16,7 +16,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[serial_test::serial(serial_db)]
 fn parsed_reindex_preserves_summaries_for_immutable_content_versions() {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
-    let project_id = unique_test_project_id("gcode-summary-preservation");
+    let project_id = unique_test_uuid("gcode-summary-preservation");
     let rel = "src/lib.rs";
     cleanup_summary_preservation_project(&mut conn, &project_id)
         .expect("pre-clean summary preservation rows");
@@ -117,7 +117,7 @@ fn parsed_reindex_preserves_summaries_for_immutable_content_versions() {
 #[serial_test::serial(serial_db)]
 fn postgres_sink_seeds_project_row_before_file_facts() {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
-    let project_id = unique_test_project_id("gcode-project-seed");
+    let project_id = unique_test_uuid("gcode-project-seed");
     let rel = "src/lib.rs";
     let root_path = Path::new("/tmp/gcode-project-seed");
     cleanup_summary_preservation_project(&mut conn, &project_id)
@@ -169,8 +169,8 @@ fn postgres_sink_seeds_project_row_before_file_facts() {
 fn indexing_adopts_existing_content_version_without_reparse() {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
     let project_root = tempfile::tempdir().expect("create project root");
-    let project_id = unique_test_project_id("gcode-content-adoption");
-    let first_machine_id = unique_test_project_id("gcode-content-adoption-first-machine");
+    let project_id = unique_test_uuid("gcode-content-adoption");
+    let first_machine_id = unique_test_uuid("gcode-content-adoption-first-machine");
     let rel = "src/lib.rs";
     let absolute_path = project_root.path().join(rel);
     std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
@@ -209,6 +209,13 @@ fn indexing_adopts_existing_content_version_without_reparse() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &shared_file).expect("seed shared content version");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = TRUE, vectors_synced = TRUE
+         WHERE id = $1",
+        &[&test_uuid_param(&shared_file.id)],
+    )
+    .expect("mark shared projections complete");
     api::upsert_file_state(&mut conn, &first_machine_id, &shared_file)
         .expect("seed first machine selector");
 
@@ -273,8 +280,8 @@ fn indexing_adopts_existing_content_version_without_reparse() {
 fn full_indexing_reparses_previously_adopted_content() {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
     let project_root = tempfile::tempdir().expect("create project root");
-    let project_id = unique_test_project_id("gcode-full-reparse");
-    let first_machine_id = unique_test_project_id("gcode-full-reparse-first-machine");
+    let project_id = unique_test_uuid("gcode-full-reparse");
+    let first_machine_id = unique_test_uuid("gcode-full-reparse-first-machine");
     let rel = "src/lib.rs";
     let content = b"pub fn adopted() {}\n";
     let absolute_path = project_root.path().join(rel);
@@ -370,9 +377,9 @@ fn full_indexing_reparses_previously_adopted_content() {
 fn overlay_indexing_adopts_existing_content_version_without_reparse() {
     let (mut conn, database_url) = connect_summary_preservation_test_db();
     let overlay_root = tempfile::tempdir().expect("create overlay root");
-    let overlay_project_id = unique_test_project_id("gcode-overlay-adoption");
-    let parent_project_id = unique_test_project_id("gcode-overlay-adoption-parent");
-    let first_machine_id = unique_test_project_id("gcode-overlay-adoption-first-machine");
+    let overlay_project_id = unique_test_uuid("gcode-overlay-adoption");
+    let parent_project_id = unique_test_uuid("gcode-overlay-adoption-parent");
+    let first_machine_id = unique_test_uuid("gcode-overlay-adoption-first-machine");
     let rel = "src/lib.rs";
     let absolute_path = overlay_root.path().join(rel);
     std::fs::create_dir_all(absolute_path.parent().expect("file parent"))
@@ -450,6 +457,13 @@ fn overlay_indexing_adopts_existing_content_version_without_reparse() {
         indexed_at: String::new(),
     };
     api::upsert_file(&mut conn, &overlay_file).expect("seed overlay content version");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = TRUE, vectors_synced = TRUE
+         WHERE id = $1",
+        &[&test_uuid_param(&overlay_file.id)],
+    )
+    .expect("mark overlay projections complete");
     api::upsert_file_state(&mut conn, &first_machine_id, &overlay_file)
         .expect("seed first machine overlay selector");
 
@@ -523,7 +537,7 @@ fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     (conn, database_url)
 }
 
-fn unique_test_project_id(prefix: &str) -> String {
+fn unique_test_uuid(prefix: &str) -> String {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system time after epoch")

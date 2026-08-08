@@ -16,9 +16,18 @@ categories = ["command-line-utilities", "development-tools"]
 name = "gobby_code"
 path = "src/lib.rs"
 
+[features]
+default = []
+test-support = []
+
 [[bin]]
 name = "gcode"
 path = "src/main.rs"
+
+[[test]]
+name = "projection_stale"
+path = "tests/projection_stale.rs"
+required-features = ["test-support"]
 
 [dependencies]
 # Internal

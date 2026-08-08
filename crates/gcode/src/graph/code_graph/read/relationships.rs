@@ -79,26 +79,91 @@ fn post_filter_symbol_ids(
 fn post_filter_graph_results(
     ctx: &Context,
     results: Vec<GraphResult>,
-    limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
     if results.is_empty() {
         return Ok(results);
     }
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    Ok(
-        visibility::filter_visible_graph_results(&mut conn, ctx, results)?
-            .into_iter()
-            .take(limit)
-            .collect(),
-    )
+    visibility::filter_visible_graph_results(&mut conn, ctx, results)
+}
+
+fn collect_visible_graph_results(
+    ctx: &Context,
+    offset: usize,
+    limit: usize,
+    mut fetch_page: impl FnMut(usize, usize) -> anyhow::Result<Vec<GraphResult>>,
+) -> anyhow::Result<Vec<GraphResult>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut raw_offset = 0;
+    let mut visible_to_skip = offset;
+    let mut visible_results = Vec::with_capacity(limit.min(MAX_GRAPH_LIMIT));
+    loop {
+        let raw_results = fetch_page(raw_offset, MAX_GRAPH_LIMIT)?;
+        let raw_count = raw_results.len();
+        if raw_count == 0 {
+            break;
+        }
+        for result in post_filter_graph_results(ctx, raw_results)? {
+            if visible_to_skip > 0 {
+                visible_to_skip -= 1;
+            } else {
+                visible_results.push(result);
+                if visible_results.len() == limit {
+                    return Ok(visible_results);
+                }
+            }
+        }
+        raw_offset = raw_offset.saturating_add(raw_count);
+        if raw_count < MAX_GRAPH_LIMIT {
+            break;
+        }
+    }
+    Ok(visible_results)
+}
+
+fn count_visible_graph_results(
+    ctx: &Context,
+    mut fetch_page: impl FnMut(usize, usize) -> anyhow::Result<Vec<GraphResult>>,
+) -> anyhow::Result<usize> {
+    let mut raw_offset = 0;
+    let mut visible_count = 0;
+    loop {
+        let raw_results = fetch_page(raw_offset, MAX_GRAPH_LIMIT)?;
+        let raw_count = raw_results.len();
+        if raw_count == 0 {
+            break;
+        }
+        visible_count += post_filter_graph_results(ctx, raw_results)?.len();
+        raw_offset = raw_offset.saturating_add(raw_count);
+        if raw_count < MAX_GRAPH_LIMIT {
+            break;
+        }
+    }
+    Ok(visible_count)
 }
 
 pub fn count_callers(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    Ok(find_callers(ctx, symbol_id, 0, MAX_GRAPH_LIMIT)?.len())
+    count_visible_graph_results(ctx, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
 }
 
 pub fn count_usages(ctx: &Context, symbol_id: &str) -> anyhow::Result<usize> {
-    Ok(find_usages(ctx, symbol_id, 0, MAX_GRAPH_LIMIT)?.len())
+    count_visible_graph_results(ctx, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
 }
 
 pub fn find_callers(
@@ -107,17 +172,14 @@ pub fn find_callers(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    let fetch_limit = graph_fetch_limit(offset, limit);
-    let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_callers_query(&ctx.project_id, symbol_id, 0, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })?;
-    Ok(post_filter_graph_results(ctx, results, fetch_limit)?
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect())
+    collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_callers_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
 }
 
 pub fn find_usages(
@@ -126,17 +188,14 @@ pub fn find_usages(
     offset: usize,
     limit: usize,
 ) -> anyhow::Result<Vec<GraphResult>> {
-    let fetch_limit = graph_fetch_limit(offset, limit);
-    let results = with_optional_core_graph(ctx, Vec::new, |client| {
-        let (query, params) = find_usages_query(&ctx.project_id, symbol_id, 0, fetch_limit);
-        let rows = client.query(&query, Some(params))?;
-        Ok(rows.iter().map(row_to_graph_result).collect())
-    })?;
-    Ok(post_filter_graph_results(ctx, results, fetch_limit)?
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect())
+    collect_visible_graph_results(ctx, offset, limit, |raw_offset, raw_limit| {
+        with_optional_core_graph(ctx, Vec::new, |client| {
+            let (query, params) =
+                find_usages_query(&ctx.project_id, symbol_id, raw_offset, raw_limit);
+            let rows = client.query(&query, Some(params))?;
+            Ok(rows.iter().map(row_to_graph_result).collect())
+        })
+    })
 }
 
 pub fn find_caller_ids(
@@ -183,7 +242,7 @@ pub fn find_callers_batch(
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;
-    post_filter_graph_results(ctx, results, limit)
+    post_filter_graph_results(ctx, results).map(|results| results.into_iter().take(limit).collect())
 }
 
 pub fn find_caller_ids_batch(
@@ -220,7 +279,7 @@ pub fn find_callees_batch(
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;
-    post_filter_graph_results(ctx, results, limit)
+    post_filter_graph_results(ctx, results).map(|results| results.into_iter().take(limit).collect())
 }
 
 pub fn find_callee_ids_batch(
@@ -432,7 +491,7 @@ pub fn blast_radius(
         let rows = client.query(&query, Some(params))?;
         Ok(rows.iter().map(row_to_graph_result).collect())
     })?;
-    post_filter_graph_results(ctx, results, MAX_GRAPH_LIMIT)
+    post_filter_graph_results(ctx, results)
 }
 
 #[cfg(test)]
