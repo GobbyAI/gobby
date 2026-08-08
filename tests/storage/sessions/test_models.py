@@ -1,6 +1,8 @@
 """Focused tests for session storage behavior."""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 import pytest
 
@@ -9,6 +11,14 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSession:
@@ -22,7 +32,7 @@ class TestSession:
         """Test creating Session from database row."""
         session = session_manager.register(
             external_id="test-cli-key",
-            machine_id="20000000-0000-4000-8000-00000000000c",
+            machine_id="20000000-0000-4000-8000-000000000002",
             source="claude",
             project_id=sample_project["id"],
         )

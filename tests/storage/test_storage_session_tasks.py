@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.session_tasks import SessionTaskManager
@@ -5,6 +8,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture
@@ -80,10 +91,16 @@ class TestSessionTaskManager:
     ) -> None:
         # Create two distinct sessions
         s1 = session_manager.register(
-            external_id="ext-1", machine_id="21000000-0000-4000-8000-000000000005", source="s1", project_id=sample_project["id"]
+            external_id="ext-1",
+            machine_id=LOCAL_MACHINE_ID,
+            source="s1",
+            project_id=sample_project["id"],
         )
         s2 = session_manager.register(
-            external_id="ext-2", machine_id="21000000-0000-4000-8000-000000000005", source="s1", project_id=sample_project["id"]
+            external_id="ext-2",
+            machine_id=LOCAL_MACHINE_ID,
+            source="s1",
+            project_id=sample_project["id"],
         )
 
         session_task_manager.link_task(s1.id, sample_task.id, "worked_on")

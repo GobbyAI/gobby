@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_escalate_round_trip(temp_db, sample_project) -> None:

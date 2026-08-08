@@ -1,5 +1,6 @@
 """Focused tests for session storage behavior."""
 
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -7,6 +8,14 @@ import pytest
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSessionEdgeCases:
@@ -28,7 +37,10 @@ class TestSessionEdgeCases:
 
         # Store the original find_by_external_id result
         existing = session_manager.find_by_external_id(
-            "disappearing-session", "20000000-0000-4000-8000-000000000001", sample_project["id"], "claude"
+            "disappearing-session",
+            "20000000-0000-4000-8000-000000000001",
+            sample_project["id"],
+            "claude",
         )
 
         # Mock find_by_external_id to return the existing session (so we go into update path)
@@ -314,7 +326,7 @@ class TestSessionEdgeCases:
         """Test count with all three filters (project_id, status, source)."""
         s1 = session_manager.register(
             external_id="all-filters-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -322,7 +334,7 @@ class TestSessionEdgeCases:
 
         session_manager.register(
             external_id="all-filters-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -343,7 +355,7 @@ class TestSessionEdgeCases:
         """Test list with all three filters (project_id, status, source)."""
         s1 = session_manager.register(
             external_id="list-all-filters-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -351,7 +363,7 @@ class TestSessionEdgeCases:
 
         session_manager.register(
             external_id="list-all-filters-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )

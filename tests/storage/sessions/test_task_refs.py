@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterator
+from unittest.mock import patch
 
 import pytest
 
@@ -11,6 +13,14 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 NOW_ISO = "2026-04-29T10:00:00+00:00"
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000005"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _register_session(

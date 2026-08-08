@@ -1,5 +1,8 @@
 """Regression tests for live agent-run activity counters."""
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -8,6 +11,14 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

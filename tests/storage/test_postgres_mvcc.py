@@ -5,9 +5,11 @@ import queue
 import re
 import threading
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 import pytest
 
@@ -19,6 +21,14 @@ from gobby.storage.task_dependencies import DependencyCycleError, TaskDependency
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager, _creation
 
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000010"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @dataclass(frozen=True)

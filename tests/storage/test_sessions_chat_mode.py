@@ -1,5 +1,8 @@
 """Tests for chat_mode persistence in sessions."""
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.sessions import SessionManager
@@ -7,6 +10,14 @@ from gobby.storage.sessions import SessionManager
 pytestmark = pytest.mark.unit
 
 PROJECT_ID = "00000000-0000-0000-0000-000000060887"  # _personal
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000005"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

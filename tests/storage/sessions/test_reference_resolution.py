@@ -1,11 +1,22 @@
 """Focused tests for session storage behavior."""
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSessionManagerReferenceResolution:
@@ -20,13 +31,13 @@ class TestSessionManagerReferenceResolution:
         # Create an active session (not handoff_ready)
         session_manager.register(
             external_id="active-session",
-            machine_id="20000000-0000-4000-8000-000000000001",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
 
         result = session_manager.find_parent(
-            machine_id="20000000-0000-4000-8000-000000000001",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
@@ -40,7 +51,7 @@ class TestSessionManagerReferenceResolution:
         """Test find_parent without source filter finds any source."""
         session = session_manager.register(
             external_id="parent-any",
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -48,7 +59,7 @@ class TestSessionManagerReferenceResolution:
 
         # Find without source filter
         found = session_manager.find_parent(
-            machine_id="20000000-0000-4000-8000-000000000002",
+            machine_id=LOCAL_MACHINE_ID,
             project_id=sample_project["id"],
             source=None,  # No source filter
         )
@@ -74,15 +85,24 @@ class TestProjectScopedSeqNum:
 
         # Create sessions in project1
         s1_p1 = session_manager.register(
-            external_id="s1-p1", machine_id="20000000-0000-4000-8000-000000000003", source="claude", project_id=project1.id
+            external_id="s1-p1",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project1.id,
         )
         s2_p1 = session_manager.register(
-            external_id="s2-p1", machine_id="20000000-0000-4000-8000-000000000003", source="claude", project_id=project1.id
+            external_id="s2-p1",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project1.id,
         )
 
         # Create sessions in project2
         s1_p2 = session_manager.register(
-            external_id="s1-p2", machine_id="20000000-0000-4000-8000-000000000003", source="claude", project_id=project2.id
+            external_id="s1-p2",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project2.id,
         )
 
         # Project1 sessions should have seq_num 1 and 2
@@ -106,10 +126,10 @@ class TestProjectScopedSeqNum:
 
         # Create #1 in each project
         s1 = session_manager.register(
-            external_id="s1", machine_id="20000000-0000-4000-8000-000000000003", source="claude", project_id=project1.id
+            external_id="s1", machine_id=LOCAL_MACHINE_ID, source="claude", project_id=project1.id
         )
         s2 = session_manager.register(
-            external_id="s2", machine_id="20000000-0000-4000-8000-000000000003", source="claude", project_id=project2.id
+            external_id="s2", machine_id=LOCAL_MACHINE_ID, source="claude", project_id=project2.id
         )
 
         # Resolve #1 with project1 context
@@ -128,7 +148,7 @@ class TestProjectScopedSeqNum:
         """Test that resolve_session_reference raises ValueError for #N without project_id."""
         session = session_manager.register(
             external_id="global-test",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
@@ -145,7 +165,7 @@ class TestProjectScopedSeqNum:
         """Test that UUID format still works with project-scoped resolution."""
         session = session_manager.register(
             external_id="uuid-test",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
@@ -174,7 +194,7 @@ class TestResolveReferenceExternalId:
         *,
         external_id: str,
         source: str = "claude",
-        machine_id: str = "20000000-0000-4000-8000-000000000013",
+        machine_id: str = LOCAL_MACHINE_ID,
     ) -> Session:
         return session_manager.register(
             external_id=external_id,
@@ -248,13 +268,13 @@ class TestResolveReferenceExternalId:
         prefix = f"literal{literal}prefix"
         expected = session_manager.register(
             external_id=f"{prefix}-target",
-            machine_id="20000000-0000-4000-8000-00000000000e",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id=f"literal{wildcard_match}prefix-decoy",
-            machine_id="20000000-0000-4000-8000-00000000000b",
+            machine_id=LOCAL_MACHINE_ID,
             source="codex",
             project_id=sample_project["id"],
         )
@@ -281,7 +301,7 @@ class TestResolveReferenceExternalId:
         )
         sess = session_manager.register(
             external_id="something-unique",
-            machine_id="20000000-0000-4000-8000-000000000010",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
@@ -306,14 +326,14 @@ class TestResolveReferenceExternalId:
             sample_project["id"],
             external_id=external_uuid,
             source="claude",
-            machine_id="20000000-0000-4000-8000-000000000008",
+            machine_id=LOCAL_MACHINE_ID,
         )
         self._seed_session_with_external_uuid(
             session_manager,
             sample_project["id"],
             external_id=external_uuid,
             source="codex",
-            machine_id="20000000-0000-4000-8000-000000000008",
+            machine_id=LOCAL_MACHINE_ID,
         )
         with pytest.raises(ValueError, match="Ambiguous"):
             session_manager.resolve_session_reference(
@@ -334,8 +354,10 @@ class TestResolveReferenceExternalId:
         import uuid as _uuid
         from datetime import UTC, datetime
 
+        from gobby.storage.machines import LocalMachineManager
         from gobby.storage.projects import LocalProjectManager
 
+        LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID)
         pm = LocalProjectManager(temp_db)
         p1 = pm.create(name="amb-p1", repo_path="/tmp/amb-p1")
         p2 = pm.create(name="amb-p2", repo_path="/tmp/amb-p2")
@@ -352,7 +374,7 @@ class TestResolveReferenceExternalId:
                 (
                     str(_uuid.uuid4()),
                     external_uuid,
-                    None,
+                    LOCAL_MACHINE_ID,
                     "claude",
                     pid,
                     now,
@@ -372,13 +394,13 @@ class TestResolveReferenceExternalId:
         shared_prefix = "deadbeef-0000"
         session_manager.register(
             external_id=f"{shared_prefix}-aaaa-aaaaaaaaaaaa",
-            machine_id="20000000-0000-4000-8000-000000000008",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id=f"{shared_prefix}-bbbb-bbbbbbbbbbbb",
-            machine_id="20000000-0000-4000-8000-000000000011",
+            machine_id=LOCAL_MACHINE_ID,
             source="claude",
             project_id=sample_project["id"],
         )

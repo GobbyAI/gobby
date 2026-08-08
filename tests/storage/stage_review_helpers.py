@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -37,12 +38,16 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
         repo_path=str(tmp_path),
     )
     sessions = SessionManager(temp_db)
-    parent = sessions.register(
-        external_id="stage-review-launcher",
-        machine_id="21000000-0000-4000-8000-000000000002",
-        source="codex",
-        project_id=project.id,
-    )
+    with patch(
+        "gobby.utils.machine_id._cached_machine_id",
+        "21000000-0000-4000-8000-000000000002",
+    ):
+        parent = sessions.register(
+            external_id="stage-review-launcher",
+            machine_id="21000000-0000-4000-8000-000000000002",
+            source="codex",
+            project_id=project.id,
+        )
     plan_path = tmp_path / ".gobby" / "plans" / "review.md"
     plan_path.parent.mkdir(parents=True)
     plan_path.write_text(

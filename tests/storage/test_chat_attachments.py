@@ -111,12 +111,16 @@ def test_bind_attachments_uses_immediate_transaction_for_read_validate_update(
     tmp_path: Path,
 ) -> None:
     attachment_id = _create_attachment(temp_db, tmp_path)
-    session = SessionManager(temp_db).register(
-        external_id="cli-session",
-        machine_id="21000000-0000-4000-8000-000000000003",
-        source="codex",
-        project_id=PERSONAL_PROJECT_ID,
-    )
+    with patch(
+        "gobby.utils.machine_id._cached_machine_id",
+        "21000000-0000-4000-8000-000000000003",
+    ):
+        session = SessionManager(temp_db).register(
+            external_id="cli-session",
+            machine_id="21000000-0000-4000-8000-000000000003",
+            source="codex",
+            project_id=PERSONAL_PROJECT_ID,
+        )
     with patch.object(
         temp_db, "transaction_immediate", wraps=temp_db.transaction_immediate
     ) as transaction_immediate:

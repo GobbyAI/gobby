@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,6 +18,15 @@ from gobby.storage import session_activity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions import SessionManager
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000006"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
 
 TERMINAL_CONTEXT = {
     "tmux_pane": "%214",

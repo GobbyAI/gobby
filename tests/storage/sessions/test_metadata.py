@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import uuid
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -14,6 +15,14 @@ pytestmark = pytest.mark.unit
 # sessions.id is a native uuid column; a valid-but-unknown UUID exercises the
 # "missing session" path without tripping the uuid cast.
 MISSING_SESSION_ID = str(uuid.uuid4())
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSessionManagerMetadata:

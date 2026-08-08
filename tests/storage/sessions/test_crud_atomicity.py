@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -11,6 +12,14 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_register_assigns_unique_seq_nums_under_concurrency(
@@ -121,7 +130,12 @@ def test_register_same_identity_with_different_projects_is_atomic(
         SELECT id FROM sessions
         WHERE external_id = %s AND machine_id = %s AND source = %s AND session_type = %s
         """,
-        ("concurrent-project-discovery", "20000000-0000-4000-8000-000000000002", "codex", "terminal"),
+        (
+            "concurrent-project-discovery",
+            "20000000-0000-4000-8000-000000000002",
+            "codex",
+            "terminal",
+        ),
     )
 
     assert errors == []

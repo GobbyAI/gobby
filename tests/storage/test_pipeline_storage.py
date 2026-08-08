@@ -6,8 +6,9 @@ TDD tests for pipeline execution CRUD operations.
 import json
 import os.path
 import uuid
+from collections.abc import Iterator
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,6 +22,22 @@ from gobby.workflows.pipeline_state import (
 )
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
+
+
+def _insert_local_machine(db: HubDatabase) -> None:
+    db.execute(
+        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (LOCAL_MACHINE_ID, "test-machine"),
+    )
+
 
 # Fixed UUID literals so ids can be compared across assertions.
 PROJECT_ID = "11111111-1111-1111-1111-111111111111"
@@ -243,10 +260,11 @@ class TestCreateExecution:
     ) -> None:
         """Test creating execution linked to a session."""
         # Create a session first
+        _insert_local_machine(db)
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_123, "ext-1", None, "claude_code", PROJECT_ID, "active"),
+            (SESSION_123, "ext-1", LOCAL_MACHINE_ID, "claude_code", PROJECT_ID, "active"),
         )
 
         execution = manager.create_execution(
@@ -453,15 +471,17 @@ class TestListExecutionsExtended:
         self, manager: LocalPipelineExecutionManager, db: HubDatabase
     ) -> None:
         """Test filtering executions by session_id."""
+        _insert_local_machine(db)
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_A, "ext-a", None, "claude_code", PROJECT_ID, "active"),
+            (SESSION_A, "ext-a", LOCAL_MACHINE_ID, "claude_code", PROJECT_ID, "active"),
         )
+        _insert_local_machine(db)
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_B, "ext-b", None, "claude_code", PROJECT_ID, "active"),
+            (SESSION_B, "ext-b", LOCAL_MACHINE_ID, "claude_code", PROJECT_ID, "active"),
         )
         manager.create_execution(pipeline_name="deploy", session_id=SESSION_A)
         manager.create_execution(pipeline_name="test", session_id=SESSION_A)
@@ -1420,10 +1440,11 @@ class TestPagination:
         self, manager: LocalPipelineExecutionManager, db: HubDatabase
     ) -> None:
         """count_executions reflects session_id filter."""
+        _insert_local_machine(db)
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_X, "ext-x", None, "claude_code", PROJECT_ID, "active"),
+            (SESSION_X, "ext-x", LOCAL_MACHINE_ID, "claude_code", PROJECT_ID, "active"),
         )
         manager.create_execution(pipeline_name="p1", session_id=SESSION_X)
         manager.create_execution(pipeline_name="p2", session_id=SESSION_X)
@@ -1453,10 +1474,11 @@ class TestPagination:
         self, manager: LocalPipelineExecutionManager, db: HubDatabase
     ) -> None:
         """status_summary_for_executions filters by session_id."""
+        _insert_local_machine(db)
         db.execute(
             """INSERT INTO sessions (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
                VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)""",
-            (SESSION_Q, "ext-q", None, "claude_code", PROJECT_ID, "active"),
+            (SESSION_Q, "ext-q", LOCAL_MACHINE_ID, "claude_code", PROJECT_ID, "active"),
         )
         e1 = manager.create_execution(pipeline_name="p1", session_id=SESSION_Q)
         e2 = manager.create_execution(pipeline_name="p2", session_id=SESSION_Q)

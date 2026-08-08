@@ -9,6 +9,7 @@ combination behavior falls out of basic SQL semantics.
 from __future__ import annotations
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -33,12 +34,15 @@ def _register(
     created_at: str = NOW_ISO,
     updated_at: str = NOW_ISO,
 ) -> str:
-    session = session_manager.register(
-        external_id=external_id,
-        machine_id=machine_id,
-        source=source,
-        project_id=sample_project["id"],
-    )
+    # Machine-ownership enforcement rejects foreign machine ids at register,
+    # so present the requested id as the local identity for this call.
+    with patch("gobby.utils.machine_id._cached_machine_id", machine_id):
+        session = session_manager.register(
+            external_id=external_id,
+            machine_id=machine_id,
+            source=source,
+            project_id=sample_project["id"],
+        )
     # Patch fields the register helper does not expose.
     session_manager.db.execute(
         """UPDATE sessions
@@ -73,7 +77,9 @@ class TestMachineIdFilter:
             machine_id="20000000-0000-4000-8000-000000000009",
         )
 
-        results = session_manager.list(project_id=sample_project["id"], machine_id="20000000-0000-4000-8000-000000000007")
+        results = session_manager.list(
+            project_id=sample_project["id"], machine_id="20000000-0000-4000-8000-000000000007"
+        )
 
         assert [session.external_id for session in results] == ["machine-a-session"]
 

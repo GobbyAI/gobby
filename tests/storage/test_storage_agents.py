@@ -1,6 +1,7 @@
 """Tests for the LocalAgentRunManager storage layer."""
 
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,14 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.mark.parametrize(
@@ -1532,7 +1541,7 @@ class TestLocalAgentRunManager:
         )
         session2 = session_manager.register(
             external_id="session-2",
-            machine_id="21000000-0000-4000-8000-000000000015",
+            machine_id=LOCAL_MACHINE_ID,
             source="qwen",
             project_id=sample_project["id"],
         )

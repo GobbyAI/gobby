@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Iterator
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
@@ -26,6 +28,14 @@ from tests.storage.tasks._stage_test_helpers import (
 )
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_stage_states_manager_exposes_reads_writes_and_models(temp_db) -> None:
@@ -882,7 +892,7 @@ def test_move_to_stage_reopens_closed_task_and_clears_reset_metadata(
 ) -> None:
     stale_owner = SessionManager(temp_db).register(
         external_id="stale-owner-ext",
-        machine_id="21000000-0000-4000-8000-000000000002",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -967,7 +977,7 @@ def test_move_to_stage_rejects_other_session_claim_without_force(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -991,7 +1001,7 @@ def test_move_to_stage_preserves_same_session_claim(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -1017,7 +1027,7 @@ def test_move_to_stage_force_overrides_other_session_claim(
     )
     owner = SessionManager(temp_db).register(
         external_id="owner-session",
-        machine_id="21000000-0000-4000-8000-000000000003",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=sample_project["id"],
     )

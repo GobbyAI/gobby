@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from unittest.mock import patch
+
 import pytest
 
 from gobby.agents.local_model import count_active_local_agents
@@ -13,6 +16,14 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def test_baseline_schema_includes_local_flag_columns(temp_db: HubDatabase) -> None:
@@ -182,6 +193,7 @@ def test_agent_run_row_preserves_null_flag_without_legacy_reclassification() -> 
     row = {
         "id": "run-local-legacy",
         "parent_session_id": "parent-session",
+        "machine_id": LOCAL_MACHINE_ID,
         "child_session_id": None,
         "claimed_session_id": None,
         "workflow_name": None,

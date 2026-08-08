@@ -1,10 +1,11 @@
 """Focused tests for session storage behavior."""
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -24,6 +25,14 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _validated_owner(owner_id: str) -> Callable[..., PaneOwnershipDecision]:
@@ -451,13 +460,13 @@ class TestSessionManagerLifecycle:
         """Test listing sessions."""
         session_manager.register(
             external_id="list-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="list-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -473,13 +482,13 @@ class TestSessionManagerLifecycle:
         """Test listing sessions with filters."""
         s1 = session_manager.register(
             external_id="filter-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="filter-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -504,7 +513,7 @@ class TestSessionManagerLifecycle:
         for i in range(5):
             session_manager.register(
                 external_id=f"limit-{i}",
-                machine_id=f"20000000-0000-4000-8000-{i:012d}",
+                machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
             )
@@ -1140,16 +1149,17 @@ class TestSessionManagerLifecycle:
             },
         )
         session_manager.update_status(older.id, "expired")
-        newer = session_manager.register(
-            external_id=f"newer-{newer_machine_id}-{newer_socket_path}",
-            machine_id=newer_machine_id,
-            source="claude",
-            project_id=sample_project["id"],
-            terminal_context={
-                "tmux_pane": "%154",
-                "tmux_socket_path": newer_socket_path,
-            },
-        )
+        with patch("gobby.utils.machine_id._cached_machine_id", newer_machine_id):
+            newer = session_manager.register(
+                external_id=f"newer-{newer_machine_id}-{newer_socket_path}",
+                machine_id=newer_machine_id,
+                source="claude",
+                project_id=sample_project["id"],
+                terminal_context={
+                    "tmux_pane": "%154",
+                    "tmux_socket_path": newer_socket_path,
+                },
+            )
 
         revived = session_manager.revive_expired_terminal_session(older.id)
 
@@ -1638,13 +1648,13 @@ class TestSessionManagerLifecycle:
         """Test counting sessions."""
         session_manager.register(
             external_id="count-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="count-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -1660,13 +1670,13 @@ class TestSessionManagerLifecycle:
         """Test counting sessions with filters."""
         s1 = session_manager.register(
             external_id="count-filter-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="count-filter-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
@@ -1691,21 +1701,26 @@ class TestSessionManagerLifecycle:
         sample_project: dict[str, str],
     ) -> None:
         """Test counting sessions grouped by status."""
+        from gobby.storage.machines import LocalMachineManager
+        from gobby.storage.sessions import ensure_system_session
+
+        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID)
+        ensure_system_session(session_manager.db)
         s1 = session_manager.register(
             external_id="status-count-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         s2 = session_manager.register(
             external_id="status-count-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="status-count-3",
-            machine_id="20000000-0000-4000-8000-00000000000f",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
@@ -1727,6 +1742,11 @@ class TestSessionManagerLifecycle:
 
     def test_count_by_status_empty(self, session_manager: SessionManager) -> None:
         """Test count_by_status with no user sessions (only bootstrapped system session)."""
+        from gobby.storage.machines import LocalMachineManager
+        from gobby.storage.sessions import ensure_system_session
+
+        LocalMachineManager(session_manager.db).upsert_seen(LOCAL_MACHINE_ID)
+        ensure_system_session(session_manager.db)
         counts = session_manager.count_by_status()
         # The bootstrapped system session is always present
         assert counts == {"active": 1}
@@ -1740,14 +1760,14 @@ class TestSessionManagerLifecycle:
         project = LocalProjectManager(temp_db).create(name="renumber-dry", repo_path="/tmp/dry")
         first = session_manager.register(
             external_id="dry-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
             title="First",
         )
         second = session_manager.register(
             external_id="dry-2",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
             title="Second",
@@ -1787,28 +1807,28 @@ class TestSessionManagerLifecycle:
 
         visible_first = session_manager.register(
             external_id="apply-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
             title="Visible first",
         )
         deleted = session_manager.register(
             external_id="apply-deleted",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
             title="Deleted",
         )
         visible_second = session_manager.register(
             external_id="apply-2",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=project.id,
             title="Visible second",
         )
         other = session_manager.register(
             external_id="other-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=other_project.id,
             title="Other",
@@ -1864,13 +1884,13 @@ class TestSessionManagerLifecycle:
         """Test listing all sessions without filters."""
         session_manager.register(
             external_id="list-all-1",
-            machine_id="20000000-0000-4000-8000-000000000003",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
         )
         session_manager.register(
             external_id="list-all-2",
-            machine_id="20000000-0000-4000-8000-000000000004",
+            machine_id="20000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )

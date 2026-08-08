@@ -1,6 +1,8 @@
 """Focused tests for session storage behavior."""
 
 import logging
+from collections.abc import Iterator
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -11,6 +13,14 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 class TestSessionManagerPruning:
@@ -689,10 +699,18 @@ class TestSessionManagerPruning:
         session_manager.db.execute(
             """
             INSERT INTO agent_runs (
-                id, parent_session_id, provider, prompt, status, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                id, machine_id, parent_session_id, provider, prompt, status,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (str(uuid4()), agent_run_ref.id, "claude", "retained prompt", "success"),
+            (
+                str(uuid4()),
+                LOCAL_MACHINE_ID,
+                agent_run_ref.id,
+                "claude",
+                "retained prompt",
+                "success",
+            ),
         )
 
         logger_name = "gobby.storage.session_lifecycle"

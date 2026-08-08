@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,14 @@ PROJECT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NEW_UNIQUE_TASK_ID = "44444444-4444-4444-4444-444444444444"
 UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
 VALIDATION_CRITERIA = "Test task completion is observable."
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 @pytest.fixture

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import subprocess
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import cast
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -20,6 +21,14 @@ from gobby.storage.tasks._transitions import escalate_task_if_owned, release_tas
 from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-00000000000f"
+
+
+@pytest.fixture(autouse=True)
+def _local_machine_identity() -> Iterator[None]:
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        yield
 
 
 def _project_id(temp_db: HubDatabase, repo_path: Path) -> str:
