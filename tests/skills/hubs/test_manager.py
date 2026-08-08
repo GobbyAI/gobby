@@ -468,7 +468,7 @@ class TestWarnMissingAuth:
     """Tests for HubManager.warn_missing_auth."""
 
     def test_warn_missing_auth_logs_for_misconfigured_hubs(self, caplog) -> None:
-        """Emits one WARNING per hub with missing required auth; none for others."""
+        """Emits one INFO per hub with missing required auth; none for others."""
         import logging
 
         configs = {
@@ -485,20 +485,18 @@ class TestWarnMissingAuth:
         }
         manager = HubManager(configs=configs, api_keys={"HAS_KEY": "v"})
 
-        with caplog.at_level(logging.WARNING, logger="gobby.skills.hubs.manager"):
+        with caplog.at_level(logging.INFO, logger="gobby.skills.hubs.manager"):
             manager.warn_missing_auth()
 
-        warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
-        # One warning per misconfigured hub: missing-a, missing-b
-        assert len(warning_records) == 2
-        hubs_warned = {r.getMessage() for r in warning_records}
-        assert any("missing-a" in msg for msg in hubs_warned)
-        assert any("missing-b" in msg for msg in hubs_warned)
-        # No WARNING for the open or configured hubs
-        assert not any("'open'" in msg for msg in hubs_warned)
-        assert not any("'configured'" in msg for msg in hubs_warned)
+        info_records = [r for r in caplog.records if r.levelno == logging.INFO]
+        assert len(info_records) == 2
+        hubs_reported = {r.getMessage() for r in info_records}
+        assert any("missing-a" in msg for msg in hubs_reported)
+        assert any("missing-b" in msg for msg in hubs_reported)
+        assert not any("'open'" in msg for msg in hubs_reported)
+        assert not any("'configured'" in msg for msg in hubs_reported)
         # Message directs at gobby install, not env
-        for msg in hubs_warned:
+        for msg in hubs_reported:
             assert "gobby install" in msg
             assert "environment" not in msg.lower()
 

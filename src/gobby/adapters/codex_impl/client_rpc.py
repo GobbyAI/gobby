@@ -229,6 +229,8 @@ async def read_loop(client: CodexAppServerClient) -> None:
             line = await loop.run_in_executor(None, stdout.readline)
 
             if not line:
+                if client._shutdown_event.is_set():
+                    break
                 return_code = proc.poll()
                 if return_code is not None:
                     logger.warning("Codex app-server process terminated with code %s", return_code)

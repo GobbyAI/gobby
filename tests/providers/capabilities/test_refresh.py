@@ -318,16 +318,18 @@ def test_coverage_audit_bounds_deduplicates_and_logs_recovery(
         metadata.contexts.update(dict.fromkeys(model_ids, 64_000))
         auditor.audit()
 
-    warnings = [
-        record.getMessage()
+    coverage_records = [
+        record
         for record in caplog.records
         if "models without context metadata" in record.getMessage()
     ]
-    assert len(warnings) == 1
-    assert "model-00" in warnings[0]
-    assert "model-09" in warnings[0]
-    assert "model-10" not in warnings[0]
-    assert "; 2 omitted" in warnings[0]
+    assert len(coverage_records) == 1
+    assert coverage_records[0].levelno == logging.INFO
+    coverage_message = coverage_records[0].getMessage()
+    assert "model-00" in coverage_message
+    assert "model-09" in coverage_message
+    assert "model-10" not in coverage_message
+    assert "; 2 omitted" in coverage_message
     assert first_record_count == 1
     assert "Provider synthetic context metadata coverage recovered" in [
         record.getMessage() for record in caplog.records
@@ -376,7 +378,7 @@ def test_coverage_audit_skips_configured_local_models(
         excluded_models=lambda: frozenset({("qwen", local_model)}),
     )
 
-    with caplog.at_level(logging.WARNING, logger="gobby.providers.capabilities.coverage"):
+    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
 
     messages = [record.getMessage() for record in caplog.records]
@@ -480,6 +482,27 @@ async def test_failed_refresh_retains_last_good(message: str) -> None:
     assert current.sources[0].state is SourceState.STALE
     assert current.sources[0].attempts == 2
     assert store.failures == [("codex", "provider-api", message)]
+
+
+async def test_authentication_required_refresh_is_informational(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def collect() -> ProviderSnapshot:
+        raise ValueError("ACP session/new error: Authentication required")
+
+    coordinator = CapabilityRefreshCoordinator(
+        _MemoryStore(_snapshot("qwen", "qwen-seed")),
+        {"qwen": _Collector(collect, provider="qwen")},
+    )
+
+    with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.refresh"):
+        await coordinator.refresh_all()
+
+    refresh_records = [
+        record for record in caplog.records if "Provider capability refresh failed" in record.message
+    ]
+    assert len(refresh_records) == 1
+    assert refresh_records[0].levelno == logging.INFO
 
 
 @pytest.mark.asyncio

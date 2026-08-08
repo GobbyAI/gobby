@@ -162,7 +162,7 @@ class HubManager:
         }
 
     def warn_missing_auth(self) -> None:
-        """Emit one WARNING per configured hub whose required auth is missing.
+        """Emit one INFO record per configured hub whose required auth is missing.
 
         Intended to be called once during daemon startup, after factories and
         configs are fully registered. Directs the user to ``gobby install``
@@ -174,7 +174,7 @@ class HubManager:
                 continue
             if self._api_keys.get(auth_secret_name):
                 continue
-            logger.warning(
+            logger.info(
                 "Skill hub '%s' is missing required auth. Run 'gobby install' to configure.",
                 hub_name,
             )

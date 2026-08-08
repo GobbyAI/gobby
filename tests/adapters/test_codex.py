@@ -684,6 +684,26 @@ class TestCodexAppServerClientReadLoop:
         assert isinstance(future2.exception(), ConnectionError)
         assert client._pending_requests == {}
 
+    async def test_intentional_shutdown_exit_is_silent(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        client = CodexAppServerClient()
+        mock_process = MagicMock()
+
+        def finish_shutdown() -> str:
+            client._shutdown_event.set()
+            return ""
+
+        mock_process.stdout.readline.side_effect = finish_shutdown
+        mock_process.poll.return_value = -15
+        client._process = mock_process
+
+        with caplog.at_level(logging.WARNING, logger="gobby.adapters.codex_impl.client_rpc"):
+            await client._read_loop()
+
+        assert not caplog.records
+        assert client.state is CodexConnectionState.DISCONNECTED
+
 
 class TestCodexAppServerClientContextManager:
     """Tests for async context manager support."""

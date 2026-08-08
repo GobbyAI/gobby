@@ -141,9 +141,8 @@ class CapabilityRefreshCoordinator:
                     source_key,
                     detail,
                 )
-            logger.warning(
-                "Provider capability refresh failed for %s: %s", collector.provider, detail
-            )
+            log = logger.info if "authentication required" in detail.casefold() else logger.warning
+            log("Provider capability refresh failed for %s: %s", collector.provider, detail)
         else:
             await self._audit_coverage(collector.provider)
 

@@ -142,7 +142,7 @@ class ModelMetadataCoverageAuditor:
                 continue
             if values:
                 listed, omitted = self._bounded(values)
-                logger.warning(
+                logger.info(
                     "Provider %s has %s models without context metadata: %s%s",
                     provider,
                     len(values),
