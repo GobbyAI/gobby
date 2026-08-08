@@ -5,6 +5,9 @@ with parents appearing before their children and siblings sorted
 topologically by dependencies.
 """
 
+import heapq
+from itertools import count
+
 from gobby.storage.tasks._models import Task, normalize_priority
 
 
@@ -56,40 +59,40 @@ def order_tasks_hierarchically(tasks: list[Task]) -> list[Task]:
                     graph[blocker_id].append(task.id)
                     in_degree[task.id] += 1
 
-        # 2. Initialize queue with tasks having 0 in-degree (no local blockers)
-        # We want to process high priority tasks first among available ones.
-        # Priority 0 is highest, so valid sort key is (priority, created_at).
-        # We sort the initial list to ensure deterministic order for stable sort
-        queue = [t for t in siblings if in_degree[t.id] == 0]
-        # Sort queue by priority/created_at so we pop high priority first
-        queue.sort(key=lambda t: (normalize_priority(t.priority), t.created_at))
+        # 2. Kahn's algorithm over a heap keyed by (priority, created_at, seq).
+        # Priority 0 is highest. The monotonic seq breaks ties in insertion
+        # order (matching the previous stable-sort behavior) and keeps Task
+        # objects out of heap comparisons. A heap keeps each pop O(log n);
+        # re-sorting a list per popped node is O(n^2 log n) and starves the
+        # daemon on large sibling groups (#19878).
+        seq = count()
+        heap = [
+            (normalize_priority(t.priority), t.created_at, next(seq), t)
+            for t in siblings
+            if in_degree[t.id] == 0
+        ]
+        heapq.heapify(heap)
 
         sorted_siblings: list[Task] = []
 
-        while queue:
-            # Pop the first (highest priority available)
-            current = queue.pop(0)
+        while heap:
+            _, _, _, current = heapq.heappop(heap)
             sorted_siblings.append(current)
 
-            # Decrease in-degree of neighbors
-            neighbors = graph[current.id]
-            # Neighbors might become available. Collect them.
-            newly_available = []
-            for neighbor_id in neighbors:
+            # Decrease in-degree of neighbors; push newly available ones.
+            for neighbor_id in graph[current.id]:
                 in_degree[neighbor_id] -= 1
                 if in_degree[neighbor_id] == 0:
-                    newly_available.append(task_by_id[neighbor_id])
-
-            # Sort newly available nodes by priority and add to queue
-            # We need to re-sort queue every time or insert in order.
-            # Since N is small (siblings usually < 50), simple re-sort of queue is fine.
-            newly_available.sort(key=lambda t: (normalize_priority(t.priority), t.created_at))
-
-            # Add newly available to queue. We want to maintain global order in queue
-            # based on priority.
-            # Merging two sorted lists is O(N).
-            queue.extend(newly_available)
-            queue.sort(key=lambda t: (normalize_priority(t.priority), t.created_at))
+                    neighbor = task_by_id[neighbor_id]
+                    heapq.heappush(
+                        heap,
+                        (
+                            normalize_priority(neighbor.priority),
+                            neighbor.created_at,
+                            next(seq),
+                            neighbor,
+                        ),
+                    )
 
         # Check for cycles (remaining nodes with >0 in-degree)
         if len(sorted_siblings) < len(siblings):

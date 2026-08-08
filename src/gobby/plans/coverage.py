@@ -748,7 +748,17 @@ def _load_db_task_records_from_connection(
     limit = 1000
     offset = 0
     while True:
-        page = manager.list_tasks(project_id=project_id, limit=limit, offset=offset)
+        # sort_by="created_at" pages in SQL (LIMIT/OFFSET). The default
+        # hierarchy sort materializes and re-sorts the entire project task set
+        # for every page — O(pages x project) CPU inside the daemon, which is
+        # enough to starve the event loop on large projects (#19878). Coverage
+        # evaluation is order-independent, so take the cheap deterministic order.
+        page = manager.list_tasks(
+            project_id=project_id,
+            limit=limit,
+            offset=offset,
+            sort_by="created_at",
+        )
         tasks.extend(page)
         if len(page) < limit:
             break
@@ -899,18 +909,23 @@ def _path_in_scope(path_cache: str | None, root_key: str) -> bool:
 
 
 def _records_hash(records: Sequence[_TaskRecord]) -> str:
-    payload = [
-        {
-            "ref": record.ref,
-            "labels": record.labels,
-            "validation_criteria": record.validation_criteria,
-            "state": record.state,
-            "parent_ref": record.parent_ref,
-            "path_cache": record.path_cache,
-            "dependencies": record.dependencies,
-        }
-        for record in records
-    ]
+    # Sorted by ref so the hash identifies task-tree state independent of the
+    # loader's query order; manifest stable-row preservation keys off this hash.
+    payload = sorted(
+        (
+            {
+                "ref": record.ref,
+                "labels": record.labels,
+                "validation_criteria": record.validation_criteria,
+                "state": record.state,
+                "parent_ref": record.parent_ref,
+                "path_cache": record.path_cache,
+                "dependencies": record.dependencies,
+            }
+            for record in records
+        ),
+        key=lambda entry: str(entry["ref"]),
+    )
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 

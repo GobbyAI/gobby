@@ -443,6 +443,89 @@ def test_db_source_loads_live_task_records(
     assert report.rows[0].leaves[0].leaf_task_ref == f"#{leaf.seq_num}"
 
 
+def test_db_loader_pages_in_sql_without_hierarchy_sort(
+    temp_db: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#19878: the coverage loader must never trigger the hierarchical re-sort.
+
+    The default `sort_by="hierarchy"` materializes and re-sorts the entire
+    project task set for every page, which is O(pages x project) pure-Python
+    CPU inside the daemon — enough to starve the event loop on large projects.
+    """
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    project = LocalProjectManager(temp_db).create("project")
+    manager = LocalTaskManager(temp_db)
+    root = manager.create_task(
+        project.id, "Root", validation_criteria="Test task completion is observable."
+    )
+    leaf = manager.create_task(
+        project.id,
+        "Leaf",
+        parent_task_id=root.id,
+        labels=["covers:plan:A1:A1.1"],
+        validation_criteria="Touches src/covered.py.",
+    )
+
+    def _forbidden(tasks: Any) -> Any:
+        raise AssertionError("coverage loading must page in SQL, not via hierarchy sort")
+
+    monkeypatch.setattr(
+        "gobby.storage.tasks._queries.order_tasks_hierarchically",
+        _forbidden,
+    )
+
+    report = evaluate(
+        plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+        plan_id="plan",
+        plan_hash="hash",
+        task_tree=TaskTreeSource.db,
+        root_task_ref=f"#{root.seq_num}",
+        project_id=project.id,
+        db=temp_db,
+    )
+
+    assert report.rows[0].status is CoverageStatus.covered
+    assert report.rows[0].leaves[0].leaf_task_ref == f"#{leaf.seq_num}"
+
+
+def test_task_tree_source_hash_is_order_insensitive() -> None:
+    """The tree hash identifies task-tree state, not the loader's query order."""
+    records: list[dict[str, object]] = [
+        {
+            "ref": "#1",
+            "path_cache": "1",
+            "validation_criteria": "Test task completion is observable.",
+        },
+        {
+            "ref": "#2",
+            "path_cache": "1.2",
+            "parent_ref": "#1",
+            "labels": ["covers:plan:A1:A1.1"],
+            "validation_criteria": "Touches src/covered.py.",
+        },
+    ]
+
+    def _report(ordered: list[dict[str, object]]) -> Any:
+        return evaluate(
+            plan=_plan(_section(_item("A1.1", "src/covered.py"))),
+            plan_id="plan",
+            plan_hash="hash",
+            task_tree=TaskTreeSource.db,
+            root_task_ref="#1",
+            project_id="project",
+            task_records=ordered,
+        )
+
+    forward = _report(records)
+    reversed_order = _report(list(reversed(records)))
+
+    assert forward.header.task_tree_source_hash == reversed_order.header.task_tree_source_hash
+    assert forward.rows[0].status is CoverageStatus.covered
+
+
 def test_db_deferral_uses_project_records_without_widening_root_scope(
     tmp_path: Path,
     temp_db: Any,
