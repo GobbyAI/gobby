@@ -169,6 +169,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     delete_branch=True,
                     force_delete_branch=force_delete_branch,
                     branch_name=wt.branch_name,
+                    base_branch=wt.base_branch,
                 )
                 result["git_deleted"] = git_result.success
                 if not git_result.success:
@@ -212,6 +213,7 @@ def create_cleanup_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     delete_branch=True,
                     force_delete_branch=force_delete_branch,
                     branch_name=wt.branch_name,
+                    base_branch=wt.base_branch,
                 )
                 result["git_deleted"] = git_result.success
                 if git_result.success:

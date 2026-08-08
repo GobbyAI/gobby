@@ -19,6 +19,22 @@ from gobby.storage.tasks import LocalTaskManager, Task
 
 pytestmark = pytest.mark.unit
 
+_SEEDED_TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+@pytest.fixture(autouse=True)
+def _local_test_machine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Resolve the current machine as the seeded test machine.
+
+    Sessions in this module register under the canonical seeded machine id
+    (tests/fixtures/postgres.py TEST_MACHINE_ID_PREFIX namespace), so the
+    machine-ownership guards must treat that id as local.
+    """
+    monkeypatch.setattr(
+        "gobby.utils.machine_id.get_machine_id",
+        lambda: _SEEDED_TEST_MACHINE_ID,
+    )
+
 
 def _set_project_repo(temp_db: HubDatabase, project_id: str, tmp_path: Path) -> Path:
     repo_path = tmp_path / "repo"
@@ -580,7 +596,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
         base_commit_sha="abc123",
     )
 
-    delete_calls: list[tuple[Path, bool, bool, bool, str | None]] = []
+    delete_calls: list[tuple[Path, bool, bool, bool, str | None, str | None]] = []
 
     class DeletingWorktreeGitManager:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -594,9 +610,10 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
             delete_branch: bool = False,
             force_delete_branch: bool = False,
             branch_name: str | None = None,
+            base_branch: str | None = None,
         ) -> SimpleNamespace:
             delete_calls.append(
-                (Path(path), force, delete_branch, force_delete_branch, branch_name)
+                (Path(path), force, delete_branch, force_delete_branch, branch_name, base_branch)
             )
             Path(path).rmdir()
             return SimpleNamespace(success=True, error=None, message="deleted")
@@ -623,7 +640,9 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
     assert len(artifacts) == 1
     assert artifacts[0].deleted is True
     assert artifacts[0].deferred is False
-    assert delete_calls == [(worktree_path, True, True, True, worktree.branch_name)]
+    assert delete_calls == [
+        (worktree_path, True, True, False, worktree.branch_name, worktree.base_branch)
+    ]
     assert not worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
     assert events == [
@@ -725,7 +744,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
         base_commit_sha="abc123",
     )
 
-    delete_calls: list[tuple[bool, bool, bool, str | None]] = []
+    delete_calls: list[tuple[bool, bool, bool, str | None, str | None]] = []
 
     class ForceOnlyWorktreeGitManager:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -739,8 +758,11 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
             delete_branch: bool = False,
             force_delete_branch: bool = False,
             branch_name: str | None = None,
+            base_branch: str | None = None,
         ) -> SimpleNamespace:
-            delete_calls.append((force, delete_branch, force_delete_branch, branch_name))
+            delete_calls.append(
+                (force, delete_branch, force_delete_branch, branch_name, base_branch)
+            )
             if not force:
                 return SimpleNamespace(success=False, error="dirty", message="dirty")
             residue = Path(path) / "staged-residue.txt"
@@ -763,7 +785,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
 
     assert len(artifacts) == 1
     assert artifacts[0].deleted is True
-    assert delete_calls == [(True, True, True, worktree.branch_name)]
+    assert delete_calls == [(True, True, False, worktree.branch_name, worktree.base_branch)]
     assert artifacts[0].error is None
     assert not worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
@@ -813,7 +835,7 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
         worktree_id=worktree.id,
         base_commit_sha="base",
     )
-    delete_calls: list[tuple[Path, bool, bool, bool, str | None]] = []
+    delete_calls: list[tuple[Path, bool, bool, bool, str | None, str | None]] = []
 
     class IntegratedDirtyWorktreeGitManager:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -857,9 +879,10 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
             delete_branch: bool = False,
             force_delete_branch: bool = False,
             branch_name: str | None = None,
+            base_branch: str | None = None,
         ) -> SimpleNamespace:
             delete_calls.append(
-                (Path(path), force, delete_branch, force_delete_branch, branch_name)
+                (Path(path), force, delete_branch, force_delete_branch, branch_name, base_branch)
             )
             (Path(path) / "scratch.txt").unlink()
             Path(path).rmdir()
@@ -881,7 +904,9 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
     assert len(artifacts) == 1
     assert artifacts[0].deleted is True
     assert artifacts[0].cleanup_reason == "dirty_closed_integrated_cleaned"
-    assert delete_calls == [(worktree_path, True, True, True, worktree.branch_name)]
+    assert delete_calls == [
+        (worktree_path, True, True, False, worktree.branch_name, worktree.base_branch)
+    ]
     assert not worktree_path.exists()
     assert LocalWorktreeManager(temp_db).get(worktree.id) is None
     stored = TaskArtifactManager(temp_db).get_artifacts(child.id)

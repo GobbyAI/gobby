@@ -455,6 +455,7 @@ class TestWorktreeHandlers:
         mock_dependencies["worktree_manager"].get_by_path.return_value = MagicMock(
             id="wt-123",
             branch_name="feature-auth",
+            base_branch="main",
         )
 
         handlers = EventHandlers(**mock_dependencies)
@@ -480,8 +481,8 @@ class TestWorktreeHandlers:
             worktree_path="/tmp/worktrees/feature-auth",
             force=True,
             delete_branch=True,
-            force_delete_branch=True,
             branch_name="feature-auth",
+            base_branch="main",
         )
         assert mock_git_manager.delete_worktree.call_count == 1
         assert mock_git_manager.delete_worktree.call_args is not None

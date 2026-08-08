@@ -400,8 +400,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
                 worktree_path=worktree_path,
                 force=True,
                 delete_branch=True,
-                force_delete_branch=True,
                 branch_name=getattr(existing, "branch_name", None),
+                base_branch=getattr(existing, "base_branch", None),
             )
             if not result.success:
                 self.logger.warning("WORKTREE_REMOVE failed: %s", result.message)

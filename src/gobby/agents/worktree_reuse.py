@@ -92,6 +92,7 @@ def cleanup_stale_worktree_registration(
         force=True,
         delete_branch=True,
         branch_name=worktree.branch_name,
+        base_branch=worktree.base_branch,
     )
     if not delete_result.success:
         raise RuntimeError(f"Failed to clean up stale worktree: {delete_result.error}")

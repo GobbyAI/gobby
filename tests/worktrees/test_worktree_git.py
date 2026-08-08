@@ -400,7 +400,7 @@ class TestWorktreeGitManagerDeleteWorktree:
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
 
-        # Mock sequence: status check, worktree remove, branch delete
+        # Mock sequence: status check, merge preflight, worktree remove, branch delete
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
@@ -416,35 +416,37 @@ class TestWorktreeGitManagerDeleteWorktree:
             subprocess.CompletedProcess(
                 args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
+            # merge-base --is-ancestor (merged)
+            subprocess.CompletedProcess(
+                args=["git", "merge-base"], returncode=0, stdout="", stderr=""
+            ),
             # worktree remove
             subprocess.CompletedProcess(
                 args=["git", "worktree", "remove"], returncode=0, stdout="", stderr=""
             ),
-            # branch -d
+            # branch -D (preflight already proved ancestry)
             subprocess.CompletedProcess(
-                args=["git", "branch", "-d"], returncode=0, stdout="", stderr=""
+                args=["git", "branch", "-D"], returncode=0, stdout="", stderr=""
             ),
         ]
 
-        result = manager.delete_worktree(worktree_path, delete_branch=True)
+        result = manager.delete_worktree(worktree_path, delete_branch=True, base_branch="main")
 
         assert result.success is True
         assert "branch" in result.message
+        assert mock_run.call_args_list[-1].args[0][-3:] == ["branch", "-D", "feature/test"]
 
     @patch("subprocess.run")
     def test_force_worktree_removal_does_not_force_branch_deletion(
         self, mock_run, manager, tmp_path
     ) -> None:
+        """Dirty-file force never implies branch force: unmerged still refuses."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
         mock_run.side_effect = [
+            # merge-base --is-ancestor: branch is NOT merged into its base
             subprocess.CompletedProcess(
-                args=["git", "worktree", "remove", "--force"],
-                returncode=0,
-                stdout="",
-                stderr="",
-            ),
-            subprocess.CompletedProcess(
-                args=["git", "branch", "-d"], returncode=0, stdout="", stderr=""
+                args=["git", "merge-base"], returncode=1, stdout="", stderr=""
             ),
         ]
 
@@ -453,11 +455,64 @@ class TestWorktreeGitManagerDeleteWorktree:
             force=True,
             delete_branch=True,
             branch_name="feature/test",
+            base_branch="main",
         )
 
-        assert result.success is True
-        assert mock_run.call_args_list[0].args[0][-3:-1] == ["remove", "--force"]
-        assert mock_run.call_args_list[1].args[0][-3:] == ["branch", "-d", "feature/test"]
+        assert result.success is False
+        assert result.error == "branch_not_merged_into_base"
+        preflight = mock_run.call_args_list[0].args[0]
+        assert preflight[-3:] == [
+            "--is-ancestor",
+            "refs/heads/feature/test",
+            "refs/heads/main",
+        ]
+        # Nothing was removed: the directory and branch survive the refusal.
+        assert worktree_path.exists()
+        assert len(mock_run.call_args_list) == 1
+
+    @patch("subprocess.run")
+    def test_delete_branch_requires_base_branch(self, mock_run, manager, tmp_path) -> None:
+        """Ordinary branch deletion without a stored base is refused outright."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
+
+        result = manager.delete_worktree(
+            worktree_path,
+            delete_branch=True,
+            branch_name="feature/test",
+        )
+
+        assert result.success is False
+        assert result.error == "branch_deletion_requires_base_branch"
+        assert worktree_path.exists()
+        mock_run.assert_not_called()
+
+    @patch("subprocess.run")
+    def test_delete_refuses_when_merge_state_unresolvable(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        """A merge-base error (unknown ref) refuses deletion instead of guessing."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "merge-base"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: Not a valid object name refs/heads/gone",
+            ),
+        ]
+
+        result = manager.delete_worktree(
+            worktree_path,
+            delete_branch=True,
+            branch_name="feature/test",
+            base_branch="gone",
+        )
+
+        assert result.success is False
+        assert "could not be verified" in result.message
+        assert worktree_path.exists()
 
     @patch("subprocess.run")
     def test_branch_force_deletion_requires_explicit_flag(
@@ -1111,7 +1166,8 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         worktree_path = tmp_path / "worktrees" / "feature-test"
         worktree_path.mkdir(parents=True)
 
-        # Mock sequence: get status, worktree remove success, branch delete fails
+        # Mock sequence: get status, merge preflight, worktree remove success,
+        # branch delete fails
         mock_run.side_effect = [
             # branch --show-current
             subprocess.CompletedProcess(
@@ -1127,24 +1183,28 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
             subprocess.CompletedProcess(
                 args=["git", "rev-list"], returncode=0, stdout="0\t0\n", stderr=""
             ),
+            # merge-base --is-ancestor (merged)
+            subprocess.CompletedProcess(
+                args=["git", "merge-base"], returncode=0, stdout="", stderr=""
+            ),
             # worktree remove - success
             subprocess.CompletedProcess(
                 args=["git", "worktree", "remove"], returncode=0, stdout="", stderr=""
             ),
-            # branch -d - failure (not fully merged)
+            # branch -D - failure (e.g. checked out elsewhere)
             subprocess.CompletedProcess(
-                args=["git", "branch", "-d"],
+                args=["git", "branch", "-D"],
                 returncode=1,
                 stdout="",
-                stderr="error: branch not fully merged",
+                stderr="error: Cannot delete branch 'feature/test' checked out at elsewhere",
             ),
         ]
 
-        result = manager.delete_worktree(worktree_path, delete_branch=True)
+        result = manager.delete_worktree(worktree_path, delete_branch=True, base_branch="main")
 
         assert result.success is False
         assert "failed to delete branch" in result.message
-        assert result.error == "error: branch not fully merged"
+        assert result.error == "error: Cannot delete branch 'feature/test' checked out at elsewhere"
 
     @patch("subprocess.run")
     def test_delete_branch_with_no_status(self, mock_run, manager, tmp_path) -> None:
@@ -1174,6 +1234,12 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         worktree_path = tmp_path / "worktrees" / "feature-test"
         mock_run.side_effect = [
             subprocess.CompletedProcess(
+                args=["git", "merge-base"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
                 args=["git", "worktree", "remove"],
                 returncode=128,
                 stdout="",
@@ -1198,12 +1264,13 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
             force=True,
             delete_branch=True,
             branch_name="feature/test",
+            base_branch="main",
         )
 
         assert result.success is True
         assert "and branch feature/test" in result.message
-        assert mock_run.call_args_list[1].args[0][-2:] == ["worktree", "prune"]
-        assert mock_run.call_args_list[2].args[0][-3:] == ["branch", "-d", "feature/test"]
+        assert mock_run.call_args_list[2].args[0][-2:] == ["worktree", "prune"]
+        assert mock_run.call_args_list[3].args[0][-3:] == ["branch", "-D", "feature/test"]
 
     @patch("subprocess.run")
     def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:
@@ -2272,7 +2339,9 @@ class TestWorktreeGitManagerMergeBranch:
         assert result.error == "Unexpected git crash"
 
     @patch("subprocess.run")
-    def test_merge_restores_original_branch(self, mock_run, manager) -> None:
+    def test_merge_restores_original_branch(
+        self, mock_run: Mock, manager: WorktreeGitManager
+    ) -> None:
         """Merge restores original branch in finally block."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/other"),  # on a different branch
@@ -2294,7 +2363,7 @@ class TestWorktreeGitManagerMergeBranch:
         assert "feature/other" in last_call[0][0]
 
     @patch("subprocess.run")
-    def test_merge_conflict_in_stderr(self, mock_run, manager) -> None:
+    def test_merge_conflict_in_stderr(self, mock_run: Mock, manager: WorktreeGitManager) -> None:
         """Merge detects conflict from stderr."""
         mock_run.side_effect = [
             self._mock_rev_parse("feature/test"),  # rev-parse HEAD
