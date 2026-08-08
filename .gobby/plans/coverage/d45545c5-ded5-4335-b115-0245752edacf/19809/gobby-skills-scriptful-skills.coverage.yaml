@@ -1,0 +1,1004 @@
+header:
+  plan_id: gobby-skills-scriptful-skills
+  plan_hash: 9710eec086f243f0297224cb118e968510308231d399acd1b09dad6c9887fa75
+  root_task_ref: '#19809'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-08-08T05:08:23Z'
+  task_tree_source: db
+  task_tree_source_hash: 6e7de66ac08f49bf6c103f604f50f83a2a708ae4ab0a861a2d56bee5442e904c
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 55b0f55cbf87b8973878d8ee224d6b2d94d60c091e44a5e10b17ea9cfc0bcdff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: _handle_existing_gobby_skill
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 90208efdea02e7d444136041cc8c85def97adbd018f0b9db209b3852b6ab5f89
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: parse_skill_text
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 043047124425cbc2f2533bb595cd79d7d82c9b010c0a12e1ce1e6fab36143da3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/storage/test_skill_sync.py::test_scripts_only_change_marks_updated
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 0f273a40f573144258d42300a70c9e12c8a4cb82ba3c5a873000e4258950f3a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/skills/test_parser.py::test_malformed_runtime_cli_raises
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 2a18257963ae52f7f0ac1715eefabda7d02a395fbbc385c2ccbe79e6c1c44a88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/storage/test_skill_sync.py::test_removed_script_purges_stale_rows
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: b38d6c49282fd20d34804e19b7cbae4dbfefe37b522cf6e2eda33568c58d8597
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/storage/test_skill_sync.py::test_sole_script_deletion_purges_all_rows
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: 286a9ccd3800ba8e622921f3cb1a77bab7d8bdfe820b54434ada3d4c8233e569
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/servers/routes/test_skills_routes.py::test_rest_writes_reject_malformed_runtime
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.8
+  plan_node_hash: 8e8265f1a76272e9fed56ab55e8212168239e32e5d98790478404f486995201c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: tests/cli/test_skills_cli.py::test_metadata_set_rejects_malformed_runtime
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.9
+  plan_node_hash: 1906d188d61370f0073566161e422af700a043bfec01e7160ff98f1a72dfaac8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: _sync_single_skill
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.10
+  plan_node_hash: ae70556afd7a88886049d0ab9ab5d626daba8811d479814d7a416ba95dc871bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: SkillUpdater._has_changes
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.11
+  plan_node_hash: 9258f34994aeb6f0068a2cf7b324a358484d53d77bc74b4cecece3766b3255c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: validate_runtime_metadata
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.12
+  plan_node_hash: a9d386e5fc052c09dbf58388957cefbf916b115262bfe91474d4af449a3540de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: install_skill
+  deferral_target: null
+- section_id: '1.1'
+  item_id: 1.1.13
+  plan_node_hash: 8796fa81a141e226b66f063e3a31103ede1fee6f870297bb37a8baea9a7494d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19836'
+    validation_criteria_snippet: '1.1.1: A scripts-only file change in a bundled skill
+      re-syncs the row as `updated` and refreshes `skill_files`, driven by a `{path:
+      content_hash}` comparison. ...'
+    matched_artifact_ref: SkillMetadataMixin.restore
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 7af87c7b84c226b2941aa442823cf6839e8f7126c3aaa28b859e70c056260151
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: SkillFilesMixin.get_skill_files
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: e025c9fce3111dee5cb6b6ea6924238190c67ab72531b1413d0e0593e8809a3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: get_skill
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 86a590be9d9e8bc71342db7c6e584449ad2fefc22a8139ede7339519c1500b86
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: list_skill_files
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 58d0655ce33a7f77b7ebd62cb8a9c9de8b343921422ae15ae396d9e59ba266f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: tests/storage/skills/test_skill_files.py::test_get_skill_files_path_prefix
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: fd3b052cd0ee69ecd50c7adbc567d8273f81ef174987ee95d33b02f08d2509ff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_get_skill.py::test_manifest_bounds_scripts_summary
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 2d911ee4caefbf50c69e6cd102ce643840a2937a603d7edb7b56f21de16baa89
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_get_skill.py::test_get_skill_files_tool_bounded_page
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: b96776df6e4fb536a413cd1320365f63e7713c331b68224e581f1d4ea247ac89
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_get_skill.py::test_get_skill_files_tool_paginates_same_prefix
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.8
+  plan_node_hash: 9df5e84ebc260458f954c82fb9c38079f4d3f5f7089bc38260a96766d5be39d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: src/gobby/storage/skills/_files.py
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.10
+  plan_node_hash: ac425ad2058202eb94bec330a453c67ce23dc458ea7dd1ad7b81acc1e341ef3f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: SkillFilesMixin.get_skill_files
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.11
+  plan_node_hash: 183100c81507fa4253cb3eabd42d22ae7aa0f4892d3521635ceb002f772f4669
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: src/gobby/storage/skills/_files.py
+  deferral_target: null
+- section_id: '1.2'
+  item_id: 1.2.9
+  plan_node_hash: 084dc92452d1e09d81ad492a860cc5373a7f9915e57e55f95fc2dbf2024a8131
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19837'
+    validation_criteria_snippet: '1.2.1: `get_skill_files` filters by an escaped SQL
+      prefix via a new `path_prefix` parameter, composable with `file_type`, with
+      an `exclude_file_type` complemen...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_get_skill.py::test_handlers_keep_event_loop_responsive
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: f230fcf4d7197a54dc000f2cf6a72b45fb12311b9c5187dd2f8b8d18fb28e779
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: src/gobby/cli/install_setup_impeccable.py
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 218bc7aac06f244eb2a5ffa36b457f360fb930997f985222163bf23ebeef2aa7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: run_daemon_setup
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: c7e5780f837d17972c4a0c2136fa70971e5fda2b93452ddbf04f76a51d723c58
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: collect_dependency_report
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: afdc11c2e05e6720ef32f1438f81ab2bc635904b5ea9000c91db3ab30228f118
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: format_status_message
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 25e2cb118062759507b258d26702406a3fb6330caf53e7b2f120343452603782
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_second_install_is_noop
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: a52a2c249e773e5e7000855ca65ec3a23af19a5470b3c4a1c555b85a1c219b0f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup.py::test_run_daemon_setup_homebrew_skips_impeccable
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: c8729611d4be3e2a7b328ff53df6b326eb3615dc8286e6da2bfaa7dffdf7d264
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_repairs_partial_corruption
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: 757cc7d0fc3aa5b5b78f04b3c28258c81774f403ac96cb625d29edc6a5d1f26e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_install_uses_locked_ci_without_scripts
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.9
+  plan_node_hash: 8fb4a63602bf35cc277fd027d0b17ddd1e7c5f258e5af25131849d5634fa38c4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_timeout_reaps_process_group
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.10
+  plan_node_hash: 43bc170560446522729f484c5a9eb38b3d993207f1feb003944838bd4c9dfdf4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_node_floor_gate
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.11
+  plan_node_hash: 7175f7000bafeb487d03dd784ab6e7fea19e916eb968326616b6ea9f4a91fa87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: _ensure_gobby_bin_on_path
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.12
+  plan_node_hash: ab191479a200201acdaaae7fffcbc3700cb4d783d63343f3861639509df3ed09
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: install_ghook
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.13
+  plan_node_hash: 95c1cea6e03b0f7f39664bbd2db07ffcf71297af220e9993310741b1334caba8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: pyproject.toml
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.14
+  plan_node_hash: 101505061f38f971ba84c85f90b3469c2888d69ce059cfaf741e69b9f55c0810
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: src/gobby/skills/script_cache.py
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.15
+  plan_node_hash: f695e57367b47020536f69354b87f5e7b7ae4549dbcba1a32872d42afb1ef42b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: src/gobby/cli/install_setup_impeccable.py
+  deferral_target: null
+- section_id: '1.3'
+  item_id: 1.3.16
+  plan_node_hash: a0d762a554545ff3b430105680a4cb53b6996542bef8fbe30f7ff742ed493cdf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19838'
+    validation_criteria_snippet: '1.3.1: A pinned `impeccable@3.5.0` install lands
+      under `~/.gobby/tools/impeccable/3.5.0/` with staging, locking, post-verify,
+      receipt, and atomic promote. file...'
+    matched_artifact_ref: impeccable_dependency_status
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 5bcfeb64457cc058af2a3b4352c880cbbe57c8762de436c0d13b8360a5c358d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19839'
+    validation_criteria_snippet: '2.1.1: The bundled skill carries the full 107-file
+      released 4.0.4 scripts tree, copied unmodified, with provenance recorded. behavior:
+      "Vendored scripts" in `s...'
+    matched_artifact_ref: Vendored scripts
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 47719bda2cebc137573f7c7f0a44cf38bbcab0275d15bcedc5bc5fe57c4957d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19839'
+    validation_criteria_snippet: '2.1.1: The bundled skill carries the full 107-file
+      released 4.0.4 scripts tree, copied unmodified, with provenance recorded. behavior:
+      "Vendored scripts" in `s...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/SKILL.md
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: bef94eca19cdd935bce3975520ec130e2cb472da2be2c25fa99d85262fe05068
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19839'
+    validation_criteria_snippet: '2.1.1: The bundled skill carries the full 107-file
+      released 4.0.4 scripts tree, copied unmodified, with provenance recorded. behavior:
+      "Vendored scripts" in `s...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/scripts/package.json
+  deferral_target: null
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 1d4dbeb9a84aa8038d8db9a3820bb74b506eaefb87ec3ad828c931d128f05919
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19839'
+    validation_criteria_snippet: '2.1.1: The bundled skill carries the full 107-file
+      released 4.0.4 scripts tree, copied unmodified, with provenance recorded. behavior:
+      "Vendored scripts" in `s...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/craft-floor.md
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 352380acd8aa729e4f936c7f06acb956b42a998a507b892a40cf6db56ed29b21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: create_skills_registry
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 6e10c48a04cc1b2d62e6b0e56e7cb23ac97e478707a02d9e14847972947cb7ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: src/gobby/mcp_proxy/tools/skills/materialize_skill_scripts.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: e9ac30a72da710a0c4acc3c52608571997777f0fa8a9e8d608d9eb43fa6d34d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_degrades_without_npm
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 859c63af5c1e210791ea271b8ab2cf68d8fcc5f651e586bab9cdf31bdaff8826
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_rejects_unsafe_paths
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 77047b711cca16ac3bc4b924f8d437a3cef8d19db90e184bd52aac355120fce3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_materializes_from_db_bytes_only
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: ac9a40f8785e624dfb2c9bfc30a0dd6e067674377503118985e982d12c12f801
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_concurrent_materialize_single_install
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: 489240b51bd13f0cda16cf0c6a32406d9e34690ffc1642f48fc385df55e1fd63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_timeout_reaps_subprocess
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: 28f77546081277cf609d8254b3bdb5e0d2315450502f87a6921cae116d97d664
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_old_generation_survives_new_publish
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 71771ba411567e3bf0f2eed151b2083eb0373f8363917f2752d91bd3df539f92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_failed_install_retry_attaches_deps
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: 1be2361f331e895be95100eeb29e2bd755588a10c7e84a467b31554f617718b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_missing_node_reports_independently
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.11
+  plan_node_hash: 8e900d52aac55d8b910ecc64fb3f7eada4d3d12f7741ca8933c89f447a2d04e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_owner_marker_written
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.12
+  plan_node_hash: 05d5de5f72c6065fa85441273cab43c4ef4e41f45f516a72ce2472ffc92e30cb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_scan_gate_covers_all_script_files
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.13
+  plan_node_hash: 310112035d7200dd24649b151e0c66b1147d6f712f71d022e19ad9c4ca5c3ab3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_returns_browser_cache_environment
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.14
+  plan_node_hash: a6cf77815c8c62238d68420422aaa2bd4c481eae43861909e72766b8875dbfaa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_first_root_crash_leaves_no_unmarked_root
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.15
+  plan_node_hash: c853976cdf99232d863ee935e55a7abebacefa72678f2fa343027589412c4eaf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_materializer_missing_local_puppeteer_never_invokes_npx
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.16
+  plan_node_hash: c6cb59beaee60b24ec0995d23d2e27da22b6b93fb002ad2dbdd7201d9d12249a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_lock_waiter_cancellation_leaves_lock_free
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.17
+  plan_node_hash: a3c5ddae03a3d700daa8418416894e40fc542b834f19e24358f45a3b8230b864
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_repeated_crashes_leave_no_stage_accumulation
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.18
+  plan_node_hash: fb5b87be42fd8771ae18b41bc586486664a433fe8009b5c5fad9204aceb3e8be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_browser_readiness_is_compatibility_keyed
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.19
+  plan_node_hash: 732b53d80f0cd6237ef50b717c2483a049e66277f1b8fc00d463c5f30eeb58dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: src/gobby/storage/skills/_files.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.20
+  plan_node_hash: 2b5da947713c4fd8911610665c1daa6b3bc5f5f99cd3a325d4e02e1093c9d70d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: src/gobby/skills/script_cache.py
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.21
+  plan_node_hash: 89ab970a481e53effa0eba777bdcc6c81af4566936e935b83ec737474915a9eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_external_source_never_installs_dependencies
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.22
+  plan_node_hash: 655a2694a49f7ce290dd687558bd16dae718541712badd693bbf07f1aa912ff0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: tests/mcp_proxy/tools/skills/test_materialize_skill_scripts.py::test_cold_materialization_keeps_event_loop_responsive
+  deferral_target: null
+- section_id: '2.2'
+  item_id: 2.2.23
+  plan_node_hash: 5afb2484c9081b2d945dfe10daac55ee87d2071f0c8e841fe39d74473dc827ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19840'
+    validation_criteria_snippet: '2.2.1: The tool is registered on gobby-skills and
+      returns the materialized scripts directory with independent `parser_deps`, `browser`,
+      and `node` prerequisite...'
+    matched_artifact_ref: materialize_skill_scripts
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 90745fcd58936213de064bf77f788e921fab99f868f5e94cd080d124278ac5f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: src/gobby/cli/install_setup_impeccable.py
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 3f9caab359f159f0fa5cd4c1b5f1bf938d1c5b5c3b095295641188c8364109cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: uninstall
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: d62392123974d6c3fa552a541bd23189e870849ed2735f40c67e8616ffd3a5d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: src/gobby/cli/install.py
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 77d94bde70f076101ba72ce243d81ee7be45aed52648458aba00b7cbf21d6ee4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_remove_impeccable_runtime
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 15e091ec8da494141b124a602a4e8ff464dde933b158c1960f9918f2baef2125
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: tests/cli/test_install_setup_impeccable.py::test_uninstall_tools_without_hooks
+  deferral_target: null
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 615157c79418ccf682c43a08bd57ab4c5cf423580ca6ba49e53b95f12044058a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19841'
+    validation_criteria_snippet: "2.3.1: `remove_impeccable_runtime()` clears the\
+      \ impeccable tool dir, launcher, stamp, and impeccable-owned materialization\
+      \ entries only \u2014 other skills' materia..."
+    matched_artifact_ref: remove_impeccable_runtime
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: de168774acf4cb0de2799ab20a77e2f4909f91ed8f3db6b7dd80210b74a3b054
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19842'
+    validation_criteria_snippet: '3.1.1: The transform tool implements the 4-step
+      release-channel flow (stage, scripts, references, pins). file: `src/gobby/install/shared/skills/impeccable/.upg...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/.upgrade/transform.py
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 853902d26c7f73c73bbcfc899dc19fea253dd54bbc1bb10f48482f815dc1c076
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19842'
+    validation_criteria_snippet: '3.1.1: The transform tool implements the 4-step
+      release-channel flow (stage, scripts, references, pins). file: `src/gobby/install/shared/skills/impeccable/.upg...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/.upgrade/README.md
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: b146342c77a5140ae1bed6149d99c4c25a675738e1de025a5ac128e4ca4bb605
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19842'
+    validation_criteria_snippet: '3.1.1: The transform tool implements the 4-step
+      release-channel flow (stage, scripts, references, pins). file: `src/gobby/install/shared/skills/impeccable/.upg...'
+    matched_artifact_ref: upgrade flow
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 711b23e47e9fc8074db4266113db1cfb18f160264075a2ab6c50a9bfe87ca051
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19842'
+    validation_criteria_snippet: '3.1.1: The transform tool implements the 4-step
+      release-channel flow (stage, scripts, references, pins). file: `src/gobby/install/shared/skills/impeccable/.upg...'
+    matched_artifact_ref: tests/skills/test_upgrade_transform.py::test_transform_mini_release_idempotent
+  deferral_target: null
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: f3271f772aecbf47965cd6209c3ceda213b985590587be07d955ae3275496c15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19842'
+    validation_criteria_snippet: '3.1.1: The transform tool implements the 4-step
+      release-channel flow (stage, scripts, references, pins). file: `src/gobby/install/shared/skills/impeccable/.upg...'
+    matched_artifact_ref: should_include_bundled_file
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 2e1435bb42760cc525d470995dbd5aec24569e3bcba59a90f7ad3742b5df3a92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/init.md
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 79d6541663993934900d3174b4068576c3c60e228660f1e85c9b2e8f6578b3d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/routing.md
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: f31a85681838d352e53a7b5cbe57f915ec34314c97b211a65eea500e8dc83120
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/ios.md
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: 54d3f5fdc538cc2b1add730501aacd4cb1728812f08313d15c13fbffdf1a0f5f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: Modifications from upstream
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 195074eb33027774068593fa06030a7ecb72641e5c2346f6cae46622ea72e576
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/SKILL.md
+  deferral_target: null
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 780732f49e5734b2e1815d5cc25454ec181a021fb1e46d5c570e92e1b47e5240
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19843'
+    validation_criteria_snippet: "3.2.1: The workflow references are adapted per the\
+      \ named defaults (init\u2192teach, document\u2192`.impeccable.md`, hooks documents-only).\
+      \ file: `src/gobby/install/share..."
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/doctor.md
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 4579f61fbe00e7c3adab3aca9aedb3cdfff75c104f0040ae657f6362a8edf2f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19844'
+    validation_criteria_snippet: '3.3.1: `live.md` is adapted to agent-driven `<scripts_dir>`
+      invocations with Gobby-session framing and kept cleanup invariants. file: `src/gobby/install/shared...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/live.md
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 040bd29773d20596ec97e0b8a34f3829d35c12fb8daa7b5b9b1271973ec20471
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19844'
+    validation_criteria_snippet: '3.3.1: `live.md` is adapted to agent-driven `<scripts_dir>`
+      invocations with Gobby-session framing and kept cleanup invariants. file: `src/gobby/install/shared...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/references/live-setup.md
+  deferral_target: null
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 56b09a9cb3ee3b0ba2a8a3401ac04bb6b3d89a12f2d37b92064d057deea55198
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19844'
+    validation_criteria_snippet: '3.3.1: `live.md` is adapted to agent-driven `<scripts_dir>`
+      invocations with Gobby-session framing and kept cleanup invariants. file: `src/gobby/install/shared...'
+    matched_artifact_ref: src/gobby/install/shared/skills/impeccable/NOTICE.md
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 51a06ff39267497a8aa957fd5c2f54decc99aeaceb80baa554c941e433d50c91
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19845'
+    validation_criteria_snippet: "4.1.1: The exact-equality pin guard, the bidirectional\
+      \ reference-inventory guard, the resolver-environment guard, and the lifecycle-ownership\
+      \ guard \u2014 no vendor..."
+    matched_artifact_ref: tests/skills/test_impeccable_pins.py::test_bundled_runtime_matches_release_pin
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 964d38c96c402a6e24f81b3b84bd73137985b8d36bda21f64bf05196370f6ac5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19845'
+    validation_criteria_snippet: "4.1.1: The exact-equality pin guard, the bidirectional\
+      \ reference-inventory guard, the resolver-environment guard, and the lifecycle-ownership\
+      \ guard \u2014 no vendor..."
+    matched_artifact_ref: the numbered end-to-end matrix
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 406f9b359cf9b8ae679b99271a9fc34f0b501656f796900daedb5fb0f71bd4e1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19845'
+    validation_criteria_snippet: "4.1.1: The exact-equality pin guard, the bidirectional\
+      \ reference-inventory guard, the resolver-environment guard, and the lifecycle-ownership\
+      \ guard \u2014 no vendor..."
+    matched_artifact_ref: Materialize + full engines
+  deferral_target: null
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 29bf287c7a00e0c7943c984ed7507d3670489326920452d35670e98c1aedad36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#19845'
+    validation_criteria_snippet: "4.1.1: The exact-equality pin guard, the bidirectional\
+      \ reference-inventory guard, the resolver-environment guard, and the lifecycle-ownership\
+      \ guard \u2014 no vendor..."
+    matched_artifact_ref: Bundled-content manifest parity
+  deferral_target: null
