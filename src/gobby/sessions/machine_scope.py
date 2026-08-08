@@ -9,7 +9,7 @@ from gobby.utils.machine_id import get_machine_id
 
 class SessionOwnership(Protocol):
     id: str
-    machine_id: str | None
+    machine_id: str
 
 
 class RemoteSessionOwnershipError(PermissionError):
