@@ -22,6 +22,7 @@ from gobby.utils.native_bin import resolve_native_bin_or_default
 
 from .hook_commands import (
     merge_gobby_hook_groups,
+    remove_gobby_hook_handlers,
     rewrite_hook_template_commands,
     set_gobby_hook_timeouts,
 )
@@ -104,6 +105,32 @@ def _extract_downstream(command: str) -> str | None:
         if part.startswith("GOBBY_STATUSLINE_DOWNSTREAM="):
             return part.split("=", 1)[1]
     return None
+
+
+def _remove_gobby_hooks(settings: dict[str, Any]) -> list[str]:
+    """Remove only Gobby-owned handlers for Gobby's registered event types."""
+    hooks = settings.get("hooks")
+    if not isinstance(hooks, dict):
+        return []
+
+    removed: list[str] = []
+    for hook_type in _GOBBY_HOOK_TYPES:
+        if hook_type not in hooks:
+            continue
+        hook_config = hooks[hook_type]
+        groups = hook_config if isinstance(hook_config, list) else [hook_config]
+        cleaned, handlers_removed = remove_gobby_hook_handlers(groups)
+        if not handlers_removed:
+            continue
+        if cleaned:
+            hooks[hook_type] = cleaned
+        else:
+            del hooks[hook_type]
+        removed.append(hook_type)
+
+    if not hooks:
+        settings.pop("hooks", None)
+    return removed
 
 
 def _restore_statusline(settings: dict[str, Any]) -> None:
@@ -398,14 +425,11 @@ def uninstall_claude(project_path: Path) -> dict[str, Any]:
         return result
 
     # Restore original statusLine (or remove if no downstream)
+    before_mutation = json.dumps(settings, sort_keys=True)
     _restore_statusline(settings)
+    hooks_removed.extend(_remove_gobby_hooks(settings))
 
-    if "hooks" in settings:
-        for hook_type in _GOBBY_HOOK_TYPES:
-            if hook_type in settings["hooks"]:
-                del settings["hooks"][hook_type]
-                hooks_removed.append(hook_type)
-
+    if json.dumps(settings, sort_keys=True) != before_mutation:
         # Write to temp file and atomically replace
         try:
             # Create temp file in same directory for atomic replace

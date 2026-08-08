@@ -26,6 +26,8 @@ from gobby.cli.utils import get_install_dir
 
 from .hook_commands import (
     config_contains_gobby_hook,
+    merge_gobby_hook_groups,
+    remove_gobby_hook_handlers,
     rewrite_hook_template_commands,
     set_gobby_hook_timeouts,
 )
@@ -175,37 +177,18 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
         raise
 
 
-def _clean_gobby_handlers_from_groups(groups: list[Any]) -> tuple[list[Any], bool]:
-    """Remove Gobby-owned command handlers while preserving unrelated handlers."""
-    cleaned_groups: list[Any] = []
-    removed = False
-
-    for group in groups:
-        if not isinstance(group, dict):
-            if _is_gobby_hook(group):
-                removed = True
-            else:
-                cleaned_groups.append(group)
-            continue
-
-        handlers = group.get("hooks")
-        if not isinstance(handlers, list):
-            if _is_gobby_hook(group):
-                removed = True
-            else:
-                cleaned_groups.append(group)
-            continue
-
-        cleaned_handlers = [handler for handler in handlers if not _is_gobby_hook(handler)]
-        if len(cleaned_handlers) != len(handlers):
-            removed = True
-
-        if cleaned_handlers:
-            cleaned_group = deepcopy(group)
-            cleaned_group["hooks"] = cleaned_handlers
-            cleaned_groups.append(cleaned_group)
-
-    return cleaned_groups, removed
+def _quarantine_corrupt_hooks_file(hooks_file: Path, reason: str) -> None:
+    """Move an unreadable hooks file aside so foreign hooks are never silently lost."""
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    corrupt_path = hooks_file.with_name(f"{hooks_file.name}.{timestamp}.corrupt")
+    hooks_file.rename(corrupt_path)
+    logger.warning(
+        "Existing %s is unusable (%s); preserved it at %s and installing fresh. "
+        "Recover any non-Gobby hooks from the preserved file manually.",
+        hooks_file,
+        reason,
+        corrupt_path,
+    )
 
 
 def _codex_hook_state_key(
@@ -444,9 +427,16 @@ def _install_hooks_file(
     existing: dict[str, Any] = {}
     if hooks_file.exists():
         try:
-            existing = json.loads(hooks_file.read_text(encoding="utf-8"))
+            parsed: Any = json.loads(hooks_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as e:
-            logger.warning("Could not read existing hooks.json, overwriting: %s", e)
+            _quarantine_corrupt_hooks_file(hooks_file, str(e))
+        else:
+            if isinstance(parsed, dict):
+                existing = parsed
+            else:
+                _quarantine_corrupt_hooks_file(
+                    hooks_file, f"expected a JSON object, got {type(parsed).__name__}"
+                )
 
     previous_gobby_trust_entries: list[HookTrustEntry] = []
     if isinstance(existing.get("hooks"), dict):
@@ -460,8 +450,9 @@ def _install_hooks_file(
         existing_groups = existing["hooks"].get(hook_type, [])
         if not isinstance(existing_groups, list):
             existing_groups = []
-        cleaned_groups, _ = _clean_gobby_handlers_from_groups(existing_groups)
-        existing["hooks"][hook_type] = cleaned_groups + hook_config
+        existing["hooks"][hook_type] = merge_gobby_hook_groups(
+            existing_groups, hook_config, is_gobby_hook=_is_gobby_hook
+        )
         hooks_installed.append(hook_type)
 
     _atomic_write_json(hooks_file, existing)
@@ -775,7 +766,9 @@ def uninstall_codex(project_path: Path | None = None) -> dict[str, Any]:
                             result["hooks_removed"].append(hook_type)
                         continue
 
-                    cleaned_groups, removed = _clean_gobby_handlers_from_groups(hook_groups)
+                    cleaned_groups, removed = remove_gobby_hook_handlers(
+                        hook_groups, is_gobby_hook=_is_gobby_hook
+                    )
                     if not removed:
                         continue
                     if cleaned_groups:

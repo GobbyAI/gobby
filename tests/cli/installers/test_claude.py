@@ -7,6 +7,7 @@ which handle installing and uninstalling Gobby hooks for Claude Code CLI.
 import json
 import os
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -653,17 +654,27 @@ class TestUninstallClaude:
         hooks_dir = claude_path / "hooks"
         hooks_dir.mkdir(parents=True)
 
-        # Create settings.json with hooks
+        # Create settings.json with Gobby-owned hooks plus foreign entries
+        def gobby_hook(hook_type: str) -> dict[str, Any]:
+            return {
+                "type": "command",
+                "command": f"ghook --gobby-owned --cli=claude --type={hook_type}",
+            }
+
         settings = {
             "hooks": {
-                "SessionStart": [{"hooks": [{"type": "command", "command": "test"}]}],
-                "SessionEnd": [{"hooks": [{"type": "command", "command": "test"}]}],
-                "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "test"}]}],
-                "PostToolUse": [
-                    {"matcher": "*", "hooks": [{"type": "command", "command": "test"}]}
+                "SessionStart": [{"hooks": [gobby_hook("session-start")]}],
+                "SessionEnd": [{"hooks": [gobby_hook("session-end")]}],
+                "PreToolUse": [
+                    {"matcher": "*", "hooks": [gobby_hook("pre-tool-use")]},
+                    {
+                        "matcher": "Edit|Write",
+                        "hooks": [{"type": "command", "command": "node impeccable/hook.mjs"}],
+                    },
                 ],
-                "PreCompact": [{"hooks": [{"type": "command", "command": "test"}]}],
-                "Stop": [{"hooks": [{"type": "command", "command": "test"}]}],
+                "PostToolUse": [{"matcher": "*", "hooks": [gobby_hook("post-tool-use")]}],
+                "PreCompact": [{"hooks": [gobby_hook("pre-compact")]}],
+                "Stop": [{"hooks": [gobby_hook("stop")]}],
                 "CustomUserHook": [{"hooks": [{"type": "command", "command": "user"}]}],
             },
             "allowedTools": ["tool1"],
@@ -730,9 +741,19 @@ class TestUninstallClaude:
 
         # Gobby hooks should be removed
         assert "SessionStart" not in settings.get("hooks", {})
-        assert "PreToolUse" not in settings.get("hooks", {})
+
+        # Foreign hooks under Gobby event types must survive
+        assert settings["hooks"]["PreToolUse"] == [
+            {
+                "matcher": "Edit|Write",
+                "hooks": [{"type": "command", "command": "node impeccable/hook.mjs"}],
+            }
+        ]
 
         # User's custom content should be preserved
+        assert settings["hooks"]["CustomUserHook"] == [
+            {"hooks": [{"type": "command", "command": "user"}]}
+        ]
         assert settings["allowedTools"] == ["tool1"]
 
     def test_uninstall_claude_no_settings_file(self, temp_project: Path) -> None:
@@ -865,7 +886,21 @@ class TestUninstallClaude:
             "PermissionRequest",
         ]
 
-        settings = {"hooks": {hook: [{}] for hook in all_hook_types}}
+        settings = {
+            "hooks": {
+                hook: [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": f"ghook --gobby-owned --cli=claude --type={hook}",
+                            }
+                        ]
+                    }
+                ]
+                for hook in all_hook_types
+            }
+        }
         (claude_path / "settings.json").write_text(json.dumps(settings))
 
         with patch.object(Path, "home", return_value=mock_home_dir):
@@ -877,10 +912,10 @@ class TestUninstallClaude:
         for hook_type in all_hook_types:
             assert hook_type in result["hooks_removed"]
 
-        # Verify settings file is updated
+        # Verify settings file is updated; an emptied hooks section is dropped
         with open(claude_path / "settings.json") as f:
             updated_settings = json.load(f)
-        assert updated_settings["hooks"] == {}
+        assert "hooks" not in updated_settings
 
     @patch("gobby.cli.installers.claude.get_install_dir")
     @patch("gobby.cli.installers.claude.remove_mcp_server_json")
@@ -1002,6 +1037,95 @@ class TestUninstallClaude:
 
         assert result["success"] is False
         assert "Failed to write settings.json" in result["error"]
+
+    @patch("gobby.cli.installers.claude.get_install_dir")
+    @patch("gobby.cli.installers.claude.remove_mcp_server_json")
+    def test_uninstall_claude_mixed_group_keeps_foreign_handler(
+        self,
+        mock_remove_mcp: MagicMock,
+        mock_get_install_dir: MagicMock,
+        temp_project: Path,
+        mock_install_dir: Path,
+        mock_home_dir: Path,
+    ) -> None:
+        """A group mixing Gobby and foreign handlers loses only the Gobby handler."""
+        from gobby.cli.installers.claude import uninstall_claude
+
+        mock_get_install_dir.return_value = mock_install_dir
+        mock_remove_mcp.return_value = {"success": True, "removed": False}
+
+        claude_path = temp_project / ".claude"
+        claude_path.mkdir(parents=True)
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=claude --type=post-tool-use",
+                            },
+                            {"type": "command", "command": "node third-party.mjs"},
+                        ],
+                    }
+                ]
+            }
+        }
+        (claude_path / "settings.json").write_text(json.dumps(settings))
+
+        with patch.object(Path, "home", return_value=mock_home_dir):
+            result = uninstall_claude(temp_project)
+
+        assert result["success"] is True
+        assert result["hooks_removed"] == ["PostToolUse"]
+
+        with open(claude_path / "settings.json") as f:
+            updated = json.load(f)
+        assert updated["hooks"]["PostToolUse"] == [
+            {
+                "matcher": "*",
+                "hooks": [{"type": "command", "command": "node third-party.mjs"}],
+            }
+        ]
+
+    @patch("gobby.cli.installers.claude.get_install_dir")
+    @patch("gobby.cli.installers.claude.remove_mcp_server_json")
+    def test_uninstall_claude_persists_statusline_restore_without_hooks(
+        self,
+        mock_remove_mcp: MagicMock,
+        mock_get_install_dir: MagicMock,
+        temp_project: Path,
+        mock_install_dir: Path,
+        mock_home_dir: Path,
+    ) -> None:
+        """The statusLine restore is written to disk even when no hooks section exists."""
+        from gobby.cli.installers.claude import uninstall_claude
+
+        mock_get_install_dir.return_value = mock_install_dir
+        mock_remove_mcp.return_value = {"success": True, "removed": False}
+
+        claude_path = temp_project / ".claude"
+        claude_path.mkdir(parents=True)
+        settings = {
+            "statusLine": {
+                "type": "command",
+                "command": (
+                    "GOBBY_STATUSLINE_DOWNSTREAM=my-statusline "
+                    "ghook --gobby-owned --cli=claude --type=statusline"
+                ),
+            }
+        }
+        (claude_path / "settings.json").write_text(json.dumps(settings))
+
+        with patch.object(Path, "home", return_value=mock_home_dir):
+            result = uninstall_claude(temp_project)
+
+        assert result["success"] is True
+
+        with open(claude_path / "settings.json") as f:
+            updated = json.load(f)
+        assert updated["statusLine"] == {"type": "command", "command": "my-statusline"}
 
 
 class TestInstallClaudeEdgeCases:
@@ -1410,9 +1534,18 @@ class TestUninstallClaudeEdgeCases:
         claude_path.mkdir(parents=True)
         settings = {
             "hooks": {
-                "SessionStart": [{"hooks": []}],  # Gobby hook
-                "CustomHook": [{"hooks": []}],  # User's custom hook
-                "AnotherCustom": [{"hooks": []}],  # Another user hook
+                "SessionStart": [
+                    {
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "ghook --gobby-owned --cli=claude --type=session-start",
+                            }
+                        ]
+                    }
+                ],
+                "CustomHook": [{"hooks": [{"type": "command", "command": "user-a"}]}],
+                "AnotherCustom": [{"hooks": [{"type": "command", "command": "user-b"}]}],
             }
         }
         (claude_path / "settings.json").write_text(json.dumps(settings))

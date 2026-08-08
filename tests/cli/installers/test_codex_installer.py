@@ -294,7 +294,8 @@ def test_codex_dispatcher_hook_ignores_non_codex_dispatcher_command() -> None:
 
 
 def test_codex_dispatcher_cleanup_preserves_unrelated_commands() -> None:
-    from gobby.cli.installers.codex import _clean_gobby_handlers_from_groups
+    from gobby.cli.installers.codex import _is_gobby_hook
+    from gobby.cli.installers.hook_commands import remove_gobby_hook_handlers
 
     user_hook = {"type": "command", "command": "echo user session hook"}
     groups = [
@@ -312,7 +313,7 @@ def test_codex_dispatcher_cleanup_preserves_unrelated_commands() -> None:
         }
     ]
 
-    cleaned_groups, removed = _clean_gobby_handlers_from_groups(groups)
+    cleaned_groups, removed = remove_gobby_hook_handlers(groups, is_gobby_hook=_is_gobby_hook)
 
     assert removed is True
     assert cleaned_groups == [{"hooks": [user_hook]}]
@@ -1400,10 +1401,10 @@ debug = true
         _assert_stable_hooks_feature(new_config)
         assert "# Comment at top" in config_path.read_text()
 
-    def test_install_corrupt_hooks_json_is_overwritten(
+    def test_install_corrupt_hooks_json_is_quarantined(
         self, mock_home: Path, temp_dir: Path
     ) -> None:
-        """Test that corrupt hooks.json is handled gracefully."""
+        """A corrupt hooks.json is preserved as a .corrupt sibling, never silently lost."""
         from gobby.cli.installers.codex import install_codex
 
         install_dir = self._make_install_dir(temp_dir)
@@ -1411,7 +1412,8 @@ debug = true
         codex_dir = mock_home / ".codex"
         codex_dir.mkdir(parents=True)
         hooks_path = codex_dir / "hooks.json"
-        hooks_path.write_text("{invalid json")
+        corrupt_content = '{invalid json with a foreign hook: "node third-party.mjs"'
+        hooks_path.write_text(corrupt_content)
 
         with (
             patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir),
@@ -1429,9 +1431,48 @@ debug = true
             result = install_codex(mock_home)
 
         assert result["success"] is True
-        # Should have overwritten corrupt file
+        # Fresh Gobby hooks installed
         hooks_config = json.loads(hooks_path.read_text())
         assert "hooks" in hooks_config
+        # Original content preserved beside it
+        quarantined = list(codex_dir.glob("hooks.json.*.corrupt"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text() == corrupt_content
+
+    def test_install_non_object_hooks_json_is_quarantined(
+        self, mock_home: Path, temp_dir: Path
+    ) -> None:
+        """A hooks.json holding a non-object JSON value is quarantined, not merged."""
+        from gobby.cli.installers.codex import install_codex
+
+        install_dir = self._make_install_dir(temp_dir)
+
+        codex_dir = mock_home / ".codex"
+        codex_dir.mkdir(parents=True)
+        hooks_path = codex_dir / "hooks.json"
+        hooks_path.write_text('["not", "an", "object"]')
+
+        with (
+            patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir),
+            patch("gobby.cli.installers.codex.install_shared_content") as mock_shared,
+            patch("gobby.cli.installers.codex.install_cli_content") as mock_cli,
+            patch("gobby.cli.installers.codex.configure_mcp_server_toml") as mock_mcp,
+            patch("gobby.cli.installers.codex.install_global_hooks") as mock_global,
+            patch("gobby.cli.installers.codex.clean_project_hooks"),
+        ):
+            mock_shared.return_value = {"plugins": []}
+            mock_cli.return_value = {"commands": []}
+            mock_mcp.return_value = {"success": True, "added": True}
+            mock_global.return_value = ["hook_dispatcher.py"]
+
+            result = install_codex(mock_home)
+
+        assert result["success"] is True
+        hooks_config = json.loads(hooks_path.read_text())
+        assert "hooks" in hooks_config
+        quarantined = list(codex_dir.glob("hooks.json.*.corrupt"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_text() == '["not", "an", "object"]'
 
 
 class TestResultStructure:

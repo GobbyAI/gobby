@@ -187,7 +187,7 @@ def _merge_droid_isolation_hooks(
     gobby_settings: dict[str, Any],
 ) -> dict[str, Any]:
     from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
-    from gobby.cli.installers.hook_commands import config_contains_gobby_hook
+    from gobby.cli.installers.hook_commands import merge_gobby_hook_groups
 
     updated = deepcopy(existing_settings)
     hooks = updated.setdefault("hooks", {})
@@ -204,13 +204,7 @@ def _merge_droid_isolation_hooks(
         if not isinstance(hook_config, list) or not hook_config:
             raise ValueError(f"Droid hooks template missing hook type: {hook_type}")
 
-        current_config = hooks.get(hook_type)
-        preserved: list[Any] = []
-        if isinstance(current_config, list):
-            preserved = [
-                deepcopy(entry) for entry in current_config if not config_contains_gobby_hook(entry)
-            ]
-        hooks[hook_type] = preserved + deepcopy(hook_config)
+        hooks[hook_type] = merge_gobby_hook_groups(hooks.get(hook_type), hook_config)
 
     return updated
 

@@ -20,7 +20,8 @@ from gobby.cli.utils import get_install_dir
 from gobby.utils.deps import get_ghook_version
 
 from .hook_commands import (
-    config_contains_gobby_hook,
+    merge_gobby_hook_groups,
+    remove_gobby_hook_handlers,
     rewrite_hook_template_commands,
     set_gobby_hook_timeouts,
 )
@@ -155,13 +156,7 @@ def _merge_gobby_hooks(
         if not isinstance(hook_config, list) or not hook_config:
             raise ValueError(f"Droid hooks template missing hook type: {hook_type}")
 
-        current_config = updated.get(hook_type)
-        preserved: list[Any] = []
-        if isinstance(current_config, list):
-            preserved = [
-                deepcopy(entry) for entry in current_config if not config_contains_gobby_hook(entry)
-            ]
-        updated[hook_type] = preserved + deepcopy(hook_config)
+        updated[hook_type] = merge_gobby_hook_groups(updated.get(hook_type), hook_config)
 
     return updated
 
@@ -176,8 +171,8 @@ def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[
         if not isinstance(hook_config, list):
             continue
 
-        preserved = [entry for entry in hook_config if not config_contains_gobby_hook(entry)]
-        if len(preserved) == len(hook_config):
+        preserved, handlers_removed = remove_gobby_hook_handlers(hook_config)
+        if not handlers_removed:
             continue
 
         removed.append(hook_type)
