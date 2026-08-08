@@ -23,7 +23,7 @@ from gobby.storage.workspace_machine_scope import (
 )
 from gobby.utils.datetime import utc_now
 
-from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
+from ._constants import ensure_system_session, get_logger, system_session_id
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._identity_reconciliation import reconcile_session_identity
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
@@ -133,28 +133,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             resource_kind="session",
             resource_id=external_id,
         )
-        # Deliberately project-agnostic, unlike idx_sessions_unique: register may
-        # recover and move a same-identity session across projects, so foreign
-        # ownership anywhere must block before that reuse path can run.
-        existing_owners = self.db.fetchall(
-            """
-            SELECT id, machine_id
-            FROM sessions
-            WHERE external_id = %s AND source = %s AND session_type = %s
-              AND status <> 'deleted'
-            """,
-            (external_id, source, session_type),
-        )
-        for owner in existing_owners:
-            owner_machine_id = str(owner["machine_id"])
-            if owner_machine_id != machine_id:
-                raise MachineOwnershipMismatchError(
-                    resource_kind="session",
-                    resource_id=str(owner["id"]),
-                    owner_machine_id=owner_machine_id,
-                    current_machine_id=machine_id,
-                )
-
         now = utc_now()
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
@@ -177,7 +155,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
 
         manual_title, manual_title_source = manual_registration_title(title, title_source)
 
-        if is_set(parent_session_id) and parent_session_id == SYSTEM_SESSION_ID:
+        if is_set(parent_session_id) and parent_session_id == system_session_id():
             ensure_system_session(self.db)
 
         registration_lock = SessionRegistration(
@@ -188,6 +166,28 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
 
         change_event = "session_created"
         with self.db.transaction_immediate(registration_lock) as conn:
+            # Deliberately project-agnostic, unlike idx_sessions_unique: register may
+            # recover and move a same-identity session across projects, so foreign
+            # ownership anywhere must block before that reuse path can run.
+            existing_owners = conn.execute(
+                """
+                SELECT id, machine_id
+                FROM sessions
+                WHERE external_id = %s AND source = %s AND session_type = %s
+                  AND status <> 'deleted'
+                """,
+                (external_id, source, session_type),
+            ).fetchall()
+            for owner in existing_owners:
+                owner_machine_id = str(owner["machine_id"])
+                if owner_machine_id != machine_id:
+                    raise MachineOwnershipMismatchError(
+                        resource_kind="session",
+                        resource_id=str(owner["id"]),
+                        owner_machine_id=owner_machine_id,
+                        current_machine_id=machine_id,
+                    )
+
             reconciliation = reconcile_session_identity(
                 conn,
                 external_id=external_id,

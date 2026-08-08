@@ -938,6 +938,45 @@ class TestSessionStartNewSession:
         assert event.metadata["_platform_session_id"] == persisted.id
         assert event.session_id == persisted.external_id
 
+    def test_explicit_resume_without_stored_session_registers_new_session(
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
+    ) -> None:
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = None
+        storage.find_by_external_id.return_value = None
+        mock_dependencies["session_manager"].register_session.return_value = "new-resume-id"
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="missing-resume-provider-id",
+            source="codex",
+            data={"source": "resume", "cwd": "/work/gobby"},
+            metadata={},
+        )
+        event.machine_id = "21000000-0000-4000-8000-000000000008"
+        project_resolution = SimpleNamespace(
+            skipped=False,
+            reason="matched test project",
+            project_id="proj-123",
+        )
+
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_hook_project_context",
+                return_value=project_resolution,
+            ),
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].register_session.assert_called_once()
+        assert event.metadata["_platform_session_id"] == "new-resume-id"
+        storage.rebind_resumed_terminal_session.assert_not_called()
+
     def test_ordinary_delayed_start_cannot_reactivate_expired_precreated_session(
         self,
         mock_dependencies: dict[str, Any],

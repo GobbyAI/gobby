@@ -24,6 +24,9 @@ pytestmark = pytest.mark.unit
 
 class _SessionManager:
     def __init__(self, sessions: list[SimpleNamespace]) -> None:
+        for session in sessions:
+            if not hasattr(session, "machine_id"):
+                session.machine_id = "machine"
         self.sessions = sessions
         self.calls: list[tuple[list[str], int]] = []
         self.socket_expirations: list[tuple[str, str]] = []
@@ -80,6 +83,31 @@ def test_tmux_repair_candidate_score_prefers_identity_and_activity() -> None:
 
     assert _tmux_repair_candidate_score(inactive) == (0, 0)
     assert _tmux_repair_candidate_score(active) == (1, 1)
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_skips_sessions_without_machine_identity() -> None:
+    session = SimpleNamespace(
+        id="missing-machine",
+        ref="#1",
+        machine_id="",
+        external_id="external",
+        terminal_context={"tmux_pane": "%1", "tmux_socket_name": "gobby"},
+        message_count=1,
+        turn_count=0,
+        tool_call_count=0,
+    )
+    manager = _SessionManager([session])
+
+    with patch(
+        "gobby.runner_maintenance.isolation.probe_tmux_pane",
+        new=AsyncMock(),
+    ) as probe:
+        await tmux_window_name_repair_loop(manager, lambda: True)
+
+    probe.assert_not_awaited()
+    assert manager.socket_expirations == []
+    assert manager.pane_expirations == []
 
 
 def test_select_tmux_repair_sessions_keeps_best_candidate_per_pane() -> None:

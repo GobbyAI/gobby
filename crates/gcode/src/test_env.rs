@@ -96,8 +96,18 @@ pub fn destructive_postgres_test_override_enabled() -> bool {
 /// from any starting database state without a manual `gcode setup --standalone`
 /// between runs. Non-`_test` databases are left untouched.
 fn ensure_code_index_schema(database_url: &str) {
-    static PROVISIONED: std::sync::OnceLock<Result<(), String>> = std::sync::OnceLock::new();
-    if let Err(message) = PROVISIONED.get_or_init(|| provision_code_index_schema(database_url)) {
+    static PROVISIONED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, Result<(), String>>>,
+    > = std::sync::OnceLock::new();
+    let provisioned =
+        PROVISIONED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let mut provisioned = provisioned
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let result = provisioned
+        .entry(database_url.to_string())
+        .or_insert_with(|| provision_code_index_schema(database_url));
+    if let Err(message) = result {
         panic!("provisioning the code-index test schema failed: {message}");
     }
 }
@@ -228,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn destructive_postgres_guard_requires_test_database_name() {
         temp_env::with_var(
             GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV,
@@ -245,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn destructive_postgres_guard_accepts_explicit_override_values() {
         for value in ["1", "true", "TRUE"] {
             temp_env::with_var(

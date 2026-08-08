@@ -390,9 +390,9 @@ class PipelineExecutor(
                 )
 
                 # 2b. Create child session for top-level pipelines
-                from gobby.storage.sessions import SYSTEM_SESSION_ID
+                from gobby.storage.sessions import system_session_id
 
-                caller_session_id = session_id or SYSTEM_SESSION_ID
+                caller_session_id = session_id or system_session_id()
                 pipeline_session_id = caller_session_id
                 parent_session_id = _parent_session_id
 

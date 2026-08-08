@@ -3,11 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import PurePath, PureWindowsPath
 from typing import Any
 
 from gobby.code_index.models import CallRelation, ImportRelation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.machine_id import require_machine_id
+
+
+def _validate_relation_path(file_path: str) -> None:
+    if not file_path:
+        raise ValueError("relation path must not be empty")
+    if PurePath(file_path).is_absolute() or PureWindowsPath(file_path).is_absolute():
+        raise ValueError("relation path must be repository-relative")
+    if ".." in PurePath(file_path).parts or ".." in PureWindowsPath(file_path).parts:
+        raise ValueError("relation path must not contain '..' segments")
 
 
 class CodeIndexRelationStorageMixin:
@@ -34,9 +44,12 @@ class CodeIndexRelationStorageMixin:
         """Idempotently store imports for the current immutable content version."""
         if not imports:
             return 0
+        _validate_relation_path(file_path)
+        for relation in imports:
+            _validate_relation_path(relation.source_file)
         content_hash = self._current_file_content_hash(project_id, file_path)
         with self.db.transaction() as conn:
-            conn.executemany(
+            cursor = conn.executemany(
                 """INSERT INTO code_imports
                    (project_id, source_file, content_hash, target_module)
                    VALUES (%s, %s, %s, %s)
@@ -45,7 +58,7 @@ class CodeIndexRelationStorageMixin:
                    ) DO NOTHING""",
                 [(project_id, imp.source_file, content_hash, imp.target_module) for imp in imports],
             )
-            return len(imports)
+            return cursor.rowcount
 
     def upsert_calls(
         self,
@@ -56,9 +69,12 @@ class CodeIndexRelationStorageMixin:
         """Idempotently store calls for the current immutable content version."""
         if not calls:
             return 0
+        _validate_relation_path(file_path)
+        for relation in calls:
+            _validate_relation_path(relation.file_path)
         content_hash = self._current_file_content_hash(project_id, file_path)
         with self.db.transaction() as conn:
-            conn.executemany(
+            cursor = conn.executemany(
                 """INSERT INTO code_calls
                    (
                        project_id, caller_symbol_id, callee_symbol_id, callee_name,
@@ -88,7 +104,7 @@ class CodeIndexRelationStorageMixin:
                     for c in calls
                 ],
             )
-            return len(calls)
+            return cursor.rowcount
 
     def get_imports_for_file(self, project_id: str, file_path: str) -> list[dict[str, Any]]:
         """Get import relations for a file (for graph sync)."""

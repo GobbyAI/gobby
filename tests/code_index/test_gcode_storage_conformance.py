@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet
 from gobby.code_index.models import IndexedFile, Symbol
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.utils.machine_id import get_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 
 pytestmark = pytest.mark.integration
@@ -61,16 +62,13 @@ def _symbol_row(
     project_id: str,
     name: str,
 ) -> Symbol:
-    row = code_storage.db.fetchone(
-        """
-        SELECT *
-        FROM code_symbols
-        WHERE project_id = %s AND file_path = %s AND name = %s
-        """,
-        (project_id, FIXTURE_FILE, name),
-    )
-    assert row is not None
-    return Symbol.from_row(row)
+    matches = [
+        symbol
+        for symbol in code_storage.get_symbols_for_file(project_id, FIXTURE_FILE)
+        if symbol.name == name
+    ]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def test_real_gcode_writer_matches_python_model_contract(
@@ -100,6 +98,13 @@ def test_real_gcode_writer_matches_python_model_contract(
     env = os.environ.copy()
     gobby_home = tmp_path / "gobby-home"
     gobby_home.mkdir()
+    machine_id = get_machine_id()
+    assert machine_id is not None
+    code_db.execute(
+        "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+        (machine_id,),
+    )
+    (gobby_home / "machine_id").write_text(machine_id, encoding="utf-8")
     bootstrap_path = gobby_home / "bootstrap.yaml"
     bootstrap_path.write_text(
         f"hub_backend: postgres\ndatabase_url: {scoped_database_url}\n",
@@ -130,10 +135,19 @@ def test_real_gcode_writer_matches_python_model_contract(
     assert indexed_file is not None
 
     greet_start = INITIAL_SOURCE.encode().index(b"def greet")
-    assert greet.id == Symbol.make_id(project_id, FIXTURE_FILE, "greet", "function", greet_start)
+    assert greet.id == Symbol.make_id(
+        project_id,
+        FIXTURE_FILE,
+        indexed_file.content_hash,
+        "greet",
+        "function",
+        greet_start,
+    )
     assert greet.qualified_name == "greet"
     assert run.qualified_name == "Worker.run"
-    assert indexed_file.id == IndexedFile.make_id(project_id, FIXTURE_FILE)
+    assert indexed_file.id == IndexedFile.make_id(
+        project_id, FIXTURE_FILE, indexed_file.content_hash
+    )
 
     code_storage.update_symbol_summary(greet.id, greet.content_hash, "Greets a caller.")
     code_db.execute(
@@ -150,10 +164,10 @@ def test_real_gcode_writer_matches_python_model_contract(
     _write_fixture(root, CHANGED_SOURCE)
     _run_gcode(gcode_bin, root, env, "index", "--full", "--quiet")
 
-    reindexed_greet = code_storage.get_symbol(greet.id)
+    reindexed_greet = _symbol_row(code_storage, project_id, "greet")
     reindexed_file = code_storage.get_file(project_id, FIXTURE_FILE)
-    assert reindexed_greet is not None
     assert reindexed_file is not None
+    assert reindexed_greet.id != greet.id
     assert reindexed_greet.content_hash != greet.content_hash
     assert reindexed_greet.summary is None
     assert reindexed_file.graph_synced is False

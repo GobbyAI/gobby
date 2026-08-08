@@ -5,14 +5,14 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ._constants import (
-    SYSTEM_SESSION_EXTERNAL_ID,
-    SYSTEM_SESSION_ID,
     SYSTEM_SESSION_PROJECT_ID,
     SYSTEM_SESSION_SOURCE,
     SYSTEM_SESSION_TITLE,
     TERMINAL_SESSION_STATUSES,
     ensure_system_session,
     logger,
+    system_session_external_id,
+    system_session_id,
 )
 
 if TYPE_CHECKING:
@@ -20,14 +20,14 @@ if TYPE_CHECKING:
 
 __all__ = [
     "SessionManager",
-    "SYSTEM_SESSION_EXTERNAL_ID",
-    "SYSTEM_SESSION_ID",
     "SYSTEM_SESSION_PROJECT_ID",
     "SYSTEM_SESSION_SOURCE",
     "SYSTEM_SESSION_TITLE",
     "TERMINAL_SESSION_STATUSES",
     "ensure_system_session",
     "logger",
+    "system_session_external_id",
+    "system_session_id",
 ]
 
 

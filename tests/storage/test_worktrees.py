@@ -235,7 +235,6 @@ def test_worktree_uniqueness_is_machine_scoped(
         worktrees_module,
         "require_machine_id",
         lambda: next(owners),
-        raising=False,
     )
     manager = LocalWorktreeManager(temp_db)
     created = [
@@ -279,7 +278,6 @@ def test_cleanup_scoped_to_local_machine(
         worktrees_module,
         "require_machine_id",
         lambda: next(owners),
-        raising=False,
     )
     manager = LocalWorktreeManager(temp_db)
     local = manager.create(
@@ -292,6 +290,8 @@ def test_cleanup_scoped_to_local_machine(
         branch_name="task/remote-stale",
         worktree_path="/tmp/remote-stale",
     )
+    assert local.machine_id == local_machine_id
+    assert remote.machine_id == remote_machine_id
     monkeypatch.setattr(worktrees_module, "require_machine_id", lambda: local_machine_id)
     stale_at = datetime.now(UTC) - timedelta(hours=48)
     temp_db.execute(
@@ -331,7 +331,6 @@ def test_claim_scoped_to_local_machine(
         worktrees_module,
         "require_machine_id",
         lambda: next(owners),
-        raising=False,
     )
     manager = LocalWorktreeManager(temp_db)
     session = session_manager.register(
@@ -350,6 +349,8 @@ def test_claim_scoped_to_local_machine(
         branch_name="task/shared",
         worktree_path="/same/path",
     )
+    assert remote.machine_id == remote_machine_id
+    assert local.machine_id == local_machine_id
     monkeypatch.setattr(worktrees_module, "require_machine_id", lambda: local_machine_id)
 
     assert manager.get_by_path("/same/path") == local
@@ -1144,6 +1145,17 @@ class TestLocalWorktreeManagerStatusTransitions:
         session_manager.update_status(owner.id, "expired")
 
         assert manager.is_claimed_by_live_session(worktree.id) is False
+
+    def test_is_claimed_by_live_session_stops_when_owned_row_is_absent(
+        self,
+        manager: LocalWorktreeManager,
+        mock_db: MagicMock,
+    ) -> None:
+        mock_db.fetchone.return_value = None
+
+        assert manager.is_claimed_by_live_session("wt-missing") is False
+        assert mock_db.fetchone.call_count == 2
+        assert all("JOIN sessions" not in call.args[0] for call in mock_db.fetchone.call_args_list)
 
     def test_mark_stale_sets_status(
         self,

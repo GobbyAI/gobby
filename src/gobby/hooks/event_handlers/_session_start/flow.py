@@ -397,9 +397,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             project_id=canonical_session.project_id,
             session_type=canonical_session.session_type,
         )
-    elif handler._session_manager and session_source == "resume":
-        if resolution.session is None:
-            return HookResponse(decision="block", reason="Explicit resume session was not found.")
+    elif handler._session_manager and session_source == "resume" and resolution.session is not None:
         try:
             resumed, transcript_path = rebind_resumed_session_start(
                 handler,

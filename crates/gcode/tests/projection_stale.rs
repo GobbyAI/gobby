@@ -6,6 +6,7 @@ mod serial_db {
     use super::common::http::spawn_http_responses;
     use postgres::{Client, NoTls};
     use serde_json::Value;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     use gobby_code::test_env;
@@ -18,6 +19,18 @@ mod serial_db {
     /// Parse a fixture id for binding against native-uuid hub columns.
     fn uuid_param(id: &str) -> uuid::Uuid {
         uuid::Uuid::parse_str(id).expect("fixture id is a uuid")
+    }
+
+    fn local_machine_uuid() -> uuid::Uuid {
+        uuid_param(&gobby_core::machine::read_local_machine_id().expect("read local machine id"))
+    }
+
+    fn isolated_gobby_home(root: &Path) -> PathBuf {
+        let home = root.join(".no-daemon-home");
+        std::fs::create_dir_all(&home).expect("create isolated Gobby home");
+        std::fs::write(home.join("machine_id"), local_machine_uuid().to_string())
+            .expect("write isolated machine id");
+        home
     }
 
     /// Deterministic uuid for a seeded child row of `project_id`.
@@ -60,9 +73,7 @@ mod serial_db {
         .expect("write gcode identity");
 
         seed_indexed_file(&mut conn, PROJECT_ID, FILE_PATH);
-        let machine_id = uuid_param(
-            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
-        );
+        let machine_id = local_machine_uuid();
         conn.execute(
             "DELETE FROM code_indexed_file_states
              WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
@@ -73,6 +84,7 @@ mod serial_db {
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
             .env("GCODE_DATABASE_URL", &database_url)
+            .env("GOBBY_HOME", isolated_gobby_home(project.path()))
             .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .arg("--no-freshness")
             .arg("--format")
@@ -155,6 +167,7 @@ mod serial_db {
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(project.path())
             .env("GCODE_DATABASE_URL", &database_url)
+            .env("GOBBY_HOME", isolated_gobby_home(project.path()))
             .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env_remove("GOBBY_FALKORDB_HOST")
             .env_remove("GOBBY_FALKORDB_PORT")
@@ -208,6 +221,7 @@ mod serial_db {
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(cwd.path())
             .env("GCODE_DATABASE_URL", &database_url)
+            .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
             .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env("GOBBY_FALKORDB_HOST", "127.0.0.1")
             .env("GOBBY_FALKORDB_PORT", "1")
@@ -255,6 +269,7 @@ mod serial_db {
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
             .current_dir(cwd.path())
             .env("GCODE_DATABASE_URL", &database_url)
+            .env("GOBBY_HOME", isolated_gobby_home(cwd.path()))
             .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
             .env_remove("GOBBY_FALKORDB_HOST")
             .env_remove("GOBBY_FALKORDB_PORT")
@@ -300,9 +315,7 @@ mod serial_db {
 
     fn seed_project_with_root(conn: &mut Client, project_id: &str, root_path: impl AsRef<str>) {
         let project_id = uuid_param(project_id);
-        let machine_id = uuid_param(
-            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
-        );
+        let machine_id = local_machine_uuid();
         conn.execute(
             "INSERT INTO code_indexed_projects (id) VALUES ($1)",
             &[&project_id],
@@ -341,9 +354,7 @@ mod serial_db {
     }
 
     fn seed_file_state(conn: &mut Client, project_id: &str, file_path: &str) {
-        let machine_id = uuid_param(
-            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
-        );
+        let machine_id = local_machine_uuid();
         conn.execute(
             "INSERT INTO code_indexed_file_states
                 (machine_id, project_id, file_path, content_hash)
@@ -394,9 +405,7 @@ mod serial_db {
     }
 
     fn indexed_project_state_count(conn: &mut Client, project_id: &str) -> i64 {
-        let machine_id = uuid_param(
-            &gobby_core::machine::read_local_machine_id().expect("read local machine id"),
-        );
+        let machine_id = local_machine_uuid();
         conn.query_one(
             "SELECT COUNT(*)::BIGINT FROM code_indexed_project_states
              WHERE machine_id = $1 AND project_id = $2",

@@ -58,6 +58,7 @@ from gobby.config.sessions import (
     SessionSummaryConfig,
 )
 from gobby.config.tasks import (
+    DEFAULT_WORKFLOW_TIMEOUT_SECONDS,
     CompactHandoffConfig,
     GobbyTasksConfig,
     TaskExpansionConfig,
@@ -487,6 +488,7 @@ class TestDaemonConfig:
         with pytest.raises(ValidationError):
             DaemonConfig(daemon_health_check_interval=500.0)
 
+    @pytest.mark.unit
     def test_coordinated_hook_timeout_defaults(self) -> None:
         config = DaemonConfig()
 
@@ -503,6 +505,7 @@ class TestDaemonConfig:
             ({"hooks": {"adapter_timeout": 120}}, "hooks.adapter_timeout"),
         ],
     )
+    @pytest.mark.unit
     def test_hook_timeout_policy_requires_strict_order(
         self,
         overrides: dict[str, object],
@@ -512,6 +515,7 @@ class TestDaemonConfig:
             DaemonConfig(**overrides)
 
     @pytest.mark.parametrize("field", ["adapter_timeout", "provider_timeout"])
+    @pytest.mark.unit
     def test_hook_timeout_values_must_be_positive(self, field: str) -> None:
         with pytest.raises(ValidationError):
             HookTimeoutConfig(**{field: 0})
@@ -1688,9 +1692,8 @@ class TestWorkflowConfig:
         assert config.timeout == 90.0
 
     def test_timeout_validation(self) -> None:
-        """Test timeout must be positive."""
-        with pytest.raises(ValidationError):
-            WorkflowConfig(timeout=0)
+        """Test the bundled zero sentinel resolves to the default timeout."""
+        assert WorkflowConfig(timeout=0).timeout == DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 
 
 class TestMessageTrackingConfig:

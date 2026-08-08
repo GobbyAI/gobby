@@ -141,7 +141,7 @@ class PruneContext:
     ) -> None:
         self.storage = storage
         self.gcode_gateway = gateway
-        self.config = SimpleNamespace(maintenance_log_file=str(log_file), content_retention_days=30)
+        self.config = SimpleNamespace(maintenance_log_file=str(log_file), content_retention_days=17)
         self.run_db_calls: list[str] = []
 
     async def run_db(self, func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -205,7 +205,7 @@ async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) 
         "retried_projects": 0,
     }
     assert gateway.global_timeouts == [CODE_INDEX_PRUNE_TIMEOUT_SECONDS]
-    assert gateway.retention_days == [30]
+    assert gateway.retention_days == [17]
     assert gateway.targeted_roots == []
     assert storage.cleared_dirty == ["proj-1"]
     log_text = (tmp_path / "maintenance.log").read_text(encoding="utf-8")

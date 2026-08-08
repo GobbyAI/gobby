@@ -412,6 +412,7 @@ mod serial_db {
             &mut conn,
             &local_machine,
             &project_id,
+            "/tmp/gcode-two-machine-resolve",
             "src/lib.rs",
             "hash-local",
         );
@@ -419,6 +420,7 @@ mod serial_db {
             &mut conn,
             &foreign_machine,
             &project_id,
+            "/tmp/gcode-two-machine-resolve",
             "src/lib.rs",
             "hash-foreign",
         );
@@ -492,6 +494,7 @@ mod serial_db {
             &mut conn,
             &foreign_machine,
             &project_id,
+            "/tmp/gcode-two-machine-resolve",
             "src/ghost.rs",
             "hash-ghost",
         );
@@ -837,6 +840,7 @@ fn insert_machine_file_state(
     conn: &mut Client,
     machine_id: &str,
     project_id: &str,
+    root_path: &str,
     file_path: &str,
     content_hash: &str,
 ) {
@@ -846,9 +850,9 @@ fn insert_machine_file_state(
         "INSERT INTO code_indexed_project_states
                 (machine_id, project_id, root_path, total_files, total_symbols,
                  last_indexed_at, index_duration_ms)
-             VALUES ($1, $2, '/tmp/gcode-two-machine', 0, 0, NOW(), 0)
+             VALUES ($1, $2, $3, 0, 0, NOW(), 0)
              ON CONFLICT (machine_id, project_id) DO NOTHING",
-        &[&machine_id, &project_id],
+        &[&machine_id, &project_id, &root_path],
     )
     .expect("insert machine project state");
     conn.execute(
@@ -950,6 +954,7 @@ fn two_machine_divergence_scopes_reads_to_local_file_state() {
         &mut conn,
         &local_machine,
         &project_id,
+        "/tmp/gcode-two-machine",
         "src/lib.rs",
         "hash-local",
     );
@@ -957,6 +962,7 @@ fn two_machine_divergence_scopes_reads_to_local_file_state() {
         &mut conn,
         &foreign_machine,
         &project_id,
+        "/tmp/gcode-two-machine",
         "src/lib.rs",
         "hash-foreign",
     );
@@ -999,6 +1005,7 @@ fn two_machine_divergence_scopes_reads_to_local_file_state() {
         &mut conn,
         &foreign_machine,
         &project_id,
+        "/tmp/gcode-two-machine",
         "src/ghost.rs",
         "hash-ghost",
     );

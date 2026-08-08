@@ -3,20 +3,9 @@ use super::*;
 #[test]
 fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
     let repo = tempfile::tempdir()?;
+    let hooks = tempfile::tempdir()?;
     std::fs::write(repo.path().join("tracked.txt"), "retained\n")?;
-    for args in [
-        vec!["init"],
-        vec!["add", "tracked.txt"],
-        vec![
-            "-c",
-            "user.name=Gcode Test",
-            "-c",
-            "user.email=gcode@example.invalid",
-            "commit",
-            "-m",
-            "seed",
-        ],
-    ] {
+    for args in [vec!["init"], vec!["add", "tracked.txt"]] {
         let status = Command::new("git")
             .arg("-C")
             .arg(repo.path())
@@ -24,8 +13,24 @@ fn recent_git_blob_protects_matching_content() -> anyhow::Result<()> {
             .status()?;
         assert!(status.success());
     }
+    let status = Command::new("git")
+        .arg("-C")
+        .arg(repo.path())
+        .args([
+            "-c",
+            "user.name=Gcode Test",
+            "-c",
+            "user.email=gcode@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+        ])
+        .arg(format!("core.hooksPath={}", hooks.path().display()))
+        .args(["commit", "-m", "seed"])
+        .status()?;
+    assert!(status.success());
 
-    let hashes = recent_content_hashes_in_git_history(repo.path(), "tracked.txt", 30)?;
+    let hashes = recent_content_hashes_in_git_history(repo.path(), "tracked.txt", 17)?;
     assert!(hashes.contains(&hasher::content_hash(b"retained\n")));
     assert!(!hashes.contains(&hasher::content_hash(b"different\n")));
     Ok(())
@@ -150,7 +155,7 @@ mod serial_db {
             "gc-hash-keep",
         );
 
-        let discovered = discover_content_gc(&database_url, 30, Some(&project_id))
+        let discovered = discover_content_gc(&database_url, 17, Some(&project_id))
             .expect("discover GC candidates");
         assert_eq!(
             discovered
@@ -216,7 +221,7 @@ mod serial_db {
         );
         seed_symbol(&mut conn, &project_id, "src/lib.rs", "gc-hash-fail");
 
-        let candidates = discover_content_gc(&database_url, 30, Some(&project_id))
+        let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
             .expect("discover GC candidates");
         assert_eq!(candidates.len(), 1);
         assert!(!candidates[0].symbol_ids.is_empty());
@@ -450,7 +455,7 @@ mod serial_db {
     }
 
     fn candidate_hashes(database_url: &str, project_id: &str) -> Vec<String> {
-        discover_content_gc(database_url, 30, Some(project_id))
+        discover_content_gc(database_url, 17, Some(project_id))
             .expect("discover GC candidates")
             .into_iter()
             .map(|candidate| candidate.content_hash)

@@ -2495,6 +2495,7 @@ class TestReleaseWindowTitleOwnership:
 
         assert result is TmuxReleaseOutcome.ALREADY_RELEASED
 
+    @pytest.mark.asyncio
     async def test_unexpected_release_failure_is_indeterminate(self) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
@@ -2505,6 +2506,7 @@ class TestReleaseWindowTitleOwnership:
         assert result is TmuxReleaseOutcome.INDETERMINATE
 
 
+@pytest.mark.asyncio
 class TestTmuxTargetProbe:
     @pytest.mark.parametrize(
         ("result", "expected_state", "expected_pane"),

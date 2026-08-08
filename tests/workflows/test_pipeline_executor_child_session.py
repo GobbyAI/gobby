@@ -75,7 +75,7 @@ class TestPipelineChildSession:
         session_manager = SessionManager(temp_db)
         caller = session_manager.register(
             external_id="approval-caller",
-            machine_id="20000000-0000-4000-8000-000000000001",
+            machine_id=None,
             source="codex",
             project_id=project.id,
         )
@@ -294,7 +294,7 @@ class TestPipelineChildSession:
         session_manager = SessionManager(temp_db)
         caller_session = session_manager.register(
             external_id="caller-ext-storage",
-            machine_id="20000000-0000-4000-8000-000000000001",
+            machine_id=None,
             source="codex",
             project_id=project_id,
             title="caller",
@@ -337,10 +337,9 @@ class TestPipelineChildSession:
         )
 
         child_session = session_manager.find_by_external_id(
-            f"pipeline-{execution.id}",
-            None,
-            project_id,
-            "pipeline",
+            external_id=f"pipeline-{execution.id}",
+            project_id=project_id,
+            source="pipeline",
         )
         assert child_session is not None
         assert child_session.source == "pipeline"
@@ -482,8 +481,8 @@ class TestPipelineChildSession:
     async def test_fallback_to_system_session_without_session_id(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """Without session_id, pipeline falls back to SYSTEM_SESSION_ID as parent."""
-        from gobby.storage.sessions import SYSTEM_SESSION_ID
+        """Without session_id, pipeline falls back to system_session_id() as parent."""
+        from gobby.storage.sessions import system_session_id
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         mock_session_manager = MagicMock()
@@ -511,7 +510,7 @@ class TestPipelineChildSession:
 
         mock_session_manager.register.assert_called_once()
         call_kwargs = mock_session_manager.register.call_args[1]
-        assert call_kwargs["parent_session_id"] == SYSTEM_SESSION_ID
+        assert call_kwargs["parent_session_id"] == system_session_id()
 
     @pytest.mark.asyncio
     async def test_nested_pipeline_inherits_session(

@@ -431,12 +431,14 @@ class LocalWorktreeManager:
     def is_claimed_by_live_session(self, worktree_id: str) -> bool:
         """Return True when the worktree owner is an active session."""
         machine_id = require_machine_id()
-        get_owned_workspace_row(
+        owned = get_owned_workspace_row(
             self.db,
             "worktree",
             worktree_id,
             current_machine_id=machine_id,
         )
+        if owned is None:
+            return False
         row = self.db.fetchone(
             """
             SELECT 1

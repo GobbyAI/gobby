@@ -17,11 +17,11 @@ from gobby.terminal_ownership import (
 from gobby.utils.datetime import utc_now
 
 from ._constants import (
-    SYSTEM_SESSION_ID,
     TERMINAL_SESSION_STATUSES,
     ensure_system_session,
     get_logger,
     past_terminal_revival_horizon,
+    system_session_id,
     validate_session_status_transition,
 )
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
@@ -426,7 +426,7 @@ class _FieldUpdateMixin(_SessionMetadataUpdateMixin, _SummaryUpdateMixin, _Title
         self: _ManagerState, session_id: str, parent_session_id: str | None
     ) -> Session | None:
         """Update the parent session ID, using None to clear it."""
-        if parent_session_id == SYSTEM_SESSION_ID:
+        if parent_session_id == system_session_id():
             ensure_system_session(self.db)
         now = utc_now()
         with self.db.transaction_immediate(SessionLineageMutation()) as conn:

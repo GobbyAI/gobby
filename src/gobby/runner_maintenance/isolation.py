@@ -66,6 +66,8 @@ async def tmux_window_name_repair_loop(
             if identity is None:
                 continue
             machine_id, socket_identity, pane = identity
+            if not machine_id:
+                continue
             socket_key = machine_id, socket_identity
             if socket_key in missing_sockets:
                 continue

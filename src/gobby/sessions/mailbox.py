@@ -14,7 +14,11 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.build.coordinator import summary_allows_cross_project_coordinator
 from gobby.storage.build_history import BuildHistoryStorage
-from gobby.storage.sessions import SYSTEM_SESSION_ID
+from gobby.storage.sessions import (
+    SYSTEM_SESSION_SOURCE,
+    ensure_system_session,
+    system_session_id,
+)
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.storage.tasks._models import TaskNotFoundError
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -158,6 +162,9 @@ class MailboxService:
                 )
         else:
             broadcast_id = None
+
+        if recipient_ids and from_session_id == system_session_id():
+            ensure_system_session(self._db)
 
         messages = []
         with self._db.transaction():
@@ -323,7 +330,7 @@ class MailboxService:
     def _resolve_project_id(self, from_session_id: str, project_id: str | None) -> str:
         if project_id is not None:
             return self._resolve_project_ref(project_id)
-        if from_session_id == SYSTEM_SESSION_ID:
+        if from_session_id == system_session_id():
             raise ValueError("project_id is required for system broadcast messages")
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
@@ -362,7 +369,7 @@ class MailboxService:
             raise ValueError("Recipient session is outside the target project")
         # System-originated messages are internal daemon notifications scoped by
         # explicit project_id, so they bypass sender/recipient project equality.
-        if from_session_id != SYSTEM_SESSION_ID and not allow_cross_project:
+        if from_session_id != system_session_id() and not allow_cross_project:
             sender: Session | None = self._session_manager.get(from_session_id)
             if sender is None:
                 raise ValueError(f"Sender session not found: {from_session_id}")
@@ -381,7 +388,7 @@ class MailboxService:
         root_task_id: str,
         build_project_id: str,
     ) -> None:
-        if from_session_id == SYSTEM_SESSION_ID:
+        if from_session_id == system_session_id():
             return
         sender: Session | None = self._session_manager.get(from_session_id)
         if sender is None:
@@ -472,11 +479,11 @@ class MailboxService:
               FROM sessions
              WHERE status IN ({status_placeholders})
                AND project_id = %s
-               AND id != %s
+               AND source != %s
                AND id != %s
              ORDER BY created_at ASC, id ASC
             """,
-            (*DELIVERABLE_SESSION_STATUSES, project_id, SYSTEM_SESSION_ID, from_session_id),
+            (*DELIVERABLE_SESSION_STATUSES, project_id, SYSTEM_SESSION_SOURCE, from_session_id),
         )
         return self._dedupe([str(row["id"]) for row in rows])
 
@@ -579,7 +586,7 @@ class MailboxService:
         recipient: Session | None = self._session_manager.get(recipient_id)
         task_id = str(row["task_id"]) if row["task_id"] is not None else None
         allow_cross_project = False
-        if from_session_id != SYSTEM_SESSION_ID and recipient is not None and task_id is not None:
+        if from_session_id != system_session_id() and recipient is not None and task_id is not None:
             sender: Session | None = self._session_manager.get(from_session_id)
             if sender is not None and sender.project_id != recipient.project_id:
                 task_project_id = self._task_project_id(task_id)

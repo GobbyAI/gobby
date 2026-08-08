@@ -27,8 +27,8 @@ fn bounded_phase_degrades_and_releases_when_worker_stalls() {
     let start = Instant::now();
     let reports = run_projection_phase_bounded(Duration::from_millis(100), &mut progress, |sink| {
         // Simulate a wedged backend: emit one heartbeat, then block
-        // forever with no further progress. The held sender keeps the
-        // receiver from ever disconnecting, so this recv never returns —
+        // forever with no further progress. A live sender that never sends
+        // keeps this receiver blocked indefinitely —
         // a truer stand-in for a wedged socket than a fixed sleep.
         sink.start(ProjectionTarget::Graph, 3);
         sink.advance(ProjectionTarget::Graph, "src/a.rs");

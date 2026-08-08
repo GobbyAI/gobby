@@ -61,6 +61,7 @@ pub fn search_code_symbols(
         .map_err(SearchError::InvalidCollectionName)?;
     let fetch_limit = post_filter_fetch_limit(request.limit);
     match vector_search(qdrant_config, &collection, &embedding, fetch_limit) {
+        Ok(hits) if hits.is_empty() => Ok(Vec::new()),
         Ok(hits) => Ok(post_filter_ranked_hits(ctx, hits, request.limit)?
             .into_iter()
             .map(|(symbol_id, score)| CodeSymbolVectorSearchHit { symbol_id, score })

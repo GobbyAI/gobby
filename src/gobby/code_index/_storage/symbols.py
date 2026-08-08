@@ -14,6 +14,8 @@ from gobby.utils.machine_id import require_machine_id
 
 logger = logging.getLogger(__name__)
 
+SYMBOL_SEARCH_OVERFETCH_FACTOR = 4
+
 
 class CodeIndexSymbolStorageMixin:
     """Storage methods for symbols and symbol search."""
@@ -59,7 +61,10 @@ class CodeIndexSymbolStorageMixin:
                     line_start, line_end, signature, docstring,
                     parent_symbol_id, file_content_hash, content_hash, summary,
                     summary_attempted_at, created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
                 ON CONFLICT(id) DO UPDATE SET
                     name=excluded.name,
                     qualified_name=excluded.qualified_name,
@@ -176,18 +181,22 @@ class CodeIndexSymbolStorageMixin:
         try:
             hits = keyword.pick_search_backend(self.db, "code_symbols").search(
                 query,
-                limit * 4,
+                limit * SYMBOL_SEARCH_OVERFETCH_FACTOR,
                 filters={"project_id": project_id, "kind": kind, "file_path": file_path},
-            )
-            rows = rows_by_ids(self.db, "code_symbols", [hit.id for hit in hits])
-            states = self.db.fetchall(
-                """SELECT file_path, content_hash FROM code_indexed_file_states
-                   WHERE machine_id = %s AND project_id = %s""",
-                (require_machine_id(), project_id),
             )
         except Exception as exc:
             logger.debug("Code symbol keyword search failed: %s", exc, exc_info=True)
             return []
+
+        rows = rows_by_ids(self.db, "code_symbols", [hit.id for hit in hits])
+        if not rows:
+            return []
+        hit_paths = sorted({str(row["file_path"]) for row in rows})
+        states = self.db.fetchall(
+            """SELECT file_path, content_hash FROM code_indexed_file_states
+               WHERE machine_id = %s AND project_id = %s AND file_path = ANY(%s)""",
+            (require_machine_id(), project_id, hit_paths),
+        )
         symbols_by_id = {str(row["id"]): Symbol.from_row(row) for row in rows}
         visible_versions = {(row["file_path"], row["content_hash"]) for row in states}
         results = [

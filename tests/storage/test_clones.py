@@ -2,6 +2,7 @@
 
 import threading
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +19,7 @@ MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
 @pytest.fixture(autouse=True)
-def _local_machine_identity():
+def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id.get_machine_id", return_value=MACHINE_ID):
         yield
 

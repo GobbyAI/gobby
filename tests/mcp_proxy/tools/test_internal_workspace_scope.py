@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
+
+pytestmark = pytest.mark.unit
 
 
 def _raise_mismatch() -> None:
@@ -15,6 +19,7 @@ def _raise_mismatch() -> None:
     )
 
 
+@pytest.mark.asyncio
 async def test_workspace_mismatch_serializes_consistently() -> None:
     registry = InternalToolRegistry(name="workspace-scope-test")
 

@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.sessions import SessionManager
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.terminal_context import parse_terminal_context_value
 
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
@@ -254,3 +255,33 @@ def test_web_continuation_converts_same_terminal_row_and_clears_context(
     assert continued.session_type == "web_chat"
     assert continued.status == "active"
     assert continued.terminal_context == {}
+
+
+def test_web_continuation_rejects_foreign_terminal_before_mutation(
+    session_manager: SessionManager,
+    sample_project: dict[str, str],
+) -> None:
+    with patch("gobby.utils.machine_id.get_machine_id", return_value=FOREIGN_MACHINE_ID):
+        foreign = session_manager.register(
+            external_id="foreign-terminal-to-web",
+            machine_id=FOREIGN_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+            terminal_context=_terminal_context(31),
+        )
+        session_manager.update_status(foreign.id, "expired")
+
+    with pytest.raises(MachineOwnershipMismatchError):
+        session_manager.continue_terminal_session_as_web_chat(
+            foreign.id,
+            source="claude",
+            model="claude-opus-4-6",
+            project_id=sample_project["id"],
+            sandbox_policy_hash="policy-v2",
+        )
+
+    unchanged = session_manager.get(foreign.id)
+    assert unchanged is not None
+    assert unchanged.session_type == "terminal"
+    assert unchanged.status == "expired"
+    assert unchanged.terminal_context == _terminal_context(31)

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.tmux.session_manager import TmuxReleaseOutcome
 from gobby.sessions.liveness_monitor import (
     SessionLivenessMonitor,
     _TerminalLivenessRecord,
@@ -131,6 +132,45 @@ class TestPaneOwnershipLifecycle:
 
         expire.assert_not_awaited()
         release.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_release_title_stops_after_released_outcome(
+        self,
+        monitor: SessionLivenessMonitor,
+    ) -> None:
+        record = _record("released")
+        manager = MagicMock()
+        manager.release_window_title_ownership = AsyncMock(return_value=TmuxReleaseOutcome.RELEASED)
+
+        with patch(
+            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            return_value=manager,
+        ):
+            await monitor._release_tmux_title(record)
+
+        manager.release_window_title_ownership.assert_awaited_once_with("%1")
+
+    @pytest.mark.asyncio
+    async def test_release_title_retries_once_after_indeterminate(
+        self,
+        monitor: SessionLivenessMonitor,
+    ) -> None:
+        record = _record("retry-release")
+        manager = MagicMock()
+        manager.release_window_title_ownership = AsyncMock(
+            side_effect=[
+                TmuxReleaseOutcome.INDETERMINATE,
+                TmuxReleaseOutcome.RELEASED,
+            ]
+        )
+
+        with patch(
+            "gobby.sessions.liveness_monitor.get_tmux_manager_for_context",
+            return_value=manager,
+        ):
+            await monitor._release_tmux_title(record)
+
+        assert manager.release_window_title_ownership.await_count == 2
 
     @pytest.mark.asyncio
     async def test_background_peer_is_preserved_with_foreground_owner(

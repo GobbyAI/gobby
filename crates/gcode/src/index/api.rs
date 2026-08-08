@@ -344,7 +344,11 @@ pub fn adopt_file_state(
             )
             SELECT $1, project_id, file_path, content_hash
             FROM code_indexed_files
-            WHERE project_id = $2 AND file_path = $3 AND content_hash = $4
+            WHERE project_id = $2
+              AND file_path = $3
+              AND content_hash = $4
+              AND graph_synced
+              AND vectors_synced
             ON CONFLICT(machine_id, project_id, file_path) DO UPDATE SET
                 content_hash=excluded.content_hash,
                 updated_at=NOW()

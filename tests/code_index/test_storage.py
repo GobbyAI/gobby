@@ -5,11 +5,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import patch
+from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.code_index._storage.symbols import SYMBOL_SEARCH_OVERFETCH_FACTOR
 from gobby.code_index.models import (
     CallRelation,
     ContentChunk,
@@ -20,6 +21,7 @@ from gobby.code_index.models import (
 )
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.code_index.summary_safety import SUMMARY_MAX_CHARS
+from gobby.storage.hub.protocol import HubDatabase
 from tests.code_index.conftest import FILE_CONTENT_HASH, MISSING_ID, PROJECT_ID, PROJECT_ID_2
 
 pytestmark = pytest.mark.unit
@@ -216,7 +218,10 @@ def test_search_symbols_fts_overfetches_before_machine_visibility_filter(
     code_storage.upsert_symbols([*stale_symbols, *current_symbols])
     ranked_ids = [symbol.id for symbol in [*stale_symbols, *current_symbols]]
 
-    with patch("gobby.code_index._storage.symbols.keyword.pick_search_backend") as pick_backend:
+    with (
+        patch("gobby.code_index._storage.symbols.keyword.pick_search_backend") as pick_backend,
+        patch.object(code_storage.db, "fetchall", wraps=code_storage.db.fetchall) as fetchall,
+    ):
         pick_backend.return_value.search.return_value = [
             SimpleNamespace(id=symbol_id) for symbol_id in ranked_ids
         ]
@@ -228,9 +233,37 @@ def test_search_symbols_fts_overfetches_before_machine_visibility_filter(
     ]
     pick_backend.return_value.search.assert_called_once_with(
         "run",
-        8,
+        2 * SYMBOL_SEARCH_OVERFETCH_FACTOR,
         filters={"project_id": PROJECT_ID, "kind": None, "file_path": None},
     )
+    state_call = next(
+        call for call in fetchall.call_args_list if "code_indexed_file_states" in call.args[0]
+    )
+    assert state_call.args[1][2] == ["src/app.py"]
+
+
+def test_search_symbols_fts_returns_empty_on_backend_failure(
+    code_storage: CodeIndexStorage,
+) -> None:
+    with patch("gobby.code_index._storage.symbols.keyword.pick_search_backend") as pick_backend:
+        pick_backend.return_value.search.side_effect = RuntimeError("backend unavailable")
+
+        assert code_storage.search_symbols_fts("run", PROJECT_ID) == []
+
+
+def test_search_symbols_fts_propagates_database_read_failures(
+    code_storage: CodeIndexStorage,
+) -> None:
+    with (
+        patch("gobby.code_index._storage.symbols.keyword.pick_search_backend") as pick_backend,
+        patch(
+            "gobby.code_index._storage.symbols.rows_by_ids",
+            side_effect=RuntimeError("database unavailable"),
+        ),
+        pytest.raises(RuntimeError, match="database unavailable"),
+    ):
+        pick_backend.return_value.search.return_value = [SimpleNamespace(id="symbol-id")]
+        code_storage.search_symbols_fts("run", PROJECT_ID)
 
 
 def test_search_symbols_by_name_with_kind_filter(
@@ -273,7 +306,8 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
     )
     calls = [unresolved_call, unresolved_call]
 
-    code_storage.upsert_calls(PROJECT_ID, "src/app.py", calls)
+    assert code_storage.upsert_calls(PROJECT_ID, "src/app.py", calls) == 1
+    assert code_storage.upsert_calls(PROJECT_ID, "src/app.py", calls) == 0
 
     results = code_storage.get_calls_for_file(PROJECT_ID, "src/app.py")
     assert results == [
@@ -287,6 +321,65 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
             "line": 42,
         }
     ]
+
+
+@pytest.mark.parametrize("file_path", ["", "/src/app.py", "../src/app.py", "C:\\src\\app.py"])
+def test_upsert_imports_validates_all_paths_before_storage(file_path: str) -> None:
+    db = MagicMock()
+    storage = CodeIndexStorage(cast(HubDatabase, db))
+    relation = ImportRelation(source_file="src/app.py", target_module="app")
+
+    with (
+        patch.object(storage, "_current_file_content_hash") as content_hash,
+        pytest.raises(ValueError),
+    ):
+        storage.upsert_imports(PROJECT_ID, file_path, [relation])
+
+    content_hash.assert_not_called()
+    db.transaction.assert_not_called()
+
+
+def test_upsert_imports_rejects_invalid_relation_path_before_storage() -> None:
+    db = MagicMock()
+    storage = CodeIndexStorage(cast(HubDatabase, db))
+    relation = ImportRelation(source_file="../src/app.py", target_module="app")
+
+    with (
+        patch.object(storage, "_current_file_content_hash") as content_hash,
+        pytest.raises(ValueError),
+    ):
+        storage.upsert_imports(PROJECT_ID, "src/app.py", [relation])
+
+    content_hash.assert_not_called()
+    db.transaction.assert_not_called()
+
+
+def test_upsert_calls_rejects_invalid_relation_path_before_storage() -> None:
+    db = MagicMock()
+    storage = CodeIndexStorage(cast(HubDatabase, db))
+    relation = CallRelation(
+        caller_symbol_id=CALLER_SYMBOL_ID,
+        callee_name="target",
+        file_path="../src/app.py",
+        line=1,
+    )
+
+    with (
+        patch.object(storage, "_current_file_content_hash") as content_hash,
+        pytest.raises(ValueError),
+    ):
+        storage.upsert_calls(PROJECT_ID, "src/app.py", [relation])
+
+    content_hash.assert_not_called()
+    db.transaction.assert_not_called()
+
+
+def test_relation_upserts_return_inserted_rows_only(code_storage: CodeIndexStorage) -> None:
+    _upsert_test_file(code_storage, "src/counts.py")
+    relation = ImportRelation(source_file="src/counts.py", target_module="pathlib")
+
+    assert code_storage.upsert_imports(PROJECT_ID, "src/counts.py", [relation, relation]) == 1
+    assert code_storage.upsert_imports(PROJECT_ID, "src/counts.py", [relation]) == 0
 
 
 def test_find_files_importing_modules(code_storage: CodeIndexStorage) -> None:

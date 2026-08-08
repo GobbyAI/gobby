@@ -188,10 +188,11 @@ def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
     from gobby.build.control_runtime import _clear_stale_dispatch_mutexes
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.projects import LocalProjectManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
+    ensure_system_session(temp_db)
     project = LocalProjectManager(temp_db).create(
         name="resume-cleanup-active-run",
         repo_path="/tmp/resume-cleanup-active-run",
@@ -210,7 +211,7 @@ def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
         validation_criteria="Test task completion is observable.",
     )
     run = LocalAgentRunManager(temp_db).create(
-        parent_session_id=SYSTEM_SESSION_ID,
+        parent_session_id=system_session_id(),
         provider="codex",
         prompt="work",
         task_id=active_task.id,
@@ -408,13 +409,13 @@ def _seed_parked_daemon_stop_run(
     sessions = SessionManager(temp_db)
     parent = sessions.register(
         external_id=f"{prefix}-parent",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="test",
         project_id=project_id,
     )
     child = sessions.register(
         external_id=f"{prefix}-child",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=project_id,
         parent_session_id=parent.id,

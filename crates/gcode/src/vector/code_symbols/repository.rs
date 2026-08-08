@@ -90,7 +90,7 @@ fn fetch_symbols_where(
     conn: &mut impl GenericClient,
     predicate: SymbolPredicate<'_>,
 ) -> anyhow::Result<Vec<Symbol>> {
-    let columns = db::symbol_select_columns("");
+    let columns = db::symbol_select_columns("s");
     let project_uuid = db::id_param(predicate.project_id())?;
     let machine_uuid = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
     let params = predicate.params(&project_uuid, &machine_uuid);

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from gobby.storage.hub.protocol import HubDatabase, SystemSessionBootstrap
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 
@@ -49,14 +51,22 @@ def get_logger() -> logging.Logger:
     return sessions_module.logger
 
 
-# Well-known system session ID — bootstrapped at DB init.
-# Used as the default parent for pipelines and cron jobs that have no caller session.
-SYSTEM_SESSION_ID = "00000000-0000-0000-0000-000000000001"
 SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
-SYSTEM_SESSION_EXTERNAL_ID = "system"
 SYSTEM_SESSION_SOURCE = "system"
 SYSTEM_SESSION_TITLE = "_system"
 SESSION_REVIVAL_HORIZON_HOURS = 24
+
+
+def system_session_id(machine_id: str | None = None) -> str:
+    """Return the deterministic system-session UUID for one machine."""
+    normalized_machine_id = str(uuid.UUID(machine_id or require_machine_id()))
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby://system-session/{normalized_machine_id}"))
+
+
+def system_session_external_id(machine_id: str | None = None) -> str:
+    """Return the machine-scoped external identity for a system session."""
+    normalized_machine_id = str(uuid.UUID(machine_id or require_machine_id()))
+    return f"system:{normalized_machine_id}"
 
 
 def past_terminal_revival_horizon(session: Session) -> bool:
@@ -71,10 +81,24 @@ def past_terminal_revival_horizon(session: Session) -> bool:
 def ensure_system_session(db: HubDatabase) -> None:
     """Ensure the bootstrapped root session for cron/pipeline work exists."""
     machine_id = require_machine_id()
+    session_id = system_session_id(machine_id)
+    external_id = system_session_external_id(machine_id)
     had_existing_sessions = False
     with db.transaction_immediate(SystemSessionBootstrap()):
-        existing = db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
+        existing = db.fetchone(
+            "SELECT id, machine_id, external_id FROM sessions WHERE id = %s", (session_id,)
+        )
         if existing is not None:
+            owner_machine_id = str(existing["machine_id"])
+            if owner_machine_id != machine_id:
+                raise MachineOwnershipMismatchError(
+                    resource_kind="system session",
+                    resource_id=session_id,
+                    owner_machine_id=owner_machine_id,
+                    current_machine_id=machine_id,
+                )
+            if str(existing["external_id"]) != external_id:
+                raise RuntimeError(f"System session {session_id} has an invalid external identity")
             return
         had_existing_sessions = db.fetchone("SELECT 1 FROM sessions LIMIT 1") is not None
 
@@ -96,8 +120,8 @@ def ensure_system_session(db: HubDatabase) -> None:
             ON CONFLICT (id) DO NOTHING
             """,
             (
-                SYSTEM_SESSION_ID,
-                SYSTEM_SESSION_EXTERNAL_ID,
+                session_id,
+                external_id,
                 machine_id,
                 SYSTEM_SESSION_SOURCE,
                 SYSTEM_SESSION_PROJECT_ID,
@@ -107,12 +131,24 @@ def ensure_system_session(db: HubDatabase) -> None:
             ),
         )
 
-        recreated = db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
+        recreated = db.fetchone(
+            "SELECT id, machine_id, external_id FROM sessions WHERE id = %s", (session_id,)
+        )
         if recreated is None:
-            raise RuntimeError(f"Failed to recreate missing system session {SYSTEM_SESSION_ID}")
+            raise RuntimeError(f"Failed to recreate missing system session {session_id}")
+        owner_machine_id = str(recreated["machine_id"])
+        if owner_machine_id != machine_id:
+            raise MachineOwnershipMismatchError(
+                resource_kind="system session",
+                resource_id=session_id,
+                owner_machine_id=owner_machine_id,
+                current_machine_id=machine_id,
+            )
+        if str(recreated["external_id"]) != external_id:
+            raise RuntimeError(f"System session {session_id} has an invalid external identity")
 
     log = get_logger()
     if had_existing_sessions:
-        log.warning("Recreated missing system session %s", SYSTEM_SESSION_ID)
+        log.warning("Recreated missing system session %s", session_id)
     else:
-        log.info("Created system session %s", SYSTEM_SESSION_ID)
+        log.info("Created system session %s", session_id)

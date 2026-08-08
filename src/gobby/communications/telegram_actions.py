@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.models import ChannelConfig, CommsMessage, CommsRoutingRule
 from gobby.communications.native_plan_actions import decode_native_plan_option
 from gobby.communications.telegram_access import allowed_senders
-from gobby.storage.sessions import SYSTEM_SESSION_ID
+from gobby.storage.sessions import system_session_id
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -211,7 +211,7 @@ class TelegramActionController:
             return
 
         result = await self._mailbox.send(
-            from_session_id=SYSTEM_SESSION_ID,
+            from_session_id=system_session_id(),
             target="session",
             target_id=session.id,
             content=answer,

@@ -462,14 +462,20 @@ class TestWorkflowConfigValidation:
 
         with pytest.raises(ValidationError) as exc_info:
             WorkflowConfig(timeout=-1.0)
-        assert "positive" in str(exc_info.value).lower()
+        assert "non-negative" in str(exc_info.value).lower()
 
-    def test_zero_timeout_is_rejected(self) -> None:
-        """Test that zero cannot disable the workflow deadline."""
+    def test_zero_timeout_resolves_to_default(self) -> None:
+        """Test that the bundled zero sentinel resolves to the default deadline."""
+        from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS, WorkflowConfig
+
+        assert WorkflowConfig(timeout=0.0).timeout == DEFAULT_WORKFLOW_TIMEOUT_SECONDS
+
+    @pytest.mark.parametrize("timeout", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_timeout_is_rejected(self, timeout: float) -> None:
         from gobby.config.tasks import WorkflowConfig
 
-        with pytest.raises(ValidationError, match="positive"):
-            WorkflowConfig(timeout=0.0)
+        with pytest.raises(ValidationError, match="finite"):
+            WorkflowConfig(timeout=timeout)
 
 
 # =============================================================================

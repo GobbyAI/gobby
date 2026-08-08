@@ -388,7 +388,7 @@ class CronExecutor:
         # Create a session for the cron-triggered pipeline so spawned agents
         # have a valid parent_session_id (required by spawn_agent).
         # The system session is the root parent for all cron-triggered work.
-        from gobby.storage.sessions import SYSTEM_SESSION_ID
+        from gobby.storage.sessions import system_session_id
 
         session_id: str | None = None
         sm = pipeline_executor.session_manager
@@ -401,7 +401,7 @@ class CronExecutor:
                     source="cron",
                     project_id=job.project_id,
                     title=f"cron:{job.name}",
-                    parent_session_id=SYSTEM_SESSION_ID,
+                    parent_session_id=system_session_id(),
                     agent_depth=0,
                 )
                 session_id = cron_session.id

@@ -213,8 +213,9 @@ async def test_sweep_expired_leases_pages_all_active_runs(
     from gobby.dispatch.constants import DISPATCH_HOLDER
     from gobby.dispatch.lease_cleanup import sweep_expired_leases
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     storage = _mutex_storage(temp_db)
     run_storage = LocalAgentRunManager(temp_db)
     base_time = datetime(2026, 1, 1, tzinfo=UTC)
@@ -222,7 +223,7 @@ async def test_sweep_expired_leases_pages_all_active_runs(
 
     for index in range(1001):
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt=f"active run {index}",
             run_id=stable_test_uuid(f"run-active-{index:04d}"),
@@ -269,8 +270,9 @@ async def test_sweep_expired_leases_retains_run_attached_after_candidate_select(
     from gobby.dispatch.constants import DISPATCH_HOLDER
     from gobby.dispatch.lease_cleanup import sweep_expired_leases
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     storage = _mutex_storage(temp_db)
     task = _task(temp_db, sample_project, title="Raced mutex")
     expired_start = datetime.now(UTC) - timedelta(minutes=10)
@@ -283,7 +285,7 @@ async def test_sweep_expired_leases_retains_run_attached_after_candidate_select(
     )
     run_storage = LocalAgentRunManager(temp_db)
     run = run_storage.create(
-        parent_session_id=SYSTEM_SESSION_ID,
+        parent_session_id=system_session_id(),
         provider="codex",
         prompt="new active owner",
         run_id=stable_test_uuid("raced-active-run"),
@@ -1343,13 +1345,13 @@ def test_count_active_agents_scopes_by_parent_session_project(
     other_project = LocalProjectManager(temp_db).create(name="other-project")
     parent_a = sessions.register(
         external_id="parent-a",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="test",
         project_id=sample_project["id"],
     )
     parent_b = sessions.register(
         external_id="parent-b",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="test",
         project_id=other_project.id,
     )
@@ -1446,13 +1448,13 @@ async def test_concurrent_project_heartbeats_share_global_agent_cap(
     sessions = SessionManager(temp_db)
     first_parent_session = sessions.register(
         external_id="dispatcher-parent",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="test",
         project_id=sample_project["id"],
     )
     second_parent_session = sessions.register(
         external_id="other-dispatcher-parent",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="test",
         project_id=other_project.id,
     )
@@ -1539,13 +1541,13 @@ async def test_global_agent_cap_admission_releases_after_interrupted_spawn(
     parent_sessions = {
         sample_project["id"]: sessions.register(
             external_id=f"cap-first-{first_outcome}",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=None,
             source="test",
             project_id=sample_project["id"],
         ).id,
         other_project.id: sessions.register(
             external_id=f"cap-second-{first_outcome}",
-            machine_id="21000000-0000-4000-8000-000000000001",
+            machine_id=None,
             source="test",
             project_id=other_project.id,
         ).id,
@@ -2003,8 +2005,9 @@ async def test_spawn_attach_failure_terminalizes_created_run(
     """Mutex attach failure cannot leak an active spawned run."""
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     task_manager = LocalTaskManager(temp_db)
     task = _task(temp_db, sample_project, stage_state="in_progress")
     storage = _mutex_storage(temp_db)
@@ -2014,7 +2017,7 @@ async def test_spawn_attach_failure_terminalizes_created_run(
 
     def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt="go",
             agent_name="backend-developer",
@@ -2084,8 +2087,9 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
     from gobby.agents import kill as agent_kill
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     task = _task(temp_db, sample_project, stage_state="in_progress")
     storage = _mutex_storage(temp_db)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
@@ -2103,7 +2107,7 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
     def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
         run_id = run_ids[len(spawned)]
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt="go",
             agent_name="backend-developer",
@@ -2478,7 +2482,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=sample_project["id"],
         title="Coordinator",
@@ -2555,7 +2559,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=other_project.id,
         title="Coordinator",
@@ -2604,7 +2608,7 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
     session_manager = SessionManager(temp_db)
     coordinator = session_manager.register(
         external_id="coord-ext-explicit",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=other_project.id,
         title="Coordinator",
@@ -3458,8 +3462,9 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher, spawn_artifacts
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+    from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     task = _task(temp_db, sample_project, stage_state="in_progress")
@@ -3476,7 +3481,7 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     async def fake_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
         run_id = run_ids[len(spawned)]
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt="go",
             agent_name="backend-developer",
@@ -3604,8 +3609,9 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
+    from gobby.storage.sessions import SessionManager, ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     task = _task(temp_db, sample_project, stage_state="in_progress")
@@ -3623,7 +3629,7 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
     async def fake_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
         run_id = run_ids[len(spawned)]
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt="go",
             agent_name="backend-developer",
@@ -3725,8 +3731,9 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
     from gobby.agents import kill as agent_kill
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     task_manager = LocalTaskManager(temp_db)
     task = _task(temp_db, sample_project, stage_state="in_progress")
     storage = _mutex_storage(temp_db)
@@ -3740,7 +3747,7 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
 
     async def fake_spawn_agent(*_args: object, **_kwargs: object) -> str:
         run = run_storage.create(
-            parent_session_id=SYSTEM_SESSION_ID,
+            parent_session_id=system_session_id(),
             provider="codex",
             prompt="go",
             agent_name="backend-developer",
@@ -4885,7 +4892,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     sessions = SessionManager(temp_db)
     coordinator = sessions.register(
         external_id="coordinator-subscribe-failure",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=None,
         source="codex",
         project_id=sample_project["id"],
     )
@@ -5022,12 +5029,13 @@ async def test_startup_sweep_preserves_expired_leases_for_active_runs(
     """Startup sweep preserves expired mutexes that still belong to active runs."""
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.sessions import SYSTEM_SESSION_ID
+    from gobby.storage.sessions import ensure_system_session, system_session_id
 
+    ensure_system_session(temp_db)
     active_task = _task(temp_db, sample_project, "Active", allow_automation=False)
     orphan_task = _task(temp_db, sample_project, "Orphan", allow_automation=False)
     run = LocalAgentRunManager(temp_db).create(
-        parent_session_id=SYSTEM_SESSION_ID,
+        parent_session_id=system_session_id(),
         provider="codex",
         prompt="work",
         task_id=active_task.id,

@@ -151,6 +151,10 @@ def install_claude(
         "error": None,
     }
 
+    if hook_timeout_seconds <= 0:
+        result["error"] = "hook_timeout_seconds must be positive"
+        return result
+
     hooks_dir = Path.home() / ".gobby" / "hooks"
     if mode == "global":
         claude_path = Path.home() / ".claude"

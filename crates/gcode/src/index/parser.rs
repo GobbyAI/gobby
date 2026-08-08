@@ -89,10 +89,10 @@ pub(crate) fn parse_file_with_semantic(
             root_path.canonicalize().ok().and_then(|root| {
                 abs.strip_prefix(&root)
                     .ok()
-                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .map(crate::index::normalize_storage_path)
             })
         })
-        .unwrap_or_else(|| file_str.replace('\\', "/"));
+        .unwrap_or_else(|| crate::index::normalize_storage_path(Path::new(file_str.as_ref())));
 
     let file_content_hash = content_hash(&source);
 
