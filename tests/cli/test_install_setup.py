@@ -136,6 +136,7 @@ class TestEnsureDaemonConfig:
 
 
 class TestRunDaemonSetup:
+    @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
@@ -154,6 +155,7 @@ class TestRunDaemonSetup:
         mock_sync,
         mock_init,
         mock_srt,
+        mock_impeccable,
         tmp_path,
         capsys: pytest.CaptureFixture[str],
     ):
@@ -165,6 +167,11 @@ class TestRunDaemonSetup:
             installed=False,
             version="0.0.66",
             path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
+        mock_impeccable.return_value = MagicMock(
+            installed=False,
+            version="3.5.0",
+            path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 5, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
@@ -194,6 +201,7 @@ class TestRunDaemonSetup:
         assert mock_mcp.call_count == 1
         assert mock_mcp.call_args is not None
         mock_srt.assert_called_once_with()
+        mock_impeccable.assert_called_once_with()
         mock_gcode.assert_called_once()
         assert mock_gcode.call_count == 1
         assert mock_gcode.call_args is not None
@@ -214,6 +222,7 @@ class TestRunDaemonSetup:
             "Failed to parse settings.json"
         ) in output
 
+    @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
@@ -232,10 +241,14 @@ class TestRunDaemonSetup:
         mock_sync: MagicMock,
         mock_init: MagicMock,
         mock_srt: MagicMock,
+        mock_impeccable: MagicMock,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_srt.side_effect = SrtRuntimeError("Node.js 20.11 or newer is required")
+        from gobby.cli.install_setup_impeccable import ImpeccableInstallError
+
+        mock_impeccable.side_effect = ImpeccableInstallError("npm failed")
         mock_init.return_value = MagicMock()
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
@@ -251,11 +264,13 @@ class TestRunDaemonSetup:
         output = capsys.readouterr().out
         assert "Node.js 20.11 or newer is required" in output
         assert "agent_sandbox.backend = provider-native" in output
+        assert "Warning: Failed to install managed Impeccable CLI (npm failed)" in output
         mock_gcode.assert_called_once()
         mock_ghook.assert_called_once()
         mock_ide.assert_called_once()
         mock_tmux.assert_called_once_with()
 
+    @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
@@ -274,6 +289,7 @@ class TestRunDaemonSetup:
         mock_sync,
         mock_init,
         mock_srt,
+        mock_impeccable,
         tmp_path,
     ):
         mock_db = MagicMock()
@@ -282,6 +298,11 @@ class TestRunDaemonSetup:
             installed=False,
             version="0.0.66",
             path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
+        mock_impeccable.return_value = MagicMock(
+            installed=False,
+            version="3.5.0",
+            path=tmp_path / ".gobby" / "tools" / "impeccable" / "3.5.0",
         )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
@@ -311,7 +332,9 @@ class TestRunDaemonSetup:
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
         assert "--gobby-owned" in command
         mock_srt.assert_called_once_with()
+        mock_impeccable.assert_called_once_with()
 
+    @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
@@ -332,6 +355,7 @@ class TestRunDaemonSetup:
         mock_sync: MagicMock,
         mock_init: MagicMock,
         mock_srt: MagicMock,
+        mock_impeccable: MagicMock,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -365,6 +389,7 @@ class TestRunDaemonSetup:
         assert mock_sync.return_value == {"total_synced": 0, "errors": []}
         assert mock_mcp.return_value["success"] is True
         mock_srt.assert_called_once_with()
+        mock_impeccable.assert_not_called()
         mock_verify.assert_called_once_with()
         mock_run.assert_not_called()
         mock_gcode.assert_not_called()
@@ -567,7 +592,7 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.2.3")
     @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
-    def test_install_gcode(
+    def test_binary_installers_pass_resolved_bin_dir(
         self, mock_path, mock_sub, mock_latest, mock_installed, mock_machine, tmp_path
     ):
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
@@ -579,6 +604,7 @@ class TestGcodeHelpers:
             res = _install_gcode()
             assert res["installed"] is True
             assert res["method"] == "workspace"
+            mock_path.assert_called_once_with(bin_dir)
 
     def test_install_gcode_from_submodule_stages_under_lock(self, tmp_path):
         workspace = tmp_path / "workspace"
@@ -715,7 +741,9 @@ class TestGcodeHelpers:
                 "gobby.cli.install_setup._install_gcode_from_cargo_install",
                 return_value=True,
             ) as cargo_install,
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch(
+                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
+            ) as ensure_path,
         ):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -728,6 +756,7 @@ class TestGcodeHelpers:
         github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", pin)
         binstall.assert_called_once_with(bin_dir, pin)
         cargo_install.assert_called_once_with(bin_dir, pin)
+        ensure_path.assert_called_once_with(bin_dir)
 
     def test_install_gcode_uses_newer_installed_version_as_install_target(self, tmp_path):
         newer_version = "9.9.9"
@@ -751,7 +780,9 @@ class TestGcodeHelpers:
                 "gobby.cli.install_setup._install_gcode_from_cargo_install",
                 return_value=True,
             ) as cargo_install,
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch(
+                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
+            ) as ensure_path,
         ):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -764,6 +795,7 @@ class TestGcodeHelpers:
         github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", newer_version)
         binstall.assert_called_once_with(bin_dir, newer_version)
         cargo_install.assert_called_once_with(bin_dir, newer_version)
+        ensure_path.assert_called_once_with(bin_dir)
 
     @patch("gobby.cli.install_setup.urlopen")
     def test_get_latest_gcode_version(self, mock_url):
@@ -919,7 +951,9 @@ class TestGwikiHelpers:
                 "gobby.cli.install_setup._install_gwiki_from_cargo_install",
                 return_value=True,
             ) as cargo_install,
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch(
+                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
+            ) as ensure_path,
         ):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -932,6 +966,7 @@ class TestGwikiHelpers:
         github.assert_called_once_with(bin_dir, "aarch64-apple-darwin", GWIKI_PIN)
         binstall.assert_called_once_with(bin_dir, GWIKI_PIN)
         cargo_install.assert_called_once_with(bin_dir, GWIKI_PIN)
+        ensure_path.assert_called_once_with(bin_dir)
 
     def test_install_gwiki_detects_missing_binary_after_install(self, tmp_path) -> None:
         with (
@@ -1053,7 +1088,8 @@ class TestEnsurePath:
         mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
         mock_home.return_value = tmp_path
 
-        res = _ensure_gobby_bin_on_path()
+        bin_dir = tmp_path / "configured-gobby" / "bin"
+        res = _ensure_gobby_bin_on_path(bin_dir)
         assert res["added"] is True
         assert res["shell"] == "bash"
 
@@ -1061,9 +1097,10 @@ class TestEnsurePath:
         assert bashrc.exists()
         assert "export PATH=" in bashrc.read_text()
         assert "# gobby" in bashrc.read_text()
+        assert str(bin_dir) in bashrc.read_text()
 
         # Second run should skip
-        res2 = _ensure_gobby_bin_on_path()
+        res2 = _ensure_gobby_bin_on_path(bin_dir)
         assert res2["added"] is False
 
     @patch("gobby.cli.install_setup.sys.platform", "linux")
@@ -1080,7 +1117,7 @@ class TestEnsurePath:
         bashrc = tmp_path / ".bashrc"
         bashrc.write_bytes(b"\xff")
 
-        res = _ensure_gobby_bin_on_path()
+        res = _ensure_gobby_bin_on_path(tmp_path / "configured-gobby" / "bin")
 
         assert res == {"added": False}
         assert bashrc.read_bytes() == b"\xff"
@@ -1100,7 +1137,7 @@ class TestEnsurePath:
         rc_file.write_text("# user config\n")
 
         with patch.object(Path, "read_text", side_effect=OSError("permission denied")) as read_text:
-            res = _ensure_gobby_bin_on_path()
+            res = _ensure_gobby_bin_on_path(tmp_path / "configured-gobby" / "bin")
 
         assert res == {"added": False}
         read_text.assert_called_once()

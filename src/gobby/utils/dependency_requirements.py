@@ -70,6 +70,26 @@ SRT_RELEASE = SrtRelease(
 
 
 @dataclass(frozen=True)
+class ImpeccableRelease:
+    """Immutable integrity contract for Gobby's managed Impeccable CLI."""
+
+    package: str
+    version: str
+    lockfile_sha256: str
+
+    def receipt_fields(self) -> dict[str, str]:
+        return asdict(self)
+
+
+IMPECCABLE_RELEASE = ImpeccableRelease(
+    package="impeccable",
+    version="3.5.0",
+    lockfile_sha256="c6d77077e7001fbd4777bf564f92b6430a8df924424970a6eba959c571aa2fa3",
+)
+IMPECCABLE_NODE_MIN_VERSION = "22.18.0"
+
+
+@dataclass(frozen=True)
 class DependencyStatus:
     state: DependencyState
     installed_version: str | None
@@ -254,7 +274,8 @@ def collect_dependency_report(
             executable="tailscale",
             arguments=("version",),
             install_action="Reinstall Tailscale to restore version reporting.",
-        )
+        ),
+        "impeccable": impeccable_dependency_status(),
     }
     docker = _command_status(
         name="Docker Engine",
@@ -377,6 +398,58 @@ def srt_dependency_status() -> DependencyStatus:
         minimum_version=None,
         expected_version=SRT_RELEASE.version,
         path=str(installation.root),
+        error=None,
+    )
+
+
+def impeccable_dependency_status() -> DependencyStatus:
+    """Return exact-version and integrity status for managed Impeccable."""
+    if is_native_windows():
+        return DependencyStatus(
+            state="healthy",
+            installed_version="unsupported on native Windows",
+            minimum_version=None,
+            expected_version=IMPECCABLE_RELEASE.version,
+            path=None,
+            error=None,
+        )
+    from gobby.cli.install_setup_impeccable import (
+        ImpeccableInstallError,
+        inspect_impeccable_installation,
+    )
+
+    try:
+        pointer = inspect_impeccable_installation()
+    except ImpeccableInstallError as exc:
+        return DependencyStatus(
+            state="invalid",
+            installed_version=None,
+            minimum_version=None,
+            expected_version=IMPECCABLE_RELEASE.version,
+            path=None,
+            error=(
+                "Impeccable is invalid; "
+                f"requires =={IMPECCABLE_RELEASE.version}. Run `gobby install` to repair ({exc})."
+            ),
+        )
+    if pointer is None:
+        return DependencyStatus(
+            state="missing",
+            installed_version=None,
+            minimum_version=None,
+            expected_version=IMPECCABLE_RELEASE.version,
+            path=None,
+            error=(
+                "Impeccable is missing; "
+                f"requires =={IMPECCABLE_RELEASE.version}. Run `gobby install` to repair."
+            ),
+        )
+    return DependencyStatus(
+        state="healthy",
+        installed_version=IMPECCABLE_RELEASE.version,
+        minimum_version=None,
+        expected_version=IMPECCABLE_RELEASE.version,
+        path=str(pointer),
         error=None,
     )
 

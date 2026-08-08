@@ -98,6 +98,21 @@ def get_gwiki_version() -> str | None:
     return _get_native_binary_version("gwiki", ".gwiki-version")
 
 
+def get_impeccable_version() -> str | None:
+    """Return the version of a fully verified managed Impeccable install."""
+    from gobby.cli.install_setup_impeccable import (
+        ImpeccableInstallError,
+        inspect_impeccable_installation,
+    )
+    from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
+
+    try:
+        pointer = inspect_impeccable_installation()
+    except ImpeccableInstallError:
+        return None
+    return IMPECCABLE_RELEASE.version if pointer is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Coding CLIs
 # ---------------------------------------------------------------------------
@@ -553,6 +568,7 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
             "ghook_path": _local_binary_path("ghook"),
             "gwiki": get_gwiki_version(),
             "gwiki_path": _local_binary_path("gwiki"),
+            "impeccable": get_impeccable_version(),
         },
         "coding_clis": {
             "claude": get_claude_code_version(),

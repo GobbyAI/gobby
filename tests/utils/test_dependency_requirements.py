@@ -50,6 +50,7 @@ def _collect_dependency_report(
     monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
     monkeypatch.setattr(requirements, "_command_status", command_status)
     monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "impeccable_dependency_status", lambda: healthy)
     monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
 
     report = requirements.collect_dependency_report(
@@ -183,6 +184,56 @@ def test_srt_status_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize(
+    ("installation", "error", "expected_state"),
+    [
+        (None, None, "missing"),
+        (Path("/managed/impeccable"), None, "healthy"),
+        (None, "corrupt", "invalid"),
+    ],
+)
+def test_impeccable_dependency_status(
+    monkeypatch: pytest.MonkeyPatch,
+    installation: Path | None,
+    error: str | None,
+    expected_state: str,
+) -> None:
+    from gobby.cli import install_setup_impeccable as impeccable
+
+    monkeypatch.setattr(requirements, "is_native_windows", lambda: False)
+    if error is None:
+        monkeypatch.setattr(
+            impeccable,
+            "inspect_impeccable_installation",
+            lambda: installation,
+        )
+    else:
+        monkeypatch.setattr(
+            impeccable,
+            "inspect_impeccable_installation",
+            lambda: (_ for _ in ()).throw(impeccable.ImpeccableInstallError(error)),
+        )
+
+    status = requirements.impeccable_dependency_status()
+
+    assert status.state == expected_state
+    if expected_state != "healthy":
+        assert status.error is not None
+        assert "gobby install" in status.error
+
+
+def test_impeccable_dependency_status_reports_native_windows_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(requirements, "is_native_windows", lambda: True)
+
+    status = requirements.impeccable_dependency_status()
+
+    assert status.state == "healthy"
+    assert status.installed_version == "unsupported on native Windows"
+    assert status.error is None
+
+
+@pytest.mark.parametrize(
     ("package_version", "verification_error"),
     [
         (None, "runner checksum mismatch"),
@@ -240,7 +291,7 @@ def test_managed_services_require_compose(monkeypatch: pytest.MonkeyPatch) -> No
     assert report.required["node"] == healthy
     assert report.required["docker_compose"] == healthy
     assert compose_minimums == ["2.7.0"]
-    assert report.optional == {"tailscale": healthy}
+    assert report.optional == {"tailscale": healthy, "impeccable": healthy}
     assert report.services["docker_running"] is True
 
 

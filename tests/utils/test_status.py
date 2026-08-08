@@ -180,7 +180,10 @@ class TestStatusUtils:
                             ),
                         )
                     },
-                    "optional": {"tailscale": _dependency(None, state="missing")},
+                    "optional": {
+                        "tailscale": _dependency(None, state="missing"),
+                        "impeccable": _dependency("3.5.0", expected_version="3.5.0"),
+                    },
                 }
             },
         )
@@ -274,7 +277,10 @@ class TestStatusUtils:
                         "node": _dependency("26.5.0", minimum_version="20.11.0"),
                         "srt": _dependency("0.0.66", expected_version="0.0.66"),
                     },
-                    "optional": {"tailscale": _dependency(None, state="missing")},
+                    "optional": {
+                        "tailscale": _dependency(None, state="missing"),
+                        "impeccable": _dependency("3.5.0", expected_version="3.5.0"),
+                    },
                 },
             },
         )
@@ -289,6 +295,7 @@ class TestStatusUtils:
         assert "git:" in msg
         assert "SRT:              0.0.66 (managed, verified)" in msg
         assert "Optional Dependencies:" in msg
+        assert "Impeccable:       3.5.0 (managed, verified)" in msg
 
     def test_format_status_message_prefers_configured_embeddings_provider(self) -> None:
         msg = format_status_message(

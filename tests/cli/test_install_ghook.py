@@ -244,7 +244,7 @@ class TestInstallGhook:
         ):
             yield
 
-    def test_fresh_install_github(
+    def test_install_ghook_passes_resolved_bin_dir(
         self,
         tmp_path: Path,
         _patch_platform: None,
@@ -264,13 +264,16 @@ class TestInstallGhook:
                 side_effect=install_from_github_side_effect,
             ),
             patch("gobby.cli.install_setup._probe_ghook_version", return_value="0.1.1"),
-            patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}),
+            patch(
+                "gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={}
+            ) as ensure_path,
         ):
             result = _install_ghook()
 
         assert result["installed"] is True
         assert result["method"] == "github"
         assert result["version"] == "0.1.1"
+        ensure_path.assert_called_once_with(bin_dir)
         assert _read_ghook_sidecar(bin_dir) == {
             "install_method": "github-release",
             "install_source_url": (

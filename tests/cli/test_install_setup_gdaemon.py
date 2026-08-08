@@ -20,7 +20,7 @@ _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
 
 def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    from gobby.cli import install_setup_srt, installers
+    from gobby.cli import install_setup_impeccable, install_setup_srt, installers
     from gobby.cli.installers import ide_config, shared, tmux_config
 
     monkeypatch.setattr(
@@ -34,6 +34,11 @@ def _stub_non_schema_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     monkeypatch.setattr(
         install_setup_srt,
         "install_srt_runtime",
+        lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
+    )
+    monkeypatch.setattr(
+        install_setup_impeccable,
+        "install_impeccable_cli",
         lambda: SimpleNamespace(installed=False, version="test", path=tmp_path),
     )
     monkeypatch.setattr(tmux_config, "configure_tmux_clipboard", lambda: {"success": True})
@@ -79,16 +84,15 @@ def test_run_daemon_setup_fails_before_database_when_gdaemon_install_fails(
     tmp_path: Path,
 ) -> None:
     database = MagicMock()
-    monkeypatch.setattr(
-        install_setup,
-        "ensure_gdaemon",
-        MagicMock(side_effect=install_setup_gdaemon.GdaemonInstallError("no usable binary")),
-    )
+    ensure = MagicMock(side_effect=install_setup_gdaemon.GdaemonInstallError("no usable binary"))
+    monkeypatch.setattr(install_setup, "ensure_gdaemon", ensure)
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", database)
 
-    with pytest.raises(click.ClickException, match="no usable binary"):
+    with pytest.raises(click.ClickException, match="no usable binary") as exc_info:
         install_setup.run_daemon_setup(tmp_path, configure_ide_settings=False)
 
+    assert str(exc_info.value) == "Failed to provision gdaemon: no usable binary"
+    ensure.assert_called_once_with()
     database.assert_not_called()
 
 

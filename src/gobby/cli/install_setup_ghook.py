@@ -342,7 +342,7 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
         installed_at=module._ghook_installed_at_utc(),
     )
 
-    path_result = module._ensure_gobby_bin_on_path()
+    path_result = module._ensure_gobby_bin_on_path(bin_dir)
     if path_result.get("added"):
         module.click.echo(
             f"  Added ~/.gobby/bin to PATH in {path_result['rc_file']} (restart shell or source it)"

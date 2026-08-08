@@ -278,7 +278,7 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
     resolved_version = probe_gcode_version(module, gcode_path) or target_version or "unknown"
     module._write_gcode_version_stamp(bin_dir, resolved_version)
 
-    module._ensure_gobby_bin_on_path()
+    module._ensure_gobby_bin_on_path(bin_dir)
 
     is_upgrade = installed_version is not None and installed_version != resolved_version
     return {

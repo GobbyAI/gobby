@@ -58,6 +58,83 @@ def test_get_gcode_version(tmp_path: Path) -> None:
                 assert deps.get_gcode_version() == "0.2.1"
 
 
+@pytest.mark.parametrize("installed", [None, Path("/managed/impeccable")])
+def test_get_impeccable_version(installed: Path | None) -> None:
+    with patch(
+        "gobby.cli.install_setup_impeccable.inspect_impeccable_installation",
+        return_value=installed,
+    ):
+        expected = "3.5.0" if installed is not None else None
+        assert deps.get_impeccable_version() == expected
+
+
+def test_get_impeccable_version_rejects_corrupt_or_mismatched_install() -> None:
+    from gobby.cli.install_setup_impeccable import ImpeccableInstallError
+
+    with patch(
+        "gobby.cli.install_setup_impeccable.inspect_impeccable_installation",
+        side_effect=ImpeccableInstallError("corrupt"),
+    ):
+        assert deps.get_impeccable_version() is None
+
+
+def test_get_impeccable_version_honors_configured_home_and_rejects_corruption(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.cli import install_setup_impeccable as impeccable
+    from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
+
+    home = tmp_path / "configured-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    root = home / "tools" / "impeccable"
+    generation = root / "3.5.0-generation-test"
+    bin_dir = generation / "node_modules" / ".bin"
+    impeccable_package = generation / "node_modules" / "impeccable"
+    puppeteer_package = generation / "node_modules" / "puppeteer"
+    (impeccable_package / "cli" / "bin").mkdir(parents=True)
+    (puppeteer_package / "lib" / "puppeteer" / "node").mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    (impeccable_package / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "impeccable",
+                "version": "3.5.0",
+                "bin": {"impeccable": "cli/bin/cli.js"},
+            }
+        )
+    )
+    (puppeteer_package / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "puppeteer",
+                "version": impeccable._locked_package_version("puppeteer"),
+                "bin": {"puppeteer": "lib/puppeteer/node/cli.js"},
+            }
+        )
+    )
+    for target in (
+        impeccable_package / "cli" / "bin" / "cli.js",
+        puppeteer_package / "lib" / "puppeteer" / "node" / "cli.js",
+    ):
+        target.write_text("#!/usr/bin/env node\n")
+        target.chmod(0o755)
+    (bin_dir / "impeccable").symlink_to("../impeccable/cli/bin/cli.js")
+    (bin_dir / "puppeteer").symlink_to("../puppeteer/lib/puppeteer/node/cli.js")
+    (generation / "receipt.json").write_text(json.dumps(IMPECCABLE_RELEASE.receipt_fields()))
+    pointer = root / "3.5.0"
+    pointer.symlink_to(generation.name)
+    launcher = home / "bin" / "impeccable"
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text(impeccable._launcher_content(home, pointer))
+    launcher.chmod(0o755)
+    (home / "bin" / ".impeccable-version").write_text("3.5.0\n")
+
+    assert deps.get_impeccable_version() == "3.5.0"
+    (bin_dir / "impeccable").unlink()
+    assert deps.get_impeccable_version() is None
+
+
 def test_get_ghook_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".ghook-version"
@@ -594,6 +671,7 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
         patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
         patch("gobby.utils.deps.get_gwiki_version", return_value="3.7"),
+        patch("gobby.utils.deps.get_impeccable_version", return_value="3.5.0"),
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
         patch("gobby.utils.deps.get_droid_cli_version", return_value="6.5"),
@@ -617,6 +695,7 @@ def test_collect_all_deps() -> None:
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
         assert res["gobby"]["gwiki"] == "3.7"
+        assert res["gobby"]["impeccable"] == "3.5.0"
         assert res["coding_clis"]["droid"] == "6.5"
         assert res["coding_clis"]["qwen"] == "6.7"
         assert res["services"]["docker_running"] is True

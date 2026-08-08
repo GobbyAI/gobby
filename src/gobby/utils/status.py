@@ -467,27 +467,34 @@ def format_status_message(
 
     # ---- Dependencies ----
     required_dependencies, optional_dependencies, _ = _dependency_sections(deps_info)
+    labels = {
+        "tmux": "tmux",
+        "git": "git",
+        "node": "node",
+        "srt": "SRT",
+        "impeccable": "Impeccable",
+    }
+    managed_dependencies = {"srt", "impeccable"}
     if required_dependencies:
-        labels = {
-            "tmux": "tmux",
-            "git": "git",
-            "node": "node",
-            "srt": "SRT",
-        }
         lines.append("Required Dependencies:")
         for name, record in required_dependencies.items():
             if name == "docker_compose":
                 continue
             label = labels.get(name, name)
             lines.append(
-                f"  {label + ':':<{_LW}}{_format_dependency_record(record, managed=name == 'srt')}"
+                f"  {label + ':':<{_LW}}"
+                f"{_format_dependency_record(record, managed=name in managed_dependencies)}"
             )
         lines.append("")
 
     if optional_dependencies:
         lines.append("Optional Dependencies:")
         for name, record in optional_dependencies.items():
-            lines.append(f"  {name + ':':<{_LW}}{_format_dependency_record(record)}")
+            label = labels.get(name, name)
+            lines.append(
+                f"  {label + ':':<{_LW}}"
+                f"{_format_dependency_record(record, managed=name in managed_dependencies)}"
+            )
         lines.append("")
 
     # ---- Active Work (only if non-zero) ----

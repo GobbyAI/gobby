@@ -153,6 +153,7 @@ gobby = [
     "install/qwen/**/*",
     "install/bundled_content_manifest.json",
     "install/srt-package-lock.json",
+    "install/impeccable-package-lock.json",
     "install/shared/**/*",
     "storage/schema_expected_identity.json",
     "data/**/*",

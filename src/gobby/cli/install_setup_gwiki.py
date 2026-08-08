@@ -285,7 +285,7 @@ def install_gwiki(module: Any, force: bool = False) -> dict[str, Any]:
     resolved_version = probe_gwiki_version(module, gwiki_path) or target_version or "unknown"
     module._write_gwiki_version_stamp(bin_dir, resolved_version)
 
-    module._ensure_gobby_bin_on_path()
+    module._ensure_gobby_bin_on_path(bin_dir)
 
     is_upgrade = installed_version is not None and installed_version != resolved_version
     return {

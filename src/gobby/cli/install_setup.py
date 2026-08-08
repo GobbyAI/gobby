@@ -8,6 +8,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess  # nosec B404 # fixed npm and managed helper invocations
 import sys
@@ -397,6 +398,18 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         click.echo(f"Verified Homebrew helper binaries: {helper_versions}")
         click.echo("Skipping global npm installs in Homebrew distribution mode")
     else:
+        from .install_setup_impeccable import ImpeccableInstallError, install_impeccable_cli
+
+        try:
+            impeccable_result = install_impeccable_cli()
+        except ImpeccableInstallError as exc:
+            click.echo(f"Warning: Failed to install managed Impeccable CLI ({exc})")
+        else:
+            action = "Installed" if impeccable_result.installed else "Verified"
+            click.echo(
+                f"{action} managed Impeccable CLI {impeccable_result.version}: "
+                f"{impeccable_result.path}"
+            )
         _run_npm_install("Playwright CLI", "@playwright/cli@latest", project_path)
         _run_npm_install("ClawHub CLI", "clawhub", project_path)
 
@@ -533,9 +546,9 @@ _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
 }
 
 
-def _ensure_gobby_bin_on_path() -> dict[str, Any]:
-    """Add ~/.gobby/bin to PATH if shell rc does not already contain it."""
-    gobby_bin = str(Path.home() / ".gobby" / "bin")
+def _ensure_gobby_bin_on_path(bin_dir: Path) -> dict[str, Any]:
+    """Add the resolved Gobby bin directory to PATH through the shell rc."""
+    gobby_bin = str(bin_dir.resolve(strict=False))
     result: dict[str, Any] = {"added": False}
 
     if gobby_bin in os.environ.get("PATH", "").split(os.pathsep):
@@ -551,15 +564,15 @@ def _ensure_gobby_bin_on_path() -> dict[str, Any]:
     rc_configs: dict[str, tuple[Path, str]] = {
         "zsh": (
             Path.home() / ".zshrc",
-            'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n',
+            f"export PATH={shlex.quote(f'{gobby_bin}:$PATH')}  # gobby\n",
         ),
         "bash": (
             Path.home() / ".bashrc",
-            'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n',
+            f"export PATH={shlex.quote(f'{gobby_bin}:$PATH')}  # gobby\n",
         ),
         "fish": (
             Path.home() / ".config" / "fish" / "config.fish",
-            "fish_add_path ~/.gobby/bin  # gobby\n",
+            f"fish_add_path {shlex.quote(gobby_bin)}  # gobby\n",
         ),
     }
 
@@ -574,7 +587,7 @@ def _ensure_gobby_bin_on_path() -> dict[str, Any]:
         except (OSError, UnicodeDecodeError) as exc:
             logger.debug("could not read shell rc file %s: %s", rc_file, exc)
             return result
-        if "# gobby" in content and ".gobby/bin" in content:
+        if "# gobby" in content and gobby_bin in content:
             return result
 
     rc_file.parent.mkdir(parents=True, exist_ok=True)
