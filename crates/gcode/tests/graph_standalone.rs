@@ -26,3 +26,5 @@ mod phantom_targets;
 mod smoke;
 #[path = "graph_standalone/support.rs"]
 mod support;
+#[path = "graph_standalone/usages_pagination.rs"]
+mod usages_pagination;

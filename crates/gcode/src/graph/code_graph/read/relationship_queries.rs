@@ -45,7 +45,7 @@ pub(crate) fn find_usages_query(
              RETURN source.id AS source_id, source.name AS source_name, \
                     'CALLS' AS rel_type, r.file AS file, r.line AS line, \
                     {LINK_METADATA_RETURN} \
-             ORDER BY source.id, r.line, r.file \
+             ORDER BY source.id, r.line, r.file, id(r) \
              SKIP {offset} LIMIT {limit}"
         ),
         typed_query::string_params(&[("project", project_id), ("id", symbol_id)]),
@@ -290,6 +290,16 @@ mod tests {
 
         assert!(query.contains("r.provenance AS provenance"));
         assert!(query.contains("r.confidence AS confidence"));
+    }
+
+    #[test]
+    fn usages_query_orders_by_unique_edge_id_tiebreaker() {
+        let (query, _) = find_usages_query("project-1", "symbol-1", 0, 10);
+
+        // (source.id, r.line, r.file) is not unique across edges; without the
+        // internal edge id tiebreaker SKIP/LIMIT paging can duplicate or drop
+        // tied rows at page boundaries.
+        assert!(query.contains("ORDER BY source.id, r.line, r.file"));
     }
 
     #[test]
