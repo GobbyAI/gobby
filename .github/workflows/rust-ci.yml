@@ -233,6 +233,14 @@ jobs:
       - name: Test graph_standalone (gcode)
         run: cargo nextest run --profile ci -p gobby-code --test graph_standalone
 
+      # projection_stale is gated behind required-features = ["test-support"];
+      # without this step no CI lane compiles or runs it. Plain cargo test keeps
+      # serial_test's in-process serialization against the shared database.
+      - name: Test projection_stale (gcode, test-support)
+        env:
+          GCODE_POSTGRES_TEST_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
+        run: cargo test -p gobby-code --features test-support --test projection_stale
+
   coverage:
     name: Coverage (report only)
     runs-on: ubuntu-latest
