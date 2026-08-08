@@ -446,32 +446,24 @@ class ChatSessionMixin:
         session.project_id = effective_pid
 
         if existing_terminal_resume and existing_db_session and session_manager:
-            try:
-                normalized_session = await run_db(
-                    self,
-                    session_manager.update,
-                    existing_db_session.id,
-                    source=provider_name,
-                    model=model,
-                    project_id=effective_pid,
-                    session_type="web_chat",
-                    status="active",
-                    terminal_context={},
-                    sandbox_enabled=False,
-                    sandbox_policy_hash=current_web_chat_policy_hash,
+            normalized_session = await run_db(
+                self,
+                session_manager.continue_terminal_session_as_web_chat,
+                existing_db_session.id,
+                source=provider_name,
+                model=model,
+                project_id=effective_pid,
+                sandbox_policy_hash=current_web_chat_policy_hash,
+            )
+            if normalized_session is None:
+                raise RuntimeError(
+                    f"Terminal session {existing_db_session.id} is ineligible for web continuation"
                 )
-                if normalized_session is not None:
-                    existing_db_session = normalized_session
-                logger.info(
-                    "Converted resumed terminal session %s into durable web-chat row",
-                    existing_db_session.id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to normalize resumed terminal session %s for web chat: %s",
-                    existing_db_session.id,
-                    e,
-                )
+            existing_db_session = normalized_session
+            logger.info(
+                "Converted resumed terminal session %s into durable web-chat row",
+                existing_db_session.id,
+            )
 
         if existing_db_session and getattr(existing_db_session, "session_type", None) == "web_chat":
             mismatch_reason = None

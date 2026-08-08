@@ -854,7 +854,7 @@ class TestSessionManagerRegistration:
         assert session2.id == session1.id
         assert session2.title == "Updated"
 
-    def test_register_revives_expired_terminal_session_and_resets_transcript(
+    def test_register_preserves_expired_terminal_session_and_transcript_state(
         self,
         session_manager: SessionManager,
         sample_project: dict,
@@ -877,13 +877,13 @@ class TestSessionManagerRegistration:
         )
 
         assert registered.id == session.id
-        assert registered.status == "active"
+        assert registered.status == "expired"
         row = session_manager.db.fetchone(
             "SELECT transcript_processed FROM sessions WHERE id = %s",
             (session.id,),
         )
         assert row is not None
-        assert row["transcript_processed"] == 0
+        assert row["transcript_processed"] == 1
 
     def test_expired_cache_mapping_cannot_route_to_detached_duplicate(
         self,

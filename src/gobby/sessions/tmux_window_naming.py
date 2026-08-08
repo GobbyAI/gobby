@@ -7,6 +7,11 @@ import logging
 import re
 from typing import Any
 
+from gobby.agents.tmux.session_manager import (
+    TmuxProbeResult,
+    TmuxReleaseOutcome,
+    TmuxSessionManager,
+)
 from gobby.hooks.background_tasks import create_background_task
 from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
@@ -147,11 +152,22 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
     return resolved_title
 
 
-def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> Any:
+def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> TmuxSessionManager:
     """Build a tmux manager for *session*'s recorded server context."""
     agent_depth = getattr(session, "agent_depth", 0) or 0
     default_socket_name = "gobby" if agent_depth > 0 else ""
     return get_tmux_manager_for_context(terminal_context, default_socket_name=default_socket_name)
+
+
+async def probe_tmux_pane(session: Any) -> TmuxProbeResult | None:
+    """Probe the tmux server and pane recorded for one persisted session."""
+    tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not tc:
+        return None
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return None
+    return await _tmux_manager_for_session(session, tc).probe_target(pane)
 
 
 async def _apply_window_rename(
@@ -359,9 +375,13 @@ async def release_window_name_if_unowned(session: Any) -> bool:
 
     mgr = _tmux_manager_for_session(session, tc)
     try:
-        return bool(await mgr.release_window_title_ownership(pane))
+        outcome = await mgr.release_window_title_ownership(pane)
+        return outcome in {
+            TmuxReleaseOutcome.RELEASED,
+            TmuxReleaseOutcome.ALREADY_RELEASED,
+        }
     except Exception:
-        logger.debug("Failed to release stale title for pane %s", pane, exc_info=True)
+        logger.warning("Failed to release stale title for pane %s", pane, exc_info=True)
         return False
 
 

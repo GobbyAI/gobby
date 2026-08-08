@@ -16,6 +16,14 @@ class TmuxRepairSessionManager(Protocol):
 
     def list(self, *, statuses: list[str], limit: int) -> Sequence[Any]: ...
 
+    def expire_tmux_socket_sessions(
+        self, machine_id: str, socket_identity: str
+    ) -> Sequence[str]: ...
+
+    def expire_tmux_pane_sessions(
+        self, machine_id: str, socket_identity: str, pane: str
+    ) -> Sequence[str]: ...
+
 
 def _tmux_repair_pane_key(session: Any) -> tuple[str, str, str] | None:
     canonical_identity = terminal_session_identity(session)

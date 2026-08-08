@@ -14,15 +14,16 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
-from gobby.hooks.event_handlers._session_start.flow import (
-    _expire_stale_terminal_sessions_for_context,
-    _log_session_start_timing,
+from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
+from gobby.hooks.event_handlers._session_start.terminal_runtime import (
+    expire_stale_terminal_sessions_for_context,
 )
 from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
@@ -62,7 +63,7 @@ def _register_context_claim_session(db: HubDatabase, *, external_id: str) -> str
     )
     session = SessionManager(db).register(
         external_id=external_id,
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=require_machine_id(),
         source="claude",
         project_id=project.id,
     )
@@ -118,7 +119,7 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
     session_manager.mark_session_expired.return_value = True
     handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
 
-    _expire_stale_terminal_sessions_for_context(
+    expire_stale_terminal_sessions_for_context(
         handler,
         session_id="current-session",
         project_id="project-1",
@@ -161,7 +162,7 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
     session_manager.mark_session_expired.side_effect = [RuntimeError("db busy"), True]
     handler = SimpleNamespace(_session_manager=session_manager, logger=MagicMock())
 
-    _expire_stale_terminal_sessions_for_context(
+    expire_stale_terminal_sessions_for_context(
         handler,
         session_id="current-session",
         project_id="project-1",
@@ -841,6 +842,127 @@ class TestSessionStartPreCreatedSession:
 class TestSessionStartNewSession:
     """Test SESSION_START handling for new sessions."""
 
+    def test_explicit_resume_rebinds_resolved_terminal_row(
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
+    ) -> None:
+        fresh_context = {
+            "tmux_pane": "%88",
+            "tmux_window_id": "@12",
+            "tmux_session": "work",
+            "tmux_socket_path": "/private/tmp/tmux-501/new",
+            "pid": 4242,
+            "tty": "/dev/ttys012",
+        }
+        persisted = SimpleNamespace(
+            id="platform-session-id",
+            external_id="provider-session-id",
+            machine_id="21000000-0000-4000-8000-000000000008",
+            project_id="proj-123",
+            session_type="terminal",
+            status="expired",
+            source="codex",
+            terminal_context={"tmux_pane": "%10"},
+            parent_session_id=None,
+            agent_depth=0,
+            agent_run_id=None,
+            title="Resumed work",
+            workflow_name=None,
+            message_count=8,
+            turn_count=3,
+            seq_num=42,
+        )
+        resumed = SimpleNamespace(**vars(persisted))
+        resumed.status = "active"
+        resumed.terminal_context = fresh_context
+        storage = mock_dependencies["session_storage"]
+        storage.find_by_external_id.return_value = persisted
+        storage.rebind_resumed_terminal_session.return_value = resumed
+        storage.get.side_effect = lambda session_id: (
+            resumed if session_id == persisted.id else None
+        )
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id=persisted.external_id,
+            source="codex",
+            data={
+                "source": "resume",
+                "cwd": "/work/gobby",
+                "transcript_path": "/tmp/resumed.jsonl",
+                "terminal_context": fresh_context,
+            },
+            metadata={},
+        )
+        event.machine_id = persisted.machine_id
+
+        compact_resolution = SimpleNamespace(
+            ambiguous=False,
+            session=None,
+            conflicting_session_ids=(),
+        )
+        project_resolution = SimpleNamespace(
+            skipped=False,
+            reason="matched test project",
+            project_id="proj-123",
+        )
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.resolve_hook_project_context",
+                return_value=project_resolution,
+            ),
+            patch(
+                "gobby.hooks.event_handlers._session_start.handoff.resolve_compact_continuation",
+                return_value=compact_resolution,
+            ),
+            patch.object(handlers, "_activate_default_agent", return_value=None),
+            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        storage.rebind_resumed_terminal_session.assert_called_once_with(
+            persisted.id,
+            machine_id=persisted.machine_id,
+            project_id="proj-123",
+            source="codex",
+            transcript_path="/tmp/resumed.jsonl",
+            terminal_context={**fresh_context, "cwd": "/work/gobby"},
+            workflow_name=None,
+            agent_depth=0,
+            sandbox_enabled=None,
+        )
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        assert event.metadata["_platform_session_id"] == persisted.id
+        assert event.session_id == persisted.external_id
+
+    def test_ordinary_delayed_start_cannot_reactivate_expired_precreated_session(
+        self,
+        mock_dependencies: dict[str, Any],
+        mock_empty_session_variable_manager: MagicMock,
+    ) -> None:
+        expired = SimpleNamespace(id="expired-platform-id", status="expired")
+        storage = mock_dependencies["session_storage"]
+        storage.get.return_value = expired
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id=expired.id,
+            source="codex",
+            data={"source": "startup"},
+        )
+
+        with patch.object(handlers, "_handle_pre_created_session") as precreated:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        precreated.assert_not_called()
+        storage.update.assert_not_called()
+        storage.register_session.assert_not_called()
+        storage.rebind_resumed_terminal_session.assert_not_called()
+
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_clear_session_starts_without_handoff(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
@@ -941,7 +1063,7 @@ class TestSessionStartNewSession:
         )
 
         with patch(
-            "gobby.hooks.event_handlers._session_start.flow.subprocess.run",
+            "gobby.hooks.event_handlers._session_start.terminal_runtime.subprocess.run",
             return_value=SimpleNamespace(returncode=0, stdout="droid\n"),
         ) as mock_run:
             response = handlers.handle_session_start(event)

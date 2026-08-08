@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
+from gobby.agents.tmux.session_manager import TmuxProbeResult, TmuxProbeState
 from gobby.runner_maintenance import (
     _select_tmux_repair_sessions,
     _tmux_repair_candidate_score,
@@ -23,17 +26,38 @@ class _SessionManager:
     def __init__(self, sessions: list[SimpleNamespace]) -> None:
         self.sessions = sessions
         self.calls: list[tuple[list[str], int]] = []
+        self.socket_expirations: list[tuple[str, str]] = []
+        self.pane_expirations: list[tuple[str, str, str]] = []
+        self.affected_ids: list[str] = []
 
-    def list(self, *, statuses: list[str], limit: int) -> list[SimpleNamespace]:
+    def list(self, *, statuses: list[str], limit: int) -> Sequence[SimpleNamespace]:
         self.calls.append((statuses, limit))
         return self.sessions
 
+    def expire_tmux_socket_sessions(self, machine_id: str, socket_identity: str) -> Sequence[str]:
+        self.socket_expirations.append((machine_id, socket_identity))
+        return self.affected_ids
 
-class _BrokenSessionManager:
+    def expire_tmux_pane_sessions(
+        self, machine_id: str, socket_identity: str, pane: str
+    ) -> Sequence[str]:
+        self.pane_expirations.append((machine_id, socket_identity, pane))
+        return self.affected_ids
+
+
+@pytest.fixture(autouse=True)
+def _live_tmux_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def probe(_session: SimpleNamespace) -> TmuxProbeResult:
+        return TmuxProbeResult(TmuxProbeState.LIVE, True)
+
+    monkeypatch.setattr("gobby.runner_maintenance.isolation.probe_tmux_pane", probe)
+
+
+class _BrokenSessionManager(_SessionManager):
     def __init__(self) -> None:
-        self.calls: list[tuple[list[str], int]] = []
+        super().__init__([])
 
-    def list(self, *, statuses: list[str], limit: int) -> list[SimpleNamespace]:
+    def list(self, *, statuses: list[str], limit: int) -> Sequence[SimpleNamespace]:
         self.calls.append((statuses, limit))
         raise RuntimeError("db down")
 
@@ -343,6 +367,98 @@ async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
 
     assert owner.await_count == 2
     assert enforce.await_args_list == [call(root), call(nested_agent)]
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_cleans_missing_socket_once_without_per_pane_calls(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    sessions = [
+        SimpleNamespace(
+            id=f"session-{index}",
+            machine_id="machine-a",
+            agent_depth=0,
+            external_id=f"external-{index}",
+            terminal_context={
+                "tmux_pane": f"%{index}",
+                "tmux_socket_path": "/private/tmp/tmux-501/gobby",
+            },
+            transcript_path=f"/tmp/{index}.jsonl",
+            message_count=1,
+            turn_count=0,
+            tool_call_count=0,
+            ref=f"#{index}",
+        )
+        for index in range(3)
+    ]
+    manager = _SessionManager(sessions)
+    manager.affected_ids = [session.id for session in sessions]
+    missing = AsyncMock(
+        return_value=TmuxProbeResult(
+            TmuxProbeState.SERVER_MISSING,
+            None,
+            "error connecting to /private/tmp/tmux-501/gobby (No such file or directory)",
+        )
+    )
+    owner = AsyncMock()
+
+    with (
+        patch("gobby.runner_maintenance.isolation.probe_tmux_pane", missing),
+        patch("gobby.runner_maintenance.isolation.resolve_tmux_repair_owner", owner),
+        caplog.at_level("INFO", logger="gobby.runner_maintenance"),
+    ):
+        await tmux_window_name_repair_loop(manager, lambda: True)
+
+    assert manager.socket_expirations == [
+        ("machine-a", "tmux_socket_path:/private/tmp/tmux-501/gobby")
+    ]
+    assert manager.pane_expirations == []
+    assert missing.await_count == 1
+    owner.assert_not_awaited()
+    cleanup_logs = [record for record in caplog.records if "missing server" in record.message]
+    assert len(cleanup_logs) == 1
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_cleans_missing_pane_and_preserves_indeterminate_probe() -> None:
+    session = SimpleNamespace(
+        id="session-pane",
+        machine_id="machine-a",
+        agent_depth=0,
+        external_id="external-pane",
+        terminal_context={
+            "tmux_pane": "%41",
+            "tmux_socket_path": "/private/tmp/tmux-501/gobby",
+        },
+        transcript_path="/tmp/pane.jsonl",
+        message_count=1,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#41",
+    )
+    manager = _SessionManager([session])
+    manager.affected_ids = [session.id]
+
+    with patch(
+        "gobby.runner_maintenance.isolation.probe_tmux_pane",
+        AsyncMock(return_value=TmuxProbeResult(TmuxProbeState.LIVE, False, "can't find pane")),
+    ):
+        await tmux_window_name_repair_loop(manager, lambda: True)
+
+    assert manager.pane_expirations == [
+        ("machine-a", "tmux_socket_path:/private/tmp/tmux-501/gobby", "%41")
+    ]
+
+    manager.pane_expirations.clear()
+    with patch(
+        "gobby.runner_maintenance.isolation.probe_tmux_pane",
+        AsyncMock(return_value=TmuxProbeResult(TmuxProbeState.INDETERMINATE, None, "timeout")),
+    ):
+        await tmux_window_name_repair_loop(manager, lambda: True)
+
+    assert manager.socket_expirations == []
+    assert manager.pane_expirations == []
 
 
 @pytest.mark.asyncio

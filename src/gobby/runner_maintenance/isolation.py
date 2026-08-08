@@ -8,10 +8,16 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from gobby.agents.tmux.session_manager import TmuxProbeState
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
-from gobby.runner_tmux_repair import TmuxRepairSessionManager, _select_tmux_repair_sessions
+from gobby.runner_tmux_repair import (
+    TmuxRepairSessionManager,
+    _select_tmux_repair_sessions,
+    _tmux_repair_pane_key,
+)
 from gobby.sessions.tmux_window_naming import (
     enforce_window_name_if_unmanaged,
+    probe_tmux_pane,
     release_window_name_if_unowned,
     resolve_tmux_repair_owner,
 )
@@ -54,8 +60,58 @@ async def tmux_window_name_repair_loop(
             logger.warning("tmux window repair: failed to list sessions: %s", e)
             return
         renamed = 0
+        missing_sockets: set[tuple[str, str]] = set()
         for session in _select_tmux_repair_sessions(sessions):
+            identity = _tmux_repair_pane_key(session)
+            if identity is None:
+                continue
+            machine_id, socket_identity, pane = identity
+            socket_key = machine_id, socket_identity
+            if socket_key in missing_sockets:
+                continue
             try:
+                probe = await probe_tmux_pane(session)
+                if probe is None or probe.state is TmuxProbeState.INDETERMINATE:
+                    continue
+                if probe.state is TmuxProbeState.SERVER_MISSING:
+                    missing_sockets.add(socket_key)
+                    affected = await asyncio.to_thread(
+                        session_manager.expire_tmux_socket_sessions,
+                        machine_id,
+                        socket_identity,
+                    )
+                    if affected:
+                        logger.info(
+                            "tmux window repair: detached %s session(s) from missing server",
+                            len(affected),
+                            extra={
+                                "event": "tmux_server_missing_cleanup",
+                                "machine_id": machine_id,
+                                "tmux_socket": socket_identity,
+                                "affected_count": len(affected),
+                            },
+                        )
+                    continue
+                if probe.pane_exists is False:
+                    affected = await asyncio.to_thread(
+                        session_manager.expire_tmux_pane_sessions,
+                        machine_id,
+                        socket_identity,
+                        pane,
+                    )
+                    if affected:
+                        logger.info(
+                            "tmux window repair: detached %s session(s) from missing pane",
+                            len(affected),
+                            extra={
+                                "event": "tmux_pane_missing_cleanup",
+                                "machine_id": machine_id,
+                                "tmux_socket": socket_identity,
+                                "tmux_pane": pane,
+                                "affected_count": len(affected),
+                            },
+                        )
+                    continue
                 owner = await resolve_tmux_repair_owner(session)
                 if owner is not None and await enforce_window_name_if_unmanaged(owner):
                     renamed += 1

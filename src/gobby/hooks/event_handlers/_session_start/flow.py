@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import time
-from collections.abc import Mapping
 from typing import Any, cast
 
 import psycopg
@@ -17,25 +15,23 @@ from gobby.hooks.terminal_context import (
     hook_cwd,
     is_gobby_acp_child,
 )
-from gobby.sessions.handoff_identity import terminal_contexts_match
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
-from .handoff import prepare_compact_continuation_variables, resolve_session_start_identity
+from .handoff import (
+    prepare_compact_continuation_variables,
+    rebind_resumed_session_start,
+    resolve_session_start_identity,
+)
 from .profile import seed_user_profile_content
+from .terminal_runtime import (
+    expire_stale_terminal_sessions_for_context,
+    session_start_is_nested_cli_child,
+)
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
-STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
-TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
-PANE_OWNER_COMMAND_SOURCES = {
-    "droid": "droid",
-    "grok": "grok",
-    "qwen": "qwen",
-    "agy": "agy",
-    "claude": "claude",
-}
 
 
 def _compat_module() -> Any:
@@ -164,163 +160,6 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", e)
 
 
-def _row_value(row: Any, key: str) -> Any:
-    if isinstance(row, Mapping):
-        return row.get(key)
-    try:
-        return row[key]
-    except (KeyError, TypeError):
-        return None
-
-
-def _source_for_pane_command(command: str) -> str | None:
-    normalized = command.strip().lower()
-    if not normalized:
-        return None
-    if normalized.startswith("codex"):
-        return "codex"
-    return PANE_OWNER_COMMAND_SOURCES.get(normalized)
-
-
-def _tmux_pane_current_command(terminal_context: dict[str, Any] | None) -> str | None:
-    if not terminal_context:
-        return None
-    pane_id = terminal_context.get("tmux_pane")
-    if not isinstance(pane_id, str) or not pane_id:
-        return None
-
-    command = ["tmux"]
-    socket_path = terminal_context.get("tmux_socket_path")
-    if isinstance(socket_path, str) and socket_path:
-        command.extend(["-S", socket_path])
-    command.extend(["display-message", "-p", "-t", pane_id, "#{pane_current_command}"])
-
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    pane_command = result.stdout.strip()
-    return pane_command or None
-
-
-def _session_start_is_nested_cli_child(
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> bool:
-    pane_command = _tmux_pane_current_command(terminal_context)
-    if pane_command is None:
-        return False
-    owner_source = _source_for_pane_command(pane_command)
-    return owner_source is not None and owner_source != cli_source
-
-
-def _expire_stale_terminal_sessions_for_context(
-    handler: Any,
-    *,
-    session_id: str | None,
-    project_id: str | None,
-    terminal_context: dict[str, Any] | None,
-) -> None:
-    if not session_id or not project_id or not terminal_context or not handler._session_manager:
-        return
-
-    db = getattr(handler._session_manager, "db", None)
-    if db is None or not hasattr(db, "fetchall"):
-        return
-
-    try:
-        rows = db.fetchall(
-            """
-            SELECT id, source, terminal_context FROM sessions
-            WHERE project_id = %s
-            AND session_type = %s
-            AND status IN (%s, %s)
-            AND id <> %s
-            AND terminal_context IS NOT NULL
-            ORDER BY updated_at DESC
-            LIMIT %s
-            """,
-            (
-                project_id,
-                "terminal",
-                "active",
-                "paused",
-                session_id,
-                STALE_TERMINAL_SESSION_SCAN_LIMIT,
-            ),
-        )
-    except psycopg.Error as e:
-        handler.logger.warning(
-            "Failed to scan stale terminal sessions",
-            extra={
-                "session_id": session_id,
-                "project_id": project_id,
-                "error_type": type(e).__name__,
-                "error": str(e),
-            },
-            exc_info=True,
-        )
-        return
-
-    expired_session_ids: list[str] = []
-    for row in rows:
-        candidate_id = _row_value(row, "id")
-        if not isinstance(candidate_id, str) or not candidate_id:
-            continue
-        stored_context = _row_value(row, "terminal_context")
-        try:
-            if not terminal_contexts_match(terminal_context, stored_context):
-                continue
-        except Exception as e:  # noqa: BLE001 - stale scan should fail open
-            handler.logger.warning(
-                "Failed to compare stale terminal session context",
-                extra={
-                    "session_id": session_id,
-                    "project_id": project_id,
-                    "candidate_session_id": candidate_id,
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-            continue
-        try:
-            expired = handler._session_manager.mark_session_expired(candidate_id)
-        except Exception as e:  # noqa: BLE001 - stale expiry should fail open
-            handler.logger.warning(
-                "Failed to expire stale terminal session",
-                extra={
-                    "session_id": session_id,
-                    "project_id": project_id,
-                    "candidate_session_id": candidate_id,
-                    "error_type": type(e).__name__,
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
-            continue
-        if expired:
-            expired_session_ids.append(candidate_id)
-
-    if expired_session_ids:
-        handler.logger.info(
-            "Expired stale terminal sessions for reused terminal context",
-            extra={
-                "session_id": session_id,
-                "expired_count": len(expired_session_ids),
-                "expired_session_ids": expired_session_ids[:10],
-            },
-        )
-
-
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
@@ -355,7 +194,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             },
         )
         return HookResponse()
-    if _session_start_is_nested_cli_child(cli_source, terminal_context):
+    if session_start_is_nested_cli_child(cli_source, terminal_context):
         handler.logger.info(
             "Skipping session registration for nested CLI child process",
             extra={
@@ -373,42 +212,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         try:
             existing_session = handler._session_manager.get(external_id)
             if existing_session:
-                return cast(
-                    HookResponse,
-                    handler._handle_pre_created_session(
-                        existing_session=existing_session,
-                        external_id=external_id,
-                        transcript_path=transcript_path,
-                        cli_source=cli_source,
-                        event=event,
-                        cwd=cwd,
-                        terminal_context=terminal_context,
-                    ),
-                )
-        except Exception as e:
-            handler.logger.debug("No pre-created session found by external_id: %s", e)
-
-        if gobby_session_id_from_env and not existing_session:
-            try:
-                existing_session = handler._session_manager.get(gobby_session_id_from_env)
-                if existing_session:
-                    handler.logger.info(
-                        "Found pre-created session %s via terminal_context, updating external_id to %s",
-                        gobby_session_id_from_env,
-                        external_id,
-                    )
-                    handler._session_manager.update(
-                        gobby_session_id_from_env,
-                        external_id=external_id,
-                    )
-                    if handler._session_manager:
-                        handler._session_manager.cache_session_mapping(
-                            external_id=external_id,
-                            source=cli_source,
-                            session_id=gobby_session_id_from_env,
-                            project_id=existing_session.project_id,
-                            session_type=existing_session.session_type,
-                        )
+                inactive = getattr(existing_session, "status", None) in {"expired", "deleted"}
+                if inactive and session_source not in {"resume", "compact"}:
+                    return HookResponse(decision="allow")
+                if not inactive:
                     return cast(
                         HookResponse,
                         handler._handle_pre_created_session(
@@ -421,6 +228,45 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                             terminal_context=terminal_context,
                         ),
                     )
+        except Exception as e:
+            handler.logger.debug("No pre-created session found by external_id: %s", e)
+
+        if gobby_session_id_from_env and not existing_session:
+            try:
+                existing_session = handler._session_manager.get(gobby_session_id_from_env)
+                if existing_session:
+                    inactive = getattr(existing_session, "status", None) in {"expired", "deleted"}
+                    if inactive and session_source not in {"resume", "compact"}:
+                        return HookResponse(decision="allow")
+                    if not inactive:
+                        handler.logger.info(
+                            "Found pre-created session %s via terminal_context, updating external_id to %s",
+                            gobby_session_id_from_env,
+                            external_id,
+                        )
+                        handler._session_manager.update(
+                            gobby_session_id_from_env,
+                            external_id=external_id,
+                        )
+                        handler._session_manager.cache_session_mapping(
+                            external_id=external_id,
+                            source=cli_source,
+                            session_id=gobby_session_id_from_env,
+                            project_id=existing_session.project_id,
+                            session_type=existing_session.session_type,
+                        )
+                        return cast(
+                            HookResponse,
+                            handler._handle_pre_created_session(
+                                existing_session=existing_session,
+                                external_id=external_id,
+                                transcript_path=transcript_path,
+                                cli_source=cli_source,
+                                event=event,
+                                cwd=cwd,
+                                terminal_context=terminal_context,
+                            ),
+                        )
             except Exception as e:
                 handler.logger.debug("No pre-created session found by gobby_session_id: %s", e)
 
@@ -551,6 +397,26 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             project_id=canonical_session.project_id,
             session_type=canonical_session.session_type,
         )
+    elif handler._session_manager and session_source == "resume":
+        if resolution.session is None:
+            return HookResponse(decision="block", reason="Explicit resume session was not found.")
+        try:
+            resumed, transcript_path = rebind_resumed_session_start(
+                handler,
+                input_data,
+                resolution.session,
+                machine_id=machine_id,
+                project_id=project_id,
+                cli_source=cli_source,
+                terminal_context=terminal_context,
+                transcript_path=transcript_path,
+            )
+        except Exception as exc:
+            handler.logger.warning("Explicit session resume failed: %s", exc)
+            return HookResponse(decision="block", reason=str(exc))
+        session_id = resumed.id
+        external_id = resumed.external_id
+        event.session_id = external_id
     elif handler._session_manager:
         if not transcript_path:
             transcript_path = handler._derive_transcript_path(
@@ -588,7 +454,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             except Exception as e:
                 handler.logger.warning("Failed to mark parent session as expired: %s", e)
 
-    _expire_stale_terminal_sessions_for_context(
+    expire_stale_terminal_sessions_for_context(
         handler,
         session_id=session_id,
         project_id=project_id,

@@ -729,7 +729,9 @@ class TestCreateChatSessionInner:
             mixin.session_manager = MagicMock()
             mixin.session_manager.db = MagicMock()
             mixin.session_manager.get.return_value = existing_terminal
-            mixin.session_manager.update.return_value = normalized_session
+            mixin.session_manager.continue_terminal_session_as_web_chat.return_value = (
+                normalized_session
+            )
 
             session = await mixin._create_chat_session_inner(
                 "term-row-id",
@@ -746,16 +748,13 @@ class TestCreateChatSessionInner:
             assert mock_session.chat_mode == "normal"
             mock_session.start.assert_awaited_once_with(model="claude-opus-4-6")
             mixin.session_manager.register.assert_not_called()
-            update_args = mixin.session_manager.update.call_args
+            update_args = mixin.session_manager.continue_terminal_session_as_web_chat.call_args
             assert update_args is not None
             assert update_args.args == ("term-row-id",)
             assert update_args.kwargs["source"] == "claude"
             assert update_args.kwargs["model"] == "claude-opus-4-6"
             assert update_args.kwargs["project_id"] == "proj-1"
-            assert update_args.kwargs["session_type"] == "web_chat"
-            assert update_args.kwargs["status"] == "active"
-            assert update_args.kwargs["terminal_context"] == {}
-            assert update_args.kwargs["sandbox_enabled"] is False
+            assert update_args.kwargs["sandbox_policy_hash"] == mock_session.sandbox_policy_hash
             assert isinstance(update_args.kwargs["sandbox_policy_hash"], str)
             assert update_args.kwargs["sandbox_policy_hash"]
             mixin.session_manager.update_model.assert_called_once_with(

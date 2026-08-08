@@ -21,7 +21,12 @@ import gobby.agents.tmux.output_reader as output_reader_mod
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader, _safe_fifo_component
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
-from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
+from gobby.agents.tmux.session_manager import (
+    TmuxProbeState,
+    TmuxReleaseOutcome,
+    TmuxSessionInfo,
+    TmuxSessionManager,
+)
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.tmux.text_injection import (
     TmuxPaneModeUnavailableError,
@@ -2450,7 +2455,7 @@ class TestReleaseWindowTitleOwnership:
 
             result = await mgr.release_window_title_ownership("%1")
 
-        assert result is True
+        assert result is TmuxReleaseOutcome.RELEASED
         mock_run.assert_awaited_once_with(
             "set-option",
             "-w",
@@ -2474,11 +2479,99 @@ class TestReleaseWindowTitleOwnership:
         )
 
     @pytest.mark.asyncio
-    async def test_returns_false_when_tmux_rejects_release(self) -> None:
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "can't find pane: %1",
+            "error connecting to /private/tmp/tmux-501/gobby (No such file or directory)",
+        ],
+    )
+    async def test_missing_target_is_already_released(self, stderr: str) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
-            mock_run.return_value = (1, "", "can't find pane: %1")
+            mock_run.return_value = (1, "", stderr)
 
             result = await mgr.release_window_title_ownership("%1")
 
-        assert result is False
+        assert result is TmuxReleaseOutcome.ALREADY_RELEASED
+
+    async def test_unexpected_release_failure_is_indeterminate(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (1, "", "permission denied by policy")
+
+            result = await mgr.release_window_title_ownership("%1")
+
+        assert result is TmuxReleaseOutcome.INDETERMINATE
+
+
+class TestTmuxTargetProbe:
+    @pytest.mark.parametrize(
+        ("result", "expected_state", "expected_pane"),
+        [
+            ((0, "%1\n", ""), TmuxProbeState.LIVE, True),
+            (
+                (
+                    1,
+                    "",
+                    "error connecting to /private/tmp/tmux-501/gobby (No such file or directory)",
+                ),
+                TmuxProbeState.SERVER_MISSING,
+                None,
+            ),
+            ((1, "", "can't find pane: %1"), TmuxProbeState.LIVE, False),
+            ((1, "", "permission denied"), TmuxProbeState.INDETERMINATE, None),
+        ],
+    )
+    async def test_classifies_probe_result(
+        self,
+        result: tuple[int, str, str],
+        expected_state: TmuxProbeState,
+        expected_pane: bool | None,
+    ) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = result
+
+            probe = await mgr.probe_target("%1")
+
+        assert probe.state is expected_state
+        assert probe.pane_exists is expected_pane
+
+    async def test_timeout_is_indeterminate(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.side_effect = TimeoutError("tmux timed out")
+
+            probe = await mgr.probe_target("%1")
+
+        assert probe.state is TmuxProbeState.INDETERMINATE
+        assert probe.pane_exists is None
+
+    async def test_unexpected_probe_failure_warns(self, caplog: pytest.LogCaptureFixture) -> None:
+        mgr = TmuxSessionManager()
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.return_value = (1, "", "unexpected tmux failure")
+
+            probe = await mgr.probe_target("%1")
+
+        assert probe.state is TmuxProbeState.INDETERMINATE
+        assert "Tmux target probe failed unexpectedly" in caplog.text
+
+    async def test_permission_probe_failure_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        mgr = TmuxSessionManager()
+        with (
+            caplog.at_level(logging.WARNING),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.return_value = (1, "", "permission denied")
+
+            probe = await mgr.probe_target("%1")
+
+        assert probe.state is TmuxProbeState.INDETERMINATE
+        assert not caplog.records

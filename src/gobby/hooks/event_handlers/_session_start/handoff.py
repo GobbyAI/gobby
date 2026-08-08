@@ -220,6 +220,58 @@ def resolve_session_start_identity(
     return SessionStartResolution(session=session, session_source="compact")
 
 
+def rebind_resumed_session_start(
+    handler: Any,
+    input_data: dict[str, Any],
+    session: Any,
+    *,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+    terminal_context: dict[str, Any] | None,
+    transcript_path: str | None,
+) -> tuple[Any, str | None]:
+    """Bind an explicit resume to its persisted row and fresh runtime context."""
+    if not transcript_path:
+        transcript_path = handler._derive_transcript_path(
+            cli_source,
+            input_data,
+            session.external_id,
+            owner_machine_id=machine_id,
+            local_machine_id=machine_id,
+        )
+
+    raw_depth = input_data.get("agent_depth")
+    try:
+        agent_depth = int(raw_depth) if raw_depth is not None else 0
+    except (TypeError, ValueError):
+        agent_depth = 0
+    raw_sandbox = input_data.get("sandbox_enabled")
+    sandbox_enabled = raw_sandbox if isinstance(raw_sandbox, bool) else None
+
+    rebound = handler._session_manager.rebind_resumed_terminal_session(
+        session.id,
+        machine_id=machine_id,
+        project_id=project_id,
+        source=cli_source,
+        transcript_path=transcript_path,
+        terminal_context=terminal_context,
+        workflow_name=input_data.get("workflow_name"),
+        agent_depth=agent_depth,
+        sandbox_enabled=sandbox_enabled,
+    )
+    if rebound is None:
+        raise RuntimeError(f"Session {session.id} is ineligible for explicit resume")
+    handler._session_manager.cache_session_mapping(
+        external_id=rebound.external_id,
+        source=cli_source,
+        session_id=rebound.id,
+        project_id=rebound.project_id,
+        session_type=rebound.session_type,
+    )
+    return rebound, transcript_path
+
+
 def _classify_terminal_identity(
     session: Any,
     child_context: Any,

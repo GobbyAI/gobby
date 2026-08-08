@@ -61,6 +61,8 @@ def update_existing_session(
             owner_machine_id=existing.machine_id,
             current_machine_id=machine_id,
         )
+    if existing.session_type == "terminal" and existing.status == "expired":
+        return existing
 
     incoming_terminal_context = parse_terminal_context_value(terminal_context_json)
     terminal_context_update_json = (

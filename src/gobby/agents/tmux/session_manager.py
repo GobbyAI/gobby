@@ -15,6 +15,7 @@ import signal
 import tempfile
 import time
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from gobby.agents.spawners.auth_env import split_credential_env
@@ -39,6 +40,31 @@ _MISSING_TARGET_ERRORS = (
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
 TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
+
+
+class TmuxProbeState(StrEnum):
+    """Observed state of the tmux server used for a target probe."""
+
+    LIVE = "live"
+    SERVER_MISSING = "server_missing"
+    INDETERMINATE = "indeterminate"
+
+
+@dataclass(frozen=True)
+class TmuxProbeResult:
+    """Server liveness plus target presence from one tmux command."""
+
+    state: TmuxProbeState
+    pane_exists: bool | None
+    detail: str = ""
+
+
+class TmuxReleaseOutcome(StrEnum):
+    """Outcome of releasing Gobby-owned tmux title state."""
+
+    RELEASED = "released"
+    ALREADY_RELEASED = "already_released"
+    INDETERMINATE = "indeterminate"
 
 
 def _write_secret_env_file(env: dict[str, str]) -> Path:
@@ -95,6 +121,11 @@ def _is_missing_tmux_server_error(stderr: str) -> bool:
     return "no server running" in message or (
         message.startswith("error connecting to ") and "(no such file or directory)" in message
     )
+
+
+def _is_tmux_permission_error(stderr: str) -> bool:
+    message = stderr.strip().lower()
+    return "permission denied" in message or "operation not permitted" in message
 
 
 def _exact_session_target(name: str) -> str:
@@ -228,6 +259,32 @@ class TmuxSessionManager:
             (stdout_bytes or b"").decode(),
             (stderr_bytes or b"").decode(),
         )
+
+    async def probe_target(self, target: str) -> TmuxProbeResult:
+        """Probe one pane while distinguishing server loss from uncertainty."""
+        try:
+            rc, _stdout, stderr = await self._run(
+                "display-message", "-p", "-t", target, "#{pane_id}"
+            )
+        except (TimeoutError, PermissionError) as exc:
+            logger.debug("Tmux target probe was indeterminate for '%s': %s", target, exc)
+            return TmuxProbeResult(TmuxProbeState.INDETERMINATE, None, str(exc))
+        except OSError as exc:
+            logger.warning("Tmux target probe failed unexpectedly for '%s': %s", target, exc)
+            return TmuxProbeResult(TmuxProbeState.INDETERMINATE, None, str(exc))
+
+        detail = stderr.strip()
+        if rc == 0:
+            return TmuxProbeResult(TmuxProbeState.LIVE, True)
+        if _is_missing_tmux_server_error(detail):
+            return TmuxProbeResult(TmuxProbeState.SERVER_MISSING, None, detail)
+        if _is_missing_tmux_target_error(detail):
+            return TmuxProbeResult(TmuxProbeState.LIVE, False, detail)
+        if _is_tmux_permission_error(detail):
+            logger.debug("Tmux target probe was indeterminate for '%s': %s", target, detail)
+            return TmuxProbeResult(TmuxProbeState.INDETERMINATE, None, detail)
+        logger.warning("Tmux target probe failed unexpectedly for '%s': %s", target, detail)
+        return TmuxProbeResult(TmuxProbeState.INDETERMINATE, None, detail)
 
     # ------------------------------------------------------------------
     # Public API
@@ -741,39 +798,49 @@ class TmuxSessionManager:
             return False
         return True
 
-    async def release_window_title_ownership(self, target: str) -> bool:
+    async def release_window_title_ownership(self, target: str) -> TmuxReleaseOutcome:
         """Release Gobby's window and pane title overrides for *target*."""
-        rc, _stdout, stderr = await self._run(
-            "set-option",
-            "-w",
-            "-u",
-            "-t",
-            target,
-            "automatic-rename",
-            ";",
-            "set-option",
-            "-w",
-            "-u",
-            "-t",
-            target,
-            "allow-rename",
-            ";",
-            "select-pane",
-            "-t",
-            target,
-            "-T",
-            "",
-        )
+        try:
+            rc, _stdout, stderr = await self._run(
+                "set-option",
+                "-w",
+                "-u",
+                "-t",
+                target,
+                "automatic-rename",
+                ";",
+                "set-option",
+                "-w",
+                "-u",
+                "-t",
+                target,
+                "allow-rename",
+                ";",
+                "select-pane",
+                "-t",
+                target,
+                "-T",
+                "",
+            )
+        except (TimeoutError, PermissionError) as exc:
+            logger.debug("Tmux title release was indeterminate for '%s': %s", target, exc)
+            return TmuxReleaseOutcome.INDETERMINATE
+        except OSError as exc:
+            logger.warning("Tmux title release failed unexpectedly for '%s': %s", target, exc)
+            return TmuxReleaseOutcome.INDETERMINATE
         if rc != 0:
             message = stderr.strip()
-            if _is_missing_tmux_target_error(message):
+            if _is_missing_tmux_server_error(message) or _is_missing_tmux_target_error(message):
                 logger.debug(
-                    "Skipping tmux title release for missing target '%s': %s", target, message
+                    "Tmux title for missing target '%s' is already released: %s", target, message
                 )
-            else:
-                logger.warning("Failed to release tmux title for '%s': %s", target, message)
-            return False
-        return True
+                return TmuxReleaseOutcome.ALREADY_RELEASED
+            if _is_tmux_permission_error(message):
+                logger.debug("Tmux title release was indeterminate for '%s': %s", target, message)
+                return TmuxReleaseOutcome.INDETERMINATE
+            logger.warning("Failed to release tmux title for '%s': %s", target, message)
+            return TmuxReleaseOutcome.INDETERMINATE
+        return TmuxReleaseOutcome.RELEASED
 
     async def capture_pane(self, session_name: str, lines: int = 5) -> str | None:
         """Capture the last N lines from a tmux session's pane.

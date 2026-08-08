@@ -570,7 +570,8 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
 @click.pass_context
 def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:
     """Restart the Gobby daemon (stop then start)."""
-    setup_logging(verbose)
+    if verbose:
+        setup_logging(True)
 
     if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
         sys.exit(1)
