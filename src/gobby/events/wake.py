@@ -34,6 +34,10 @@ CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 # idle on the same turn, suppress redundant tmux send-keys after the first wake.
 # The 30s ceiling guarantees we resume nudging if turn_count signals get missed.
 PANE_WAKE_DEBOUNCE_SECONDS = 30.0
+# Bounds SDK-resume and web-chat wakes only, which have no internal timeout.
+# Never wrap the tmux senders in wait_for: every tmux subprocess is already
+# bounded (TmuxTextInjectionTimeout), and an outer cancellation can land
+# between paste-buffer and Enter, leaving pasted text unsubmitted.
 LIVE_WAKE_TIMEOUT_SECONDS = 5.0
 
 RunDb = Callable[..., Awaitable[Any]]
@@ -246,15 +250,12 @@ class WakeDispatcher:
                 return self._live_wake_debounced_result(session_id, method="tmux_pane")
             tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
             try:
-                await asyncio.wait_for(
-                    self._tmux_pane_sender(
-                        tmux_pane,
-                        CONTINUE_WAKE_MESSAGE,
-                        tmux_socket_path,
-                        submit=True,
-                        escape_before_submit=True,
-                    ),
-                    timeout=LIVE_WAKE_TIMEOUT_SECONDS,
+                await self._tmux_pane_sender(
+                    tmux_pane,
+                    CONTINUE_WAKE_MESSAGE,
+                    tmux_socket_path,
+                    submit=True,
+                    escape_before_submit=True,
                 )
                 self._record_live_wake(session_id, session)
                 return {
@@ -299,14 +300,11 @@ class WakeDispatcher:
             tmux_session_name = self._parse_tmux_session(terminal_context)
             if tmux_session_name:
                 try:
-                    await asyncio.wait_for(
-                        self._tmux_sender(
-                            tmux_session_name,
-                            CONTINUE_WAKE_MESSAGE,
-                            submit=True,
-                            escape_before_submit=True,
-                        ),
-                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
+                    await self._tmux_sender(
+                        tmux_session_name,
+                        CONTINUE_WAKE_MESSAGE,
+                        submit=True,
+                        escape_before_submit=True,
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -327,15 +325,12 @@ class WakeDispatcher:
             if tmux_pane:
                 tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
                 try:
-                    await asyncio.wait_for(
-                        self._tmux_pane_sender(
-                            tmux_pane,
-                            CONTINUE_WAKE_MESSAGE,
-                            tmux_socket_path,
-                            submit=True,
-                            escape_before_submit=True,
-                        ),
-                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
+                    await self._tmux_pane_sender(
+                        tmux_pane,
+                        CONTINUE_WAKE_MESSAGE,
+                        tmux_socket_path,
+                        submit=True,
+                        escape_before_submit=True,
                     )
                     self._record_live_wake(session_id, session)
                     return {

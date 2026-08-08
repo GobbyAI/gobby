@@ -12,7 +12,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
+from gobby.agents.tmux.text_injection import (
+    TmuxTargetUnavailableError,
+    TmuxTextInjectionTimeout,
+)
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
 from tests._timing import drain_asyncio_tasks
 
@@ -85,35 +88,63 @@ class TestWakeDispatch:
         assert offloaded == ["read_session", "persist_notification"]
 
     @pytest.mark.asyncio
-    async def test_live_wake_client_timeout_returns_structured_failure(
+    async def test_live_wake_internal_timeout_returns_structured_failure(
         self,
-        monkeypatch: pytest.MonkeyPatch,
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
+        """The sender's own subprocess bound surfaces as a structured failure."""
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
             terminal_context={"tmux_pane": "%1"},
         )
 
-        async def blocked_sender(*_args: object, **_kwargs: object) -> None:
-            await asyncio.Event().wait()
+        async def timing_out_sender(*_args: object, **_kwargs: object) -> None:
+            raise TmuxTextInjectionTimeout(command=("tmux", "paste-buffer"), timeout=10.0)
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=timing_out_sender,
+        )
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["delivered"] is False
+        assert result["error_code"] == "tmux_pane_wake_failed"
+
+    @pytest.mark.asyncio
+    async def test_live_wake_slow_injection_is_not_cancelled(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        """Injection slower than LIVE_WAKE_TIMEOUT_SECONDS completes and delivers."""
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=0,
+            terminal_context={"tmux_pane": "%1"},
+        )
+        completed = asyncio.Event()
+
+        async def slow_sender(*_args: object, **_kwargs: object) -> None:
+            await asyncio.sleep(0.05)
+            completed.set()
 
         monkeypatch.setattr("gobby.events.wake.LIVE_WAKE_TIMEOUT_SECONDS", 0.01)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_pane_sender=blocked_sender,
+            tmux_pane_sender=slow_sender,
         )
 
-        result = await asyncio.wait_for(
-            dispatcher.dispatch_live_wake(WAKE_SESSION_ID),
-            timeout=0.2,
-        )
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
-        assert result["delivered"] is False
-        assert result["error_code"] == "tmux_pane_wake_failed"
+        assert completed.is_set()
+        assert result["delivered"] is True
+        assert result["method"] == "tmux_pane"
 
     @pytest.mark.asyncio
     async def test_interactive_session_gets_ism(
