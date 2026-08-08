@@ -63,13 +63,13 @@ def build_close_diff_evidence(
 
     additions = sum(item.additions for item in files)
     deletions = sum(item.deletions for item in files)
-    manifest = "\n".join(
-        [
-            f"Changed files ({len(files)} total, +{additions}/-{deletions}):",
-            *(f"- {item.path} (+{item.additions}/-{item.deletions})" for item in files),
-        ]
-    )
     separator = "\n\nDiff excerpts:\n"
+    manifest = _build_file_manifest(
+        files,
+        additions=additions,
+        deletions=deletions,
+        max_chars=max_chars - len(separator),
+    )
     if len(manifest) + len(separator) > max_chars:
         raise ValidationEvidenceTooLarge(
             "The complete changed-file manifest exceeds the bounded criteria-review prompt. "
@@ -107,6 +107,72 @@ def build_close_diff_evidence(
         manifest_chars=len(manifest),
         excerpt_chars=len(excerpts),
     )
+
+
+def _build_file_manifest(
+    files: list[ChangedFileEvidence],
+    *,
+    additions: int,
+    deletions: int,
+    max_chars: int,
+) -> str:
+    """Render every exact path, aliasing repeated directory prefixes when needed."""
+    displays = [item.path for item in files]
+    aliases: list[tuple[str, str]] = []
+
+    manifest = _format_file_manifest(files, displays, aliases, additions, deletions)
+    if len(manifest) <= max_chars:
+        return manifest
+
+    prefix_members: dict[str, list[int]] = {}
+    for index, item in enumerate(files):
+        components = item.path.split("/")[:-1]
+        for depth in range(1, len(components) + 1):
+            prefix = "/".join(components[:depth]) + "/"
+            prefix_members.setdefault(prefix, []).append(index)
+
+    assigned: set[int] = set()
+    candidates = sorted(
+        prefix_members.items(),
+        key=lambda candidate: len(candidate[0]) * len(candidate[1]),
+        reverse=True,
+    )
+    for prefix, members in candidates:
+        eligible = [index for index in members if index not in assigned]
+        if len(eligible) < 2:
+            continue
+        alias = f"@{len(aliases) + 1}/"
+        alias_line = f"- {alias} = {prefix}"
+        saved_chars = (len(prefix) - len(alias)) * len(eligible) - len(alias_line) - 1
+        if saved_chars <= 0:
+            continue
+        aliases.append((alias, prefix))
+        for index in eligible:
+            displays[index] = alias + files[index].path.removeprefix(prefix)
+            assigned.add(index)
+        manifest = _format_file_manifest(files, displays, aliases, additions, deletions)
+        if len(manifest) <= max_chars:
+            return manifest
+
+    return manifest
+
+
+def _format_file_manifest(
+    files: list[ChangedFileEvidence],
+    displays: list[str],
+    aliases: list[tuple[str, str]],
+    additions: int,
+    deletions: int,
+) -> str:
+    lines = [f"Changed files ({len(files)} total, +{additions}/-{deletions}):"]
+    if aliases:
+        lines.append("Path aliases (exact prefixes):")
+        lines.extend(f"- {alias} = {prefix}" for alias, prefix in aliases)
+    lines.extend(
+        f"- {display} (+{item.additions}/-{item.deletions})"
+        for item, display in zip(files, displays, strict=True)
+    )
+    return "\n".join(lines)
 
 
 def _parse_diff_files(diff: str) -> list[ChangedFileEvidence]:
