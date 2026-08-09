@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Strict, model_validator
+
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
+
+ConfigRevision = Annotated[int, Strict(), Field(ge=0, le=MAX_CONFIG_REVISION)]
 
 
-class SaveConfigRequest(BaseModel):
-    """Request body for PUT /api/config/values."""
+class PatchConfigRequest(BaseModel):
+    """Request body for PATCH /api/config/values."""
 
-    values: dict[str, Any]
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: ConfigRevision
+    values: dict[str, object] = Field(default_factory=dict)
+    unset: frozenset[str] = frozenset()
 
 
 class SaveTemplateRequest(BaseModel):

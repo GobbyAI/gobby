@@ -22,8 +22,8 @@ from gobby.servers.routes.configuration_generation_endpoints import (
 from gobby.servers.routes.configuration_import_export import register_import_export_routes
 from gobby.servers.routes.configuration_models import (
     ImportConfigRequest,
+    PatchConfigRequest,
     SaveApprovalRulesRequest,
-    SaveConfigRequest,
     SavePromptOverrideRequest,
     SaveSecretRequest,
     SaveTemplateRequest,
@@ -41,8 +41,8 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ImportConfigRequest",
+    "PatchConfigRequest",
     "SaveApprovalRulesRequest",
-    "SaveConfigRequest",
     "SavePromptOverrideRequest",
     "SaveSecretRequest",
     "SaveTemplateRequest",

@@ -192,6 +192,14 @@ class ConfigSnapshot:
         """Return an isolated typed active projection."""
         return self._active.model_copy(deep=True)
 
+    @property
+    def desired_values(self) -> Mapping[str, object]:
+        return self._desired_values
+
+    @property
+    def active_values(self) -> Mapping[str, object]:
+        return self._active_values
+
     def desired_secret(self, key: str) -> str | None:
         binding = self._desired_bindings.get(key)
         return None if binding is None else binding.plaintext

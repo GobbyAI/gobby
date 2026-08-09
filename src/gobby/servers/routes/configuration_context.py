@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import HTTPException
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
+from gobby.config.values import ConfigValuesService
 from gobby.prompts.loader import PromptLoader
 from gobby.servers.routes._database import require_hub_database
+from gobby.storage.config_mutations import ConfigMutations
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
@@ -38,6 +42,30 @@ class ConfigurationRouteContext:
                 store = ConfigStore(require_hub_database(self.server.services.database))
                 self.server.services.config_store = store
         return store
+
+    def get_config_runtime(self) -> ConfigRuntime:
+        runtime = getattr(self.server.services, "config_runtime", None)
+        if not isinstance(runtime, ConfigRuntime):
+            raise HTTPException(status_code=503, detail="Config runtime not available")
+        return runtime
+
+    def get_config_service(self) -> ConfigValuesService:
+        service = getattr(self.server.services, "config_values_service", None)
+        if isinstance(service, ConfigValuesService):
+            return service
+        with self._service_init_lock:
+            service = getattr(self.server.services, "config_values_service", None)
+            if not isinstance(service, ConfigValuesService):
+                service = ConfigValuesService(
+                    runtime=self.get_config_runtime(),
+                    mutations=ConfigMutations(require_hub_database(self.server.services.database)),
+                    run_blocking=self.run_config_db,
+                )
+                self.server.services.config_values_service = service
+        return service
+
+    async def run_config_db[T](self, operation: Callable[[], T]) -> T:
+        return cast(T, await self.server.run_db(operation))
 
     def get_prompt_manager(self) -> LocalPromptManager:
         manager = getattr(self.server.services, "prompt_manager", None)

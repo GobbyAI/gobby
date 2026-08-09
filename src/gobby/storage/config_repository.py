@@ -18,6 +18,7 @@ from gobby.config.registry import (
     ConfigSecrecy,
     RegistrySpec,
     UnknownConfigKeyError,
+    config_key_secrecy,
 )
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
@@ -69,9 +70,9 @@ def decode_config_value(key: str, raw_value: str) -> object:
         raise ConfigRepositoryError(f"Invalid JSON for configuration key {key!r}") from exc
 
 
-def registry_is_secret(spec: RegistrySpec) -> bool:
+def registry_is_secret(spec: RegistrySpec, key: str) -> bool:
     """Return the registry-derived storage secrecy marker."""
-    return spec.secrecy is not ConfigSecrecy.NONE
+    return config_key_secrecy(spec, key) is not ConfigSecrecy.NONE
 
 
 class ConfigRepository:
@@ -155,7 +156,7 @@ class ConfigRepository:
                 key = str(row["key"])
                 spec = self._resolve(key)
                 self._validate_row_revision(key, int(row["revision"]), revision)
-                expected = registry_is_secret(spec)
+                expected = registry_is_secret(spec, key)
                 if bool(row["is_secret"]) == expected:
                     continue
                 transaction.execute(
@@ -197,7 +198,7 @@ class ConfigRepository:
             value = decode_config_value(key, str(row["value"]))
             overrides[key] = value
             row_revisions[key] = row_revision
-            if spec.secrecy is ConfigSecrecy.REFERENCE:
+            if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                 reference = self._secret_reference(key, value)
                 name = reference.removeprefix("$secret:")
                 plaintext = self.secret_store.get(name) if resolve_secrets else None

@@ -24,6 +24,7 @@ from gobby.config.registry import (
     ConfigVisibility,
     RegistrySpec,
     UnknownConfigKeyError,
+    config_key_secrecy,
 )
 from gobby.storage.config_repository import (
     MAX_CONFIG_REVISION,
@@ -76,6 +77,10 @@ class ConfigValidationError(ConfigMutationError, ValueError):
 
     code = "invalid_config"
     retryable = False
+
+    def __init__(self, message: str, *, key: str | None = None) -> None:
+        self.key = key
+        super().__init__(message)
 
 
 class EmbeddingConfigMutationBlocked(ConfigMutationError):
@@ -348,17 +353,23 @@ class ConfigMutations:
                 spec = self._resolve(key)
                 self._authorize(spec, key, allow_internal=allow_internal)
                 validated = self._validate_value(spec, key, value)
-                if spec.secrecy is ConfigSecrecy.REFERENCE:
+                if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                     self._validate_reference(key, validated)
                 values[key] = validated
                 candidate[key] = validated
             for key, update in patch.secrets.items():
                 spec = self._resolve(key)
                 self._authorize(spec, key, allow_internal=allow_internal)
-                if spec.secrecy is not ConfigSecrecy.REFERENCE:
-                    raise ConfigValidationError(f"Configuration key {key!r} is not a secret")
+                if config_key_secrecy(spec, key) is not ConfigSecrecy.REFERENCE:
+                    raise ConfigValidationError(
+                        f"Configuration key {key!r} is not a secret",
+                        key=key,
+                    )
                 if not isinstance(update.plaintext, str):
-                    raise ConfigValidationError(f"Secret value for {key!r} must be a string")
+                    raise ConfigValidationError(
+                        f"Secret value for {key!r} must be a string",
+                        key=key,
+                    )
                 name = update.name or config_key_to_secret_name(key)
                 reference = f"$secret:{name}"
                 self._validate_reference(key, reference, canonical=update.name is None)
@@ -378,9 +389,12 @@ class ConfigMutations:
         if allow_internal:
             return
         if spec.visibility is ConfigVisibility.RESTRICTED:
-            raise ConfigValidationError(f"Configuration key {key!r} is restricted")
+            raise ConfigValidationError(f"Configuration key {key!r} is restricted", key=key)
         if spec.activation is ActivationPolicy.MANAGED:
-            raise ConfigValidationError(f"Configuration key {key!r} requires managed activation")
+            raise ConfigValidationError(
+                f"Configuration key {key!r} requires managed activation",
+                key=key,
+            )
 
     @staticmethod
     def _validate_value(spec: RegistrySpec, key: str, value: object) -> object:
@@ -399,20 +413,25 @@ class ConfigMutations:
             return cast(object, TypeAdapter(annotation).validate_python(value, strict=True))
         except ValidationError as exc:
             raise ConfigValidationError(
-                f"Invalid value for configuration key {key!r}: {exc}"
+                f"Invalid value for configuration key {key!r}: {exc}",
+                key=key,
             ) from exc
 
     @staticmethod
     def _validate_reference(key: str, value: object, *, canonical: bool = False) -> None:
         if not isinstance(value, str) or not value.startswith("$secret:"):
             raise ConfigValidationError(
-                f"Secret configuration key {key!r} requires a secret update or reference"
+                f"Secret configuration key {key!r} requires a secret update or reference",
+                key=key,
             )
         name = value.removeprefix("$secret:")
         if not name:
-            raise ConfigValidationError(f"Secret reference for {key!r} is empty")
+            raise ConfigValidationError(f"Secret reference for {key!r} is empty", key=key)
         if canonical and name != config_key_to_secret_name(key):
-            raise ConfigValidationError(f"Secret reference for {key!r} is not canonical")
+            raise ConfigValidationError(
+                f"Secret reference for {key!r} is not canonical",
+                key=key,
+            )
 
     def _effective_changes(
         self,
@@ -493,7 +512,7 @@ class ConfigMutations:
                 key,
                 json.dumps(value),
                 source,
-                registry_is_secret(spec),
+                registry_is_secret(spec, key),
                 revision,
                 utc_now(),
             ),
@@ -508,7 +527,7 @@ class ConfigMutations:
         try:
             return self.registry.resolve(key)
         except UnknownConfigKeyError as exc:
-            raise ConfigValidationError(f"Unknown configuration key: {key}") from exc
+            raise ConfigValidationError(f"Unknown configuration key: {key}", key=key) from exc
 
 
 def _validate_revision(revision: int) -> None:

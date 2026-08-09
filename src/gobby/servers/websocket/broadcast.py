@@ -209,6 +209,14 @@ class BroadcastMixin:
         }
         await self.broadcast(message)
 
+    async def broadcast_config_event(self, revision: int) -> None:
+        """Broadcast one revision-only event for each newly reconciled epoch."""
+        current = getattr(self, "_last_config_event_revision", -1)
+        if revision <= current:
+            return
+        self._last_config_event_revision = revision
+        await self.broadcast({"type": "config_event", "revision": revision})
+
     async def broadcast_session_usage_updated(self, payload: dict[str, Any]) -> None:
         """Broadcast session aggregate token usage refresh."""
         message = {

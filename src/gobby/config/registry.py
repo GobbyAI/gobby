@@ -10,7 +10,7 @@ from typing import Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 from pydantic.fields import FieldInfo
-from pydantic_core import PydanticUndefined
+from pydantic_core import PydanticUndefined, to_jsonable_python
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -358,6 +358,18 @@ class ConfigRegistry:
         }
 
 
+def config_key_secrecy(spec: RegistrySpec, key: str) -> ConfigSecrecy:
+    """Return effective secrecy for an exact key or one patterned field."""
+    if not isinstance(spec, ConfigPatternSpec):
+        return spec.secrecy
+    if spec.secrecy is not ConfigSecrecy.NONE:
+        return spec.secrecy
+    matched = spec.match(key)
+    field_name = matched.get("field") if matched else None
+    field = next((item for item in spec.field_specs if item.name == field_name), None)
+    return ConfigSecrecy.NONE if field is None else field.secrecy
+
+
 def _patterns_overlap(left: ConfigPatternSpec, right: ConfigPatternSpec) -> bool:
     left_parts = left.pattern.split(".")
     right_parts = right.pattern.split(".")
@@ -447,13 +459,17 @@ def _json_type(annotation: object) -> str | list[str]:
 def _json_default(value: object) -> object:
     if isinstance(value, Enum):
         return value.value
-    if isinstance(value, tuple):
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, (list, tuple)):
         if value and all(isinstance(item, tuple) and len(item) == 2 for item in value):
             return {str(key): _json_default(child) for key, child in value}
         return [_json_default(child) for child in value]
+    if isinstance(value, Mapping):
+        return {str(key): _json_default(child) for key, child in value.items()}
     if isinstance(value, frozenset):
         return sorted((_json_default(child) for child in value), key=repr)
-    return value
+    return to_jsonable_python(value)
 
 
 def _freeze(value: object) -> object:
@@ -757,5 +773,6 @@ __all__ = [
     "RegistryError",
     "UnknownConfigKeyError",
     "decode_dynamic_segment",
+    "config_key_secrecy",
     "encode_dynamic_segment",
 ]
