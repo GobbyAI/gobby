@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
   schema contract. Version: `0.9.0`.
+- **Audit exemption re-anchored** — require the `code/**` path and
+  `trust: generated` alongside the `gwiki-code` marker before a page skips
+  claim auditing, so structural placeholders and marker-stamped knowledge
+  pages stay fully audited. Version: `0.9.2`.
 
 #### ghook
 
