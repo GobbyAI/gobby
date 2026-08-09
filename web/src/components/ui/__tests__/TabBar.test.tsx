@@ -10,6 +10,35 @@ const tabs = [
 ]
 
 describe('TabBar', () => {
+  it('renders coarse-pointer tab and close targets as sibling buttons', () => {
+    const onTabChange = vi.fn()
+    const onTabClose = vi.fn()
+
+    render(
+      <TabBar
+        tabs={tabs}
+        activeTab="overview"
+        onTabChange={onTabChange}
+        onTabClose={onTabClose}
+      />,
+    )
+
+    const tab = screen.getByRole('tab', { name: 'Overview' })
+    const closeButton = screen.getByRole('button', { name: 'Close Overview' })
+
+    expect(tab).toHaveClass('pointer-coarse:before:min-h-11', 'pointer-coarse:before:min-w-11')
+    expect(closeButton).toHaveClass(
+      'pointer-coarse:before:min-h-11',
+      'pointer-coarse:before:min-w-11',
+    )
+    expect(tab).not.toContainElement(closeButton)
+    expect(tab.parentElement).toContainElement(closeButton)
+
+    fireEvent.click(closeButton)
+    expect(onTabClose).toHaveBeenCalledWith('overview')
+    expect(onTabChange).not.toHaveBeenCalled()
+  })
+
   it('exposes tab semantics and makes only the active tab tabbable', () => {
     render(<TabBar tabs={tabs} activeTab="changes" onTabChange={vi.fn()} />)
 

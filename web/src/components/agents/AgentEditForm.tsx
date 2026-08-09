@@ -50,6 +50,7 @@ import {
   AGENT_RULES_CHIPS_CLS,
 } from './agents-styles'
 import { Heading } from '../shared/Heading'
+import { TabBar } from '../ui/TabBar'
 
 export interface AgentFormData {
   name: string
@@ -268,22 +269,16 @@ export function AgentEditForm({
   const headerContent = (
     <>
       {onViewChange && (
-        <div className="sidebar-tab-bar">
-          <button
-            type="button"
-            className={`sidebar-tab ${view !== 'yaml' ? 'sidebar-tab--active' : ''}`}
-            onClick={() => onViewChange('form')}
-          >
-            Form
-          </button>
-          <button
-            type="button"
-            className={`sidebar-tab ${view === 'yaml' ? 'sidebar-tab--active' : ''}`}
-            onClick={() => onViewChange('yaml')}
-          >
-            YAML
-          </button>
-        </div>
+        <TabBar
+          tabs={[
+            { id: 'form', label: 'Form' },
+            { id: 'yaml', label: 'YAML' },
+          ]}
+          activeTab={view}
+          onTabChange={(tabId) => onViewChange(tabId === 'yaml' ? 'yaml' : 'form')}
+          ariaLabel="Agent editor view"
+          className="mb-0"
+        />
       )}
     </>
   )

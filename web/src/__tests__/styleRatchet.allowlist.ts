@@ -18,7 +18,7 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
     'src/App.tsx': 1,
-    'src/components/FilesPage.tsx': 4,
+    'src/components/FilesPage.tsx': 3,
     'src/components/ProjectSelector.tsx': 2,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityFilterDropdown.tsx': 1,
@@ -72,7 +72,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/wiki/WikiPageTree.tsx': 2,
     'src/components/activity/wiki/WikiSourcesManager.tsx': 3,
     'src/components/activity/wiki/WikiTabToolbar.tsx': 1,
-    'src/components/agents/AgentEditForm.tsx': 8,
+    'src/components/agents/AgentEditForm.tsx': 6,
     'src/components/agents/AgentPortfolioPage.tsx': 2,
     'src/components/agents/AgentRulesEditor.tsx': 11,
     'src/components/agents/AgentSkillsEditor.tsx': 2,
@@ -103,7 +103,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/shared/DiffBlock.tsx': 1,
     'src/components/shared/MermaidBlock.tsx': 1,
     'src/components/shared/SidebarPanel.tsx': 1,
-    'src/components/shared/TabBar.tsx': 1,
     'src/components/tasks/QuickCaptureTask.tsx': 2,
     'src/components/tasks/TaskCreateForm.tsx': 3,
   },
@@ -183,7 +182,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
 
 // `const *_CLS =` style-constant declarations per file.
 export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/FilesPage.tsx': 49,
+  'src/components/FilesPage.tsx': 44,
   'src/components/ValidationDetectionEditor.tsx': 9,
   'src/components/activity/memory/KnowledgeGraph.tsx': 19,
   'src/components/activity/pipelines/PipelineEditor.styles.ts': 47,

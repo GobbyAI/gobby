@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import { CodeBlock } from './shared/CodeBlock'
 import { Button } from './ui/Button'
+import { TabBar } from './ui/TabBar'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
 import { MarkdownBody } from './shared/MarkdownBody'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
@@ -34,15 +35,6 @@ const TREE_GIT_BADGE_CLS = 'ml-auto shrink-0 font-mono text-[length:var(--text-2
 const TREE_LOADING_CLS = 'px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]'
 
 const MAIN_CLS = 'relative flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]'
-
-const TABS_CLS =
-  'flex overflow-x-auto border-b border-[var(--border)] bg-[var(--bg-secondary)] [scrollbar-width:thin]'
-const TAB_CLS =
-  'group flex min-w-0 cursor-pointer select-none items-center gap-1.5 whitespace-nowrap border-r border-[var(--border)] px-3 py-2 text-[length:var(--text-md)] text-[var(--text-muted)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
-const TAB_ACTIVE_CLS = '-mb-px border-b-2 border-b-[var(--accent)] bg-[var(--bg-primary)] text-[var(--text-primary)]'
-const TAB_NAME_CLS = 'overflow-hidden text-ellipsis'
-const TAB_CLOSE_CLS =
-  'flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 text-[length:var(--text-base)] leading-none text-[var(--text-muted)] opacity-0 transition-opacity duration-100 group-hover:opacity-100 hover:bg-surface-tint-strong hover:text-[var(--text-primary)] pointer-coarse:h-11 pointer-coarse:w-11'
 
 const TOOLBAR_CLS =
   'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] [container-type:inline-size] [container-name:files-viewer]'
@@ -278,41 +270,29 @@ export function FilesPage({
 
       <div className={MAIN_CLS}>
         {openFiles.length > 0 && (
-          <div className={TABS_CLS} role="tablist" aria-label="Open files">
-            {openFiles.map((file, i) => {
-              const isActive = i === activeFileIndex
-              return (
-                <div
-                  key={`${file.projectId}:${file.path}`}
-                  className={cn(TAB_CLS, isActive && TAB_ACTIVE_CLS)}
-                  role="tab"
-                  aria-selected={isActive}
-                  tabIndex={0}
-                  onClick={() => onSetActiveFile(i)}
-                  onKeyDown={(event) =>
-                    activateOnKeyboard(event, () => onSetActiveFile(i))
-                  }
-                >
-                  <FileIcon extension={file.name.split('.').pop() || ''} size={14} />
-                  <span className={TAB_NAME_CLS}>{file.dirty ? `${file.name} ●` : file.name}</span>
-                  <button
-                    className={cn(TAB_CLOSE_CLS, isActive && 'opacity-100')}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      if (file.dirty) {
-                        setPendingDiscard({ action: 'close', index: i })
-                      } else {
-                        onCloseFile(i)
-                      }
-                    }}
-                    aria-label={`Close ${file.name}`}
-                  >
-                    &times;
-                  </button>
-                </div>
-              )
-            })}
-          </div>
+          <TabBar
+            tabs={openFiles.map((file, index) => ({
+              id: String(index),
+              label: file.dirty ? `${file.name} ●` : file.name,
+              closeLabel: file.name,
+              icon: <FileIcon extension={file.name.split('.').pop() || ''} size={14} />,
+            }))}
+            activeTab={String(activeFileIndex)}
+            onTabChange={(tabId) => onSetActiveFile(Number(tabId))}
+            onTabClose={(tabId) => {
+              const index = Number(tabId)
+              const file = openFiles[index]
+              if (!file) return
+
+              if (file.dirty) {
+                setPendingDiscard({ action: 'close', index })
+              } else {
+                onCloseFile(index)
+              }
+            }}
+            ariaLabel="Open files"
+            className="mb-0 bg-[var(--bg-secondary)]"
+          />
         )}
 
         {activeFile && !activeFile.image && !activeFile.binary && !activeFile.loading && !activeFile.error && activeFile.content !== null && (
