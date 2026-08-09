@@ -237,6 +237,10 @@ def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None
 
     assert "subscribe once by calling `gobby-agents:wait_for_agent(run_id)`" in normalized
     assert "daemon wake" in normalized
+    assert "custom foreground poll" in normalized
+    assert "direct agent-run API polling" in normalized
+    assert "Bash sleep heartbeat" in normalized
+    assert "only supported resume mechanism" in normalized
     assert "get_agent_result(run_id)` only if" in normalized
     assert "mandatory post-launch `gobby-sessions:compact_self`" in normalized
     assert "already known to be terminal skips subscribing and waiting" in normalized

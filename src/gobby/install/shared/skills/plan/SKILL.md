@@ -303,6 +303,9 @@ mandatory post-launch `gobby-sessions:compact_self` call:
    independent work remains, subscribe once by calling
    `gobby-agents:wait_for_agent(run_id)`. If the run
    remains active, end the turn and let the daemon wake resume the session.
+   Never replace this subscribe-once protocol with a custom foreground poll,
+   direct agent-run API polling, or a Bash sleep heartbeat. The daemon wake is
+   the only supported resume mechanism for an active subscribed run.
 3. On the daemon wake, re-call `gobby-agents:wait_for_agent(run_id)` first to
    retrieve the terminal snapshot, then perform a full status and health sweep.
    Call `gobby-agents:get_agent_result(run_id)` only if you need to re-read the
