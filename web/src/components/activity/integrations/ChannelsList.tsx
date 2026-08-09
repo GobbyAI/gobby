@@ -70,11 +70,11 @@ export function ChannelsList({
                 label={statusLabelForChannel(channel)}
               />
               <span className="activity-row-title">{channel.name}</span>
-              <Chip className="activity-chip gap-1">
+              <Chip className="gap-1">
                 <IntegrationPlatformIcon type={channel.channel_type} size={12} />
                 {CHANNEL_DISPLAY_NAMES[channel.channel_type]}
               </Chip>
-              <Chip className="activity-chip">
+              <Chip>
                 {channel.enabled ? "On" : "Off"}
               </Chip>
             </Button>

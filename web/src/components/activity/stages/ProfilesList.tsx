@@ -85,10 +85,10 @@ export function ProfilesList({
                 pulse={profile.enabled}
               />
               <span className="activity-row-title">{profile.display_label}</span>
-              <Chip className="activity-chip">{profile.source}</Chip>
-              <Chip className="activity-chip">{profile.isolation}</Chip>
+              <Chip>{profile.source}</Chip>
+              <Chip>{profile.isolation}</Chip>
               {profile.name === "default" && (
-                <Chip className="activity-chip activity-chip--accent">default</Chip>
+                <Chip tone="accent">default</Chip>
               )}
             </Button>
             <div className="px-1">

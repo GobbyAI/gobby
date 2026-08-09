@@ -96,7 +96,7 @@ export function SkillsInstalledDetail({
         actions={
           <>
             {skillSourceKey(draft) !== "installed" && (
-              <Chip className="activity-chip">{skillSourceLabel(draft)}</Chip>
+              <Chip>{skillSourceLabel(draft)}</Chip>
             )}
             {viewMode === "content" ? (
               <DetailActionButton label="Close" onClick={() => setViewMode("detail")} />

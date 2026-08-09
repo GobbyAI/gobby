@@ -112,9 +112,9 @@ export function SkillsInstalledList({
                 label={statusLabel(skill)}
               />
               <span className="activity-row-title">{skill.name}</span>
-              <Chip className="activity-chip">{skillCategory(skill)}</Chip>
+              <Chip>{skillCategory(skill)}</Chip>
               {source !== "installed" && (
-                <Chip className="activity-chip">{skillSourceLabel(skill)}</Chip>
+                <Chip>{skillSourceLabel(skill)}</Chip>
               )}
             </Button>
             <div className="px-1">

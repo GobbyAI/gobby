@@ -288,7 +288,7 @@ export function RulesDetailPanel({
             />
             <div className="flex min-h-8 items-center gap-2">
               <span className="text-sm font-medium text-muted-foreground">Source</span>
-              <Chip className="activity-chip rules-detail__source">{detail.source}</Chip>
+              <Chip className="rules-detail__source">{detail.source}</Chip>
             </div>
             <div className="rules-detail__readonly-grid">
               <ReadOnlySummary label="When" value={draft.when} />

@@ -201,12 +201,7 @@ export function MemoryDetailPanel({
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-[var(--bg-secondary)] p-3 text-xs">
           <dt className="text-muted-foreground">Scope</dt>
           <dd className="flex min-w-0 items-center gap-2 text-foreground">
-            <Chip
-              className={cn(
-                "activity-chip",
-                memory.is_global && "activity-chip--accent",
-              )}
-            >
+            <Chip tone={memory.is_global ? "accent" : "neutral"}>
               {memoryScopeLabel(memory)}
             </Chip>
             <span className="truncate">

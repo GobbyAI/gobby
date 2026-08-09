@@ -255,7 +255,7 @@ export function ChannelDetailPanel({
                   />
                   {statusLabel(status)}
                 </div>
-                <Chip className="activity-chip">
+                <Chip>
                   {CHANNEL_DISPLAY_NAMES[draft.channel_type]}
                 </Chip>
               </div>

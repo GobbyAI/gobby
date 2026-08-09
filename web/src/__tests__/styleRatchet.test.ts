@@ -422,7 +422,11 @@ describe('style ratchet', () => {
 
   it('keeps activity metadata chip adopters on ui Chip', () => {
     for (const file of ACTIVITY_CHIP_ADOPTER_FILES) {
-      expect(readFileSync(file, 'utf8'), `${file} Chip composition`).toMatch(/<Chip\b/)
+      const source = readFileSync(file, 'utf8')
+      expect(source, `${file} Chip composition`).toMatch(/<Chip\b/)
+      // Adoption must orphan the legacy pill classes so 5.4 can delete
+      // their rules with the sheet; tones replace the -- modifiers.
+      expect(source, `${file} legacy chip class residue`).not.toMatch(/activity-(?:mcp-)?chip/)
     }
   })
 

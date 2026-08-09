@@ -611,14 +611,7 @@ export function ActivityMcpTab({
                       title={`Health: ${health}`}
                     />
                     <span className="activity-row-title">{server.name}</span>
-                    <Chip
-                      className={cn(
-                        "activity-mcp-chip",
-                        serverType === "internal"
-                          ? "activity-mcp-chip--internal"
-                          : "activity-mcp-chip--external",
-                      )}
-                    >
+                    <Chip tone={serverType === "internal" ? "accent" : "info"}>
                       {serverType === "internal" ? "Internal" : "External"}
                     </Chip>
                     <Button

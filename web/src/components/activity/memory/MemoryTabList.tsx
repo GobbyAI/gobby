@@ -169,15 +169,10 @@ export function MemoryTabList({
             >
               <span className="activity-row-title">{previewContent(memory.content)}</span>
               {hidden && <DreamFlagBadge memory={memory} />}
-              <Chip className="activity-chip">
+              <Chip>
                 {memoryTypeLabel(memory.memory_type)}
               </Chip>
-              <Chip
-                className={cn(
-                  "activity-chip",
-                  memory.is_global && "activity-chip--accent",
-                )}
-              >
+              <Chip tone={memory.is_global ? "accent" : "neutral"}>
                 {memoryScopeLabel(memory)}
               </Chip>
             </Button>

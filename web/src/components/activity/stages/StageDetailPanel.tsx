@@ -71,7 +71,7 @@ export function StageDetailPanel({
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
         actions={
-          <Chip className="activity-chip">{draft.name}</Chip>
+          <Chip>{draft.name}</Chip>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">

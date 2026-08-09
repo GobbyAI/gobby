@@ -92,7 +92,7 @@ export function ProfileDetailPanel({
         onDiscard={draftState.discard}
         actions={
           !creating ? (
-            <Chip className="activity-chip">{draft.source}</Chip>
+            <Chip>{draft.source}</Chip>
           ) : null
         }
       />

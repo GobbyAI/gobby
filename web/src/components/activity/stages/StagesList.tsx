@@ -63,8 +63,8 @@ export function StagesList({
                 label={stage.requires_human ? "Human review required" : "Automated stage"}
               />
               <span className="activity-row-title">{stage.display_label}</span>
-              <Chip className="activity-chip">{stage.category}</Chip>
-              <Chip className="activity-chip">{stage.name}</Chip>
+              <Chip>{stage.category}</Chip>
+              <Chip>{stage.name}</Chip>
             </Button>
             <div className="px-1">
               <QuickMenu

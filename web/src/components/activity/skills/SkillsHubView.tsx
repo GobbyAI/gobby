@@ -208,10 +208,10 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                           {result.description || "No description"}
                         </span>
                       </span>
-                      <Chip className="activity-chip">
+                      <Chip>
                         {result.hub_name}
                       </Chip>
-                      <Chip className="activity-chip">
+                      <Chip>
                         {result.version ? `v${result.version}` : "latest"}
                       </Chip>
                     </Button>
