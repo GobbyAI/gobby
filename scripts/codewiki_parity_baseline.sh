@@ -3,7 +3,7 @@
 set -euo pipefail
 
 usage() {
-  printf 'usage: scripts/codewiki_parity_baseline.sh --engine {gcode|gwiki}\n' >&2
+  printf 'usage: scripts/codewiki_parity_baseline.sh --engine gwiki\n' >&2
 }
 
 fixture_digest() {
@@ -44,7 +44,9 @@ def normalized_bytes(path: pathlib.Path) -> bytes:
     if path == vault / "_meta/codewiki.json":
         metadata = json.loads(text)
         # These keys hash rendered frontmatter before provenance normalization.
-        # Pin their pre-move values; the page entries below still hash every byte.
+        # Pin their pre-move values so the frozen legacy baseline still matches;
+        # the page entries below still hash every byte, so genuine drift in
+        # these two pages surfaces through the page hashes, not these keys.
         legacy_engine_derived_keys = {
             "code/_ownership.md": (
                 "content-sensitive:50157c76ede85b3ac64e26e061185424372014745425b865bb6d6e7d124b3d69"
@@ -55,12 +57,15 @@ def normalized_bytes(path: pathlib.Path) -> bytes:
         }
         for doc_path, legacy_key in legacy_engine_derived_keys.items():
             key = metadata.get("docs", {}).get(doc_path, {}).get("invalidation_key")
-            if isinstance(key, str):
-                text = text.replace(
-                    f'"invalidation_key": "{key}"',
-                    f'"invalidation_key": "{legacy_key}"',
-                    1,
-                )
+            if not isinstance(key, str):
+                continue
+            # Anchor the rewrite to this doc's entry; str.index raises on a
+            # serialization-shape change instead of silently skipping.
+            anchor = text.index(json.dumps(doc_path))
+            needle = f'"invalidation_key": "{key}"'
+            start = text.index(needle, anchor)
+            replacement = f'"invalidation_key": "{legacy_key}"'
+            text = text[:start] + replacement + text[start + len(needle):]
     text = text.replace("gcode-codewiki", "<codewiki-engine>")
     text = text.replace("gwiki-code", "<codewiki-engine>")
     text = re.sub(
@@ -82,7 +87,12 @@ def normalized_bytes(path: pathlib.Path) -> bytes:
     return text.encode("utf-8")
 
 entries = []
-for path in sorted(candidate for candidate in vault.rglob("*") if candidate.is_file()):
+# Sort by relative path components so ordering is byte-stable across
+# platforms (Path ordering case-folds on Windows).
+for path in sorted(
+    (candidate for candidate in vault.rglob("*") if candidate.is_file()),
+    key=lambda candidate: candidate.relative_to(vault).parts,
+):
     relative = path.relative_to(vault).as_posix()
     if relative == "_meta/codewiki.lock":
         continue
@@ -164,7 +174,12 @@ main() {
   done
 
   case "$engine" in
-    gcode|gwiki) ;;
+    gwiki) ;;
+    gcode)
+      printf 'legacy gcode engine removed; the baseline is frozen at the capture pinned in %s\n' \
+        'crates/gwiki/tests/fixtures/codewiki_parity/README.md' >&2
+      return 2
+      ;;
     *)
       usage
       return 2
@@ -212,6 +227,7 @@ PY
     git -C "$REPO_ROOT" status --short -- "$FIXTURE_PROJECT" >&2
     return 1
   fi
+  FIXTURE_STATUS_BEFORE="$(git -C "$REPO_ROOT" status --porcelain -- "$FIXTURE_ROOT")"
 
   RUN_ROOT="${CODEWIKI_PARITY_RUN_ROOT:-}"
   REMOVE_RUN_ROOT=0
@@ -255,29 +271,13 @@ PY
       commit --quiet -m "CodeWiki parity fixture"
 
   GCODE_BINARY="$TARGET_DIR/debug/gcode"
-  local engine_package=""
-  local engine_bin_name=""
-  ENGINE_SUBCOMMAND=""
-  case "$ENGINE" in
-    gcode)
-      engine_package="gobby-code"
-      engine_bin_name="gcode"
-      ENGINE_SUBCOMMAND="codewiki"
-      ;;
-    gwiki)
-      engine_package="gobby-wiki"
-      engine_bin_name="gwiki"
-      ENGINE_SUBCOMMAND="code"
-      ;;
-  esac
+  ENGINE_SUBCOMMAND="code"
 
   cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
     --target-dir "$TARGET_DIR" -p gobby-code --bin gcode
-  if [[ "$ENGINE" == "gwiki" ]]; then
-    cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
-      --target-dir "$TARGET_DIR" -p "$engine_package" --bin "$engine_bin_name"
-  fi
-  ENGINE_BINARY="$TARGET_DIR/debug/$engine_bin_name"
+  cargo build --locked --manifest-path "$REPO_ROOT/Cargo.toml" \
+    --target-dir "$TARGET_DIR" -p gobby-wiki --bin gwiki
+  ENGINE_BINARY="$TARGET_DIR/debug/gwiki"
   if [[ ! -x "$GCODE_BINARY" || ! -x "$ENGINE_BINARY" ]]; then
     printf 'workspace build did not produce the expected executable\n' >&2
     return 1
@@ -295,73 +295,30 @@ PY
     > "$RUN_ROOT/capture.txt"
 
   run_generation 1
-  local entry_count=""
-  if [[ "$ENGINE" == "gcode" ]]; then
-    run_generation 2
-    if ! cmp -s "$RUN_ROOT/run-1/manifest.sha256" "$RUN_ROOT/run-2/manifest.sha256"; then
-      printf 'same-engine manifests differ\n' >&2
-      diff -u "$RUN_ROOT/run-1/manifest.sha256" "$RUN_ROOT/run-2/manifest.sha256" >&2 || true
-      return 1
-    fi
-    cp -- "$RUN_ROOT/run-1/manifest.sha256" "$BASELINE_PATH"
-    entry_count="$(wc -l < "$BASELINE_PATH" | tr -d ' ')"
-    python3 - "$CAPTURE_README" "$revision" "$binary_version" "$ACTUAL_DIGEST" "$entry_count" <<'PY'
-import pathlib
-import re
-import sys
-
-path = pathlib.Path(sys.argv[1])
-replacement = "\n".join(
-    (
-        "<!-- baseline-capture:start -->",
-        "- Engine: `gcode codewiki --ai off`",
-        f"- Workspace revision: `{sys.argv[2]}`",
-        f"- Binary version: `{sys.argv[3]}`",
-        f"- Fixture input digest: `{sys.argv[4]}`",
-        f"- Normalized manifest entries: `{sys.argv[5]}`",
-        "<!-- baseline-capture:end -->",
-    )
-)
-text = path.read_text()
-updated, count = re.subn(
-    r"<!-- baseline-capture:start -->.*?<!-- baseline-capture:end -->",
-    replacement,
-    text,
-    flags=re.DOTALL,
-)
-if count != 1:
-    raise SystemExit("fixture README capture block is missing or duplicated")
-path.write_text(updated)
-PY
-  else
-    if ! cmp -s "$RUN_ROOT/run-1/manifest.sha256" "$BASELINE_PATH"; then
-      printf 'gwiki output differs from the committed gcode baseline\n' >&2
-      diff -u "$BASELINE_PATH" "$RUN_ROOT/run-1/manifest.sha256" >&2 || true
-      return 1
-    fi
-    entry_count="$(wc -l < "$BASELINE_PATH" | tr -d ' ')"
+  run_generation 2
+  if ! cmp -s "$RUN_ROOT/run-1/manifest.sha256" "$RUN_ROOT/run-2/manifest.sha256"; then
+    printf 'same-engine manifests differ\n' >&2
+    diff -u "$RUN_ROOT/run-1/manifest.sha256" "$RUN_ROOT/run-2/manifest.sha256" >&2 || true
+    return 1
   fi
+  if ! cmp -s "$RUN_ROOT/run-1/manifest.sha256" "$BASELINE_PATH"; then
+    printf 'gwiki output differs from the frozen legacy baseline\n' >&2
+    diff -u "$BASELINE_PATH" "$RUN_ROOT/run-1/manifest.sha256" >&2 || true
+    return 1
+  fi
+  local entry_count
+  entry_count="$(wc -l < "$BASELINE_PATH" | tr -d ' ')"
 
   if [[ "$(fixture_digest)" != "$ACTUAL_DIGEST" ]]; then
     printf 'capture mutated the committed fixture project\n' >&2
     return 1
   fi
 
-  local status_line
-  local changed_path
-  while IFS= read -r status_line; do
-    [[ -z "$status_line" ]] && continue
-    changed_path="${status_line:3}"
-    case "$ENGINE:$changed_path" in
-      gcode:crates/gwiki/tests/fixtures/codewiki_parity/README.md|\
-      gcode:crates/gwiki/tests/fixtures/codewiki_parity/baseline.sha256)
-        ;;
-      *)
-        printf 'capture wrote an undeclared fixture path: %s\n' "$changed_path" >&2
-        return 1
-        ;;
-    esac
-  done < <(git -C "$REPO_ROOT" status --porcelain -- "$FIXTURE_ROOT")
+  if [[ "$(git -C "$REPO_ROOT" status --porcelain -- "$FIXTURE_ROOT")" != "$FIXTURE_STATUS_BEFORE" ]]; then
+    printf 'run wrote an undeclared fixture path\n' >&2
+    git -C "$REPO_ROOT" status --short -- "$FIXTURE_ROOT" >&2
+    return 1
+  fi
 
   printf '%s parity manifest verified (%s entries)\n' "$ENGINE" "$entry_count"
 }
