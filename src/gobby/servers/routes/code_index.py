@@ -19,7 +19,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeUnavailableError,
     GcodeVersionError,
 )
-from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
+from gobby.config.wiki import WikiConfig
 from gobby.servers.responses import JSONResponse
 from gobby.storage.projects import LocalProjectManager, Project
 
@@ -467,63 +467,14 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/codewiki/refresh", status_code=202)
     async def refresh_codewiki(
-        request: Request,
-        body: CodewikiRefreshRequest,
+        _body: CodewikiRefreshRequest,
     ) -> dict[str, Any]:
-        """Schedule a debounced codewiki refresh after post-commit indexing."""
-        root_value = body.root_path.strip()
-        if not root_value:
-            raise HTTPException(status_code=400, detail="root_path is required")
-
-        trigger = getattr(server.services, "codewiki_trigger", None)
-        request_refresh = getattr(trigger, "request_refresh", None)
-        if not callable(request_refresh):
-            raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
-
-        try:
-            project_name = await _resolve_project_name(server, body.project_id)
-            scopes = resolve_codewiki_scopes(_server_wiki_config(server), project_name)
-            accepted = bool(
-                await _run_db(
-                    server,
-                    request_refresh,
-                    root_path=root_value,
-                    project_id=body.project_id,
-                    out_dir=body.out_dir,
-                    ai=body.ai,
-                    scopes=scopes,
-                )
-            )
-        except HTTPException:
-            raise
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except OSError as exc:
-            if isinstance(exc, (FileNotFoundError, NotADirectoryError)):
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            _log_schedule_refresh_error(request, root_value, body, exc)
-            raise HTTPException(status_code=500, detail="Internal server error") from exc
-        except Exception as exc:
-            _log_schedule_refresh_error(request, root_value, body, exc)
-            raise HTTPException(status_code=500, detail="Internal server error") from exc
-
-        return {
-            "accepted": accepted,
-            "root_path": root_value,
-            "project_id": body.project_id,
-            "reason": None if accepted else "wiki.codewiki_on_commit disabled",
-        }
+        """Report that the retired daemon trigger is unavailable."""
+        raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
 
     @router.get("/codewiki/status")
     async def codewiki_status() -> dict[str, Any]:
-        """Return the refresh trigger's pending/running/last-run snapshot."""
-        trigger = getattr(server.services, "codewiki_trigger", None)
-        status_fn = getattr(trigger, "status", None)
-        if not callable(status_fn):
-            raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
-        snapshot: dict[str, Any] = status_fn()
-        return snapshot
+        """Report that the retired daemon trigger is unavailable."""
+        raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
 
     return router

@@ -78,17 +78,6 @@ def create_lifespan(
             except Exception as e:
                 logger.warning("Failed to create CodeIndexTrigger: %s", e)
 
-            try:
-                from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
-
-                server.services.codewiki_trigger = CodewikiRefreshTrigger(
-                    loop=asyncio.get_running_loop(),
-                    config_store_provider=lambda: server.services.config_store,
-                    debounce_seconds=2.0,
-                )
-            except (AttributeError, ImportError) as e:
-                logger.warning("Failed to create CodewikiRefreshTrigger: %s", e)
-
         if not getattr(app.state, "hook_manager", None):
             app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
             logger.debug("HookManager initialized in daemon")

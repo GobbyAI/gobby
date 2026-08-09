@@ -156,6 +156,7 @@ def create_base_patches(
             "gobby.runner_init.storage.ensure_machine_identity",
             side_effect=lambda _database, machine_id: machine_id,
         ),
+        patch("gobby.runner_init.storage.ensure_system_session"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
         patch(
             "gobby.runner_init.helpers.admitted_database_url",

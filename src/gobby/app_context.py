@@ -31,7 +31,6 @@ from gobby.worktrees.executor import WorktreeDeleteExecutor, run_worktree_delete
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
-    from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
@@ -110,7 +109,6 @@ class ServiceContainer:
 
     # Code Index
     code_indexer: Any | None = None  # CodeIndexContext
-    codewiki_trigger: CodewikiRefreshTrigger | None = None
 
     # Config
     config_store: Any | None = None  # ConfigStore
