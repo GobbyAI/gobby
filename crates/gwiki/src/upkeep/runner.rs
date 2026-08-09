@@ -9,7 +9,7 @@ use super::reserved_pages::migrate_reserved_pages;
 use super::{
     ClusterOutcome, NearDuplicateMatch, Options, REPORT_RELATIVE_PATH, SemanticProbe,
     SkippedCluster, UpkeepReport, archive_long_stale_pages, archive_unworthy_concepts,
-    find_unworthy_concepts, govern_candidates, write_report,
+    collect_upkeep_pages, find_unworthy_concepts, govern_candidates, write_report,
 };
 use crate::compile::{CompileRequest, WikiCompileOptions, compile_to_wiki_with_options, select};
 use crate::explainer::ExplainerGenerator;
@@ -222,7 +222,7 @@ pub(super) fn run_with_clock(
 
     // Match keys for existing knowledge pages (concepts and topics; source
     // digests are excluded so an entity name never "matches" a digest stub).
-    let pages = lint::collect_pages(&vault_root)?;
+    let pages = collect_upkeep_pages(&vault_root)?;
     let existing_pages: Vec<(PathBuf, BTreeSet<String>)> = pages
         .iter()
         .filter(|page| {

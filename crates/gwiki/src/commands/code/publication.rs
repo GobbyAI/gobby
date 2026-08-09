@@ -556,9 +556,10 @@ fn placeholder_page(path: &str) -> String {
         .unwrap_or("Codewiki page")
         .replace(['-', '_'], " ");
     format!(
-        "---\ntitle: \"{}\"\ngenerated_by: gcode-codewiki\ntrust: structural\n\
+        "---\ntitle: \"{}\"\ngenerated_by: {}\ntrust: structural\n\
          freshness: publishing\nstructural_placeholder: true\n---\n\n# {}\n\nPublication in progress.\n",
         yaml_escape(&title),
+        gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE,
         title
     )
 }

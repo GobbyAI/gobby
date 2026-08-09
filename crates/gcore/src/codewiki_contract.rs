@@ -28,7 +28,7 @@ pub const DEGRADED_SOURCES_KEY: &str = "degraded_sources";
 pub const PROVENANCE_TRUNCATED_KEY: &str = "provenance_truncated";
 
 /// Marker values codewiki writes for the keys above.
-pub const GENERATED_BY_CODEWIKI: &str = "gcode-codewiki";
+pub const GENERATED_BY_GWIKI_CODE: &str = "gwiki-code";
 pub const TRUST_GENERATED: &str = "generated";
 pub const FRESHNESS_INDEXED: &str = "indexed";
 
@@ -46,7 +46,7 @@ provenance:
   ranges:
   - 1-2
   - '10'
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 ai_route: off
@@ -88,7 +88,7 @@ mod tests {
                 "golden page is missing contract key `{key}`"
             );
         }
-        assert!(GOLDEN_PAGE.contains(GENERATED_BY_CODEWIKI));
+        assert!(GOLDEN_PAGE.contains(GENERATED_BY_GWIKI_CODE));
         assert!(GOLDEN_PAGE.contains(TRUST_GENERATED));
         assert!(GOLDEN_PAGE.contains(FRESHNESS_INDEXED));
         assert!(GOLDEN_PAGE.contains("[[code/files/src/lib.rs|src/lib.rs]]"));

@@ -148,7 +148,7 @@ fn generated_codewiki_numeric_claims_do_not_inherit_raw_source_context() {
     std::fs::create_dir_all(code_page.parent().expect("code parent")).expect("create code dir");
     std::fs::write(
         &code_page,
-        "---\ntitle: Index Changes\nkind: code_changes\ngenerated_by: gcode-codewiki\ntrust: generated\nfreshness: indexed\n---\n# Index Changes\n\n## Current Snapshot\n\n- Files: 457\n- Symbols: 7901\n",
+        "---\ntitle: Index Changes\nkind: code_changes\ngenerated_by: gwiki-code\ntrust: generated\nfreshness: indexed\n---\n# Index Changes\n\n## Current Snapshot\n\n- Files: 457\n- Symbols: 7901\n",
     )
     .expect("write code page");
     let knowledge_page = root.join("knowledge/topics/claims.md");
@@ -416,7 +416,7 @@ title: src/mathutil.py
 type: code_file
 provenance:
 - file: src/mathutil.py
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 ai_route: off
@@ -466,7 +466,7 @@ title: src/mathutil.py
 type: code_file
 provenance:
 - file: src/mathutil.py
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 ai_route: off
@@ -508,7 +508,7 @@ title: src/mathutil.py
 type: code_file
 provenance:
 - file: src/mathutil.py
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 ai_route: daemon
@@ -546,7 +546,7 @@ fn aggregate_code_pages_with_empty_provenance_are_exempt() {
 title: Repository Overview
 type: code_repo
 provenance: []
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 stub: true
@@ -579,6 +579,31 @@ Summary: `crates` contains 0 direct files and 4 child modules.
 }
 
 #[test]
+fn code_path_without_current_marker_is_not_trusted() {
+    let page = test_codewiki_page(
+        "code/repo.md",
+        "---\ntitle: Legacy Projection\ngenerated_by: gcode-codewiki\ntrust: generated\n---\n# Legacy\nUnsupported operational claim.\n",
+    );
+    let context = Arc::new(vec![AuditSourceContext {
+        source_id: "source-1".to_string(),
+        path: None,
+        citation: None,
+        location: None,
+    }]);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &context,
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(!claims.is_empty(), "legacy projection must be audited");
+    assert_eq!(claims[0].source_context.as_ref(), context.as_ref());
+}
+
+#[test]
 fn frontmatter_migration_audits_legacy_and_shared_sources_equivalently() {
     let legacy = r#"---
 title: crates/example.rs
@@ -598,7 +623,7 @@ provenance:
 - file: crates/example.rs
   ranges:
   - 1-12
-generated_by: gcode-codewiki
+generated_by: gwiki-code
 trust: generated
 freshness: indexed
 ---

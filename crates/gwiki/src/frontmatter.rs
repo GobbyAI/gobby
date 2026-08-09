@@ -822,7 +822,7 @@ mod tests {
             "provenance:\n",
             "  - file: src/lib.rs\n",
             "    ranges: [7-9]\n",
-            "generated_by: gcode-codewiki\n",
+            "generated_by: gwiki-code\n",
             "trust: generated\n",
             "freshness: indexed\n",
             "---\n",
@@ -831,10 +831,7 @@ mod tests {
 
         let parsed = parse_frontmatter(markdown).expect("parse shared frontmatter");
 
-        assert_eq!(
-            parsed.metadata.generated_by.as_deref(),
-            Some("gcode-codewiki")
-        );
+        assert_eq!(parsed.metadata.generated_by.as_deref(), Some("gwiki-code"));
         assert_eq!(parsed.metadata.trust.as_deref(), Some("generated"));
         assert_eq!(parsed.metadata.freshness.as_deref(), Some("indexed"));
         assert!(parsed.metadata.source.is_some());
@@ -852,7 +849,7 @@ mod tests {
         assert_eq!(parsed.metadata.title.as_deref(), Some("src/lib.rs"));
         assert_eq!(
             parsed.metadata.generated_by.as_deref(),
-            Some(codewiki_contract::GENERATED_BY_CODEWIKI)
+            Some(codewiki_contract::GENERATED_BY_GWIKI_CODE)
         );
         assert_eq!(
             parsed.metadata.trust.as_deref(),
@@ -896,7 +893,7 @@ mod tests {
         let markdown = concat!(
             "---\n",
             "title: Code Page\n",
-            "generated_by: gcode-codewiki\n",
+            "generated_by: gwiki-code\n",
             "---\n",
             "# Code Page\n",
         );
@@ -929,7 +926,7 @@ mod tests {
         let markdown = concat!(
             "+++\n",
             "title = \"Code Page\"\n",
-            "generated_by = \"gcode-codewiki\"\n",
+            "generated_by = \"gwiki-code\"\n",
             "+++\n",
             "# Code Page\n",
         );

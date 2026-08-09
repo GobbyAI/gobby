@@ -100,7 +100,7 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
         frontmatter
             .get("generated_by")
             .and_then(serde_yaml::Value::as_str),
-        Some("gcode-codewiki")
+        Some("gwiki-code")
     );
     assert!(frontmatter.get("source").is_none());
     assert!(frontmatter.get("provenance").is_some());

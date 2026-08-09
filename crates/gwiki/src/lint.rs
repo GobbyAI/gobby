@@ -207,21 +207,17 @@ const SOURCES_ROOT: &str = "knowledge/sources";
 /// Classify a page for backlink-reciprocity semantics (#17806): machine-
 /// regenerated pages neither create nor bear backlink obligations, because
 /// the next regeneration erases any hand-added reciprocal link. A page is
-/// generated when it is stamped `generated_by` (codewiki file/module/repo
-/// pages, gwiki catalog indexes), carries a codewiki `type: code_*` marker
-/// (aggregate/narrative/concept pages predate universal `generated_by`
-/// stamping), or lives in a machine-written vault namespace (recap digests,
-/// ingested source digests). Everything else — concepts, topics, operator
+/// generated when it carries a current writer marker or lives in a
+/// machine-written vault namespace (recap digests, ingested source digests).
+/// Everything else — concepts, topics, operator
 /// pages — is curated and keeps full reciprocity checking.
 fn page_authorship(page: &WikiPage) -> PageAuthorship {
     let frontmatter = &page.parsed.frontmatter;
-    let codewiki_typed = frontmatter
-        .unknown
-        .get("type")
-        .and_then(serde_json::Value::as_str)
-        .is_some_and(|page_type| page_type.starts_with("code_"));
-    if frontmatter.generated_by.is_some()
-        || codewiki_typed
+    let known_generated = matches!(
+        frontmatter.generated_by.as_deref(),
+        Some(gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE) | Some("gwiki-catalog")
+    );
+    if known_generated
         || page
             .relative_path
             .starts_with(crate::recap::RECAPS_DIRECTORY)
@@ -579,7 +575,7 @@ mod tests {
         write_page(
             root,
             "code/modules/helper.md",
-            "---\ntitle: \"Helper Module\"\ngenerated_by: gcode-codewiki\n---\n# Helper\nNo links back.\n",
+            "---\ntitle: \"Helper Module\"\ngenerated_by: gwiki-code\n---\n# Helper\nNo links back.\n",
         );
         write_page(
             root,
@@ -607,6 +603,37 @@ mod tests {
         assert_eq!(
             report.missing_frontmatter,
             vec![PathBuf::from("code/INDEX.md")]
+        );
+    }
+
+    #[test]
+    fn unrecognized_generated_by_is_plain_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        write_page(
+            root,
+            "knowledge/topics/arbitrary-marker.md",
+            "---\ntitle: Arbitrary Marker\ngenerated_by: unknown-generator\n---\n# Arbitrary\nLinks to [[Marker Target]].\n",
+        );
+        write_page(
+            root,
+            "knowledge/topics/legacy-type.md",
+            "---\ntitle: Legacy Type\ntype: code_module\n---\n# Legacy\nLinks to [[Type Target]].\n",
+        );
+        let pages = collect_pages(root).expect("collect pages");
+
+        let plain_pages = pages
+            .iter()
+            .filter(|page| {
+                page.relative_path == Path::new("knowledge/topics/arbitrary-marker.md")
+                    || page.relative_path == Path::new("knowledge/topics/legacy-type.md")
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(plain_pages.len(), 2);
+        assert!(
+            plain_pages
+                .into_iter()
+                .all(|page| matches!(page_authorship(page), PageAuthorship::Curated))
         );
     }
 

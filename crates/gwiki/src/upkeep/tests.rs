@@ -90,6 +90,46 @@ fn archive_long_stale_pages_archives_only_aged_stale_pages() {
 }
 
 #[test]
+fn code_namespace_excluded_from_upkeep() {
+    use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let root = temp.path();
+    let stale =
+        "---\ntitle: Stale\nlifecycle: stale\nstale_at: 2020-01-01T00:00:00Z\n---\n\nBody.\n";
+    write_file(root, "code/legacy.md", stale);
+    write_file(root, "knowledge/topics/control.md", stale);
+
+    let report = run(
+        research_scope(root),
+        scope(),
+        &Options::default(),
+        None,
+        None,
+        TIMESTAMP,
+    )
+    .expect("upkeep runs");
+
+    assert_eq!(
+        std::fs::read_to_string(root.join("code/legacy.md")).expect("read code page"),
+        stale
+    );
+    assert_eq!(
+        report.archived_pages,
+        vec![PathBuf::from("knowledge/topics/control.md")]
+    );
+    let control = std::fs::read_to_string(root.join("knowledge/topics/control.md"))
+        .expect("read control page");
+    assert_eq!(
+        parse_frontmatter(&control)
+            .expect("parse control")
+            .metadata
+            .lifecycle,
+        Some(WikiLifecycle::Archived)
+    );
+}
+
+#[test]
 fn archive_long_stale_pages_dry_run_reports_without_writing() {
     let temp = tempfile::tempdir().expect("tempdir");
     let markdown =

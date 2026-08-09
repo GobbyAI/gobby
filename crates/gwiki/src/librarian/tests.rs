@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use gobby_core::config::{EmbeddingConfig, FalkorConfig, QdrantConfig};
 
 use crate::ScopeIdentity;
+use crate::frontmatter::parse_frontmatter;
 use crate::markdown::parse_markdown;
 use crate::search::semantic::SemanticSearchRequest;
 use crate::sources::{SourceDraft, SourceManifest};
@@ -33,21 +34,12 @@ fn librarian_detects_and_proposes_without_rewriting_pages() {
         "knowledge/topics/stale.md",
         "---\ntitle: Stale\nstale: true\n---\n# Stale\nUnsupported operational claim.\nSee [[Missing]].\n",
     );
-    write_page(
-        root,
-        "code/example.md",
-        "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
-    );
-
     let original_page =
         std::fs::read_to_string(root.join("knowledge/topics/stale.md")).expect("read page");
     let report = run(
         root,
         ScopeIdentity::project("project-1"),
-        Options {
-            shared_code_graph_available: true,
-            ..Options::offline()
-        },
+        Options::offline(),
         None,
     )
     .expect("librarian runs");
@@ -58,25 +50,13 @@ fn librarian_detects_and_proposes_without_rewriting_pages() {
     );
     assert_eq!(
         report.check("missing_citations").items,
-        vec![
-            PathBuf::from("code/example.md"),
-            PathBuf::from("knowledge/topics/stale.md"),
-        ]
+        vec![PathBuf::from("knowledge/topics/stale.md")]
     );
     assert_eq!(
         report.check("broken_links").items,
         vec![PathBuf::from("knowledge/topics/stale.md")]
     );
-    assert_eq!(
-        report.check("weak_provenance").items,
-        vec![PathBuf::from("code/example.md")]
-    );
-    assert!(report.check("outdated_codewiki").available);
-    assert_eq!(
-        report.check("outdated_codewiki").items,
-        vec![PathBuf::from("code/example.md")]
-    );
-    assert!(report.check("outdated_codewiki").note.is_none());
+    assert!(report.check("weak_provenance").items.is_empty());
     assert!(!report.check("patch_suggestions").available);
     assert!(
         report
@@ -106,76 +86,44 @@ fn librarian_detects_and_proposes_without_rewriting_pages() {
 }
 
 #[test]
-fn librarian_filters_codewiki_checks_to_selected_scope() {
+fn generated_code_namespace_not_curated() {
     let temp = tempfile::tempdir().expect("tempdir");
     let root = temp.path();
+    let code_page = "---\ntitle: Legacy Code\nstale: true\ngenerated_by: gcode-codewiki\n---\n# Legacy Code\nUnsupported operational claim.\n";
+    write_page(root, "code/legacy.md", code_page);
     write_page(
         root,
-        "knowledge/topics/topic.md",
-        "# Topic\nSupported claim.\n",
-    );
-    write_page(
-        root,
-        "code/example.md",
-        "---\ntitle: Example code\ngenerated_by: gcode-codewiki\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
-    );
-
-    let report = run(
-        root,
-        ScopeIdentity::topic("ops"),
-        Options {
-            shared_code_graph_available: true,
-            ..Options::offline()
-        },
-        None,
-    )
-    .expect("librarian runs");
-
-    assert!(report.check("weak_provenance").items.is_empty());
-    assert!(report.check("outdated_codewiki").items.is_empty());
-}
-
-#[test]
-fn codewiki_frontmatter_provenance_is_not_weak_provenance() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path();
-    // Codewiki pages stamp the source files they were generated from in
-    // frontmatter; that IS their provenance (#17781). Only pages recording
-    // nothing (missing key or an empty list) may be flagged.
-    write_page(
-        root,
-        "code/files/src/lib.rs.md",
-        "---\ntitle: src/lib.rs\nprovenance:\n  - file: src/lib.rs\ngenerated_by: gcode-codewiki\n---\n# src/lib.rs\nDocumented.\n",
-    );
-    write_page(
-        root,
-        "code/deprecations.md",
-        "---\ntitle: Deprecations\nprovenance: []\ngenerated_by: gcode-codewiki\n---\n# Deprecations\nDerived scan.\n",
-    );
-    write_page(
-        root,
-        "code/bare.md",
-        "---\ntitle: Bare\ngenerated_by: gcode-codewiki\n---\n# Bare\nNo provenance recorded.\n",
+        "knowledge/topics/control.md",
+        "---\ntitle: Control\nstale: true\n---\n# Control\nUnsupported operational claim.\n",
     );
 
     let report = run(
         root,
         ScopeIdentity::project("project-1"),
-        Options {
-            shared_code_graph_available: true,
-            ..Options::offline()
-        },
+        Options::offline(),
         None,
     )
     .expect("librarian runs");
 
     assert_eq!(
-        report.check("weak_provenance").items,
-        vec![
-            PathBuf::from("code/bare.md"),
-            PathBuf::from("code/deprecations.md"),
-        ]
+        std::fs::read_to_string(root.join("code/legacy.md")).expect("read code page"),
+        code_page
     );
+    let reported_paths = report
+        .checks
+        .iter()
+        .flat_map(|check| check.items.iter())
+        .chain(
+            report
+                .suggested_tasks
+                .iter()
+                .flat_map(|task| task.paths.iter()),
+        )
+        .chain(report.suggested_patch_diffs.iter().map(|diff| &diff.path))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    assert!(!reported_paths.contains(Path::new("code/legacy.md")));
+    assert!(reported_paths.contains(Path::new("knowledge/topics/control.md")));
 }
 
 #[test]
@@ -195,52 +143,8 @@ fn librarian_degrades_each_optional_check_independently() {
     assert!(report.check("missing_citations").available);
     assert!(report.check("broken_links").available);
     assert!(report.check("weak_provenance").available);
-    assert!(!report.check("outdated_codewiki").available);
-    assert_eq!(
-        report.check("outdated_codewiki").note.as_deref(),
-        Some("shared code graph is unavailable; skipped outdated codewiki detection")
-    );
     assert!(!report.check("semantic_gaps").available);
     assert!(!report.check("patch_suggestions").available);
-}
-
-#[test]
-fn librarian_outdated_codewiki_unavailable_without_shared_graph_even_when_stale() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let root = temp.path();
-    write_page(
-        root,
-        "code/example.md",
-        "---\ntitle: Example code\ngenerated_by: gcode-codewiki\nsource_spans:\n  - path: src/lib.rs\n    start_line: 1\n    end_line: 1\ncodewiki_status: stale\n---\n# Example code\nDocuments old code.\n",
-    );
-
-    let report =
-        run(root, ScopeIdentity::topic("ops"), Options::offline(), None).expect("librarian runs");
-
-    let check = report.check("outdated_codewiki");
-    assert!(!check.available);
-    assert!(check.items.is_empty());
-    assert_eq!(
-        check.note.as_deref(),
-        Some("shared code graph is unavailable; skipped outdated codewiki detection")
-    );
-}
-
-#[test]
-fn librarian_codewiki_path_checks_are_sorted() {
-    let pages = vec![
-        codewiki_page("code/z.md", true),
-        codewiki_page("code/a.md", true),
-    ];
-
-    assert_eq!(
-        weak_provenance_pages(&pages, &ProvenanceGraph::default()),
-        vec![PathBuf::from("code/a.md"), PathBuf::from("code/z.md")]
-    );
-    assert_eq!(
-        outdated_codewiki_pages(&pages),
-        vec![PathBuf::from("code/a.md"), PathBuf::from("code/z.md")]
-    );
 }
 
 #[test]
@@ -273,7 +177,6 @@ fn librarian_probed_options_reflect_runtime_services() {
         Options::probed(&services, true),
         Options {
             require_postgres_index: true,
-            shared_code_graph_available: true,
             semantic_available: true,
             model_available: true,
         }
@@ -999,7 +902,6 @@ fn hygiene_checks(implicated: &[(&'static str, &str)]) -> Vec<CheckReport> {
         "missing_citations",
         "broken_links",
         "weak_provenance",
-        "outdated_codewiki",
         "semantic_gaps",
         "patch_suggestions",
     ]
@@ -1162,20 +1064,4 @@ fn distinct_pairs_verdict_suppresses_near_duplicate_pair() {
     // Missing file loads as an empty set.
     let empty = tempfile::tempdir().expect("tempdir");
     assert!(load_distinct_pairs(empty.path()).is_empty());
-}
-
-fn codewiki_page(relative: &str, stale: bool) -> lint::WikiPage {
-    let markdown = format!(
-        "---\ntitle: Code\ngenerated_by: gcode-codewiki\ncodewiki_status: {}\n---\n# Code\n",
-        if stale { "stale" } else { "fresh" }
-    );
-    let relative_path = PathBuf::from(relative);
-    lint::WikiPage {
-        path: relative_path.clone(),
-        relative_path: relative_path.clone(),
-        parsed: parse_markdown(relative_path, &markdown, Vec::<String>::new())
-            .expect("parse test page"),
-        markdown,
-        has_frontmatter: true,
-    }
 }

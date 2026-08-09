@@ -19,7 +19,6 @@ pub(super) fn suggested_tasks(
     missing_citations: &[PathBuf],
     broken_links: &[PathBuf],
     weak_provenance: &[PathBuf],
-    outdated_codewiki: &[PathBuf],
     semantic: &SemanticGapScan,
 ) -> Vec<SuggestedTask> {
     let mut tasks = Vec::new();
@@ -57,13 +56,6 @@ pub(super) fn suggested_tasks(
         "Strengthen weak provenance",
         "Attach source-to-section provenance before relying on these pages.",
         weak_provenance,
-    );
-    push_task(
-        &mut tasks,
-        !outdated_codewiki.is_empty(),
-        "Refresh outdated codewiki pages",
-        "Codewiki pages are stale; regenerate or accept a reviewed patch.",
-        outdated_codewiki,
     );
     let near_duplicate_pairs = semantic
         .near_duplicates
@@ -184,7 +176,6 @@ pub(super) fn persist_report(vault_root: &Path, report: &ProposalsReport) -> Res
         &report.artifacts.stale_pages_json,
         &json!({
             "stale_pages": report.checks.iter().find(|check| check.name == "stale_pages"),
-            "outdated_codewiki": report.checks.iter().find(|check| check.name == "outdated_codewiki"),
         }),
     )
 }

@@ -47,10 +47,6 @@ impl RuntimeServices {
         }
     }
 
-    pub(crate) fn shared_code_graph_available(&self) -> bool {
-        self.falkor.is_some()
-    }
-
     pub(crate) fn semantic_available(&self) -> bool {
         self.qdrant.is_some() && self.semantic_embedding.is_some()
     }

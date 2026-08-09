@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::frontmatter::parse_frontmatter;
 use crate::links::{canonical_target_key, is_concept_worthy};
 use crate::paths::derived_markdown_path;
 use crate::provenance::ProvenanceGraph;
@@ -27,7 +26,6 @@ use semantic::{SemanticGapScan, semantic_gap_scan, semantic_gaps_check};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {
     pub require_postgres_index: bool,
-    pub shared_code_graph_available: bool,
     pub semantic_available: bool,
     pub model_available: bool,
 }
@@ -36,7 +34,6 @@ impl Options {
     pub fn offline() -> Self {
         Self {
             require_postgres_index: false,
-            shared_code_graph_available: false,
             semantic_available: false,
             model_available: false,
         }
@@ -48,7 +45,6 @@ impl Options {
     pub(crate) fn probed(services: &RuntimeServices, model_available: bool) -> Self {
         Self {
             require_postgres_index: true,
-            shared_code_graph_available: services.shared_code_graph_available(),
             semantic_available: services.semantic_available(),
             model_available,
         }
@@ -149,15 +145,24 @@ pub fn run(
     let lint_report = lint::run(vault_root, scope.clone())?;
     let pages = lint::collect_pages(vault_root)?
         .into_iter()
-        .filter(|page| scope_includes_page(&scope, &page.relative_path))
+        .filter(|page| {
+            scope_includes_page(&scope, &page.relative_path)
+                && !is_code_namespace(&page.relative_path)
+        })
         .collect::<Vec<_>>();
     let provenance = ProvenanceGraph::load_from_vault(vault_root)?;
 
-    let stale_pages = health_report.stale_pages.clone();
+    let stale_pages = health_report
+        .stale_pages
+        .iter()
+        .filter(|path| !is_code_namespace(path))
+        .cloned()
+        .collect::<Vec<_>>();
     let missing_citations = unique_paths(
         audit_report
             .unsupported_claims
             .iter()
+            .filter(|claim| !is_code_namespace(&claim.path))
             .map(|claim| claim.path.clone()),
     );
     // Broken digest links are mostly upkeep's convergence fuel, not repair
@@ -171,15 +176,16 @@ pub fn run(
         digest_pages.insert(derived_markdown_path(record)?);
         manifest_ids.insert(record.id.to_lowercase());
     }
+    let eligible_broken_links = lint_report
+        .broken_links
+        .iter()
+        .filter(|issue| !is_code_namespace(&issue.path))
+        .cloned()
+        .collect::<Vec<_>>();
     let broken_link_scan =
-        classify_broken_links(&lint_report.broken_links, &digest_pages, &manifest_ids);
+        classify_broken_links(&eligible_broken_links, &digest_pages, &manifest_ids);
     let broken_links = broken_link_scan.repair_pages.clone();
     let weak_provenance = weak_provenance_pages(&pages, &provenance);
-    let outdated_codewiki = if options.shared_code_graph_available {
-        outdated_codewiki_pages(&pages)
-    } else {
-        Vec::new()
-    };
     let semantic_scan = if options.semantic_available {
         match semantic {
             Some(probe) => {
@@ -200,12 +206,6 @@ pub fn run(
         broken_links_check(&broken_link_scan),
         available_check("weak_provenance", weak_provenance.clone()),
     ];
-    checks.push(optional_check(
-        "outdated_codewiki",
-        options.shared_code_graph_available,
-        "shared code graph is unavailable; skipped outdated codewiki detection",
-        outdated_codewiki.clone(),
-    ));
     checks.push(semantic_gaps_check(&options, &semantic_scan));
     checks.push(optional_check(
         "patch_suggestions",
@@ -220,7 +220,6 @@ pub fn run(
         &missing_citations,
         &broken_links,
         &weak_provenance,
-        &outdated_codewiki,
         &semantic_scan,
     );
     let suggested_patch_diffs = suggested_patch_diffs(&stale_pages, &missing_citations);
@@ -233,11 +232,7 @@ pub fn run(
         artifacts,
         dependency_classification: DependencyClassification {
             hard: vec!["PostgreSQL index", "vault"],
-            optional: vec![
-                "FalkorDB/shared code graph",
-                "Qdrant+embeddings",
-                "model provider",
-            ],
+            optional: vec!["Qdrant+embeddings", "model provider"],
             multimodal: "none; transcription, vision, and video providers are not used",
         },
     };
@@ -335,6 +330,10 @@ fn available_check(name: &'static str, items: Vec<PathBuf>) -> CheckReport {
 
 fn unique_paths(paths: impl Iterator<Item = PathBuf>) -> Vec<PathBuf> {
     paths.collect::<BTreeSet<_>>().into_iter().collect()
+}
+
+fn is_code_namespace(path: &Path) -> bool {
+    path.starts_with(Path::new("code"))
 }
 
 fn optional_check(
@@ -453,7 +452,10 @@ fn classify_broken_links(
 fn weak_provenance_pages(pages: &[lint::WikiPage], provenance: &ProvenanceGraph) -> Vec<PathBuf> {
     let mut paths = pages
         .iter()
-        .filter(|page| page_is_codewiki(page))
+        .filter(|page| {
+            page.parsed.frontmatter.generated_by.as_deref()
+                == Some(gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE)
+        })
         .filter(|page| !page_records_provenance(page))
         .filter(|page| !provenance_mentions_page(provenance, &page.relative_path))
         .map(|page| page.relative_path.clone())
@@ -481,35 +483,4 @@ fn provenance_mentions_page(provenance: &ProvenanceGraph, path: &Path) -> bool {
         .links()
         .iter()
         .any(|link| link.section.page_path.to_string_lossy() == path)
-}
-
-fn outdated_codewiki_pages(pages: &[lint::WikiPage]) -> Vec<PathBuf> {
-    let mut paths = pages
-        .iter()
-        .filter(|page| page_is_codewiki(page))
-        .filter(|page| frontmatter_flag(&page.markdown, "codewiki_status", "stale"))
-        .map(|page| page.relative_path.clone())
-        .collect::<Vec<_>>();
-    paths.sort();
-    paths
-}
-
-fn page_is_codewiki(page: &lint::WikiPage) -> bool {
-    page.parsed
-        .frontmatter
-        .generated_by
-        .as_deref()
-        .is_some_and(|generated_by| generated_by.contains("codewiki"))
-}
-
-fn frontmatter_flag(markdown: &str, key: &str, expected: &str) -> bool {
-    parse_frontmatter(markdown)
-        .ok()
-        .and_then(|parsed| parsed.metadata.unknown.get(key).cloned())
-        .and_then(|value| match value {
-            Value::String(value) => Some(value == expected),
-            Value::Bool(value) => Some(value && expected == "true"),
-            _ => None,
-        })
-        .unwrap_or(false)
 }

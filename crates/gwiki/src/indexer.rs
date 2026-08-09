@@ -777,7 +777,7 @@ mod tests {
         write_file(
             tempdir.path(),
             "code/modules/src.md",
-            "---\nsource:\n  - file: src/lib.rs\n    ranges: [1-2]\nprovenance:\n  - file: src/lib.rs\n    ranges: [1-2]\ngenerated_by: gcode-codewiki\ntrust: generated\nfreshness: indexed\n---\n# src\n\nSee [[code/files/src/lib.rs|src/lib.rs]].\n",
+            "---\nsource:\n  - file: src/lib.rs\n    ranges: [1-2]\nprovenance:\n  - file: src/lib.rs\n    ranges: [1-2]\ngenerated_by: gwiki-code\ntrust: generated\nfreshness: indexed\n---\n# src\n\nSee [[code/files/src/lib.rs|src/lib.rs]].\n",
         );
         write_file(
             tempdir.path(),
@@ -871,6 +871,24 @@ mod tests {
             serde_json::json!({"title": "Rust", "tags": ["systems", "language"]})
         );
         assert_eq!(document.body, body);
+    }
+
+    #[test]
+    fn unrecognized_generated_by_indexes_as_ordinary_frontmatter() {
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        write_file(
+            tempdir.path(),
+            "knowledge/topics/plain.md",
+            "---\ntitle: Plain\ngenerated_by: unknown-generator\n---\n# Plain\n\nBody.\n",
+        );
+        let mut store = MemoryWikiStore::default();
+
+        index_vault_for_test(tempdir.path(), &mut store).expect("index vault");
+
+        assert_eq!(
+            store.documents[&PathBuf::from("knowledge/topics/plain.md")].frontmatter["generated_by"],
+            "unknown-generator"
+        );
     }
 
     #[test]

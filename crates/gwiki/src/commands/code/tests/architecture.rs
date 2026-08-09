@@ -73,7 +73,7 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
         .get("code/_architecture.md")
         .expect("architecture overview doc");
 
-    assert!(rendered.contains("generated_by: gcode-codewiki"));
+    assert!(rendered.contains("generated_by: gwiki-code"));
     assert!(rendered.contains("type: code_architecture"));
     // The failing generator is the only content gap: the page degrades on
     // `model-unavailable`, never on graph availability (truncated here).

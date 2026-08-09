@@ -78,7 +78,7 @@ pub(super) fn ownership_frontmatter(
         kind: "code_ownership",
         provenance,
         provenance_truncated: (omitted > 0).then_some(omitted),
-        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
+        generated_by: gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
         degraded: (!degraded_sources.is_empty()).then_some(true),

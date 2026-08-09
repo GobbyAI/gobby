@@ -199,7 +199,7 @@ fn archive_long_stale_pages(
     let max_age =
         chrono::Duration::days(i64::try_from(options.archive_after_days).unwrap_or(i64::MAX));
     let mut archived = Vec::new();
-    for page in lint::collect_pages(vault_root)? {
+    for page in collect_upkeep_pages(vault_root)? {
         let frontmatter = &page.parsed.frontmatter;
         if frontmatter.lifecycle != Some(WikiLifecycle::Stale) {
             continue;
@@ -284,6 +284,13 @@ fn find_unworthy_concepts(pages: &[lint::WikiPage]) -> Vec<UnworthyConceptArchiv
     archived
 }
 
+fn collect_upkeep_pages(vault_root: &Path) -> Result<Vec<lint::WikiPage>, WikiError> {
+    Ok(lint::collect_pages(vault_root)?
+        .into_iter()
+        .filter(|page| !page.relative_path.starts_with(Path::new("code")))
+        .collect())
+}
+
 fn archive_unworthy_concepts(
     vault_root: &Path,
     scope: &ScopeIdentity,
@@ -326,7 +333,7 @@ fn govern_candidates(
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), WikiError> {
     use crate::frontmatter::WikiLifecycle;
 
-    let pages = lint::collect_pages(vault_root)?;
+    let pages = collect_upkeep_pages(vault_root)?;
     let candidates: Vec<(usize, BTreeSet<String>)> = pages
         .iter()
         .enumerate()

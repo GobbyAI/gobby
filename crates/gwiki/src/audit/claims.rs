@@ -152,10 +152,8 @@ fn is_recap_page(page: &WikiPage) -> bool {
 }
 
 fn is_generated_codewiki_page(page: &WikiPage) -> bool {
-    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
-    page_path.starts_with("code/")
-        && page.parsed.frontmatter.trust.as_deref()
-            == Some(gobby_core::codewiki_contract::TRUST_GENERATED)
+    page.parsed.frontmatter.generated_by.as_deref()
+        == Some(gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE)
 }
 
 pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
@@ -196,8 +194,8 @@ pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
 /// (`knowledge/**`) are not `code/**` and remain fully audited.
 fn is_generated_code_projection_page(page: &WikiPage) -> bool {
     is_generated_codewiki_page(page)
-        && page.parsed.frontmatter.generated_by.as_deref()
-            == Some(gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI)
+        && page.parsed.frontmatter.trust.as_deref()
+            == Some(gobby_core::codewiki_contract::TRUST_GENERATED)
 }
 
 /// A digest under `knowledge/sources/` whose frontmatter `source_hash` matches

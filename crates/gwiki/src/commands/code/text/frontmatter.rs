@@ -263,7 +263,7 @@ fn frontmatter_with_options(
         kind,
         provenance: source_files,
         provenance_truncated,
-        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
+        generated_by: gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
         ai_route: ai_outcome.route_label(),
