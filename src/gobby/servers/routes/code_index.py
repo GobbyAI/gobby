@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -19,7 +19,6 @@ from gobby.code_index.gcode_gateway import (
     GcodeUnavailableError,
     GcodeVersionError,
 )
-from gobby.config.wiki import WikiConfig
 from gobby.servers.responses import JSONResponse
 from gobby.storage.projects import LocalProjectManager, Project
 
@@ -34,36 +33,6 @@ class InvalidateIndexRequest(BaseModel):
     """Request body for POST /api/code-index/invalidate."""
 
     project_id: str
-
-
-class CodewikiRefreshRequest(BaseModel):
-    """Request body for POST /api/code-index/codewiki/refresh."""
-
-    root_path: str
-    project_id: str | None = None
-    out_dir: str | None = None
-    ai: Literal["auto", "on", "off", "daemon", "direct"] = "auto"
-
-
-def _log_schedule_refresh_error(
-    request: Request,
-    root_value: str,
-    body: CodewikiRefreshRequest,
-    exc: BaseException,
-) -> None:
-    logger.exception(
-        "Failed to schedule codewiki refresh",
-        extra={
-            "method": request.method,
-            "path": request.url.path,
-            "request_id": getattr(request.state, "request_id", None)
-            or request.headers.get("x-request-id"),
-            "root_path": root_value,
-            "project_id": body.project_id,
-            "ai": body.ai,
-            "error": str(exc),
-        },
-    )
 
 
 def _require_project_id(project_id: str | None) -> str:
@@ -85,13 +54,6 @@ def _scoped_project_id(
     if project_id is not None and project_id != claims.project_id:
         raise HTTPException(status_code=403, detail="Project does not match agent capability")
     return claims.project_id
-
-
-def _server_wiki_config(server: HTTPServer) -> WikiConfig:
-    wiki_config = getattr(getattr(server, "config", None), "wiki", None)
-    if isinstance(wiki_config, WikiConfig):
-        return wiki_config
-    return WikiConfig()
 
 
 async def _resolve_project_name(server: HTTPServer, project_id: str | None) -> str | None:
@@ -464,17 +426,5 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         result = await code_indexer.invalidate(project_id)
         status_code = 207 if result.get("status") == "partial_failure" else 200
         return JSONResponse(status_code=status_code, content=result)
-
-    @router.post("/codewiki/refresh", status_code=202)
-    async def refresh_codewiki(
-        _body: CodewikiRefreshRequest,
-    ) -> dict[str, Any]:
-        """Report that the retired daemon trigger is unavailable."""
-        raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
-
-    @router.get("/codewiki/status")
-    async def codewiki_status() -> dict[str, Any]:
-        """Report that the retired daemon trigger is unavailable."""
-        raise HTTPException(status_code=503, detail="Codewiki refresh trigger not available")
 
     return router

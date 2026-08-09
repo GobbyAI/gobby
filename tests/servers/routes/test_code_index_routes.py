@@ -111,26 +111,12 @@ def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock)
     )
 
 
-def test_codewiki_refresh_requires_trigger(client: TestClient) -> None:
+def test_codewiki_routes_absent(client: TestClient) -> None:
     response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
+    status = client.get("/api/code-index/codewiki/status")
 
-    assert response.status_code == 503
-
-
-def test_codewiki_refresh_rejects_unknown_ai_literal(
-    client: TestClient,
-) -> None:
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "ai": "bad"},
-    )
-
-    assert response.status_code == 422
-
-
-def test_codewiki_status_requires_trigger(client: TestClient) -> None:
-    response = client.get("/api/code-index/codewiki/status")
-    assert response.status_code == 503
+    assert response.status_code == 404
+    assert status.status_code == 404
 
 
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:

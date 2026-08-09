@@ -75,8 +75,8 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/workflows/variables/set", True),
     # Hook execution (ghook).
     _AgentRoute("POST", _HOOKS_EXECUTE_PATH, True),
-    # Code index (gcode): codewiki refresh and graph lifecycle.
-    _AgentRoute("POST", "/api/code-index/codewiki/refresh", False),
+    # Wiki code refresh and code-index graph lifecycle.
+    _AgentRoute("POST", "/api/wiki/code/refresh", False),
     _AgentRoute("POST", "/api/code-index/graph/clear", True),
     _AgentRoute("POST", "/api/code-index/graph/rebuild", True),
     _AgentRoute("POST", "/api/code-index/invalidate", True),
