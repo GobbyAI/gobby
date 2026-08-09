@@ -1,3 +1,5 @@
+@reference "./tailwind-theme.css";
+
 .app-header {
   position: relative;
   z-index: 100;
@@ -142,7 +144,7 @@
   }
 }
 
-@media (max-width: 430px) {
+@variant mobile {
   .app-header-actions .project-selector {
     width: 6.25rem;
   }

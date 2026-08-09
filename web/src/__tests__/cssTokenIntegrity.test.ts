@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, relative } from 'node:path'
+import { compile } from 'tailwindcss'
 import { describe, expect, it } from 'vitest'
 
 const SOURCE_EXTENSIONS = new Set(['.css', '.ts', '.tsx', '.js', '.jsx', '.mjs'])
@@ -97,6 +98,30 @@ function tokenReferences(file: string, source: string): TokenReference[] {
 }
 
 describe('CSS token integrity', () => {
+  it('keeps the compiled mobile variant aligned with emitted tier properties', async () => {
+    const theme = readFileSync(join(process.cwd(), 'src/styles/tailwind-theme.css'), 'utf8')
+    const compiler = await compile(`${theme}\n@tailwind utilities;`)
+    const compiled = compiler.build(['mobile:block'])
+    const rootBlock = compiled.match(/:root,\s*:host\s*\{([^}]*)\}/)?.[1] ?? ''
+    const emittedProperties = new Map(
+      [...rootBlock.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [
+        name,
+        value.trim(),
+      ]),
+    )
+    const compiledMedia = compiled.match(
+      /@media\s*\(max-width:\s*(\d+)px\),\s*\(max-height:\s*(\d+)px\)/,
+    )
+
+    expect(compiledMedia).not.toBeNull()
+    expect(compiledMedia?.slice(1)).toEqual([
+      emittedProperties.get('--breakpoint-mobile-max-width')?.replace('px', ''),
+      emittedProperties.get('--breakpoint-mobile-max-height')?.replace('px', ''),
+    ])
+    expect(emittedProperties.get('--breakpoint-desktop')).toBe('768px')
+    expect(compiledMedia?.[0]).not.toContain('var(')
+  })
+
   it('keeps static var() references backed by defined tokens or explicit fallbacks', () => {
     const root = join(process.cwd(), 'src')
     expect(statSync(root).isDirectory()).toBe(true)

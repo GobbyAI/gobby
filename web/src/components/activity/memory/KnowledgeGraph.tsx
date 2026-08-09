@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import ForceGraph3D from 'react-force-graph-3d'
 import SpriteText from 'three-spritetext'
 import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
-import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
+import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from '../../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity } from '../../../hooks/useMemory'
 import { inputFocusCls } from '../../shared/focusStyles'
@@ -242,7 +242,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   }, [animateIdle])
 
   // Mobile GPUs get a hard cap regardless of the persisted setting (#19157)
-  const effectiveLimits = useMemo(() => effectiveGraphLimits(limits, IS_MOBILE), [limits])
+  const effectiveLimits = useMemo(() => effectiveGraphLimits(limits, IS_MOBILE_DEVICE), [limits])
 
   // Initial data fetch (refetches when limits change)
   useEffect(() => {
@@ -286,7 +286,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     fg.d3Force('center')?.strength(centerStrength)
 
     // Cap pixel ratio on mobile — iPhone 16 PM is 3x; capping at 2x cuts framebuffer 9x → 4x
-    if (IS_MOBILE) {
+    if (IS_MOBILE_DEVICE) {
       try {
         fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2))
       } catch { /* renderer may not be ready */ }
@@ -328,7 +328,10 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   }, [fetchEntityNeighbors, expandingNode])
 
   // Shared sphere geometry (reused across all iOS nodes to reduce GPU allocations)
-  const sphereGeo = useMemo(() => IS_IOS ? new SphereGeometry(3, 12, 8) : null, [])
+  const sphereGeo = useMemo(
+    () => IS_IOS_DEVICE ? new SphereGeometry(3, 12, 8) : null,
+    [],
+  )
 
   // Custom node rendering — iOS: simple colored spheres (zero per-node textures);
   // other mobile: lightweight SpriteText; desktop: full SpriteText with backgrounds
@@ -339,7 +342,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       const dimmed = isSearchActive && !label.toLowerCase().includes(searchLower)
 
       // iOS: simple sphere mesh — no canvas textures at all
-      if (IS_IOS && sphereGeo) {
+      if (IS_IOS_DEVICE && sphereGeo) {
         const mat = new MeshLambertMaterial({
           color: dimmed ? resolveCssVar('--text-muted') : color,
           transparent: dimmed,
@@ -352,7 +355,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
       sprite.color = dimmed ? resolveCssVar('--text-muted') : color
       sprite.fontFace = 'SF Mono, Menlo, monospace'
 
-      if (IS_MOBILE) {
+      if (IS_MOBILE_DEVICE) {
         // Other mobile: smaller text, no background/border (smaller canvas textures)
         sprite.textHeight = 2
       } else {
@@ -504,17 +507,19 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         linkColor={linkColor}
         linkWidth={0.5}
         linkOpacity={0.6}
-        linkDirectionalArrowLength={IS_MOBILE ? 0 : 3}
+        linkDirectionalArrowLength={IS_MOBILE_DEVICE ? 0 : 3}
         linkDirectionalArrowRelPos={1}
-        linkDirectionalParticles={IS_MOBILE ? 0 : 2}
+        linkDirectionalParticles={IS_MOBILE_DEVICE ? 0 : 2}
         linkDirectionalParticleSpeed={0.004}
         linkDirectionalParticleWidth={0.8}
         linkDirectionalParticleColor={linkColor}
-        nodePositionUpdate={IS_MOBILE ? undefined : nodePositionUpdate}
+        nodePositionUpdate={IS_MOBILE_DEVICE ? undefined : nodePositionUpdate}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
         enableNodeDrag={true}
-        {...(IS_MOBILE ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } } : {})}
+        {...(IS_MOBILE_DEVICE
+          ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } }
+          : {})}
       />
 
       <div className={OVERLAY_STACK_CLS}>
@@ -636,7 +641,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
               if (relationships !== limits.relationships) onLimitsChange?.({ ...limits, relationships })
             }}
           />
-          {IS_MOBILE ? (
+          {IS_MOBILE_DEVICE ? (
             <div className={LIMIT_NOTE_CLS}>
               Hard-capped at {MOBILE_ENTITY_CAP} entities / {MOBILE_RELATIONSHIP_CAP} relationships
               on this device.

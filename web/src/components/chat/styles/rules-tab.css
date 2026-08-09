@@ -1,3 +1,5 @@
+@reference "../../../styles/tailwind-theme.css";
+
 /* ============================================
    Activity Panel — Rules tab
    ============================================ */
@@ -187,10 +189,8 @@
   line-height: 1.45;
 }
 
-@media (width <= 480px), (pointer: coarse) {
+@variant mobile {
   .rules-tab .activity-panel-toolbar {
-    --control-row-height-sm: 2.75rem;
-
     flex-wrap: wrap;
     min-height: auto;
     padding-block: 0.375rem;
@@ -198,15 +198,24 @@
 
   .rules-tab .activity-panel-search {
     flex-basis: 100%;
+  }
+
+  .rules-tab .activity-filter-button {
+    margin-left: 0;
+  }
+}
+
+@media (pointer: coarse) {
+  .rules-tab .activity-panel-toolbar {
+    --control-row-height-sm: 2.75rem;
+  }
+
+  .rules-tab .activity-panel-search {
     min-height: 2.75rem;
   }
 
   .rules-tab .activity-filter-button,
   .rules-tab .activity-panel-toolbar-segmented > .segmented-control__option {
     min-height: 2.75rem;
-  }
-
-  .rules-tab .activity-filter-button {
-    margin-left: 0;
   }
 }

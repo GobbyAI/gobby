@@ -3,13 +3,13 @@ import ForceGraph3D from 'react-force-graph-3d'
 import SpriteText from 'three-spritetext'
 import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
-import { IS_MOBILE, IS_IOS } from '../../utils/platform'
+import { IS_IOS_DEVICE, IS_MOBILE_DEVICE } from '../../utils/platform'
 import { resolveCssVar, cn, escapeHtml } from '../../lib/utils'
 import { inputFocusCls } from '../shared/focusStyles'
 
-const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
+const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS_DEVICE ? 30 : IS_MOBILE_DEVICE ? 50 : 100
 const CODE_GRAPH_LIMIT_MIN = 10
-const CODE_GRAPH_LIMIT_MAX = IS_IOS ? 100 : IS_MOBILE ? 200 : 1000
+const CODE_GRAPH_LIMIT_MAX = IS_IOS_DEVICE ? 100 : IS_MOBILE_DEVICE ? 200 : 1000
 const CODE_GRAPH_LIMIT_STEP = 10
 
 const DEFAULT_CHARGE = -120
@@ -288,7 +288,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
     fg.d3Force('charge')?.strength(charge)
     fg.d3Force('link')?.distance(linkDist)
     fg.d3Force('center')?.strength(centerStrength)
-    if (IS_MOBILE) {
+    if (IS_MOBILE_DEVICE) {
       try { fg.renderer().setPixelRatio(Math.min(window.devicePixelRatio, 2)) } catch (e) { console.warn('CodeGraphExplorer: setPixelRatio failed', e) }
     }
     try { fg.d3ReheatSimulation() } catch { /* simulation may not be ready */ }
@@ -411,7 +411,7 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
       sprite.color = isDimmed ? resolveCssVar('--text-muted') : color
       sprite.fontFace = 'JetBrains Mono, SF Mono, Menlo, monospace'
 
-      if (IS_MOBILE) {
+      if (IS_MOBILE_DEVICE) {
         sprite.textHeight = 2
       } else {
         sprite.textHeight = 3
@@ -692,16 +692,18 @@ export function CodeGraphExplorer({ projectId }: CodeGraphExplorerProps) {
         linkLabel={linkLabel}
         linkWidth={0.5}
         linkOpacity={0.6}
-        linkDirectionalArrowLength={IS_MOBILE ? 0 : 3}
+        linkDirectionalArrowLength={IS_MOBILE_DEVICE ? 0 : 3}
         linkDirectionalArrowRelPos={1}
-        linkDirectionalParticles={IS_MOBILE ? 0 : 2}
+        linkDirectionalParticles={IS_MOBILE_DEVICE ? 0 : 2}
         linkDirectionalParticleSpeed={0.004}
         linkDirectionalParticleWidth={0.8}
         linkDirectionalParticleColor={linkColor}
         backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
         enableNodeDrag={true}
-        {...(IS_MOBILE ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } } : {})}
+        {...(IS_MOBILE_DEVICE
+          ? { rendererConfig: { antialias: false, powerPreference: 'low-power' as const } }
+          : {})}
       />
     </div>
   )

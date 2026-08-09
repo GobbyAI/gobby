@@ -1,3 +1,16 @@
+@theme static {
+  --breakpoint-desktop: 768px;
+  --breakpoint-mobile-max-width: 767px;
+  --breakpoint-mobile-max-height: 500px;
+}
+
+@custom-variant mobile {
+  @media (max-width: theme(--breakpoint-mobile-max-width)),
+    (max-height: theme(--breakpoint-mobile-max-height)) {
+    @slot;
+  }
+}
+
 @theme inline {
   --color-background: var(--bg-primary);
   --color-foreground: var(--text-primary);

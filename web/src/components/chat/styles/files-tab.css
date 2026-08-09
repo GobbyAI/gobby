@@ -1,3 +1,5 @@
+@reference "../../../styles/tailwind-theme.css";
+
 /* ============================================
    Files Tab
    ============================================ */
@@ -94,7 +96,7 @@
   }
 }
 
-@media (max-width: 480px) {
+@variant mobile {
   .file-viewer-btn__label {
     display: none;
   }

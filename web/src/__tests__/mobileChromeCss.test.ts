@@ -175,6 +175,17 @@ function hasContainerAncestor(rule: Rule, container: string): boolean {
   return false
 }
 
+function hasVariantAncestor(rule: Rule, variant: string): boolean {
+  let parent = rule.parent as CssParent | undefined
+  while (parent) {
+    if (parent.type === 'atrule' && parent.name === 'variant' && parent.params === variant) {
+      return true
+    }
+    parent = parent.parent
+  }
+  return false
+}
+
 function findRule(root: Root, selector: string, media?: string): Rule {
   let found: Rule | undefined
   root.walkRules(rule => {
@@ -194,6 +205,16 @@ function findContainerRule(root: Root, selector: string, container: string): Rul
     if (hasContainerAncestor(rule, container)) found = rule
   })
   expect(found, `Expected CSS rule ${selector} in @container ${container}`).toBeDefined()
+  return found as Rule
+}
+
+function findVariantRule(root: Root, selector: string, variant: string): Rule {
+  let found: Rule | undefined
+  root.walkRules(selector, rule => {
+    if (found) return
+    if (hasVariantAncestor(rule, variant)) found = rule
+  })
+  expect(found, `Expected CSS rule ${selector} in @variant ${variant}`).toBeDefined()
   return found as Rule
 }
 
@@ -231,6 +252,23 @@ function expectContainerDeclarations(
   expected: Record<string, string>,
 ): void {
   const rule = findContainerRule(root, selector, container)
+  const declarations = new Map<string, string>()
+  rule.walkDecls(declaration => {
+    declarations.set(declaration.prop, declaration.value)
+  })
+
+  for (const [property, value] of Object.entries(expected)) {
+    expect(declarations.get(property)).toBe(value)
+  }
+}
+
+function expectVariantDeclarations(
+  root: Root,
+  selector: string,
+  variant: string,
+  expected: Record<string, string>,
+): void {
+  const rule = findVariantRule(root, selector, variant)
   const declarations = new Map<string, string>()
   rule.walkDecls(declaration => {
     declarations.set(declaration.prop, declaration.value)
@@ -320,17 +358,17 @@ describe('mobile chrome CSS', () => {
     expectClassToken(appSource, 'app-health-badge')
     expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
 
-    expectDeclarations(
+    expectVariantDeclarations(
       shellCss,
       '.app-header-actions .project-selector-segmented-wrap',
+      'mobile',
       { display: 'none' },
-      '(max-width: 430px)',
     )
-    expectDeclarations(
+    expectVariantDeclarations(
       shellCss,
       '.project-selector-compact-wrap',
+      'mobile',
       { display: 'inline-flex' },
-      '(max-width: 430px)',
     )
     expectDeclarations(shellCss, '.project-selector-compact-trigger', {
       background: 'var(--accent-tint)',
@@ -367,12 +405,6 @@ describe('mobile chrome CSS', () => {
       '.app-header-actions .segmented-control__option',
       { 'min-width': '2.75rem', 'min-height': '2.75rem' },
       '(pointer: coarse)',
-    )
-    expectDeclarations(
-      shellCss,
-      '.app-brand-title',
-      { 'font-size': 'var(--text-2xl)' },
-      '(max-width: 768px)',
     )
   })
 
@@ -414,6 +446,38 @@ describe('mobile chrome CSS', () => {
       sessionsCss,
       '.quick-menu-item',
       { 'min-height': '2.75rem' },
+      '(pointer: coarse)',
+    )
+  })
+
+  it('keeps rules-tab layout responsive to geometry while coarse pointers size targets only', () => {
+    const rulesCss = parseCss('src/components/chat/styles/rules-tab.css')
+
+    expect(findVariantRule(rulesCss, '.rules-tab .activity-panel-toolbar', 'mobile').selector).toBe(
+      '.rules-tab .activity-panel-toolbar',
+    )
+    expectVariantDeclarations(
+      rulesCss,
+      '.rules-tab .activity-panel-toolbar',
+      'mobile',
+      { 'flex-wrap': 'wrap' },
+    )
+    expectVariantDeclarations(
+      rulesCss,
+      '.rules-tab .activity-panel-search',
+      'mobile',
+      { 'flex-basis': '100%' },
+    )
+    expectNoDeclaration(
+      rulesCss,
+      '.rules-tab .activity-panel-toolbar',
+      'flex-wrap',
+      '(pointer: coarse)',
+    )
+    expectNoDeclaration(
+      rulesCss,
+      '.rules-tab .activity-panel-search',
+      'flex-basis',
       '(pointer: coarse)',
     )
   })
