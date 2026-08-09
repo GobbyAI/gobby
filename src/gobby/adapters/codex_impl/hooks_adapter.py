@@ -166,16 +166,20 @@ class CodexHooksAdapter(BaseAdapter):
             capability=capability,
             event_logger=logger,
         )
-        normalized_reason = normalize_adapter_response_reason(
-            response,
-            adapter_name=self.__class__.__name__,
-            hook_type=hook_type,
-            logger=logger,
+        normalized_reason = (
+            None
+            if hook_event_name == "SubagentStart"
+            else normalize_adapter_response_reason(
+                response,
+                adapter_name=self.__class__.__name__,
+                hook_type=hook_type,
+                logger=logger,
+            )
         )
 
         result: dict[str, Any] = {"continue": True}
 
-        if response.decision in ("deny", "block"):
+        if response.decision in ("deny", "block") and hook_event_name != "SubagentStart":
             if hook_event_name == "PermissionRequest":
                 decision: dict[str, Any] = {"behavior": "deny"}
                 if normalized_reason:
@@ -233,6 +237,13 @@ class CodexHooksAdapter(BaseAdapter):
                     )
                 return deny_result
 
+            elif hook_event_name == "SubagentStop":
+                return {
+                    "continue": True,
+                    "decision": "block",
+                    "reason": normalized_reason or "Blocked by Gobby hook",
+                }
+
             else:
                 block_result: dict[str, Any] = {"continue": False, "decision": "block"}
                 if normalized_reason:
@@ -256,11 +267,11 @@ class CodexHooksAdapter(BaseAdapter):
         # session/system context ahead of large workflow payloads.
         context_parts: list[tuple[str, str]] = []
 
-        session_start_hook = hook_event_name == "SessionStart"
+        start_hook = hook_event_name in {"SessionStart", "SubagentStart"}
 
         # Route system_message by event type:
         # - systemMessage-only events: visible systemMessage
-        # - SessionStart: startup context only via additionalContext
+        # - SessionStart, SubagentStart: startup context only via additionalContext
         # - UserPromptSubmit, PostToolUse: additionalContext only (hidden from user)
         if response.system_message:
             if context_channel is ContextChannel.SYSTEM_MESSAGE:
@@ -277,8 +288,7 @@ class CodexHooksAdapter(BaseAdapter):
                 context_lines = build_first_hook_session_metadata_lines(
                     response.metadata,
                     include_session_id_line=not (
-                        session_start_hook
-                        and system_message_has_session_banner(response.system_message)
+                        start_hook and system_message_has_session_banner(response.system_message)
                     ),
                     include_tty=False,
                 )

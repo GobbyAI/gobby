@@ -11,6 +11,17 @@
         ]
       }
     ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=SubagentStart",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -76,6 +87,17 @@
             "type": "command",
           "command": "ghook --gobby-owned --cli=codex --type=PostCompact",
           "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=SubagentStop",
+            "timeout": 120
           }
         ]
       }

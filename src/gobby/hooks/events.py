@@ -253,12 +253,12 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
         "qwen": "SubagentStart",
-        "codex": None,
+        "codex": "SubagentStart",
     },
     HookEventType.SUBAGENT_STOP: {
         "claude": "SubagentStop",
         "qwen": "SubagentStop",
-        "codex": None,
+        "codex": "SubagentStop",
     },
     HookEventType.PERMISSION_REQUEST: {
         "claude": "PermissionRequest",

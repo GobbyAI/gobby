@@ -55,7 +55,9 @@ CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
     "PreCompact": "pre_compact",
     "PostCompact": "post_compact",
     "SessionStart": "session_start",
+    "SubagentStart": "subagent_start",
     "UserPromptSubmit": "user_prompt_submit",
+    "SubagentStop": "subagent_stop",
     "Stop": "stop",
     "SessionEnd": "session_end",
 }
@@ -67,6 +69,8 @@ CODEX_MATCHER_HASH_EVENTS = {
     "PreCompact",
     "PostCompact",
     "SessionStart",
+    "SubagentStart",
+    "SubagentStop",
 }
 
 

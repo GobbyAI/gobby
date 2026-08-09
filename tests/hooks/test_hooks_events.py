@@ -212,6 +212,8 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["codex"] == "SessionStart"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["codex"] == "PreToolUse"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["codex"] == "PostToolUse"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["codex"] == "SubagentStart"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_STOP]["codex"] == "SubagentStop"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_END]["codex"] == "SessionEnd"
 
     def test_grok_support(self) -> None:
@@ -227,7 +229,7 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["qwen"] is None
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["codex"] is None
 
-        # Claude and Qwen both expose subagent lifecycle events.
+        # Claude, Qwen, and Codex expose subagent lifecycle events.
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["claude"] == "SubagentStart"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["qwen"] == "SubagentStart"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["codex"] is None
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["codex"] == "SubagentStart"

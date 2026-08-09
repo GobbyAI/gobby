@@ -2467,6 +2467,32 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event.source == SessionSource.CODEX
         assert hook_event.cwd == "/project/path"
 
+    def test_translate_subagent_start_preserves_lifecycle_context(self) -> None:
+        """Translate SubagentStart without dropping child identifiers or transcript context."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        input_data = {
+            "session_id": "codex-session-123",
+            "turn_id": "turn-456",
+            "transcript_path": "/tmp/parent.jsonl",
+            "cwd": "/project/path",
+            "model": "o3",
+            "permission_mode": "workspace-write",
+            "agent_id": "agent-789",
+            "agent_type": "explorer",
+        }
+
+        hook_event = adapter.translate_to_hook_event(
+            {"hook_type": "SubagentStart", "input_data": input_data, "source": "codex"}
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.SUBAGENT_START
+        assert hook_event.session_id == "codex-session-123"
+        for field, value in input_data.items():
+            assert hook_event.data[field] == value
+
     def test_translate_pre_tool_use(self) -> None:
         """Translate PreToolUse to BEFORE_TOOL."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
@@ -2621,6 +2647,35 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event is not None
         assert hook_event.event_type == HookEventType.STOP
 
+    def test_translate_subagent_stop_preserves_lifecycle_and_stop_metadata(self) -> None:
+        """Translate SubagentStop with both transcript paths and recoverable stop metadata."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        input_data = {
+            "session_id": "codex-session-123",
+            "turn_id": "turn-456",
+            "transcript_path": "/tmp/parent.jsonl",
+            "agent_transcript_path": "/tmp/agent.jsonl",
+            "cwd": "/project/path",
+            "model": "o3",
+            "permission_mode": "workspace-write",
+            "stop_hook_active": True,
+            "agent_id": "agent-789",
+            "agent_type": "explorer",
+            "last_assistant_message": "Child result",
+        }
+
+        hook_event = adapter.translate_to_hook_event(
+            {"hook_type": "SubagentStop", "input_data": input_data, "source": "codex"}
+        )
+
+        assert hook_event is not None
+        assert hook_event.event_type == HookEventType.SUBAGENT_STOP
+        assert hook_event.session_id == "codex-session-123"
+        for field, value in input_data.items():
+            assert hook_event.data[field] == value
+
     def test_translate_unsupported_returns_none(self) -> None:
         """Unsupported hook type returns None."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
@@ -2666,7 +2721,7 @@ class TestCodexHooksAdapterTranslateToHookEvent:
         assert hook_event.event_type == expected_event_type
 
     def test_all_event_types_mapped(self) -> None:
-        """All 9 Codex hook types are in EVENT_MAP."""
+        """All 11 Codex hook types are in EVENT_MAP."""
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
         expected = {
@@ -2676,7 +2731,9 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             "PreCompact",
             "PostCompact",
             "SessionStart",
+            "SubagentStart",
             "UserPromptSubmit",
+            "SubagentStop",
             "Stop",
             "SessionEnd",
         }
@@ -2709,6 +2766,43 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert result["continue"] is False
         assert result["decision"] == "block"
         assert result["reason"] == "Blocked by rule"
+
+    def test_subagent_start_ignores_block_and_injects_context(self) -> None:
+        """SubagentStart always continues and exposes startup context to the child."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(
+            decision="block",
+            reason="Ignored startup block",
+            context="Child startup context",
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="SubagentStart")
+
+        assert result["continue"] is True
+        assert "decision" not in result
+        assert "reason" not in result
+        hook_output = result["hookSpecificOutput"]
+        assert hook_output["hookEventName"] == "SubagentStart"
+        assert hook_output["additionalContext"] == "Child startup context"
+
+    @pytest.mark.parametrize("reason", ["Continue with this feedback", "   "])
+    def test_subagent_stop_block_uses_recoverable_continuation(self, reason: str) -> None:
+        """SubagentStop blocking keeps Codex running with non-empty continuation feedback."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        adapter = CodexHooksAdapter()
+        response = HookResponse(decision="block", reason=reason)
+
+        result = adapter.translate_from_hook_response(response, hook_type="SubagentStop")
+
+        assert result["continue"] is True
+        assert result["decision"] == "block"
+        assert isinstance(result["reason"], str)
+        assert result["reason"].strip()
+        if reason.strip():
+            assert result["reason"] == reason.strip()
 
     def test_deny_response(self) -> None:
         """Deny response maps to block with continue: false."""

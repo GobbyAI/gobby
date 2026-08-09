@@ -66,6 +66,8 @@ def test_capability_registry_covers_current_http_adapters() -> None:
 def test_current_context_and_decision_capabilities_are_declared() -> None:
     claude_pre_tool = get_provider_capabilities("claude").get_hook("pre-tool-use")
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
+    codex_subagent_start = get_provider_capabilities("codex").get_hook("SubagentStart")
+    codex_subagent_stop = get_provider_capabilities("codex").get_hook("SubagentStop")
     qwen_pre_tool = get_provider_capabilities("qwen").get_hook("PreToolUse")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     agy_pre_tool = get_provider_capabilities("agy").get_hook("PreToolUse")
@@ -78,6 +80,14 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_pre_tool is not None
     assert codex_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
     assert codex_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
+
+    assert codex_subagent_start is not None
+    assert codex_subagent_start.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert codex_subagent_start.decision_style is ProviderDecisionStyle.NONE
+
+    assert codex_subagent_stop is not None
+    assert codex_subagent_stop.context_channel is ContextChannel.NONE
+    assert codex_subagent_stop.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
 
     assert qwen_pre_tool is not None
     assert qwen_pre_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT

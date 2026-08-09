@@ -4546,7 +4546,15 @@ class TestCodexValidateSettings:
         from gobby.install.shared.hooks.validate_settings import CLI_VALIDATION_CONFIGS
 
         config = CLI_VALIDATION_CONFIGS["codex"]
-        for hook in ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
+        for hook in (
+            "SessionStart",
+            "SubagentStart",
+            "UserPromptSubmit",
+            "PreToolUse",
+            "PostToolUse",
+            "SubagentStop",
+            "Stop",
+        ):
             assert hook in config.required_hooks, f"Missing required hook: {hook}"
 
 

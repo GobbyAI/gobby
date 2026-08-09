@@ -293,17 +293,21 @@ def _acp_capabilities(source: SessionSource) -> ProviderCapabilities:
 
 CODEX_EVENT_MAP: dict[str, HookEventType] = {
     "SessionStart": HookEventType.SESSION_START,
+    "SubagentStart": HookEventType.SUBAGENT_START,
     "UserPromptSubmit": HookEventType.BEFORE_AGENT,
     "PreToolUse": HookEventType.BEFORE_TOOL,
     "PermissionRequest": HookEventType.PERMISSION_REQUEST,
     "PostToolUse": HookEventType.AFTER_TOOL,
     "PreCompact": HookEventType.PRE_COMPACT,
     "PostCompact": HookEventType.POST_COMPACT,
+    "SubagentStop": HookEventType.SUBAGENT_STOP,
     "Stop": HookEventType.STOP,
     "SessionEnd": HookEventType.SESSION_END,
 }
 
-CODEX_ADDITIONAL_CONTEXT_HOOKS = frozenset({"SessionStart", "UserPromptSubmit", "PostToolUse"})
+CODEX_ADDITIONAL_CONTEXT_HOOKS = frozenset(
+    {"SessionStart", "SubagentStart", "UserPromptSubmit", "PostToolUse"}
+)
 CODEX_SYSTEM_MESSAGE_CONTEXT_HOOKS = frozenset(
     {"PreToolUse", "PermissionRequest", "PreCompact", "PostCompact", "Stop"}
 )
@@ -331,7 +335,7 @@ def _codex_capabilities() -> ProviderCapabilities:
             decision_style = ProviderDecisionStyle.COMPACT_STOP
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"SessionStart", "UserPromptSubmit", "PostToolUse"}:
+        elif hook_name in {"SessionStart", "SubagentStart", "UserPromptSubmit", "PostToolUse"}:
             decision_style = ProviderDecisionStyle.NONE
 
         events[hook_name] = HookCapability(

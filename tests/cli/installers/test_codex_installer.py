@@ -20,8 +20,10 @@ EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
     "PreCompact",
     "PostCompact",
     "SessionStart",
+    "SubagentStart",
     "SessionEnd",
     "UserPromptSubmit",
+    "SubagentStop",
     "Stop",
 )
 EXPECTED_HOOK_EVENT_SET: Final[set[str]] = set(EXPECTED_HOOK_EVENTS)
@@ -33,8 +35,10 @@ EVENT_KEY_LABELS: Final[dict[str, str]] = {
     "PreCompact": "pre_compact",
     "PostCompact": "post_compact",
     "SessionStart": "session_start",
+    "SubagentStart": "subagent_start",
     "SessionEnd": "session_end",
     "UserPromptSubmit": "user_prompt_submit",
+    "SubagentStop": "subagent_stop",
     "Stop": "stop",
 }
 
@@ -117,6 +121,21 @@ def test_codex_hook_trust_hash_matches_codex_discovery() -> None:
         _normalized_codex_command_hook_hash("SessionStart", {"hooks": [argv_hook]}, argv_hook)
         == expected
     )
+
+
+@pytest.mark.parametrize("event", ["SubagentStart", "SubagentStop"])
+def test_codex_subagent_trust_hash_includes_native_matcher(event: str) -> None:
+    """Codex lifecycle trust identities include matchers when present."""
+    from gobby.cli.installers.codex import _normalized_codex_command_hook_hash
+
+    hook = {"type": "command", "command": f"ghook --cli=codex --type={event}"}
+
+    matcherless_hash = _normalized_codex_command_hook_hash(event, {"hooks": [hook]}, hook)
+    matcher_hash = _normalized_codex_command_hook_hash(
+        event, {"matcher": ".*", "hooks": [hook]}, hook
+    )
+
+    assert matcher_hash != matcherless_hash
 
 
 def test_codex_hook_trust_state_prunes_stale_gobby_positions(tmp_path: Path) -> None:
@@ -1242,6 +1261,24 @@ class TestHooksTemplateFormat:
         # Tool and permission events should use ".*" regex matchers
         for event in ["PreToolUse", "PermissionRequest", "PostToolUse"]:
             assert hooks_config["hooks"][event][0]["matcher"] == ".*"
+
+    def test_subagent_hooks_are_matcherless_with_standard_timeout(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+        mock_deps: None,
+    ) -> None:
+        """Subagent lifecycle handlers use the standard matcherless hook shape."""
+        from gobby.cli.installers.codex import install_codex
+
+        result = install_codex(mock_home)
+        assert result["success"] is True
+
+        hooks_config = json.loads((mock_home / ".codex" / "hooks.json").read_text())
+        for event in ["SubagentStart", "SubagentStop"]:
+            group = hooks_config["hooks"][event][0]
+            assert "matcher" not in group
+            assert group["hooks"][0]["timeout"] == 120
 
     def test_hooks_dir_substituted_with_absolute_path(
         self,
