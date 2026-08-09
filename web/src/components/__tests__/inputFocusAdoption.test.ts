@@ -5,8 +5,6 @@ import { describe, expect, it } from 'vitest'
 
 const focusManagedInputs = [
   'ValidationDetectionEditor.tsx',
-  'activity/memory/KnowledgeGraph.tsx',
-  'code-graph/CodeGraphExplorer.tsx',
   'tasks/QuickCaptureTask.tsx',
 ]
 
