@@ -145,11 +145,11 @@ class TestDockerComposeServices:
         assert data["volumes"]["gobby_qdrant_data"]["name"] == "gobby_qdrant_data"
 
     def test_qdrant_restart_policy(self) -> None:
-        """Qdrant service always restarts with Docker."""
+        """Qdrant service has unless-stopped restart policy."""
         from gobby.cli.installers.qdrant import _COMPOSE_SRC
 
         data = yaml.safe_load(_COMPOSE_SRC.read_text())
-        assert data["services"]["qdrant"]["restart"] == "always"
+        assert data["services"]["qdrant"]["restart"] == "unless-stopped"
 
 
 # ---------------------------------------------------------------------------

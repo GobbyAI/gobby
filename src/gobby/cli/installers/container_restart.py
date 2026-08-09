@@ -11,7 +11,7 @@ from gobby.paths import get_gobby_home
 
 from .docker_guard import ensure_docker_allowed
 
-DEFAULT_RESTART_POLICY: Final = "always"
+DEFAULT_RESTART_POLICY: Final = "unless-stopped"
 DISABLED_RESTART_POLICY: Final = "no"
 POSTGRES_CONTAINER: Final = "gobby-postgres"
 FALKORDB_CONTAINER: Final = "services-falkordb-1"

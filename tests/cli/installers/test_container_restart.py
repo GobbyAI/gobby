@@ -21,7 +21,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("enabled", "expected_policy"),
     [
-        (True, "always"),
+        (True, "unless-stopped"),
         (False, DISABLED_RESTART_POLICY),
     ],
 )
