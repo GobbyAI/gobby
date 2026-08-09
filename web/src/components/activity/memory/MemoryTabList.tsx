@@ -1,5 +1,8 @@
 import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn, previewContent } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import {
   dreamFlagLabel,
@@ -157,26 +160,27 @@ export function MemoryTabList({
               hidden && "opacity-60",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${previewContent(memory.content)}`}
               onClick={() => onSelect(memory)}
             >
               <span className="activity-row-title">{previewContent(memory.content)}</span>
               {hidden && <DreamFlagBadge memory={memory} />}
-              <span className="activity-chip">
+              <Chip className="activity-chip">
                 {memoryTypeLabel(memory.memory_type)}
-              </span>
-              <span
+              </Chip>
+              <Chip
                 className={cn(
                   "activity-chip",
                   memory.is_global && "activity-chip--accent",
                 )}
               >
                 {memoryScopeLabel(memory)}
-              </span>
-            </button>
+              </Chip>
+            </Button>
             <div className="flex items-center px-1">
               <QuickMenu
                 items={menuItems}

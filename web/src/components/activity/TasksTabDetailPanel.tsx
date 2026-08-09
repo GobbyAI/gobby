@@ -17,6 +17,8 @@ import {
   type TaskInlineEditApi,
 } from "./taskdetail/taskDetailFormat";
 import { Markdown } from "../chat/Markdown";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 export type { GobbyTaskDetail };
 export type { ParentTaskRef };
@@ -89,14 +91,16 @@ export function TasksTabDetailPanel({
       {editError && (
         <div className="activity-task-detail-edit-error" role="alert">
           <span>{editError}</span>
-          <button
+          <Button
             type="button"
-            className="activity-task-detail-edit-error__dismiss"
+            variant="ghost"
+            size="icon"
+            className={`activity-task-detail-edit-error__dismiss ${coarseHitAreaCls}`}
             aria-label="Dismiss error"
             onClick={() => edit?.clearError(task.id)}
           >
             ×
-          </button>
+          </Button>
         </div>
       )}
 

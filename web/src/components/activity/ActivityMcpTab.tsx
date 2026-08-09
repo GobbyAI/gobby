@@ -22,6 +22,9 @@ import {
 } from "../../hooks/useTreeKeyboardNavigation";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
@@ -518,14 +521,16 @@ export function ActivityMcpTab({
       )}
 
       {actionError && (
-        <button
+        <Button
           type="button"
-          className="activity-mcp-error"
+          variant="destructive"
+          size="sm"
+          className={cn("activity-mcp-error", coarseHitAreaCls)}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
           {actionError}
-        </button>
+        </Button>
       )}
 
       <div
@@ -585,9 +590,11 @@ export function ActivityMcpTab({
                     onClick={() => selectRow(serverId)}
                     onKeyDown={(event) => handleKeyDown(serverId, event)}
                   >
-                    <button
+                    <Button
                       type="button"
-                      className="activity-mcp-row-toggle"
+                      variant="ghost"
+                      size="icon"
+                      className={cn("activity-mcp-row-toggle", coarseHitAreaCls)}
                       aria-label={`${expanded ? "Collapse" : "Expand"} ${
                         server.name
                       } tools`}
@@ -598,13 +605,13 @@ export function ActivityMcpTab({
                       }}
                     >
                       <ChevronIcon open={expanded} />
-                    </button>
+                    </Button>
                     <ActivityRowStatusDot
                       kind={healthToStatusKind(health)}
                       title={`Health: ${health}`}
                     />
                     <span className="activity-row-title">{server.name}</span>
-                    <span
+                    <Chip
                       className={cn(
                         "activity-mcp-chip",
                         serverType === "internal"
@@ -613,10 +620,12 @@ export function ActivityMcpTab({
                       )}
                     >
                       {serverType === "internal" ? "Internal" : "External"}
-                    </span>
-                    <button
+                    </Chip>
+                    <Button
                       type="button"
-                      className="task-more-btn"
+                      variant="ghost"
+                      size="icon"
+                      className={cn("task-more-btn", coarseHitAreaCls)}
                       aria-label={`Open actions for ${server.name} server`}
                       onClick={(event) =>
                         openMenu(event, {
@@ -628,7 +637,7 @@ export function ActivityMcpTab({
                       }
                     >
                       <KebabIcon />
-                    </button>
+                    </Button>
                   </div>
                   {expanded &&
                     (visibleTools.length === 0 ? (
@@ -679,9 +688,11 @@ export function ActivityMcpTab({
                                 {tool.brief}
                               </span>
                             )}
-                            <button
+                            <Button
                               type="button"
-                              className="task-more-btn"
+                              variant="ghost"
+                              size="icon"
+                              className={cn("task-more-btn", coarseHitAreaCls)}
                               aria-label={`Open actions for ${server.name}.${tool.name}`}
                               onClick={(event) =>
                                 openMenu(event, {
@@ -692,7 +703,7 @@ export function ActivityMcpTab({
                               }
                             >
                               <KebabIcon />
-                            </button>
+                            </Button>
                           </div>
                         );
                       })

@@ -1,5 +1,8 @@
 import type { Channel } from "../../../hooks/useIntegrations";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { IntegrationPlatformIcon } from "./IntegrationPlatformIcon";
@@ -55,9 +58,10 @@ export function ChannelsList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${channel.name}`}
               onClick={() => onSelect(channel)}
             >
@@ -66,14 +70,14 @@ export function ChannelsList({
                 label={statusLabelForChannel(channel)}
               />
               <span className="activity-row-title">{channel.name}</span>
-              <span className="activity-chip gap-1">
+              <Chip className="activity-chip gap-1">
                 <IntegrationPlatformIcon type={channel.channel_type} size={12} />
                 {CHANNEL_DISPLAY_NAMES[channel.channel_type]}
-              </span>
-              <span className="activity-chip">
+              </Chip>
+              <Chip className="activity-chip">
                 {channel.enabled ? "On" : "Off"}
-              </span>
-            </button>
+              </Chip>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

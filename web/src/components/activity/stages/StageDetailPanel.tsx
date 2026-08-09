@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from "react";
 
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import {
   DetailPaneHeader,
@@ -70,7 +71,7 @@ export function StageDetailPanel({
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
         actions={
-          <span className="activity-chip">{draft.name}</span>
+          <Chip className="activity-chip">{draft.name}</Chip>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">

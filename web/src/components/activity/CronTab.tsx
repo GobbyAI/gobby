@@ -1,6 +1,8 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import '../chat/styles/cron-tab.css'
 import { ResizeHandle } from '../shared/ResizeHandle'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun, CronRunChild } from '../../hooks/useCronJobs'
@@ -201,9 +203,10 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                   key={job.id}
                   className={`activity-list-row${selectedJob?.id === job.id ? ' activity-list-row--selected' : ''}`}
                 >
-                  <button
+                  <Button
                     type="button"
-                    className="activity-list-row__body"
+                    variant="ghost"
+                    className={`activity-list-row__body ${coarseHitAreaCls}`}
                     aria-label={`Select ${jobLabel}`}
                     onClick={() => selectJob(job)}
                   >
@@ -212,7 +215,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                     <span className="activity-row-meta shrink-0">
                       {formatNextFiring(job, now)}
                     </span>
-                  </button>
+                  </Button>
                   <div className="flex items-center px-1">
                     <QuickMenu
                       items={menuItems}
@@ -224,9 +227,11 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
               )
             })}
             {hasMore && (
-              <button
+              <Button
                 type="button"
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors ${coarseHitAreaCls}`}
                 onClick={() =>
                   setDisplayLimitState({
                     filter: statusFilter,
@@ -235,7 +240,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                 }
               >
                 Load more
-              </button>
+              </Button>
             )}
           </>
         )}

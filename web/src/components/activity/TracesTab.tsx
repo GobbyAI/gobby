@@ -2,6 +2,8 @@ import { memo, useMemo, useState } from 'react'
 import '../chat/styles/traces-tab.css'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { formatTime } from '../shared/executions/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
@@ -101,11 +103,12 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
         ) : (
           <>
             {visibleTraces.map((trace) => (
-              <button
+              <Button
                 key={trace.trace_id}
                 type="button"
+                variant="ghost"
                 data-testid="trace-row-button"
-                className={`pipeline-exec-row${selectedTraceId === trace.trace_id ? ' pipeline-exec-row--active' : ''}`}
+                className={`pipeline-exec-row${selectedTraceId === trace.trace_id ? ' pipeline-exec-row--active' : ''} ${coarseHitAreaCls}`}
                 onClick={() => setSelectedTraceId(trace.trace_id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -122,12 +125,14 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                     {formatTime(trace.timestamp)}
                   </span>
                 </div>
-              </button>
+              </Button>
             ))}
             {hasMore && (
-              <button
+              <Button
                 type="button"
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors ${coarseHitAreaCls}`}
                 onClick={() =>
                   setDisplayLimitState({
                     filter: statusFilter,
@@ -136,7 +141,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                 }
               >
                 Load more
-              </button>
+              </Button>
             )}
           </>
         )}

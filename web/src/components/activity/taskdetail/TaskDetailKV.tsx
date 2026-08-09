@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 /**
  * D5 — shared key/value primitives for the detail pane. Tight horizontal
@@ -103,9 +105,11 @@ export function ParentKVRow({
       <span className="activity-task-detail-kv-row__label">Parent</span>
       <span className="activity-task-detail-kv-row__value">
         {handleClick ? (
-          <button
+          <Button
             type="button"
-            className="activity-task-detail-parent-link"
+            variant="ghost"
+            size="sm"
+            className={cn("activity-task-detail-parent-link", coarseHitAreaCls)}
             aria-label={`Open parent task ${parent.ref}: ${parent.title}`}
             onClick={handleClick}
           >
@@ -113,7 +117,7 @@ export function ParentKVRow({
             <span className="activity-task-detail-parent-title">
               {parent.title}
             </span>
-          </button>
+          </Button>
         ) : (
           <>
             <span className="activity-task-detail-parent-ref">{parent.ref}</span>{" "}

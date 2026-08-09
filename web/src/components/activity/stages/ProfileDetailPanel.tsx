@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import {
   DetailPaneHeader,
@@ -91,7 +92,7 @@ export function ProfileDetailPanel({
         onDiscard={draftState.discard}
         actions={
           !creating ? (
-            <span className="activity-chip">{draft.source}</span>
+            <Chip className="activity-chip">{draft.source}</Chip>
           ) : null
         }
       />

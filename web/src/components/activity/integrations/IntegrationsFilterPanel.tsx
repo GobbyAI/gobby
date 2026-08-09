@@ -1,4 +1,5 @@
 import "../../chat/styles/rules-tab.css";
+import { SelectField } from "../fields";
 import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
 import { type IntegrationFilters } from "./IntegrationsTabModel";
 
@@ -17,45 +18,46 @@ export function IntegrationsFilterPanel({
 }: IntegrationsFilterPanelProps) {
   return (
     <div className="activity-filter-panel">
-      <label className="activity-filter-panel__field">
-        <span>Platform</span>
-        <select
-          aria-label="Platform filter"
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Platform"
+          ariaLabel="Platform filter"
           name="integration-platform-filter"
           value={filters.channelType}
-          onChange={(event) =>
+          onChange={(channelType) =>
             onFiltersChange({
               ...filters,
-              channelType: event.target.value as IntegrationFilters["channelType"],
+              channelType: channelType as IntegrationFilters["channelType"],
             })
           }
-        >
-          <option value="all">All platforms</option>
-          {INTEGRATION_CHANNEL_TYPES.map((type) => (
-            <option key={type} value={type}>
-              {CHANNEL_DISPLAY_NAMES[type]}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="activity-filter-panel__field">
-        <span>Status</span>
-        <select
-          aria-label="Integration status"
+          options={[
+            { value: "all", label: "All platforms" },
+            ...INTEGRATION_CHANNEL_TYPES.map((type) => ({
+              value: type,
+              label: CHANNEL_DISPLAY_NAMES[type],
+            })),
+          ]}
+        />
+      </div>
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Status"
+          ariaLabel="Integration status"
           name="integration-status-filter"
           value={filters.status}
-          onChange={(event) =>
+          onChange={(status) =>
             onFiltersChange({
               ...filters,
-              status: event.target.value as IntegrationFilters["status"],
+              status: status as IntegrationFilters["status"],
             })
           }
-        >
-          <option value="all">All states</option>
-          <option value="enabled">Enabled</option>
-          <option value="disabled">Disabled</option>
-        </select>
-      </label>
+          options={[
+            { value: "all", label: "All states" },
+            { value: "enabled", label: "Enabled" },
+            { value: "disabled", label: "Disabled" },
+          ]}
+        />
+      </div>
     </div>
   );
 }

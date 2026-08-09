@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 
 import type { DependencyTree, GobbyTask } from "../../../types/tasks";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import {
   getTaskDisplayState,
   TASK_STATE_LABELS,
@@ -39,16 +41,18 @@ function DepList({
           ? () => onSelectTask(node.id)
           : undefined;
         return select ? (
-          <button
+          <Button
             key={node.id}
             type="button"
-            className="activity-task-detail-parent-link activity-task-detail-deplist__item"
+            variant="ghost"
+            size="sm"
+            className={`activity-task-detail-parent-link activity-task-detail-deplist__item ${coarseHitAreaCls}`}
             onClick={select}
             title={title}
           >
             <span className="activity-task-detail-parent-ref">{ref}</span>
             <span className="activity-task-detail-parent-title">{title}</span>
-          </button>
+          </Button>
         ) : (
           <span
             key={node.id}

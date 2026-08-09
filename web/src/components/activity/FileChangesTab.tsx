@@ -4,6 +4,8 @@ import { DiffBlock } from '../shared/DiffBlock'
 import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
 import type { ChangedFile } from '../../hooks/useFileChanges'
 import { ActivityPanelEmpty, ChangesEmptyIcon } from './ActivityPanelEmpty'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface FileChangesTabProps {
   changedFiles: ChangedFile[]
@@ -114,13 +116,15 @@ export const FileChangesTab = memo(function FileChangesTab({
         body={error}
         footer={
           onRetry ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={onRetry}
-              className="mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+              className={`mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors ${coarseHitAreaCls}`}
             >
               Retry
-            </button>
+            </Button>
           ) : undefined
         }
       />
@@ -156,11 +160,13 @@ export const FileChangesTab = memo(function FileChangesTab({
         {changedFiles.map((file) => {
           const isSelected = file.path === selectedPath
           return (
-            <button
+            <Button
               key={file.path}
+              type="button"
+              variant="ghost"
               onClick={() => handleSelect(file.path)}
               aria-pressed={isSelected}
-              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''}`}
+              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''} ${coarseHitAreaCls}`}
             >
               {statusBadge(file.status)}
               <div className="flex-1 min-w-0 flex items-baseline gap-1">
@@ -171,7 +177,7 @@ export const FileChangesTab = memo(function FileChangesTab({
                   {fileDir(file.path)}
                 </span>
               </div>
-            </button>
+            </Button>
           )
         })}
       </div>

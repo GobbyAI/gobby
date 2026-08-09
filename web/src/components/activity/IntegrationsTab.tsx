@@ -4,6 +4,7 @@ import type { Channel } from "../../hooks/useIntegrations";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { useRegisterActivityActions } from "./activityActions";
@@ -228,14 +229,16 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
       )}
 
       {error && (
-        <button
+        <Button
           type="button"
-          className="min-h-11 border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+          variant="destructive"
+          size="sm"
+          className={`min-h-11 w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm text-error ${coarseHitAreaCls}`}
           onClick={() => setError(null)}
           aria-label={`Dismiss error: ${error}`}
         >
           {error}
-        </button>
+        </Button>
       )}
 
       <div className="flex min-h-0 flex-1 flex-col">
@@ -271,7 +274,13 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
               }
               footer={
                 channels.length === 0 ? (
-                  <Button type="button" variant="accent" size="sm" onClick={handleAdd}>
+                  <Button
+                    type="button"
+                    variant="accent"
+                    size="sm"
+                    className={coarseHitAreaCls}
+                    onClick={handleAdd}
+                  >
                     Create channel
                   </Button>
                 ) : undefined

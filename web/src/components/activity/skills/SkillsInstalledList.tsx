@@ -1,6 +1,9 @@
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import {
   skillCategory,
   skillSourceKey,
@@ -97,9 +100,10 @@ export function SkillsInstalledList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${skill.name}`}
               onClick={() => onSelect(skill)}
             >
@@ -108,11 +112,11 @@ export function SkillsInstalledList({
                 label={statusLabel(skill)}
               />
               <span className="activity-row-title">{skill.name}</span>
-              <span className="activity-chip">{skillCategory(skill)}</span>
+              <Chip className="activity-chip">{skillCategory(skill)}</Chip>
               {source !== "installed" && (
-                <span className="activity-chip">{skillSourceLabel(skill)}</span>
+                <Chip className="activity-chip">{skillSourceLabel(skill)}</Chip>
               )}
-            </button>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

@@ -6,6 +6,7 @@ import { FormField } from "../../ui/FormField";
 import { Input } from "../../ui/Input";
 import { NativeSelect } from "../../ui/NativeSelect";
 import { Textarea } from "../../ui/Textarea";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { DraftFieldBaseProps, FieldOption } from "./types";
 
 interface TextFieldProps extends DraftFieldBaseProps {
@@ -28,6 +29,7 @@ interface TextAreaFieldProps extends DraftFieldBaseProps {
 }
 
 interface SelectFieldProps extends DraftFieldBaseProps {
+  name?: string;
   value: string;
   onChange: (value: string) => void;
   options: FieldOption[];
@@ -94,7 +96,7 @@ export function SecretField({
             variant="ghost"
             size="sm"
             dense
-            className="absolute inset-y-0 right-0 rounded-l-none px-3"
+            className={cn("absolute inset-y-0 right-0 rounded-l-none px-3", coarseHitAreaCls)}
             aria-label={revealed ? `Hide ${ariaLabel}` : `Show ${ariaLabel}`}
             aria-pressed={revealed}
             disabled={disabled}
@@ -178,6 +180,7 @@ export function TextAreaField({
 
 export function SelectField({
   label,
+  name,
   value,
   onChange,
   disabled,
@@ -189,6 +192,7 @@ export function SelectField({
       {({ id }) => (
         <NativeSelect
           id={id}
+          name={name}
           aria-label={ariaLabel}
           value={value}
           disabled={disabled}
@@ -259,6 +263,7 @@ export function TagsField({
                 variant="ghost"
                 size="icon"
                 className={cn(
+                  coarseHitAreaCls,
                   "min-h-5 w-5 rounded-full text-muted-foreground",
                   "hover:text-foreground",
                 )}

@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { Channel, ChannelStatus, ChannelType } from "../../../hooks/useIntegrations";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { Input } from "../../ui/Input";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import {
@@ -61,9 +65,9 @@ function SecretField({
   placeholder?: string;
 }) {
   return (
-    <label className="flex flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      <input
+      <Input
         type="password"
         className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         aria-label={label}
@@ -74,7 +78,7 @@ function SecretField({
         data-1p-ignore
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -251,9 +255,9 @@ export function ChannelDetailPanel({
                   />
                   {statusLabel(status)}
                 </div>
-                <span className="activity-chip">
+                <Chip className="activity-chip">
                   {CHANNEL_DISPLAY_NAMES[draft.channel_type]}
-                </span>
+                </Chip>
               </div>
               {status && (
                 <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
@@ -355,13 +359,15 @@ export function ChannelDetailPanel({
                 <code className="min-w-0 flex-1 truncate rounded bg-[var(--code-bg)] px-2 py-1 text-xs text-foreground">
                   {webhookUrl}
                 </code>
-                <button
+                <Button
                   type="button"
-                  className="min-h-8 rounded-md border border-border px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+                  variant="secondary"
+                  size="sm"
+                  className={`min-h-8 rounded-md border border-border px-2 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${coarseHitAreaCls}`}
                   onClick={() => void copyWebhookUrl()}
                 >
                   {copied ? "Copied" : "Copy"}
-                </button>
+                </Button>
               </div>
             </div>
           )}

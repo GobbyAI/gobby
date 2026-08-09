@@ -36,6 +36,54 @@ const AGENT_SURFACE_FILES = [
   'src/components/activity/agents/AgentsTabList.tsx',
   'src/components/agents/AgentPortfolioPage.tsx',
 ] as const
+const ACTIVITY_LIST_DETAIL_SURFACE_FILES = [
+  'src/components/activity/ActivityMcpTab.tsx',
+  'src/components/activity/CronTab.tsx',
+  'src/components/activity/FileChangesTab.tsx',
+  'src/components/activity/IntegrationsTab.tsx',
+  'src/components/activity/MemoryTab.tsx',
+  'src/components/activity/PlanReviewCard.tsx',
+  'src/components/activity/RulesTab.tsx',
+  'src/components/activity/SkillsTab.tsx',
+  'src/components/activity/StagesTab.tsx',
+  'src/components/activity/TasksTabDetailPanel.tsx',
+  'src/components/activity/TracesTab.tsx',
+  'src/components/activity/fields/KeyValueField.tsx',
+  'src/components/activity/integrations/ChannelDetailPanel.tsx',
+  'src/components/activity/integrations/ChannelsList.tsx',
+  'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+  'src/components/activity/memory/MemoryDetailPanel.tsx',
+  'src/components/activity/memory/MemoryTabList.tsx',
+  'src/components/activity/rules/RulesTabList.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+  'src/components/activity/skills/SkillsInstalledList.tsx',
+  'src/components/activity/stages/ProfilesList.tsx',
+  'src/components/activity/stages/StagesList.tsx',
+  'src/components/activity/taskdetail/TaskDetailKV.tsx',
+  'src/components/activity/taskdetail/TaskDetailRelationships.tsx',
+] as const
+const ACTIVITY_SELECT_FIELD_FILES = [
+  'src/components/activity/RulesTab.tsx',
+  'src/components/activity/SkillsTab.tsx',
+  'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+] as const
+const ACTIVITY_CHIP_ADOPTER_FILES = [
+  'src/components/activity/ActivityMcpTab.tsx',
+  'src/components/activity/integrations/ChannelDetailPanel.tsx',
+  'src/components/activity/integrations/ChannelsList.tsx',
+  'src/components/activity/memory/MemoryDetailPanel.tsx',
+  'src/components/activity/memory/MemoryTabList.tsx',
+  'src/components/activity/rules/RulesDetailPanel.tsx',
+  'src/components/activity/rules/RulesTabList.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+  'src/components/activity/skills/SkillsInstalledDetail.tsx',
+  'src/components/activity/skills/SkillsInstalledList.tsx',
+  'src/components/activity/stages/ProfileDetailPanel.tsx',
+  'src/components/activity/stages/ProfilesList.tsx',
+  'src/components/activity/stages/StageDetailPanel.tsx',
+  'src/components/activity/stages/StagesList.tsx',
+] as const
 const PIPELINE_SURFACE_FILES = [
   'src/components/activity/PipelinesTab.tsx',
   'src/components/activity/pipelines/PipelineEditor.tsx',
@@ -356,6 +404,26 @@ describe('style ratchet', () => {
       }
     }
     expect(scan.cssFiles).not.toContain('src/components/shared/SidebarPanel.css')
+  })
+
+  it('keeps swept activity lists and detail panels at zero raw-control debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of ACTIVITY_LIST_DETAIL_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+  })
+
+  it('keeps activity filter-panel selects on SelectField', () => {
+    for (const file of ACTIVITY_SELECT_FIELD_FILES) {
+      expect(readFileSync(file, 'utf8'), `${file} SelectField composition`).toMatch(/<SelectField\b/)
+    }
+  })
+
+  it('keeps activity metadata chip adopters on ui Chip', () => {
+    for (const file of ACTIVITY_CHIP_ADOPTER_FILES) {
+      expect(readFileSync(file, 'utf8'), `${file} Chip composition`).toMatch(/<Chip\b/)
+    }
   })
 
   it('keeps swept pipeline surfaces at zero raw-control and shared-style debt', () => {

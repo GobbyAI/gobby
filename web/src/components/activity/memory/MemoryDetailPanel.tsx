@@ -3,6 +3,8 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import {
   DetailPaneHeader,
   SelectField,
@@ -118,6 +120,7 @@ export function MemoryDetailPanel({
               type="button"
               variant="ghost"
               size="sm"
+              className={coarseHitAreaCls}
               aria-label="Restore memory"
               disabled={restoring}
               onClick={() => {
@@ -139,14 +142,19 @@ export function MemoryDetailPanel({
         </div>
       )}
       {actionError && (
-        <button
+        <Button
           type="button"
-          className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+          variant="destructive"
+          size="sm"
+          className={cn(
+            "w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm text-error",
+            coarseHitAreaCls,
+          )}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
           {actionError}
-        </button>
+        </Button>
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         <TextAreaField
@@ -193,14 +201,14 @@ export function MemoryDetailPanel({
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-[var(--bg-secondary)] p-3 text-xs">
           <dt className="text-muted-foreground">Scope</dt>
           <dd className="flex min-w-0 items-center gap-2 text-foreground">
-            <span
+            <Chip
               className={cn(
                 "activity-chip",
                 memory.is_global && "activity-chip--accent",
               )}
             >
               {memoryScopeLabel(memory)}
-            </span>
+            </Chip>
             <span className="truncate">
               {memory.is_global ? "Available across projects" : "Current project"}
             </span>

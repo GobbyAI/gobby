@@ -5,11 +5,13 @@ import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { SelectField } from "./fields";
 import {
   copyRuleWithRetry,
   formatRuleError,
@@ -53,70 +55,56 @@ function RulesFilterDropdown({
 }: RulesFilterDropdownProps) {
   return (
     <div className="activity-filter-panel">
-      <label className="activity-filter-panel__field">
-        <span>Event</span>
-        <select
-          aria-label="Filter by event"
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Event"
+          ariaLabel="Filter by event"
           value={filters.event}
-          onChange={(event) => onFiltersChange({ ...filters, event: event.target.value })}
-        >
-          <option value="">Any event</option>
-          {eventOptions.map((eventName) => (
-            <option key={eventName} value={eventName}>
-              {eventName}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="activity-filter-panel__field">
-        <span>Group</span>
-        <select
-          aria-label="Filter by group"
+          onChange={(event) => onFiltersChange({ ...filters, event })}
+          options={[
+            { value: "", label: "Any event" },
+            ...eventOptions.map((eventName) => ({ value: eventName, label: eventName })),
+          ]}
+        />
+      </div>
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Group"
+          ariaLabel="Filter by group"
           value={filters.group}
-          onChange={(event) => onFiltersChange({ ...filters, group: event.target.value })}
-        >
-          <option value="">Any group</option>
-          {groupOptions.map((group) => (
-            <option key={group} value={group}>
-              {group}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="activity-filter-panel__field">
-        <span>Source</span>
-        <select
-          aria-label="Filter by source"
+          onChange={(group) => onFiltersChange({ ...filters, group })}
+          options={[
+            { value: "", label: "Any group" },
+            ...groupOptions.map((group) => ({ value: group, label: group })),
+          ]}
+        />
+      </div>
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Source"
+          ariaLabel="Filter by source"
           value={filters.source}
-          onChange={(event) =>
+          onChange={(source) =>
             onFiltersChange({
               ...filters,
-              source: event.target.value as RulesFilters["source"],
+              source: source as RulesFilters["source"],
             })
           }
-        >
-          {RULE_SOURCE_OPTIONS.map((source) => (
-            <option key={source.value} value={source.value}>
-              {source.label}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="activity-filter-panel__field">
-        <span>Tag</span>
-        <select
-          aria-label="Filter by tag"
+          options={[...RULE_SOURCE_OPTIONS]}
+        />
+      </div>
+      <div className="activity-filter-panel__field">
+        <SelectField
+          label="Tag"
+          ariaLabel="Filter by tag"
           value={filters.tag}
-          onChange={(event) => onFiltersChange({ ...filters, tag: event.target.value })}
-        >
-          <option value="">Any tag</option>
-          {tagOptions.map((tag) => (
-            <option key={tag} value={tag}>
-              {tag}
-            </option>
-          ))}
-        </select>
-      </label>
+          onChange={(tag) => onFiltersChange({ ...filters, tag })}
+          options={[
+            { value: "", label: "Any tag" },
+            ...tagOptions.map((tag) => ({ value: tag, label: tag })),
+          ]}
+        />
+      </div>
       <div className="activity-filter-panel__footer">
         <span>Enforcement</span>
         <Switch
@@ -348,14 +336,16 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       )}
 
       {actionError && (
-        <button
+        <Button
           type="button"
-          className="rules-action-error"
+          variant="destructive"
+          size="sm"
+          className={cn("rules-action-error", coarseHitAreaCls)}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
           {actionError}
-        </button>
+        </Button>
       )}
 
       <div
@@ -373,6 +363,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
                 <Button
                   type="button"
                   size="sm"
+                  className={coarseHitAreaCls}
                   onClick={() => {
                     data.setSearch("");
                     data.setFilters(DEFAULT_RULE_FILTERS);

@@ -9,6 +9,8 @@ import {
   type PlanPendingVariant,
 } from '../chat/planPendingSurface'
 import { useIsMobile } from '../../hooks/useIsMobile'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface PlanReviewCardProps {
   plan: Plan
@@ -146,12 +148,14 @@ function RevisionHistory({
           const isCurrent = index === plan.currentVersionIndex
           return (
             <li key={index}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => onSetVersion(plan.id, index)}
                 aria-current={isCurrent ? 'true' : undefined}
                 className={cn(
-                  'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors pointer-coarse:min-h-11',
+                  'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                  coarseHitAreaCls,
                   isCurrent
                     ? 'bg-accent/10 font-medium text-foreground'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -159,7 +163,7 @@ function RevisionHistory({
               >
                 <span>Revision {index + 1}</span>
                 <span className="font-mono text-xs text-muted-foreground">{formatTime(v.timestamp)}</span>
-              </button>
+              </Button>
             </li>
           )
         })}

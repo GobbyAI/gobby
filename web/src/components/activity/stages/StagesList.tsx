@@ -1,6 +1,9 @@
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { StageEntry } from "./StagesTabData";
 
 interface StagesListProps {
@@ -48,9 +51,10 @@ export function StagesList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${stage.display_label}`}
               onClick={() => onSelect(stage)}
             >
@@ -59,9 +63,9 @@ export function StagesList({
                 label={stage.requires_human ? "Human review required" : "Automated stage"}
               />
               <span className="activity-row-title">{stage.display_label}</span>
-              <span className="activity-chip">{stage.category}</span>
-              <span className="activity-chip">{stage.name}</span>
-            </button>
+              <Chip className="activity-chip">{stage.category}</Chip>
+              <Chip className="activity-chip">{stage.name}</Chip>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

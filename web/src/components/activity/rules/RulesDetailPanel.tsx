@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { RuleDetail } from "../../../hooks/useRules";
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { SegmentedControl } from "../../ui/SegmentedControl";
 import {
@@ -287,7 +288,7 @@ export function RulesDetailPanel({
             />
             <div className="flex min-h-8 items-center gap-2">
               <span className="text-sm font-medium text-muted-foreground">Source</span>
-              <span className="activity-chip rules-detail__source">{detail.source}</span>
+              <Chip className="activity-chip rules-detail__source">{detail.source}</Chip>
             </div>
             <div className="rules-detail__readonly-grid">
               <ReadOnlySummary label="When" value={draft.when} />
