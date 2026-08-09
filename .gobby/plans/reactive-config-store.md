@@ -201,6 +201,16 @@ the configured pool, executes `LISTEN gobby_config_changed`, and is owned by
 notifications, revision gaps, and reconnects trigger full atomic reloads. Database
 restart causes bounded reconnect backoff followed by full reload before healthy status.
 
+Reconciliation is idempotent by revision. A notification whose revision is less than or
+equal to the active snapshot revision is a no-op, and one or more newer notifications
+coalesce into one reload to the latest committed revision. A local commit therefore
+reconciles exactly once even though the pool-exempt listener also receives its own
+`NOTIFY`.
+
+Subscriber registration is serialized with snapshot swapping. Registration returns the
+current active projection and its revision, and any revision committed during
+registration is reconciled before registration completes.
+
 Live activation uses a local prepare/commit protocol: every matching subscriber builds
 replacement state first; any preparation failure disposes prepared replacements and
 preserves all previous active state. Successful preparation permits no-fail reference
@@ -216,6 +226,7 @@ are rejected before persistence.
 - 1.4.3 - Subscriber preparation failure performs no swap and no database write. test: `tests/config/test_config_runtime.py::test_apply_failure_preserves_local_last_good_state`.
 - 1.4.4 - A second runtime receives remote revisions over the pool-exempt listener. test: `tests/config/test_config_runtime.py::test_remote_runtime_receives_revision_notification`.
 - 1.4.5 - Listener reconnect performs a full reload before health recovery. test: `tests/config/test_config_runtime.py::test_listener_reconnect_reloads_snapshot`.
+- 1.4.6 - Duplicate, current, and burst notifications reconcile at most once to the latest revision. test: `tests/config/test_config_runtime.py::test_notifications_are_idempotent_and_coalesced`.
 
 ## P2: Public and Machine Interfaces
 `kind: framing`
@@ -229,6 +240,7 @@ Targets:
 - `src/gobby/servers/routes/configuration_values.py::*` — scope-reason: replace duplicated validation and mutation behavior
 - `src/gobby/servers/routes/configuration_secrets.py::*` — scope-reason: route registered secret fields through universal patch semantics
 - `src/gobby/servers/routes/configuration.py::create_configuration_router`
+- `src/gobby/servers/websocket/broadcast.py::BroadcastMixin`
 - `tests/servers/routes/test_config_values_api.py`
 
 Provide:
@@ -246,12 +258,19 @@ Map stale revisions to 409 and validation errors to path-addressed 422 responses
 Structural embedding keys return `managed_activation_required` with
 `/api/embeddings/switch/start`. Remove reset and caller-controlled secrecy.
 
+Add one canonical `config_event` WebSocket message carrying only `{revision}`. Each
+daemon emits it once after ConfigRuntime finishes reconciling a newly observed revision;
+duplicate and current revisions emit nothing. Pending-restart and failed-live metadata
+reach clients through the values refetch the event triggers, so the event body never
+carries configuration content. Section 3.1 registers the publisher at startup.
+
 **Acceptance:**
 
 - 2.1.1 - Schema and values expose public registry metadata and masked desired/active state. test: `tests/servers/routes/test_config_values_api.py::test_public_schema_and_values_contract`.
 - 2.1.2 - PATCH enforces CAS, path validation, per-key unset, and managed activation. test: `tests/servers/routes/test_config_values_api.py::test_public_patch_contract`.
 - 2.1.3 - Public reads, errors, and events contain no secret plaintext. test: `tests/servers/routes/test_config_values_api.py::test_public_surfaces_redact_secrets`.
 - 2.1.4 - Reset and caller-supplied `is_secret` are absent. test: `tests/servers/routes/test_config_values_api.py::test_legacy_reset_and_secrecy_flags_are_removed`.
+- 2.1.5 - A newly reconciled revision emits exactly one revision-only `config_event` and duplicate revisions emit none. test: `tests/servers/routes/test_config_values_api.py::test_config_revision_event_contract`.
 
 ### 2.2 Preserve the authenticated Rust machine contract [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -306,7 +325,9 @@ Targets:
 Parse and validate the complete candidate before mutation. Reject bootstrap, restricted,
 unknown, and managed keys; restore masked secret references; resolve references for
 validation; run full Pydantic cross-field validation; then issue one CAS replacement for
-`namespace=daemon`.
+`namespace=daemon`. Each replacement request carries `expected_revision` and reuses the
+typed 409 conflict contract from universal PATCH, so a document edited against a stale
+revision requires an explicit refetch before resubmission.
 
 Omitted daemon settings restore defaults. UI preferences, credentials, operational data,
 domain records, and bootstrap remain untouched. Export desired daemon configuration with
@@ -318,6 +339,7 @@ masks/references. Prompt/domain bundles remain separate.
 - 2.4.2 - Valid replacement changes only the daemon namespace in one revision. test: `tests/servers/routes/test_config_yaml_replace.py::test_daemon_replacement_is_scoped_and_atomic`.
 - 2.4.3 - Omissions restore daemon defaults without clearing supplemental/domain state. test: `tests/servers/routes/test_config_yaml_replace.py::test_omissions_restore_only_daemon_defaults`.
 - 2.4.4 - Export round-trips without plaintext secret disclosure. test: `tests/servers/routes/test_config_yaml_replace.py::test_masked_export_round_trip`.
+- 2.4.5 - A stale-revision replacement returns 409 and leaves rows, secrets, and the revision untouched. test: `tests/servers/routes/test_config_yaml_replace.py::test_stale_revision_replacement_is_rejected`.
 
 ### 2.5 Migrate browser configuration state [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -331,6 +353,9 @@ Targets:
 - `web/src/components/app/useAppProjectSelection.ts::useAppProjectSelection`
 - `web/src/components/activity/MemoryTab.tsx::*` — scope-reason: replace direct configuration fetches and writes
 - `web/src/hooks/useWebSocketEvent.ts::useWebSocketEvent`
+- `web/src/components/settings/sections/configFields.tsx::*` — scope-reason: render activation class, pending-restart, and failed-live state on registered fields
+- `web/src/components/settings/sections/MemoryKnowledgeSection.tsx::EmbeddingsGroup`
+- `web/src/components/settings/sections/__tests__/configFieldActivation.test.tsx`
 - `web/src/hooks/__tests__/useConfiguration.revision.test.ts`
 - `web/src/hooks/__tests__/useSettings.test.ts::*` — scope-reason: update persistence expectations
 - `web/src/components/app/__tests__/useAppProjectSelection.test.tsx::*` — scope-reason: update project-selection persistence
@@ -340,12 +365,19 @@ the unsaved local draft, and require explicit resubmission. Coalesce higher-revi
 WebSocket events into one refetch. Remove specialized UI-setting, reset, launch-default,
 and approval-setting writes.
 
+Render activation state from the schema and values payloads section 2.1 already returns:
+each field shows its activation class, pending-restart keys show desired-versus-active
+values, and failed-live keys show their apply status. Managed keys route to the supplied
+managed action instead of generic PATCH. This deliverable adds no backend surface.
+
 **Acceptance:**
 
 - 2.5.1 - Every browser mutation includes the current revision. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::includes_revision_in_every_patch`.
 - 2.5.2 - Conflict refresh preserves unsaved edits and requires resubmission. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::preserves_draft_after_conflict`.
 - 2.5.3 - UI preferences and project selection use universal paths. test: `web/src/hooks/__tests__/useSettings.test.ts::persists_settings_through_config_patch`.
 - 2.5.4 - Higher WebSocket revisions trigger one coalesced refetch. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::coalesces_config_revision_events`.
+- 2.5.5 - Fields render their activation class and show desired-versus-active values for pending-restart keys. test: `web/src/components/settings/sections/__tests__/configFieldActivation.test.tsx::renders_activation_class_and_pending_restart_state`.
+- 2.5.6 - Failed-live keys surface apply status and managed keys route to the managed action. test: `web/src/components/settings/sections/__tests__/configFieldActivation.test.tsx::routes_managed_keys_and_shows_failed_live_status`.
 
 ### 2.6 Generate and consume the Rust runtime-config contract [category: code] (depends: 1.1, 2.2)
 `kind: deliverable`
@@ -405,6 +437,9 @@ Startup loads bootstrap topology, opens PostgreSQL, constructs the
 registry/store/runtime, loads the initial snapshot, then starts notifications before
 post-database services.
 
+Startup also registers the section 2.1 `config_event` publisher against ConfigRuntime so
+each reconciled revision reaches WebSocket clients exactly once.
+
 Add `config_runtime` to runner and `ServiceContainer`. Existing `config`, `config_store`,
 and `runner.config_store` references remain only until their dependent migration leaves
 complete; section 4.1 deletes them. No new consumer may use them.
@@ -414,6 +449,7 @@ complete; section 4.1 deletes them. No new consumer may use them.
 - 3.1.1 - Startup constructs exactly one ConfigRuntime before post-database services. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_constructs_one_runtime`.
 - 3.1.2 - Runner and ServiceContainer expose the same ConfigRuntime instance. test: `tests/runner_init/test_config_runtime_startup.py::test_context_shares_runner_runtime`.
 - 3.1.3 - Runtime notification lifecycle closes cleanly with daemon shutdown. test: `tests/runner_init/test_config_runtime_startup.py::test_runtime_closes_with_daemon`.
+- 3.1.4 - Startup registers the config event publisher and one reconciled revision emits one event. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_registers_config_event_publisher`.
 
 ### 3.2 Migrate generic policy consumers [category: code] (depends: 2.1, 3.1)
 `kind: deliverable`
@@ -472,12 +508,17 @@ clients, MCP proxy settings, chat limits, and other constructor-captured live se
 Each adapter prepares replacements without publishing, commits via no-fail reference swap,
 and drains old in-flight work.
 
+Registration uses the section 1.4 serialized handshake: each adapter hydrates from the
+active projection ConfigRuntime returns at registration, and a revision committed during
+registration reconciles before registration completes.
+
 **Acceptance:**
 
 - 3.4.1 - Matching changes prepare all replacements before any swap. test: `tests/config/test_stateful_config_subscribers.py::test_prepare_precedes_every_swap`.
 - 3.4.2 - Preparation failure disposes replacements and preserves all old services. test: `tests/config/test_stateful_config_subscribers.py::test_failed_prepare_keeps_last_good_services`.
 - 3.4.3 - Successful swaps drain old in-flight clients. test: `tests/config/test_stateful_config_subscribers.py::test_successful_swap_drains_old_client`.
 - 3.4.4 - API-key changes invalidate only dependent cached clients. test: `tests/config/test_stateful_config_subscribers.py::test_key_scoped_invalidation`.
+- 3.4.5 - A revision committed during registration leaves the subscriber at the newest revision exactly once. test: `tests/config/test_stateful_config_subscribers.py::test_registration_race_resolves_to_latest_revision`.
 
 ### 3.5 Migrate loops and lifecycle consumers [category: code] (depends: 3.1, 3.4)
 `kind: deliverable`
@@ -666,8 +707,8 @@ Targets:
 Start two isolated daemon-runtime worker processes against one temporary PostgreSQL
 schema. Each owns a separate pool and dedicated listener. Verify remote notification,
 local immediate reconciliation, CAS conflict, restart pending state, secret redaction,
-apply failure isolation, listener backend termination/reconnect, and latest-snapshot
-convergence.
+apply failure isolation, listener backend termination/reconnect, single-reconcile
+idempotency, and latest-snapshot convergence.
 
 Use isolated ports/state and never contact the user's running daemon.
 
@@ -676,6 +717,7 @@ Use isolated ports/state and never contact the user's running daemon.
 - 4.2.1 - A write through runtime A updates runtime B through PostgreSQL notification. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_remote_daemon_converges_after_commit`.
 - 4.2.2 - Forced listener termination reconnects and reloads the latest revision. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_listener_restart_recovers_latest_snapshot`.
 - 4.2.3 - Apply failure in one process changes neither committed desired state nor the other process's active state. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_apply_failure_is_process_local`.
+- 4.2.4 - A local commit reconciles once and its own notification invokes no subscriber again. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_local_commit_reconciles_once`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -721,7 +763,42 @@ Use isolated ports/state and never contact the user's running daemon.
   - V2 reordered: `gdaemon` is rebuilt before the identity generator runs, because
     `scripts/generate_schema_expected_identity.py` shells out to the installed binary.
     Added the catalog-manifest freshness test.
-- No enhancement or adversarial-review round has run.
+- No adversarial-review round has run.
+
+**Round 1** `kind: enhancement`
+
+- enhancer_run: a1ee360e-6f5d-43f9-91a4-33d18b89b843
+- enhancer_session: 6c84743c-249a-4d58-ac63-712fa85e23f8
+- converged: false
+- suggestions_presented: 6
+- accepted:
+  - E1 / better / notification idempotency and coalescing in 1.4, proved in 4.2
+  - E2 / better / assign the `config_event` WebSocket producer (narrowed form)
+  - E3 / bigger / render activation, pending-restart, failed-live, and managed routing in 2.5
+  - E4 / better / `expected_revision` and typed 409 on YAML replacement in 2.4
+  - E6 / better / serialize subscriber registration against snapshot swaps in 1.4/3.4
+- declined:
+  - E5 / better / explicit ConfigRuntime readiness transitions in 1.4
+- resolution_notes: >-
+  E1 added the idempotency/coalescing paragraph to 1.4 plus acceptance 1.4.6 and 4.2.4;
+  the pool-exempt listener receives its own `NOTIFY`, so the drafted design reconciled
+  every local commit twice. E2 was accepted in narrowed form: the enhancer's envelope
+  both emitted on failed-live-only changes and suppressed non-advancing revisions, which
+  is self-contradictory for a revision-only body. 2.1 now defines a `config_event`
+  carrying `{revision}` alone, emitted once per newly reconciled revision, with
+  pending-restart and failed-live metadata riding the values refetch it triggers;
+  acceptance 2.1.5 covers the contract and 3.1.4 covers startup registration, keeping the
+  P2-contract/P3-wiring split the plan already uses so 2.5 keeps its single 2.1
+  dependency. E3 extended 2.5 with `configFields.tsx` and
+  `MemoryKnowledgeSection.tsx::EmbeddingsGroup` targets and acceptance 2.5.5/2.5.6; the
+  managed-key half prevents a plain PATCH on `ai.embeddings.*` surfacing
+  `managed_activation_required` as a raw error. E4 added `expected_revision` and the
+  typed 409 to 2.4 plus acceptance 2.4.5; a CAS with no specified expected value is not a
+  CAS. E6 added the serialized registration handshake to 1.4 (where ConfigRuntime owns
+  it) and 3.4 (where adapters consume it) plus acceptance 3.4.5. E5 was declined: 1.4.5
+  already asserts full reload before health recovery, and a reason-carrying readiness
+  object implies a health surface this plan does not scope. Acceptance items went from 79
+  to 87; the companion ledger and registry `plan_hash` were regenerated to match.
 
 ## V2: Verification
 `kind: verification`
