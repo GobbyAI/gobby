@@ -59,6 +59,9 @@ registered Gobby runtime keys.
   column drop.
 - Multiple daemons connected to one remote hub receive revisions through a dedicated
   pool-exempt PostgreSQL notification connection.
+- Remote-hub multi-daemon deployments require the existing shared-passphrase secret KEK
+  posture; a daemon that cannot prove the shared KEK/DEK identity fails closed before
+  ready.
 - #19650 and #17769 retain auth identity/API-key ownership. Final raw-access deletion
   waits for their auth-owned consumers to use the restricted typed API.
 - No wholesale reset API, durable change log, compatibility layer, or full pytest run.
@@ -111,11 +114,19 @@ Registry startup rejects overlaps, unclassified mapping leaves, unknown public k
 bootstrap/runtime ownership conflicts, and restricted-key exposure. Generate JSON Schema
 metadata for namespace, secrecy, visibility, activation, and machine export.
 
+Dynamic path segments use one canonical lossless codec: UTF-8 percent-encoding that
+escapes at least `%` and `.` inside a segment. Registry pattern matching, dotted
+ConfigStore keys, HTTP/MCP/YAML paths, browser state, and the generated Rust contract
+all apply the same codec, so operator-controlled identifiers containing dots, percent
+signs, slashes, spaces, or child-field-like text never change logical paths or collide
+during flatten/unflatten or cross-language matching.
+
 **Acceptance:**
 
 - 1.1.1 - Every non-bootstrap daemon leaf resolves to exactly one spec. test: `tests/config/test_config_registry.py::test_every_daemon_leaf_has_one_spec`.
 - 1.1.2 - Every mapping leaf has an explicit non-overlapping pattern adapter. test: `tests/config/test_config_registry.py::test_mapping_patterns_are_complete`.
 - 1.1.3 - Public and machine schemas expose only their declared visibility classes. test: `tests/config/test_config_registry.py::test_visibility_partitions_are_disjoint`.
+- 1.1.4 - Dynamic segments containing dots, percent signs, slashes, or spaces round-trip losslessly through every dynamic family without collisions. test: `tests/config/test_config_registry.py::test_dynamic_segment_codec_round_trip`.
 
 ### 1.2 Extend baseline 375 with revisioned configuration state [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -196,12 +207,20 @@ revision when the secret payload changes even if its reference string remains st
 Startup reconciles registered `is_secret` metadata without changing effective values and
 fails closed on unknown residual rows.
 
+Complete-snapshot reads are single-snapshot coherent: `ConfigRepository` opens one
+read-only `REPEATABLE READ` transaction before its first query and reads `config_state`,
+every registered row, row revisions, and secret bindings inside it. A row revision above
+the captured global revision is rejected as torn, so a writer committing between
+snapshot queries can never produce a mixed snapshot whose metadata claims the wrong
+revision.
+
 **Acceptance:**
 
 - 1.3.1 - Concurrent writers sharing an expected revision yield one commit and one typed conflict. test: `tests/storage/test_revisioned_config_store.py::test_compare_and_swap_serializes_writers`.
 - 1.3.2 - Values, unsets, secret payloads, row revisions, global revision, and notification commit atomically. test: `tests/storage/test_revisioned_config_store.py::test_mutation_is_one_transaction`.
 - 1.3.3 - Invalid candidates leave configuration, secrets, revision, and notifications untouched. test: `tests/storage/test_revisioned_config_store.py::test_invalid_candidate_has_no_side_effects`.
 - 1.3.4 - No-op and secret-rotation behavior follows the effective-change rule. test: `tests/storage/test_revisioned_config_store.py::test_effective_change_controls_revision`.
+- 1.3.5 - A paused reader with a concurrent committed writer returns a wholly old or wholly new snapshot, never a mix. test: `tests/storage/test_revisioned_config_store.py::test_snapshot_read_is_repeatable_read_coherent`.
 
 ### 1.4 Add ConfigRuntime and remote-daemon notifications [category: code] (depends: 1.3)
 `kind: deliverable`
@@ -215,6 +234,29 @@ Targets:
 Add frozen `ConfigSnapshot`, `ConfigChange`, `ApplyFailure`, prepared-subscriber
 interfaces, and `ConfigRuntime`. Snapshots contain revision, typed desired and active
 projections, row revisions, pending-restart keys, and failed-live keys.
+
+Snapshots additionally carry private, non-serializable desired and active secret
+bindings with content fingerprints. Failed preparation preserves the previous active
+binding, and machine and subscriber consumers resolve secrets through the active
+binding rather than current storage, so a same-reference rotation whose activation
+failed locally never exposes the unactivated payload through that daemon.
+
+The configuration service boundary is async. Blocking repository reads and subscriber
+constructor work run off-loop through the existing bounded database/work executor, and
+local commits hand results back through an awaitable thread-safe handoff. A deadline
+expiry quarantines and disposes the late synchronous result when it eventually
+completes, so a blocking read or hung constructor can never stall `LISTEN` progress,
+PATCH completion, or daemon shutdown.
+
+Activation publishes one immutable runtime-active bundle containing the active snapshot
+epoch and every replaceable service reference. Subscribers prepare a replacement bundle;
+`ConfigRuntime` publishes a single pointer swap, and every request, policy decision, and
+loop captures that pointer once per operation, so a multi-key revision is always
+observed as one complete old or new epoch.
+
+On a remote hub, `ConfigRuntime` verifies a non-secret KEK/DEK identity fingerprint
+before reporting ready and fails closed on mismatch, so a daemon that cannot unwrap the
+shared secret envelope never becomes healthy.
 
 A dedicated `psycopg.AsyncConnection` comes from a pool-exempt hub factory that applies
 `SET ROLE gobby_daemon_runtime` — matching the pool's least-privilege session identity —
@@ -235,7 +277,11 @@ notifications, reconnect reloads, and subscriber registration. A notification wh
 revision is less than or equal to the active snapshot revision is a no-op, one or more
 newer notifications coalesce into one reload to the latest committed revision, and the
 published revision is rechecked after every awaited I/O so a delayed older reload or
-preparation result is discarded rather than published. A local commit therefore
+preparation result is discarded rather than published. A superseded preparation is
+discarded through bounded cleanup: unfinished work is cancelled, every completed
+replacement is disposed exactly once, no failed-live metadata is recorded for the
+obsolete revision, and the maximum-requested-revision watermark reconciles afterward.
+A local commit therefore
 reconciles exactly once even though the pool-exempt listener also receives its own
 `NOTIFY`, and no path can publish an older snapshot over a newer one or invoke
 subscribers twice for one revision.
@@ -268,6 +314,11 @@ are rejected before persistence.
 - 1.4.6 - Duplicate, current, and burst notifications reconcile at most once to the latest revision. test: `tests/config/test_config_runtime.py::test_notifications_are_idempotent_and_coalesced`.
 - 1.4.7 - The pool-exempt listener runs under the daemon runtime role and receives notifications, reconnects, and closes under it. test: `tests/config/test_config_runtime.py::test_listener_assumes_runtime_role`.
 - 1.4.8 - A delayed older reload completing after a newer one is discarded and never published. test: `tests/config/test_config_runtime.py::test_out_of_order_reload_is_discarded`.
+- 1.4.9 - Failed preparation after a same-reference secret rotation preserves the previous active secret binding and consumers never observe the unactivated payload. test: `tests/config/test_config_runtime.py::test_failed_apply_preserves_active_secret_binding`.
+- 1.4.10 - Blocking repository or constructor work runs off-loop, and a late result arriving after its deadline is quarantined and disposed without stalling LISTEN or shutdown. test: `tests/config/test_config_runtime.py::test_blocking_work_is_bounded_and_quarantined`.
+- 1.4.11 - A successful preparation superseded by a newer revision is disposed exactly once and records no failed-live metadata. test: `tests/config/test_config_runtime.py::test_superseded_preparation_is_disposed`.
+- 1.4.12 - Snapshot and service references publish as one bundle pointer and no forced interleaving observes a mixed epoch. test: `tests/config/test_config_runtime.py::test_active_bundle_swap_is_atomic`.
+- 1.4.13 - Remote-hub startup verifies the KEK/DEK identity fingerprint and a mismatched daemon fails closed before ready. test: `tests/config/test_config_runtime.py::test_kek_mismatch_fails_closed`.
 
 ## P2: Public and Machine Interfaces
 `kind: framing`
@@ -280,6 +331,7 @@ Targets:
 - `src/gobby/servers/routes/configuration_context.py::*` — scope-reason: expose ConfigRuntime to configuration routes
 - `src/gobby/servers/routes/configuration_values.py::*` — scope-reason: replace duplicated validation and mutation behavior
 - `src/gobby/servers/routes/configuration_secrets.py::*` — scope-reason: route registered secret fields through universal patch semantics
+- `src/gobby/servers/routes/configuration_generation_endpoints.py::*` — scope-reason: migrate probe-gated endpoint activation to one revisioned typed mutation including its secret
 - `src/gobby/servers/routes/configuration.py::create_configuration_router`
 - `src/gobby/servers/websocket/broadcast.py::BroadcastMixin`
 - `tests/servers/routes/test_config_values_api.py`
@@ -299,6 +351,16 @@ Map stale revisions to 409 and validation errors to path-addressed 422 responses
 Structural embedding keys return `managed_activation_required` with
 `/api/embeddings/switch/start`. Remove reset and caller-controlled secrecy.
 
+Persistence and activation outcomes are distinct: when persistence succeeds but local
+activation fails, PATCH returns committed success carrying the new revision plus
+`failed_live_keys` and apply-status metadata, so callers never retry into an immediate
+conflict. 5xx responses are reserved for indeterminate persistence.
+
+Probe-gated generation-endpoint activation moves onto this surface: after probing, it
+commits values and the endpoint secret as one revisioned typed mutation through the
+universal service and performs no raw ConfigStore, secret-store, or runtime-config
+writes.
+
 Add one canonical `config_event` WebSocket message carrying only `{revision}`. Each
 daemon emits it once after ConfigRuntime finishes reconciling a newly observed revision;
 duplicate and current revisions emit nothing. Pending-restart and failed-live metadata
@@ -312,6 +374,8 @@ carries configuration content. Section 3.1 registers the publisher at startup.
 - 2.1.3 - Public reads, errors, and events contain no secret plaintext. test: `tests/servers/routes/test_config_values_api.py::test_public_surfaces_redact_secrets`.
 - 2.1.4 - Reset and caller-supplied `is_secret` are absent. test: `tests/servers/routes/test_config_values_api.py::test_legacy_reset_and_secrecy_flags_are_removed`.
 - 2.1.5 - A newly reconciled revision emits exactly one revision-only `config_event` and duplicate revisions emit none. test: `tests/servers/routes/test_config_values_api.py::test_config_revision_event_contract`.
+- 2.1.6 - A committed mutation whose local activation fails returns success with the new revision and failed-live metadata, never a retryable generic error. test: `tests/servers/routes/test_config_values_api.py::test_apply_failure_returns_committed_metadata`.
+- 2.1.7 - Generation-endpoint activation commits one revisioned typed mutation including its secret and performs no raw writes. test: `tests/servers/routes/test_config_values_api.py::test_endpoint_activation_uses_typed_mutation`.
 
 ### 2.2 Preserve the authenticated Rust machine contract [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -322,7 +386,9 @@ Targets:
 
 Keep `/api/config/effective` returning flat dotted `{"config": {...}}` from the active
 snapshot. Select keys through registry machine visibility and resolve allowed secret
-references to plaintext for authenticated binaries. Keep `Cache-Control: no-store` and
+references to plaintext for authenticated binaries through the snapshot's active secret
+binding — never by re-resolving the reference from current storage — so machine output
+returns only payloads that actually activated. Keep `Cache-Control: no-store` and
 existing runtime-token authorization.
 
 Keep `/api/config/service-capabilities`, agent-claims authorization, and response schema.
@@ -336,6 +402,7 @@ registration — moves to snapshot input.
 - 2.2.2 - Public-only and restricted-only keys are excluded from machine output. test: `tests/servers/routes/test_configuration_effective_routes.py::test_effective_config_uses_machine_visibility`.
 - 2.2.3 - Effective config requires the runtime token and disables caching. test: `tests/servers/routes/test_configuration_effective_routes.py::test_effective_config_auth_and_cache_contract`.
 - 2.2.4 - Service capabilities retain agent authorization and active-snapshot behavior. test: `tests/servers/routes/test_configuration_effective_routes.py::test_service_capabilities_use_active_snapshot`.
+- 2.2.5 - Machine output serves the activated secret payload and never an unactivated rotated payload. test: `tests/servers/routes/test_configuration_effective_routes.py::test_machine_output_uses_active_secret_binding`.
 
 ### 2.3 Replace MCP configuration tools [category: code] (depends: 1.4, 2.1)
 `kind: deliverable`
@@ -345,7 +412,9 @@ Targets:
 - `tests/mcp_proxy/tools/test_config_values.py`
 
 Retain the module and expose only `get_config_schema`, `get_config_values`, and
-`patch_config_values`. Reuse the same service and errors as HTTP. Every mutation requires
+`patch_config_values`. Reuse the same service and errors as HTTP, including the
+committed-with-apply-failure result: a patch that persists but fails local activation
+returns success with the new revision and failed-live metadata. Every mutation requires
 `expected_revision`.
 
 **Acceptance:**
@@ -353,6 +422,7 @@ Retain the module and expose only `get_config_schema`, `get_config_values`, and
 - 2.3.1 - MCP and HTTP return equivalent schema, values, and patch results. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_wraps_universal_config_service`.
 - 2.3.2 - MCP patch requires revision and preserves secret/managed policies. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_requires_revision`.
 - 2.3.3 - Raw get/set/delete/batch/list/default-seeding tools are absent. test: `tests/mcp_proxy/tools/test_config_values.py::test_legacy_config_tools_are_removed`.
+- 2.3.4 - An MCP patch whose local activation fails reports committed success with failed-live metadata. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_reports_apply_status`.
 
 ### 2.4 Make YAML a validate-first daemon-namespace replacement [category: code] (depends: 1.4, 2.1)
 `kind: deliverable`
@@ -368,7 +438,9 @@ unknown, and managed keys; restore masked secret references; resolve references 
 validation; run full Pydantic cross-field validation; then issue one CAS replacement for
 `namespace=daemon`. Each replacement request carries `expected_revision` and reuses the
 typed 409 conflict contract from universal PATCH, so a document edited against a stale
-revision requires an explicit refetch before resubmission.
+revision requires an explicit refetch before resubmission. A replacement that persists
+but fails local activation reuses the committed-success contract with the new revision
+and failed-live metadata.
 
 Omitted daemon settings restore defaults. UI preferences, credentials, operational data,
 domain records, and bootstrap remain untouched. Export desired daemon configuration with
@@ -381,6 +453,7 @@ masks/references. Prompt/domain bundles remain separate.
 - 2.4.3 - Omissions restore daemon defaults without clearing supplemental/domain state. test: `tests/servers/routes/test_config_yaml_replace.py::test_omissions_restore_only_daemon_defaults`.
 - 2.4.4 - Export round-trips without plaintext secret disclosure. test: `tests/servers/routes/test_config_yaml_replace.py::test_masked_export_round_trip`.
 - 2.4.5 - A stale-revision replacement returns 409 and leaves rows, secrets, and the revision untouched. test: `tests/servers/routes/test_config_yaml_replace.py::test_stale_revision_replacement_is_rejected`.
+- 2.4.6 - A replacement that persists but fails local activation reports committed success with failed-live metadata. test: `tests/servers/routes/test_config_yaml_replace.py::test_replacement_reports_apply_status`.
 
 ### 2.5 Migrate browser configuration state [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -456,7 +529,8 @@ Targets:
 
 Generate a deterministic checked-in JSON contract from registry machine specs, including
 exact keys/patterns, defaults, secrecy, and activation metadata. Python CI regenerates and
-byte-compares it.
+byte-compares it. The contract and Rust pattern matching use the section 1.1 canonical
+dynamic-segment codec, byte-identically with Python.
 
 Rust effective-config validation consumes this asset instead of `MANAGED_CONFIG_KEYS`. In
 Gobby daemon or hub mode:
@@ -479,6 +553,7 @@ both crates declare their new test submodule from the existing `config/tests.rs`
 - 2.6.2 - Rust rejects machine keys absent from the generated contract. test: `crates/gcore/src/config/tests/runtime_contract.rs::rejects_unregistered_machine_key`.
 - 2.6.3 - Gobby runtime mode ignores env/standalone precedence for registered keys. test: `crates/gcode/src/config/tests/runtime_contract.rs::gobby_mode_uses_registry_authority`.
 - 2.6.4 - Direct hub fallback resolves multiple service families from one revision-coherent snapshot and resolves secrets. test: `crates/gcode/src/config/tests/runtime_contract.rs::hub_fallback_reads_atomic_snapshot`.
+- 2.6.5 - Rust and Python encode and match delimiter-containing dynamic segments byte-identically. test: `crates/gcode/src/config/tests/runtime_contract.rs::dynamic_segment_codec_matches_python`.
 
 ## P3: Consumer Migration and Activation
 `kind: framing`
@@ -527,6 +602,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/voice.py::*` — scope-reason: replace raw vocabulary persistence and in-memory config mutation with the typed API
 - `src/gobby/servers/routes/attention.py::*` — scope-reason: replace services.config policy reads with runtime snapshots
 - `src/gobby/servers/routes/sessions/core.py::*` — scope-reason: replace services.config policy reads with runtime snapshots
+- `src/gobby/servers/routes/configuration_validation_detection.py::*` — scope-reason: replace ServiceContainer.config reads with runtime snapshots
 - `tests/config/test_live_policy_consumers.py`
 
 Read one typed snapshot per policy decision. Move global rules, approvals, launch
@@ -539,6 +615,7 @@ lifecycle behavior.
 - 3.2.2 - Approval policy and launch defaults use typed registered paths. test: `tests/config/test_live_policy_consumers.py::test_approval_and_launch_defaults_are_registered`.
 - 3.2.3 - Specialized setting writers disappear while domain CRUD remains. test: `tests/config/test_live_policy_consumers.py::test_only_specialized_setting_writers_are_removed`.
 - 3.2.4 - Voice vocabulary persists through the typed API and attention/session routes read runtime snapshots. test: `tests/config/test_live_policy_consumers.py::test_voice_and_route_consumers_use_runtime`.
+- 3.2.5 - Validation-detection preview reads the runtime snapshot instead of `ServiceContainer.config`. test: `tests/config/test_live_policy_consumers.py::test_validation_detection_uses_runtime_snapshot`.
 
 ### 3.3 Separate restart-bound topology consumers [category: code] (depends: 3.1)
 `kind: deliverable`
@@ -550,10 +627,18 @@ Targets:
 - `src/gobby/servers/http.py::*` — scope-reason: capture auth_mode from BootstrapConfig at construction
 - `tests/config/test_restart_config_consumers.py`
 
-Daemon/WS/UI ports, bind addresses, service bind address, daemon URL, database URL, and
-pool sizing come from bootstrap. CORS, test mode, WebSocket enablement, UI
-lifecycle, database services, telemetry, and memory backend come from the startup active
-snapshot and do not mutate running topology.
+Daemon/WS/UI ports, bind addresses, service bind address, daemon URL, and database URL
+come from bootstrap. CORS, test mode, WebSocket enablement, UI lifecycle, database
+services, telemetry, and memory backend come from the startup active snapshot and do not
+mutate running topology.
+
+Database capacity uses two-stage startup. Bootstrap `postgres_pool` supplies connection
+and acquisition policy plus a fixed minimal pool sufficient to load ConfigRuntime. After
+the initial active snapshot, `database_concurrency.pool_max_size` and
+`executor_max_workers` apply from that one revision — resizing the pool and sizing
+executors before post-database services construct. Later `database_concurrency.*`
+changes stay pending until the next startup, matching their restart-required
+registration.
 
 Interim `auth_mode` ownership moves fully to bootstrap: HTTP construction captures it
 from `BootstrapConfig` instead of `ServiceContainer.config`, hook preflight keeps its
@@ -561,14 +646,22 @@ bootstrap read, the installer remains the only writer, and the runtime registry 
 the key. #19650 §2.2 deletes the field; this deliverable only relocates the read it
 would otherwise strand.
 
+Cross-plan ordering is recorded as expansion edges, never prose alone: at expansion,
+#19650 gains blocked-by dependencies on the leaves created from sections 1.2 and 3.3, so
+the auth plan's overlapping bootstrap, HTTP, baseline, and identity edits cannot run
+before or concurrently with them, and the section 4.3 deferral task depends on #19650.
+The expansion handoff verifies the resulting cross-plan chain is acyclic before
+dispatch.
+
 **Acceptance:**
 
 - 3.3.1 - Process topology reads only `BootstrapConfig`. test: `tests/config/test_restart_config_consumers.py::test_topology_uses_bootstrap_only`.
 - 3.3.2 - Restart-class writes do not mutate running servers or middleware. test: `tests/config/test_restart_config_consumers.py::test_restart_changes_remain_pending`.
 - 3.3.3 - Restart activates desired settings on the next startup snapshot. test: `tests/config/test_restart_config_consumers.py::test_restart_promotes_desired_to_active`.
 - 3.3.4 - `auth_mode` resolves only from bootstrap across installer write, hook preflight, and HTTP construction, and is absent from the registry. test: `tests/config/test_restart_config_consumers.py::test_auth_mode_is_bootstrap_owned`.
+- 3.3.5 - Startup sizes the pool and executors from the initial active revision after the fixed minimal bootstrap pool, and later concurrency changes stay pending until restart. test: `tests/config/test_restart_config_consumers.py::test_two_stage_pool_and_executor_sizing`.
 
-### 3.4 Add live stateful service subscribers [category: code] (depends: 3.1)
+### 3.4 Add live stateful service subscribers [category: code] (depends: 3.1, 3.3)
 `kind: deliverable`
 
 Targets:
@@ -579,8 +672,10 @@ Targets:
 
 Implement focused subscriber adapters for cached providers, model clients, embedding
 clients, MCP proxy settings, chat limits, and other constructor-captured live settings.
-Each adapter prepares replacements without publishing, commits via no-fail reference swap,
-and drains old in-flight work.
+Each adapter prepares its replacement entry for the section 1.4 runtime-active bundle
+without publishing; `ConfigRuntime` commits the whole revision as one bundle-pointer
+swap, and old in-flight work drains afterward. No consumer observes a mix of old and
+new service references within one revision.
 
 Registration uses the section 1.4 serialized handshake: each adapter hydrates from the
 active projection ConfigRuntime returns at registration, and a revision committed during
@@ -601,6 +696,7 @@ work within the same bounds.
 - 3.4.5 - A revision committed during registration leaves the subscriber at the newest revision exactly once. test: `tests/config/test_stateful_config_subscribers.py::test_registration_race_resolves_to_latest_revision`.
 - 3.4.6 - Preparation timeout disposes replacements, preserves last-good services, and records failed-live keys. test: `tests/config/test_stateful_config_subscribers.py::test_preparation_timeout_preserves_last_good`.
 - 3.4.7 - Shutdown cancels in-flight preparation and drain within bounds and a drain failure never rolls back active state. test: `tests/config/test_stateful_config_subscribers.py::test_shutdown_cancels_subscriber_work`.
+- 3.4.8 - Forced thread interleaving across a multi-key revision never observes a mixed service/snapshot epoch. test: `tests/config/test_stateful_config_subscribers.py::test_no_mixed_epoch_under_interleaving`.
 
 ### 3.5 Migrate loops and lifecycle consumers [category: code] (depends: 3.1, 3.4)
 `kind: deliverable`
@@ -617,9 +713,10 @@ Targets:
 - `src/gobby/servers/_app_routes.py::*` — scope-reason: replace route-construction config access
 - `tests/config/test_runtime_loop_consumers.py`
 
-Long-lived loops read one active snapshot at iteration boundaries. Lifecycle and route
-initialization receive either ConfigRuntime or an explicitly captured startup active
-projection according to activation policy.
+Long-lived loops capture the runtime-active bundle pointer once per iteration and read
+snapshot and services from that one epoch. Lifecycle and route initialization receive
+either ConfigRuntime or an explicitly captured startup active projection according to
+activation policy.
 
 **Acceptance:**
 
@@ -633,6 +730,7 @@ projection according to activation policy.
 
 Targets:
 - `src/gobby/config/embedding_keys.py::*` — scope-reason: make canonical registry paths the only persisted namespace
+- `src/gobby/ai/embedding_switch.py::*` — scope-reason: persist a completed-switch record that survives journal deletion
 - `src/gobby/ai/embedding_switch_service.py::EmbeddingSwitchCoordinator`
 - `src/gobby/ai/embedding_switch_runner.py::*` — scope-reason: replace fresh config loads throughout switch execution
 - `src/gobby/cli/installers/embedding.py::*` — scope-reason: use typed runtime snapshots during installation
@@ -647,10 +745,16 @@ invalidates embedding clients.
 Managed structural revisions converge on every daemon. The committed configuration
 revision is tied to the existing embedding lifecycle journal: a runtime observing a
 managed structural revision — locally or over notification — verifies the completed
-switch against the journal, promotes active structural values only after the shared
-aliases are ready, and rebuilds dependent embedding clients. Restart recovery resolves
-each journal phase from ConfigRuntime plus the journal, so a crash at the flip or commit
-boundary converges to either the old or the new structural state, never a mix.
+switch, promotes active structural values only after the shared aliases are ready, and
+rebuilds dependent embedding clients. Restart recovery resolves each journal phase from
+ConfigRuntime plus the journal, so a crash at the flip or commit boundary converges to
+either the old or the new structural state, never a mix.
+
+Completion evidence survives journal cleanup: `complete_switch` currently deletes the
+journal, so completion also persists a compact completed record — run ID, committed
+revision, and target aliases — that survives GC and is retained until the next managed
+switch supersedes it. A remote daemon that reloads after the journal is gone verifies
+the committed structural revision against that record, including after reconnect.
 
 **Acceptance:**
 
@@ -659,6 +763,7 @@ boundary converges to either the old or the new structural state, never a mix.
 - 3.6.3 - Switch recovery reads ConfigRuntime instead of rebuilding configuration. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_switch_recovery_uses_runtime_snapshot`.
 - 3.6.4 - API-key rotation is live and invalidates the embedding client. test: `tests/storage/test_embedding_switch_config_contract.py::test_api_key_rotation_is_live`.
 - 3.6.5 - A remote runtime observing a managed structural revision verifies the journal, promotes after aliases are ready, and rebuilds clients; crash recovery at any journal phase converges without a mixed state. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_managed_revision_converges_across_runtimes`.
+- 3.6.6 - A remote daemon reloading after journal deletion verifies the persisted completed record and converges, including after reconnect. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_remote_catchup_after_journal_gc`.
 
 ### 3.7 Replace load_full_config_from_db and every caller [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -786,8 +891,9 @@ reads/writes outside the enumerated auth-owned seam, loader imports/re-exports, 
 mutable config fields, specialized writer routes, unregistered production keys,
 registry-pattern gaps, generated-contract drift, and Gobby-mode Rust env/standalone
 precedence. The audit enumerates the known migrated sites — runner lifecycle, shutdown,
-subsystem, and readiness modules, voice MCP tools, attention and session routes — and
-the section 2.5 browser-authority audit runs in the same gate.
+subsystem, and readiness modules, voice MCP tools, attention and session routes, and the
+generation-endpoint and validation-detection configuration routes — and the section 2.5
+browser-authority audit runs in the same gate.
 
 Update operator documentation for public, machine, bootstrap, revision, activation,
 secret, YAML, and embedding contracts.
@@ -812,6 +918,10 @@ local immediate reconciliation, CAS conflict, restart pending state, secret reda
 apply failure isolation, listener backend termination/reconnect, single-reconcile
 idempotency, and latest-snapshot convergence.
 
+The workers use distinct daemon homes with the existing shared-passphrase KEK posture,
+proving remote secret activation across homes, per-daemon secret-binding isolation on
+failed activation, and fail-closed readiness for a wrong-key daemon.
+
 Use isolated ports/state and never contact the user's running daemon.
 
 **Acceptance:**
@@ -821,24 +931,40 @@ Use isolated ports/state and never contact the user's running daemon.
 - 4.2.3 - Apply failure keeps the committed desired revision, only the failing daemon retains its old active state, and the other daemon independently activates the committed revision. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_apply_failure_is_process_local`.
 - 4.2.4 - A local commit reconciles once and its own notification invokes no subscriber again. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_local_commit_reconciles_once`.
 - 4.2.5 - A managed embedding switch on daemon A converges daemon B, and a crash at the flip or commit boundary recovers to a coherent structural state. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_managed_switch_converges_across_daemons`.
+- 4.2.6 - Two daemons with distinct homes and the shared-passphrase posture converge on a remote API-key rotation. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_remote_secret_rotation_with_shared_kek`.
+- 4.2.7 - A wrong-key daemon fails closed and never reports healthy. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_wrong_kek_daemon_fails_closed`.
+- 4.2.8 - A same-reference rotation with one failing daemon proves per-daemon payload isolation and public redaction. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_same_reference_rotation_failure_isolation`.
 
 ### 4.3 Delete auth-owned raw configuration access [category: code] (depends: 4.1)
-`kind: deliverable`
+`kind: deferred`
 
-Targets:
-- `src/gobby/storage/config_store.py::*` — scope-reason: delete the remaining auth-owned raw access seam
-- `tests/config/test_config_authority_audit.py`
+Deletes the raw ConfigStore get/set/batch/delete/reset/default APIs once the #19650
+auth consumers use the restricted typed API, then reruns the section 4.1 audit without
+the auth-owned seam allowance (`tests/config/test_config_authority_audit.py`). The
+original obligations: 4.3.1 — raw ConfigStore access APIs are absent and the audit
+passes without the seam allowance; 4.3.2 — auth consumers read and write credentials
+only through the restricted typed API.
 
-Delete the raw ConfigStore get/set/batch/delete/reset/default APIs once the #19650
-auth consumers use the restricted typed API. At expansion this leaf gains an enforceable
-task-graph blocker on #19650; prose alone does not gate execution. #17769 carries no
-blocker by explicit decision: its consumers do not exist yet and are born onto the
-restricted typed API this plan provides (typed deferral, see V1 Round 1).
+This work is deferred because it is gated on external auth work that a manifest entry
+cannot encode. The deferral task is created at expansion, parented under epic #19645 as
+its tail work, labeled `deferred-from:reactive-config-store:4.3`, and blocked by both
+#19650 and the leaf created from section 4.1. #17769 carries no blocker by explicit
+decision: its consumers do not exist yet and are born onto the restricted typed API
+this plan provides.
 
-**Acceptance:**
-
-- 4.3.1 - Raw ConfigStore access APIs are absent and the audit runs without the auth-owned seam allowance. test: `tests/config/test_config_authority_audit.py::test_no_raw_config_store_access_remains`.
-- 4.3.2 - Auth consumers read and write credentials only through the restricted typed API. test: `tests/config/test_config_authority_audit.py::test_auth_consumers_use_restricted_typed_api`.
+```yaml
+deferral:
+  task_ref: "#0"
+  reason: >-
+    Final raw-access deletion is gated on #19650 auth consumers adopting the
+    restricted typed API; an in-plan manifest entry cannot encode an external
+    task dependency. The task_ref is a placeholder until expansion creates the
+    epic-parented tail task.
+  owner: "backend-developer"
+  original_acceptance_items:
+    - "4.3.1"
+    - "4.3.2"
+```
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -968,6 +1094,45 @@ restricted typed API this plan provides (typed deferral, see V1 Round 1).
 ```json plan-review-round
 {"evidence_id":"d0659591-035c-460e-aae8-0c74a98a15b3","plan_hash":"e5567cf63afbad5d518c778cb83a7e68cb7b233f03f369b3647ec02f44d2c28c","round_number":1,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"49b9456f4870ef3ab9f049a9a43b31d753c73be8e1b790123bf0569d2d4e47fd","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":4,"emitted_findings":15,"total":19},"evidence_id":"d0659591-035c-460e-aae8-0c74a98a15b3","lanes":[{"candidate_count":4,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":7,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":8,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":22,"manifest_digest":"781e65d8454cdc5d329884d532f4ec741a3836b95cf8b8866d47093f8967a2de","status":"valid"},"source_digest":"224c4440552f5a21b38c0047b46b7c6ded483f62530e2c216d3eb393b66f57de","version":1},"findings":[{"category":"unhandled-edge","check_key":"apply-failure-state-consistency","description":"Acceptance 1.4.3 says subscriber preparation failure performs no database write, while the constraints require committed desired state to survive an apply failure without compensation. Acceptance 4.2.3 also reads as preventing the committed desired change and successful activation in the other process.","finding_id":"APR1-001","fix":"Rewrite 1.4.3 so desired state and revision remain committed, the failing daemon performs no active swap or compensating write, and failed-live metadata is recorded. Rewrite 4.2.3 so only the failing daemon retains its old active state while another daemon independently activates the committed revision when preparation succeeds.","location":"P1 §1.4 and P4 §4.2","prevention":"For each apply failure, state the database desired value and revision, the failing daemon active value, other daemon active values, emitted event, and failure metadata.","principle":"Every failure-path acceptance item must preserve the governing desired-state, revision, and per-process active-state transitions.","root_cause":"The acceptance text conflates pre-persistence validation failure with post-commit live-activation failure.","section_id":"1.4","severity":"blocking"},{"category":"bad-sequencing","check_key":"contract-producer-dependencies","description":"Section 2.3 reuses the HTTP service and errors, section 2.4 reuses the universal PATCH 409 contract, and section 3.1 registers the section 2.1 publisher, yet none depends on 2.1. Expansion can schedule each consumer before its contract exists.","finding_id":"APR1-002","fix":"Add `2.1` to the dependency lists of sections 2.3, 2.4, and 3.1.","location":"P2 §§2.3–2.4 and P3 §3.1","prevention":"For every cross-section reference, identify the producing leaf and add a direct or transitive dependency before manifest derivation.","principle":"A leaf that consumes a contract owned by another leaf must depend on the contract-producing leaf.","root_cause":"Sections 2.3, 2.4, and 3.1 retained their 1.4 dependency after they began consuming section 2.1 service, error, and event contracts.","section_id":"2.3","severity":"blocking"},{"category":"bad-sequencing","check_key":"external-cutover-blockers","description":"Raw-access deletion is required to wait for #19650 and #17769, but #19645 has no blockers, #19650 is open, and #17769 is blocked. Section 4.1 can therefore execute and delete auth-owned access before its consumers migrate.","finding_id":"APR1-003","fix":"Split 4.1 into an auth-independent audit leaf and a raw-access deletion leaf. Before expansion, add enforceable blockers from the cutover work to #19650 and #17769, name both refs in the deletion leaf, and keep final deletion acceptance on that blocked leaf.","location":"P4 §4.1","prevention":"Before expansion, verify that every external prerequisite named with wait/after language is represented by a task dependency or a deferred cutover leaf.","principle":"Destructive final cutover must be guarded by enforceable dependencies rather than prose.","root_cause":"The plan names auth prerequisites globally, while #19645 and the 4.1 manifest path carry no dependency on the open auth work.","section_id":"4.1","severity":"blocking"},{"category":"missing-requirement","check_key":"cross-language-authority-audit","description":"The root task requires every production configuration read/write path to migrate, but the authority audit cannot detect remaining browser direct reads, specialized writers, reset calls, or revisionless mutations. `web/src/__tests__/App.test.tsx` still pins the specialized UI-settings contract and is absent from Targets.","finding_id":"APR1-004","fix":"Add a TypeScript browser-authority audit target and acceptance item that rejects direct configuration fetches, specialized writers, reset endpoints, and mutations outside the revision-carrying client. Add `web/src/__tests__/App.test.tsx::*` to section 2.5 and include the audit in V2.","location":"P2 §2.5 and P4 §4.1","prevention":"Inventory and audit Python, Rust, TypeScript/browser, generated assets, and integration mocks whenever a legacy authority is removed.","principle":"A whole-repository authority cutover needs an exhaustive audit for every production language and client surface.","root_cause":"The final audit specifies Python AST and generated Rust checks but leaves browser TypeScript coverage to selected behavioral tests.","section_id":"4.1","severity":"blocking"},{"category":"weak-testability","check_key":"schema-identity-generation-path","description":"`generate_schema_expected_identity.py` prefers `~/.gobby/bin/gdaemon`, while `cargo build` produces `target/release/gdaemon`. The catalog test writes only with `UPDATE_GCORE_SCHEMA_MANIFEST`, and without a configured isolated database it skips. The stated sequence can therefore use stale identity and catalog bytes even though `root_hash()` includes the catalog.","finding_id":"APR1-005","fix":"Specify this deterministic order in 1.2/V2: update `BASELINE_CHECKSUM`; regenerate the catalog against an isolated PostgreSQL database with `UPDATE_GCORE_SCHEMA_MANIFEST=1`; build release `gdaemon`; run `uv run python scripts/generate_schema_expected_identity.py --gdaemon target/release/gdaemon`; then rerun catalog freshness without update mode and both identity contracts.","location":"P1 §1.2 and V2","prevention":"Trace each generated artifact to its actual writer, required environment, exact binary argument, and non-update verification command.","principle":"A regeneration recipe must select the newly built producer binary and invoke every write path whose bytes contribute to the asserted identity.","root_cause":"The recipe assumes `cargo build` changes the generator's default binary and treats a conditional freshness test as the catalog generator.","section_id":"1.2","severity":"blocking"},{"category":"traceability","check_key":"rust-fallback-fanin-target","description":"`Context::resolve_services` currently invokes independent resolver paths that perform per-key reads. The promised one-revision repeatable-read fallback cannot be implemented across service families without changing `crates/gcode/src/config/context.rs`, which is absent from section 2.6 Targets.","finding_id":"APR1-006","fix":"Add `crates/gcode/src/config/context.rs::*` with a scope reason for fallback transaction fan-in. Specify one read-only REPEATABLE READ transaction that captures `config_state.revision` and all machine-visible rows once, resolves every service from that immutable map, and returns the captured revision; extend the Rust test across multiple service families.","location":"P2 §2.6","prevention":"For each coherent-snapshot promise, trace every resolver to the highest shared caller and target that caller explicitly.","principle":"Exact Targets must include the fan-in where a promised cross-consumer transaction boundary is established.","root_cause":"The plan targets individual Rust service resolvers while omitting the context fan-in that calls them independently.","section_id":"2.6","severity":"blocking"},{"category":"traceability","check_key":"alternate-authority-adjacent-callers","description":"Current production consumers outside all exact Targets still read `runner.config` or write raw/specialized settings, including runner lifecycle/readiness modules, voice MCP tools, generation-endpoint routes, install/embedding key inventories, and session-start agent defaults. Section 4.1 would either break those paths or leave alternate authorities.","finding_id":"APR1-007","fix":"Add the verified runner lifecycle, shutdown, subsystem, readiness, voice, generation-endpoint, install-state, embeddings, and session-start modules to the appropriate sections 2.1/2.3/3.1–3.5. Make 4.1 depend on their migration and require its audit to enumerate these known sites before deleting fields and facade methods.","location":"P3 consumer leaves and P4 §4.1","prevention":"Run a class-wide caller/consumer sweep for each deleted symbol and assign every result to an exact earlier Target before final cutover.","principle":"A deletion leaf may run only after every constructor, reader, writer, and test seam for the deleted surface has an owned migration target.","root_cause":"The caller inventory stopped before several runner lifecycle/readiness modules and specialized raw writers.","section_id":"4.1","severity":"blocking"},{"category":"missing-requirement","check_key":"auth-mode-ownership","description":"`auth_mode` is currently parsed and written in bootstrap configuration and read by hooks before database access, but the plan excludes it from bootstrap ownership and never registers or migrates it. Registry conflict checks and final loader removal would leave an undefined trust-boundary input.","finding_id":"APR1-008","fix":"Retain `auth_mode` as a BootstrapConfig-owned field: add it to the bootstrap ownership list, exclude it from the runtime registry, keep installer persistence bootstrap-scoped, and make HTTP startup capture it from BootstrapConfig. Add ownership tests covering installer, hook preflight, and HTTP construction.","location":"Constraints, P1 §1.1, and P3 bootstrap migration","prevention":"Compare every BootstrapConfig field and pre-database consumer against the ownership list before registry compilation.","principle":"Every pre-database trust-boundary input must have one explicit owner and activation policy.","root_cause":"The exclusive BootstrapConfig list omits the existing `auth_mode` field without assigning or migrating its installer, hook, and HTTP consumers.","section_id":"1.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"baseline-receipt-refresh-path","description":"The existing-hub reapply acceptance cannot pass with the current repository. A previous checksum never reaches baseline application, and even a forced path would collide on the existing receipt. `crates/gcore/src/schema/runner.rs` is also absent from Targets.","finding_id":"APR1-009","fix":"Add `crates/gcore/src/schema/runner.rs::*` to 1.2. Recognize only the exact predecessor `baseline@375` receipt as refreshable, apply the idempotent baseline, replace/upsert that receipt in the same transaction, and continue rejecting arbitrary checksum or filename mismatches. Test successful predecessor refresh, receipt replacement, data preservation, and corrupt-receipt rejection.","location":"P1 §1.2","prevention":"Trace the exact old-receipt state through classification, DDL execution, and receipt commit before claiming in-place baseline refresh.","principle":"A claimed schema refresh path must be reachable from the current classifier and replace its existing receipt atomically.","root_cause":"The current runner classifies any checksum-mismatched baseline-375 receipt as `CorruptPartial`, and `apply_baseline` inserts rather than replaces the existing version-375 receipt.","section_id":"1.2","severity":"blocking"},{"category":"unhandled-edge","check_key":"listener-runtime-role","description":"Opening the LISTEN connection directly from `conninfo` runs under the login role rather than the fixed daemon runtime role used by pooled connections. Tests with an owner DSN can pass while production least-privilege behavior remains untested.","finding_id":"APR1-010","fix":"Add the exact PostgreSQL adapter target needed to expose a dedicated async runtime connection factory, or apply and assert `SET ROLE gobby_daemon_runtime` before `LISTEN`. Test `current_user`, notification receipt, reconnect, and closure under the production runtime role.","location":"P1 §1.4 and P3 §3.1","prevention":"For every connection outside a configured pool, verify application name, role assumption, current-user assertion, timeout, and close behavior.","principle":"Pool-exempt database connections must preserve the daemon pool's least-privilege session identity.","root_cause":"`PostgresHubDatabase.conninfo` contains connection parameters but not the pool's `SET ROLE gobby_daemon_runtime` configure/check hooks.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"listen-startup-catchup","description":"A revision committed after the initial snapshot read and before LISTEN acknowledgement is permanently missed until another revision happens. The daemon can start post-database services with stale configuration.","finding_id":"APR1-011","fix":"Require ConfigRuntime startup and reconnect to await connection establishment and LISTEN acknowledgement, then perform a full revision-coherent reload before readiness or consumer construction. Add a deterministic commit-in-the-window test that converges without a later notification.","location":"P1 §1.4, P3 §3.1, and P4 §4.2","prevention":"For every lossy notification channel, test a commit in each read/register and reconnect/register window.","principle":"Notification consumers must close the initial snapshot-to-subscription race before becoming ready.","root_cause":"Startup reads the snapshot first and registers LISTEN second without a post-LISTEN catch-up read.","section_id":"3.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"reconciliation-monotonic-serialization","description":"Concurrent reloads or preparations can complete out of order, publish an older snapshot, invoke subscribers twice, or emit stale `config_event` callbacks despite revision-based coalescing.","finding_id":"APR1-012","fix":"Specify one ConfigRuntime reconciliation mutex plus a maximum-requested-revision watermark shared by local commits, LISTEN notifications, reconnects, and registration. Recheck the published revision after awaited I/O, discard stale reload/preparation results, and add delayed out-of-order reload and registration-race tests.","location":"P1 §1.4 with P3 §§3.1/3.4","prevention":"Enumerate all reconciliation entry points and test delayed older work completing after newer work.","principle":"Every asynchronous publication path for revisioned state must share one monotonic serialization rule.","root_cause":"Only subscriber registration is explicitly serialized; local commits, notification reloads, reconnect reloads, and registration catch-up can overlap.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"subscriber-work-bounds","description":"A hung provider constructor or client drain can stall PATCH completion, LISTEN progress, later revisions, and shutdown. After a successful swap, an old-resource drain failure also has no defined effect on the published snapshot.","finding_id":"APR1-013","fix":"Add named per-subscriber preparation and disposal deadlines. Preparation timeout must dispose completed replacements, preserve old active state, and record affected keys. Publish the new snapshot before bounded old-resource drain; drain failure must never roll back active state. Add timeout and shutdown-cancellation tests.","location":"P1 §1.4 and P3 §3.4","prevention":"For every subscriber phase, specify deadline, cancellation cleanup, active-state effect, failure metadata, and shutdown ownership.","principle":"One live subscriber must not be able to block global configuration convergence or daemon shutdown indefinitely.","root_cause":"Prepare-all and old-resource drain phases have no deadlines, cancellation contract, or post-swap drain failure policy.","section_id":"3.4","severity":"blocking"},{"category":"missing-requirement","check_key":"managed-multidaemon-activation","description":"When daemon A completes an embedding switch, daemon B receives the managed structural revision but has no specified authorization, active-state promotion, client invalidation, or recovery path. Generic rejection rules do not define how an already-committed managed revision converges.","finding_id":"APR1-014","fix":"Tie the committed configuration revision to the existing embedding lifecycle journal. Define how local and remote runtimes verify the completed switch, promote active structural values after shared aliases are ready, rebuild dependent clients, and recover each existing journal phase after restart. Add two-daemon switch convergence and crash-at-flip/commit-boundary tests.","location":"P1 §1.4, P3 §3.6, and P4 §4.2","prevention":"For every managed mutation, trace local commit, remote notification, remote active transition, restart recovery, and crash boundaries.","principle":"A shared managed revision needs deterministic activation and recovery semantics on every daemon that observes it.","root_cause":"The switch coordinator is daemon-local, while its structural configuration commit is hub-wide and the remote reconciliation path is unspecified.","section_id":"3.6","severity":"blocking"},{"category":"unhandled-edge","check_key":"browser-event-catchup","description":"A `config_event` emitted while the socket is disconnected is lost, and a higher event arriving during an in-flight refetch can be dropped by simple request coalescing. The browser can remain indefinitely stale.","finding_id":"APR1-015","fix":"Track the maximum observed configuration revision, refetch whenever the WebSocket reconnects, ignore responses older than the rendered revision, and issue a trailing refetch whenever a response revision is below the observed watermark. Add both race tests.","location":"P2 §§2.1/2.5","prevention":"Test mutation while disconnected and a higher event arriving during every in-flight refetch.","principle":"A client using a non-durable event stream must reconcile from authoritative revisioned state after disconnects and overlapping fetches.","root_cause":"The browser coalesces observed events but has no reconnect refetch or maximum-revision watermark.","section_id":"2.5","severity":"blocking"}],"reviewer_session":"9f29efe8-b48a-4c38-86da-bcaed09b52e7","round":1,"round_number":1,"verdict":"needs_review"},"session_id":"a05c50fe-9266-4c23-8944-e17d5ef6ffed"}
 ```
+
+**Round 2** `kind: verification`
+
+- reviewer_run: beb9e352-48d3-44d4-bc4c-a354b897aaf3
+- reviewer_session: 85c4e853-aed5-4ca3-bbf5-00e978cf4c24
+- verdict: needs_review
+- findings:
+- APR2-001/blocking/§4.3 external blocker and #17769 deferral were prose-only and unenforceable
+- APR2-002/blocking/generation-endpoint and validation-detection routes were untargeted raw consumers
+- APR2-003/blocking/no cross-plan edges ordered #19650 against the 1.2 and 3.3 leaves
+- APR2-004/blocking/§§3.3 and 3.4 shared http.py::* with no dependency between them
+- APR2-005/blocking/switch completion deletes the journal remote verification relied on
+- APR2-006/blocking/same-reference secret rotation could expose an unactivated payload after failed apply
+- APR2-007/blocking/Python snapshot reads lacked an isolation protocol
+- APR2-008/blocking/async listener plus sync repository had no executor boundary or late-result policy
+- APR2-009/blocking/dynamic key segments had no canonical lossless encoding
+- APR2-010/blocking/multi-daemon remote hubs lacked a shared KEK posture and fail-closed readiness
+- APR2-011/blocking/§3.3 assigned pool sizing to bootstrap, stranding registered database_concurrency keys
+- APR2-012/blocking/superseded successful preparations were discarded without disposal
+- APR2-013/blocking/multi-reference swaps plus separate snapshot publication allowed mixed epochs
+- APR2-014/blocking/no committed-with-apply-failure response contract on HTTP/MCP/YAML
+- resolution_notes: All 14 findings accepted with one user amendment: the §4.3 deferral
+  task is created at expansion and parented under epic #19645 as tail work rather than
+  free-floating. §4.3 converted to a kind: deferred section (dangling task_ref until
+  expansion); §3.4 now depends on 3.3; §2.1 gained the generation-endpoints target,
+  typed activation, and the committed-with-apply-failure contract mirrored in §§2.3/2.4;
+  §3.2 gained the validation-detection target; §3.6 gained the embedding_switch.py
+  target and a GC-surviving completed record; §1.1 gained the dynamic-segment codec with
+  Rust parity in §2.6; §1.3 gained REPEATABLE READ snapshot reads; §1.4 gained secret
+  bindings, the async executor boundary, superseded-preparation disposal, the
+  runtime-active bundle, and KEK fingerprint readiness; §3.3 gained two-stage pool
+  sizing and cross-plan expansion edges; §4.2 gained distinct-home KEK, rotation, and
+  isolation tests. Acceptance items went from 103 to 121 deliverable items (4.3's two
+  moved into the deferral); the ledger and registry plan_hash were regenerated to match.
+
+```json plan-review-round
+{"evidence_id":"8a8c3f53-0228-4c5c-bcd3-1fcca2683115","plan_hash":"1e1a682306d693d979ecb0c03db46af39bfa9fa831668858d9453c84c97fb6c6","round_number":2,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"552c862cc8180d050d9074dfc3a7e5e68959c80b8015424cf2aec73eb4054574","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":1,"emitted_findings":14,"total":15},"evidence_id":"8a8c3f53-0228-4c5c-bcd3-1fcca2683115","lanes":[{"candidate_count":3,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":2,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":10,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":23,"manifest_digest":"95e2896d04d4191b3cfd1a019e9d87201909d9d4883a0910896106a0369c1dc4","status":"valid"},"source_digest":"be8d2e3f4cbde146ada8250a68b77a330eb0f939f1daaebc5e020444d062a697","version":1},"findings":[{"category":"bad-sequencing","causal_finding_id":"APR1-003","causal_section_ids":["4.1","4.3"],"check_key":"external-cutover-blockers","description":"The derived 4.3 entry depends only on 4.1; it cannot encode #19650. The claimed #17769 typed deferral is also absent, so neither round-1 sequencing promise is enforceable.","finding_id":"APR2-001","fix":"Change 4.3 to a formal deferred section for 4.3.1/4.3.2 backed by a dedicated open raw-access-deletion task labeled `deferred-from:reactive-config-store:4.3` and blocked by #19650. Remove the #17769 typed-deferral claim because no current acceptance item belongs to its future consumers, then regenerate the ledger.","introduced_in_round":1,"location":"P4 §4.3","prevention":"For every external wait/after requirement, inspect the derived entry and the live prerequisite task for an actual dependency or valid deferral before approval.","principle":"Destructive cutover prerequisites must be represented by enforceable task state.","root_cause":"The repair describes an external blocker and a typed deferral in prose, while the manifest only supports internal section dependencies and the artifact contains no deferred section.","section_id":"4.3","severity":"blocking"},{"category":"traceability","causal_finding_id":"APR1-007","causal_section_ids":["3.2","4.1"],"check_key":"alternate-authority-adjacent-callers","description":"`configuration_generation_endpoints.py` still performs raw ConfigStore, secret, and runtime-config writes, while `configuration_validation_detection.py` still reads `ServiceContainer.config`; neither file is targeted.","finding_id":"APR2-002","fix":"Add `configuration_generation_endpoints.py::*` to 2.1 and migrate probe-gated activation to one revisioned typed mutation including secret handling. Add `configuration_validation_detection.py::*` to the generic snapshot-consumer leaf. Add focused acceptance tests and enumerate both modules in 4.1's audit.","introduced_in_round":1,"location":"P2 §2.1, P3 consumer migration, and P4 §4.1","prevention":"Expand each router/factory registration fan-out and assign every raw reader, writer, and mutable-config replacement to an exact target before cutover.","principle":"Final authority deletion must own every registered production reader and writer before the audit runs.","root_cause":"The round-1 caller repair added several adjacent modules but skipped two subroutes registered by the configuration router.","section_id":"4.1","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"APR1-008","causal_section_ids":["Constraints","3.3"],"check_key":"cross-plan-interim-ownership-sequencing","description":"The plan says #19650 deletes `auth_mode` later, yet #19650 can run before or concurrently with 1.2/3.3 and edit the same files. The 4.3-only blocker does not establish the required earlier half of the sequence.","finding_id":"APR2-003","fix":"At expansion, make #19650 depend on the created 1.2 and 3.3 leaves, and make the dedicated deferred raw-access-deletion task from APR2-001 depend on #19650. Record those external edges in a typed expansion handoff and verify the resulting acyclic chain before dispatch.","introduced_in_round":1,"location":"P1 §1.2, P3 §3.3, and external plan #19650 §2.2","prevention":"For every interim ownership amendment, build the complete predecessor → external task → cleanup chain and inspect overlapping targets before expansion.","principle":"An interim owner and its later deleting plan need an acyclic, enforceable cross-plan sequence.","root_cause":"The approved interim auth_mode relocation and #19650 deletion touch the same bootstrap, HTTP, baseline, and identity surfaces without graph edges ordering those edits.","section_id":"3.3","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"APR1-008","causal_section_ids":["3.3"],"check_key":"shared-target-serialization","description":"Sections 3.3 and 3.4 both target `src/gobby/servers/http.py::*` and both depend only on 3.1, so expansion may dispatch conflicting file-wide edits concurrently.","finding_id":"APR2-004","fix":"Add 3.3 to 3.4's dependencies so bootstrap/auth construction lands before stateful subscriber rewiring, then keep `http.py::*` ownership sequential.","introduced_in_round":1,"location":"P3 §§3.3–3.4","prevention":"After every target-list repair, sweep duplicate target paths and verify a dependency path or exact non-overlapping symbols for each pair.","principle":"Independent leaves with a shared file-wide target must be sequenced or partitioned.","root_cause":"Adding the interim HTTP auth-mode capture to 3.3 created a second `http.py::*` owner beside 3.4 without adding a dependency.","section_id":"3.4","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR1-014","causal_section_ids":["3.6","4.2"],"check_key":"managed-journal-retention","description":"A remote daemon can reload the committed structural revision after the switch journal has been deleted, leaving no run/revision evidence with which to perform the promised verification.","finding_id":"APR2-005","fix":"Add `src/gobby/ai/embedding_switch.py::*` to 3.6. Persist a compact completed record containing run ID, committed revision, and target aliases through GC and retain it until the next managed switch supersedes it. Test remote catch-up after journal cleanup and reconnect.","introduced_in_round":1,"location":"P3 §3.6 and P4 §4.2","prevention":"Trace managed evidence through local commit, GC, remote delayed reload, reconnect, and next-switch replacement; target every persistence model involved.","principle":"Remote managed activation needs durable evidence that survives missed notifications and coordinator cleanup.","root_cause":"The repair relies on the lifecycle journal for remote verification, while the existing completion path deletes that journal and the journal module is absent from 3.6 Targets.","section_id":"3.6","severity":"blocking"},{"category":"unhandled-edge","check_key":"secret-rotation-active-binding","description":"When secret rotation commits under the same reference and preparation fails locally, the old active reference resolves to new desired plaintext. The failing daemon can therefore use or return a payload it never activated.","finding_id":"APR2-006","fix":"Store private non-serializable desired and active secret bindings with content fingerprints in each coherent snapshot. Preserve the previous active binding on failed preparation, make machine/subscriber consumers use that binding, and add a two-daemon same-reference rotation failure test proving public redaction and per-daemon payload isolation.","location":"P1 §§1.3–1.4, P2 §2.2, and P4 §4.2","prevention":"For every secret transition, compare desired reference, desired payload version, active reference, active payload version, subscriber state, and machine output on success and failure.","principle":"Last-good active state must bind the exact secret payload that successfully activated.","root_cause":"Active state retains a stable secret reference, while same-reference rotation overwrites the referenced payload and machine output resolves it from current storage.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"python-snapshot-isolation","description":"Under ordinary READ COMMITTED behavior, a writer can commit between the global-revision and row/secret queries, producing a mixed snapshot whose metadata claims the wrong revision.","finding_id":"APR2-007","fix":"Require `ConfigRepository` to open one read-only REPEATABLE READ transaction before its first query and read `config_state`, all registered rows, row revisions, and secret bindings inside it. Reject row revisions above the captured global revision and add the deterministic paused-reader race test.","location":"P1 §§1.3–1.4 and P3 §3.1","prevention":"Pause between every multi-query snapshot step, commit a concurrent writer, and prove the result is wholly old or wholly new.","principle":"A revisioned snapshot must read its revision, rows, row revisions, and secret bindings from one database snapshot.","root_cause":"Python complete-snapshot reads promise coherence without an isolation or locking protocol, unlike the explicit Rust REPEATABLE READ path.","section_id":"1.3","severity":"blocking"},{"category":"unhandled-edge","check_key":"config-sync-async-boundary","description":"A blocking read or constructor can stall LISTEN progress and PATCH, while timing out its wrapper cannot stop late synchronous work from leaking resources or extending shutdown.","finding_id":"APR2-008","fix":"Make the configuration service boundary async and route remaining blocking repository/constructor operations through the existing bounded database/work executor. Use an awaitable thread-safe handoff for local commits, quarantine and dispose late results, and test event-loop progress, worker-thread commits, and hung-constructor shutdown.","location":"P1 §1.4, P2 §§2.1/2.3, and P3 §§3.1/3.4","prevention":"For every sync/async seam, specify executor ownership, loop handoff, timeout cancellation, late completion disposal, and shutdown behavior.","principle":"Async readiness, deadlines, and shutdown guarantees require an explicit boundary around blocking storage and constructor work.","root_cause":"The plan combines an async listener with current synchronous repository and service-construction surfaces without defining off-loop execution, cross-thread signaling, or late-result quarantine.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"dynamic-key-segment-codec","description":"Identifiers containing dots, percent signs, slashes, spaces, or child-field-like text can change logical paths or collide during flatten/unflatten and cross-language matching.","finding_id":"APR2-009","fix":"Define canonical UTF-8 percent-encoding for dynamic path segments, including `%` and `.`, and use it in registry matching, dotted storage, HTTP/MCP/YAML/browser paths, and Rust generation. Add collision and byte-equivalent Python/Rust round-trip tests for every dynamic family.","location":"P1 §§1.1/1.3, P2 interfaces, and P4 §4.1","prevention":"Round-trip every dynamic family through storage, HTTP/MCP, YAML, browser state, and generated Rust using adversarial delimiter-containing identifiers.","principle":"Dynamic identifiers need one lossless canonical encoding across every configuration representation.","root_cause":"Dotted primary keys and nested JSON/YAML treat dots structurally, while dynamic placeholders admit operator-controlled names and commands with no segment grammar or escaping.","section_id":"1.1","severity":"blocking"},{"category":"missing-requirement","check_key":"remote-secret-key-posture","description":"Separate daemon homes can attach to the same hub yet fail to unwrap the same DEK, breaking remote secret activation and authenticated machine output without a defined readiness failure.","finding_id":"APR2-010","fix":"Require the existing shared-passphrase KEK posture for remote-hub multi-daemon mode, verify a non-secret KEK/DEK identity fingerprint before ConfigRuntime becomes ready, and fail closed on mismatch. Extend 4.2 with distinct homes, successful remote API-key rotation, and a wrong-key worker that never becomes healthy.","location":"P1 runtime startup, P2 §2.2, and P4 §4.2","prevention":"Run remote-hub secret tests with distinct daemon homes and verify both correct-key convergence and wrong-key fail-closed readiness.","principle":"Every daemon sharing encrypted hub secrets must prove a common decrypting key posture before runtime readiness.","root_cause":"The existing secret envelope defaults to daemon-local KEK material, while multi-daemon convergence does not specify shared provisioning or mismatch behavior.","section_id":"4.2","severity":"blocking"},{"category":"missing-requirement","check_key":"bootstrap-runtime-pool-ownership","description":"Implementing the current prose either strands registered `database_concurrency.*` keys or requires reading them before the database capacity needed to load ConfigRuntime is established.","finding_id":"APR2-011","fix":"Specify two-stage startup: bootstrap `postgres_pool` supplies connection/acquisition policy and a fixed minimal pool; after the initial active snapshot, apply `database_concurrency.pool_max_size` and `executor_max_workers` from that one revision before post-database services construct. Test initial loading, coherent resize, and pending restart changes.","location":"Constraints and P3 §§3.1/3.3","prevention":"Map every bootstrap pool field and every runtime concurrency field to startup stage, owner, and activation point before consumer migration.","principle":"Bootstrap capacity must load runtime configuration, and the startup active revision must own final restart-bound capacity.","root_cause":"Section 3.3 assigns pool sizing to bootstrap even though `database_concurrency.pool_max_size` and executor capacity are registered restart-required runtime settings.","section_id":"3.3","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR1-012","causal_section_ids":["1.4"],"check_key":"superseded-preparation-cleanup","description":"A successful preparation for revision N that becomes stale when N+1 is requested can be discarded without closing its clients, sockets, or workers.","finding_id":"APR2-012","fix":"Route superseded preparation through bounded cleanup: cancel unfinished work, dispose every completed replacement exactly once, omit failed-live metadata for the obsolete revision, then reconcile the maximum watermark. Add an N/N+1 delayed-completion test.","introduced_in_round":1,"location":"P1 §1.4 and P3 §3.4","prevention":"Enumerate success, failure, timeout, cancellation, and superseded outcomes for every preparation and assert disposal ownership in each.","principle":"Every prepared resource that cannot publish must be disposed exactly once within bounds.","root_cause":"The monotonic repair discards stale preparation results, while cleanup is specified only for preparation failure and timeout.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"active-epoch-atomicity","description":"A multi-key revision can expose a new snapshot with old services or a mixture of old and new service references even though all replacements were prepared first.","finding_id":"APR2-013","fix":"Introduce one immutable runtime-active bundle containing the active snapshot epoch and all replaceable service references. Subscribers prepare a replacement bundle and ConfigRuntime publishes one pointer; every request, policy decision, and loop captures that pointer once. Add forced thread-interleaving tests.","location":"P1 §1.4 and P3 §§3.4–3.5","prevention":"Force reader interleavings at every commit boundary and prove each operation observes one complete old or new epoch.","principle":"Configuration and constructor-captured services activated by one revision must become visible as one local epoch.","root_cause":"The plan swaps several mutable service references and publishes `ConfigSnapshot` separately, while synchronous consumers can read between those operations.","section_id":"3.4","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR1-001","causal_section_ids":["1.4","4.2"],"check_key":"postcommit-apply-response","description":"A local apply failure can commit desired state and revision, yet callers have no defined response. A generic error invites a retry that immediately conflicts and obscures that persistence succeeded.","finding_id":"APR2-014","fix":"Return normal committed success with the new revision plus `failed_live_keys`/apply-status metadata from HTTP, MCP, and YAML replacement when persistence succeeds but activation fails. Reserve 5xx for indeterminate persistence and add interface contract tests.","introduced_in_round":1,"location":"P1 §1.4 and P2 §§2.1/2.3/2.4","prevention":"For every mutation outcome, specify database state, active state, status code/result type, retry semantics, and client-visible metadata across all interfaces.","principle":"A mutation API must distinguish persistence outcome from local activation outcome.","root_cause":"The repaired post-commit failure state preserves the new desired revision, while HTTP, MCP, and YAML sections define only validation/conflict errors and no committed-with-apply-failure response.","section_id":"2.1","severity":"blocking"}],"reviewer_session":"85c4e853-aed5-4ca3-bbf5-00e978cf4c24","round":2,"round_number":2,"verdict":"needs_review"},"session_id":"a05c50fe-9266-4c23-8944-e17d5ef6ffed"}
+```
+
 
 ## V2: Verification
 `kind: verification`
