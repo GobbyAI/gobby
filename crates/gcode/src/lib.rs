@@ -1,68 +1,33 @@
 pub(crate) mod bm25_health;
 pub mod codewiki_facts;
 mod commands;
-#[allow(
-    unused_imports,
-    reason = "private implementation retains test-only imports"
-)]
 mod config;
 pub mod contract;
-#[allow(
-    dead_code,
-    reason = "private implementation retains test-only entrypoints"
-)]
 mod db;
 mod freshness;
 mod git;
 #[allow(
     clippy::enum_variant_names,
-    dead_code,
-    unused_imports,
-    reason = "privatization preserves established graph error and test entrypoints"
+    reason = "privatization preserves established graph error naming"
 )]
 mod graph;
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "private implementation retains test-only entrypoints"
-)]
-mod index;
+pub mod index;
 pub(crate) mod index_lock;
-#[allow(dead_code, reason = "private implementation retains test-only types")]
 mod models;
 mod output;
 pub(crate) mod postgres_errors;
 mod project;
 mod projection;
-#[allow(dead_code, reason = "private implementation retains test-only helpers")]
 mod savings;
 mod schema;
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "private implementation retains test-only query entrypoints"
-)]
 mod search;
-#[allow(
-    unused_imports,
-    reason = "private implementation retains test-only imports"
-)]
 mod secrets;
-#[allow(
-    unused_imports,
-    reason = "private implementation retains test-only imports"
-)]
 mod setup;
 mod skill;
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_env;
 mod utils;
-#[allow(
-    dead_code,
-    unused_imports,
-    reason = "private implementation retains test-only vector entrypoints"
-)]
 mod vector;
 pub(crate) mod visibility;
 

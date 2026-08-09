@@ -255,29 +255,6 @@ fn embedding_error(error: AiError) -> VectorLifecycleError {
     }
 }
 
-pub fn embed_query(config: &EmbeddingConfig, text: &str) -> Option<Vec<f32>> {
-    let prefix = config.query_prefix.as_deref().unwrap_or("").trim();
-    let input = if prefix.is_empty() {
-        text.to_string()
-    } else {
-        format!("{prefix} {text}")
-    };
-    let client = match embedding_client(config) {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("gcode: query embedding failed: {error}");
-            return None;
-        }
-    };
-    match embed_text(&client, config, &input) {
-        Ok(embedding) => Some(embedding),
-        Err(error) => {
-            eprintln!("gcode: query embedding failed: {error}");
-            None
-        }
-    }
-}
-
 pub fn embed_query_with_source(source: &EmbeddingSource, text: &str) -> Option<Vec<f32>> {
     let backend = match EmbeddingBackend::new(source.clone()) {
         Ok(backend) => backend,

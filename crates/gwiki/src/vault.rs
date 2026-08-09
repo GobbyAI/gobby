@@ -6,7 +6,7 @@ use serde::Serialize;
 use crate::WikiError;
 use crate::scope::ResolvedScope;
 
-/// Unified Obsidian vault layout shared by gwiki and gcode codewiki.
+/// Unified Obsidian vault layout shared by gwiki commands, including `gwiki code`.
 ///
 /// `code/` contains generated code documentation, `knowledge/` contains
 /// synthesized wiki pages, and `_meta/` contains shared generation metadata.

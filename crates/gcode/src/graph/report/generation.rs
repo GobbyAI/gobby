@@ -18,6 +18,7 @@ use super::types::{
     ReportDegradation, ReportGraphSnapshot,
 };
 
+#[cfg(test)]
 pub fn generate_report(ctx: &Context) -> Result<ProjectGraphReport, ProjectGraphReportError> {
     generate_report_with_options(ctx, ProjectGraphReportOptions::default())
 }
@@ -58,10 +59,12 @@ pub fn generate_report_with_options(
     }
 }
 
+#[cfg(test)]
 pub fn empty_report(project_id: impl Into<String>) -> ProjectGraphReport {
     generate_report_from_snapshot(project_id, now_iso8601(), ReportGraphSnapshot::default())
 }
 
+#[cfg(test)]
 pub(super) fn generate_report_from_snapshot(
     project_id: impl Into<String>,
     generated_at: impl Into<String>,

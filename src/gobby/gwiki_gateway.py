@@ -23,9 +23,9 @@ PAGE_WRITE_MODES = frozenset({"upsert", "create"})
 
 # Gateway command names (the ``command_name`` passed to ``_run_json``) whose
 # subprocesses mutate the wiki vault. Every gateway in this process — watcher
-# coordinator, cron handlers, MCP tools, HTTP routes, codewiki refresh —
-# serializes these per vault so concurrent runs don't collide on gwiki's
-# internal file locks and degrade with lock timeouts.
+# coordinator, cron handlers, MCP tools, HTTP routes — serializes these per
+# vault so concurrent runs don't collide on gwiki's internal file locks and
+# degrade with lock timeouts.
 SERIALIZED_WRITE_COMMANDS = frozenset(
     {
         "index",

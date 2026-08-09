@@ -604,6 +604,52 @@ fn code_path_without_current_marker_is_not_trusted() {
 }
 
 #[test]
+fn structural_code_placeholder_is_audited_with_full_context() {
+    let page = test_codewiki_page(
+        "code/modules/crates.md",
+        "---\ntitle: crates\ngenerated_by: gwiki-code\ntrust: structural\n---\n# crates\nUnsupported operational claim.\n",
+    );
+    let context = Arc::new(vec![AuditSourceContext {
+        source_id: "source-1".to_string(),
+        path: None,
+        citation: None,
+        location: None,
+    }]);
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &context,
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(!claims.is_empty(), "structural placeholder must be audited");
+    assert_eq!(claims[0].source_context.as_ref(), context.as_ref());
+}
+
+#[test]
+fn marker_outside_code_tree_does_not_exempt_a_page() {
+    let page = test_codewiki_page(
+        "knowledge/topics/example.md",
+        "---\ntitle: Example\ngenerated_by: gwiki-code\ntrust: generated\n---\n# Example\nUnsupported operational claim.\n",
+    );
+
+    let claims = unsupported_claims(
+        &page,
+        &ProvenanceGraph::default(),
+        &Arc::new(Vec::new()),
+        &BTreeSet::new(),
+        &AuditOptions::default(),
+    );
+
+    assert!(
+        !claims.is_empty(),
+        "marker on a knowledge page must not dodge the audit"
+    );
+}
+
+#[test]
 fn frontmatter_migration_audits_legacy_and_shared_sources_equivalently() {
     let legacy = r#"---
 title: crates/example.rs

@@ -24,6 +24,10 @@ from gobby.utils.datetime import parse_stored_datetime, resolve_local_timezone, 
 logger = logging.getLogger(__name__)
 
 REMOVED_AUTOMATION_JOB_NAMES = frozenset({"gobby:dispatcher", "gobby:pipeline-heartbeat"})
+CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
+# Per-project automation whose handlers were retired; rows are kept dormant
+# for the wiki redesign but must never list, dispatch, or re-enable.
+RETIRED_AUTOMATION_JOB_NAME_PREFIXES = (CODEWIKI_NIGHTLY_JOB_PREFIX,)
 CRON_JOB_NAME_PRIORITIES = {
     "gobby:pipeline-heartbeat": 0,
     "gobby:dispatcher": 1,
@@ -84,7 +88,9 @@ def _cron_job_priority(job: CronJob) -> int:
 
 
 def is_removed_automation_job(job: CronJob) -> bool:
-    return job.name in REMOVED_AUTOMATION_JOB_NAMES
+    return job.name in REMOVED_AUTOMATION_JOB_NAMES or job.name.startswith(
+        RETIRED_AUTOMATION_JOB_NAME_PREFIXES
+    )
 
 
 def _escape_like_prefix(prefix: str) -> str:
@@ -296,6 +302,10 @@ class CronJobStorage(CronRunStorageMixin):
             placeholders = ", ".join(["%s"] * len(removed_names))
             conditions.append(f"name NOT IN ({placeholders})")
             params.extend(removed_names)
+        if exclude_removed_automation:
+            for retired_prefix in RETIRED_AUTOMATION_JOB_NAME_PREFIXES:
+                conditions.append("name NOT LIKE %s ESCAPE '\\'")
+                params.append(_escape_like_prefix(retired_prefix))
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -322,6 +332,32 @@ class CronJobStorage(CronRunStorageMixin):
             raise ValueError("prefix must not be empty")
         pattern = _escape_like_prefix(prefix)
         conditions = ["is_system = TRUE", "name LIKE %s ESCAPE '\\'"]
+        params: list[Any] = [pattern]
+        if enabled is not None:
+            conditions.append("enabled = %s")
+            params.append(bool(enabled))
+
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM cron_jobs
+            WHERE {" AND ".join(conditions)}
+            ORDER BY name
+            """,  # nosec B608
+            tuple(params),
+        )
+        return [CronJob.from_row(row) for row in rows]
+
+    def list_jobs_by_name_prefix(
+        self,
+        prefix: str,
+        *,
+        enabled: bool | None = None,
+    ) -> list[CronJob]:
+        """List cron rows whose name starts with prefix, regardless of ownership."""
+        if not prefix:
+            raise ValueError("prefix must not be empty")
+        pattern = _escape_like_prefix(prefix)
+        conditions = ["name LIKE %s ESCAPE '\\'"]
         params: list[Any] = [pattern]
         if enabled is not None:
             conditions.append("enabled = %s")
@@ -419,6 +455,11 @@ class CronJobStorage(CronRunStorageMixin):
         job = self.get_job(job_id)
         if job is None:
             return None
+        if fields.get("enabled") and is_removed_automation_job(job):
+            raise SystemRowProtected(
+                f"Cron row {job_id} targets retired automation {job.name!r}; "
+                "re-enabling is rejected because its handler no longer exists."
+            )
         if job.is_system:
             disallowed_fields = set(fields.keys()) - SYSTEM_ROW_UPDATE_ALLOWED_FIELDS
             if disallowed_fields:
@@ -778,6 +819,11 @@ class CronJobStorage(CronRunStorageMixin):
             if row is None:
                 return None
             job = CronJob.from_row(row)
+            if not job.enabled and is_removed_automation_job(job):
+                raise SystemRowProtected(
+                    f"Cron row {job_id} targets retired automation {job.name!r}; "
+                    "re-enabling is rejected because its handler no longer exists."
+                )
             if job.is_system:
                 raise SystemRowProtected(
                     f"Cron row {job_id} is system-managed; toggle_job is operator-facing. "

@@ -73,6 +73,17 @@ def test_code_index_skill_documents_durable_plan_targets() -> None:
     assert resolve_position < blast_position
 
 
+def test_code_index_skill_documents_paused_gwiki_code_lifecycle() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "## CodeWiki Lifecycle" in body
+    assert "`gwiki code`" in body
+    assert "isolated/manual use" in body
+    assert "operationally paused" in body
+    assert "docs/guides/codewiki.md" in body
+    assert "gcode codewiki" not in body
+
+
 def test_code_index_skill_matches_gcode_bundled_asset_when_present() -> None:
     """Keep Gobby's install template byte-identical to gcode's bundled skill."""
     assert SKILL_PATH.read_bytes() == _gcode_bundled_skill_path().read_bytes()

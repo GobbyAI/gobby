@@ -117,6 +117,32 @@ def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | 
         return None
 
 
+def _reconcile_codewiki_dormant_state(runner: GobbyRunner) -> None:
+    """Disable persisted CodeWiki cron rows without blocking scheduler startup."""
+    from gobby.wiki.codewiki_dormant import reconcile_codewiki_crons_disabled
+
+    cron_storage = runner.cron_storage
+    if cron_storage is None:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.warning("Skipping dormant CodeWiki reconciliation; cron storage is unavailable")
+        return
+
+    try:
+        result = reconcile_codewiki_crons_disabled(cron_storage)
+    except Exception:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.exception("Failed to reconcile dormant CodeWiki cron rows")
+        return
+
+    if result.failed or result.residual_enabled:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.warning(
+            "CodeWiki cron reconciliation left enabled rows; failed=%s residual_enabled=%s",
+            result.failed,
+            result.residual_enabled,
+        )
+
+
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
     runner.project_purge_service = None
@@ -343,6 +369,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
         except Exception:
             logger.exception("Failed to normalize system cron schedule timezones")
 
+        _reconcile_codewiki_dormant_state(runner)
+
         try:
             from gobby.scheduler.executor import CronExecutor
 
@@ -525,77 +553,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     e,
                 )
 
-            try:
-                from gobby.code_index.codewiki_nightly import (
-                    register_codewiki_nightly_crons,
-                )
-
-                # Codewiki freshness must cover every project the memory dream
-                # judges per-project, not just the runner: each project's sweep
-                # reads its resolved vault's _meta/truth_digest.json, so a
-                # project whose codewiki is never refreshed is judged against a
-                # stale or absent digest. Register a nightly refresh for the
-                # runner project plus every memory-bearing project with a repo
-                # path.
-                codewiki_targets: dict[str, tuple[str, str]] = {}
-                memory_scope_enumeration_succeeded = True
-                current_project = pm.get(runner.project_id) if runner.project_id else None
-                if current_project is not None and current_project.repo_path:
-                    codewiki_targets[current_project.id] = (
-                        current_project.name,
-                        current_project.repo_path,
-                    )
-
-                if runner.memory_manager is not None:
-                    # A far-future cutoff makes every live memory "due", so the
-                    # dream enumeration returns every project that has memories
-                    # — the exact set the per-project sweep will judge.
-                    all_memories_cutoff = "9999-12-31T23:59:59+00:00"
-                    try:
-                        memory_scopes = runner.memory_manager.list_dream_scopes(
-                            redream_cutoff=all_memories_cutoff
-                        )
-                    except Exception as enum_err:
-                        logger.warning(
-                            "Failed to enumerate memory-bearing projects for codewiki: %s",
-                            enum_err,
-                            exc_info=True,
-                        )
-                        memory_scope_enumeration_succeeded = False
-                        memory_scopes = []
-                    for memory_scope in memory_scopes:
-                        memory_project_id = memory_scope.project_id
-                        if memory_project_id is None or memory_project_id in codewiki_targets:
-                            continue
-                        memory_project = pm.get(memory_project_id)
-                        if memory_project is not None and memory_project.repo_path:
-                            codewiki_targets[memory_project_id] = (
-                                memory_project.name,
-                                memory_project.repo_path,
-                            )
-
-                if memory_scope_enumeration_succeeded:
-                    registered_count = register_codewiki_nightly_crons(
-                        cron_storage=runner.cron_storage,
-                        cron_executor=cron_executor,
-                        projects=[
-                            (project_id, project_name, repo_path)
-                            for project_id, (project_name, repo_path) in codewiki_targets.items()
-                        ],
-                        wiki_config=runner.config.wiki,
-                    )
-                    logger.debug(
-                        "Codewiki nightly cron handlers registered for %d project(s)",
-                        registered_count,
-                    )
-                else:
-                    logger.warning(
-                        "Skipping codewiki nightly cron reconciliation because memory scope "
-                        "enumeration failed"
-                    )
-            except Exception as e:
-                mark_service_degraded(runner, "codewiki_nightly_cron")
-                logger.exception("Failed to register codewiki nightly cron handler: %s", e)
         elif getattr(runner.config.code_index, "enabled", False):
             mark_service_degraded(runner, "code_index_maintenance")
             logger.warning(

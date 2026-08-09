@@ -9,6 +9,7 @@ use super::types::{DiscoveryOptions, FileClassification};
 
 /// Discover files eligible for indexing under `root`.
 /// Returns (ast_candidates, content_only_candidates) as absolute paths.
+#[cfg(test)]
 pub fn discover_files<S: AsRef<str>>(
     root: &Path,
     exclude_patterns: &[S],

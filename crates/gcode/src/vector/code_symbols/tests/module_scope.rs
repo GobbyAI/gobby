@@ -225,7 +225,6 @@ fn routes_through_gobby_core_qdrant() {
         include_str!("../lifecycle.rs"),
     ]
     .join("\n");
-    assert!(source.contains("gobby_core::config::resolve_qdrant_config"));
     assert!(source.contains("gobby_core::qdrant::with_qdrant"));
     assert!(source.contains("gobby_core::qdrant::collection_name"));
     assert!(source.contains("CollectionScope::Custom"));

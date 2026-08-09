@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -88,7 +87,6 @@ def mock_server() -> MagicMock:
     code_indexer.storage.search_symbols_by_name = MagicMock(return_value=[_make_symbol()])
     code_indexer.storage.get_project_stats = MagicMock(return_value=MagicMock())
     server.services.code_indexer = code_indexer
-    server.services.codewiki_trigger = None
     return server
 
 
@@ -113,193 +111,12 @@ def test_graph_overview_returns_data(client: TestClient, mock_server: MagicMock)
     )
 
 
-def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: MagicMock) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.return_value = True
-    mock_server.services.codewiki_trigger = trigger
-
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
-    )
-
-    assert response.status_code == 202
-    assert response.json()["accepted"] is True
-    trigger.request_refresh.assert_called_once_with(
-        root_path="/repo",
-        project_id=PROJECT_ID,
-        out_dir=None,
-        ai="daemon",
-        scopes=["crates", "web", "src"],
-    )
-
-
-def test_codewiki_refresh_runs_trigger_through_db_bridge(
-    client: TestClient, mock_server: MagicMock
-) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.return_value = True
-    mock_server.services.codewiki_trigger = trigger
-    calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
-
-    async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
-        calls.append((func, args, kwargs))
-        return func(*args, **kwargs)
-
-    mock_server.run_db = run_db
-
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
-    )
-
-    assert response.status_code == 202
-    assert response.json()["accepted"] is True
-    assert len(calls) == 2
-    assert calls[1:] == [
-        (
-            trigger.request_refresh,
-            (),
-            {
-                "root_path": "/repo",
-                "project_id": PROJECT_ID,
-                "out_dir": None,
-                "ai": "daemon",
-                "scopes": ["crates", "web", "src"],
-            },
-        )
-    ]
-
-
-def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: MagicMock) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.return_value = False
-    mock_server.services.codewiki_trigger = trigger
-
+def test_codewiki_routes_absent(client: TestClient) -> None:
     response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
+    status = client.get("/api/code-index/codewiki/status")
 
-    assert response.status_code == 202
-    assert response.json()["accepted"] is False
-    assert response.json()["reason"] == "wiki.codewiki_on_commit disabled"
-
-
-def test_codewiki_refresh_rejects_unknown_project_id(
-    client: TestClient, mock_server: MagicMock
-) -> None:
-    trigger = MagicMock()
-    mock_server.services.codewiki_trigger = trigger
-    mock_server.services.database.fetchone.return_value = None
-
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "project_id": "missing"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "Unknown project_id: missing"
-    trigger.request_refresh.assert_not_called()
-
-
-def test_codewiki_refresh_requires_trigger(client: TestClient) -> None:
-    response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
-
-    assert response.status_code == 503
-
-
-def test_codewiki_refresh_validates_ai(client: TestClient, mock_server: MagicMock) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.side_effect = ValueError("ai must be one of auto, daemon, direct, off")
-    mock_server.services.codewiki_trigger = trigger
-
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "ai": "direct"},
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "ai must be one of auto, daemon, direct, off"
-
-
-def test_codewiki_refresh_rejects_unknown_ai_literal(
-    client: TestClient,
-    mock_server: MagicMock,
-) -> None:
-    trigger = MagicMock()
-    mock_server.services.codewiki_trigger = trigger
-
-    response = client.post(
-        "/api/code-index/codewiki/refresh",
-        json={"root_path": "/repo", "ai": "bad"},
-    )
-
-    assert response.status_code == 422
-    trigger.request_refresh.assert_not_called()
-
-
-def test_codewiki_refresh_maps_expected_path_errors_to_bad_request(
-    client: TestClient,
-    mock_server: MagicMock,
-) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.side_effect = FileNotFoundError("missing repo")
-    mock_server.services.codewiki_trigger = trigger
-
-    response = client.post("/api/code-index/codewiki/refresh", json={"root_path": "/repo"})
-
-    assert response.status_code == 400
-    assert "missing repo" in response.json()["detail"]
-
-
-def test_codewiki_refresh_maps_unexpected_os_errors_to_500(
-    client: TestClient,
-    mock_server: MagicMock,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    trigger = MagicMock()
-    trigger.request_refresh.side_effect = OSError("unexpected disk failure")
-    mock_server.services.codewiki_trigger = trigger
-
-    with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.code_index"):
-        response = client.post(
-            "/api/code-index/codewiki/refresh",
-            json={"root_path": "/repo", "project_id": PROJECT_ID, "ai": "daemon"},
-            headers={"x-request-id": "req-1"},
-        )
-
-    assert response.status_code == 500
-    assert response.json()["detail"] == "Internal server error"
-    record = next(
-        item for item in caplog.records if item.message == "Failed to schedule codewiki refresh"
-    )
-    assert record.method == "POST"
-    assert record.path == "/api/code-index/codewiki/refresh"
-    assert record.request_id == "req-1"
-    assert record.root_path == "/repo"
-    assert record.project_id == PROJECT_ID
-    assert record.ai == "daemon"
-    assert record.error == "unexpected disk failure"
-
-
-def test_codewiki_status_requires_trigger(client: TestClient) -> None:
-    response = client.get("/api/code-index/codewiki/status")
-    assert response.status_code == 503
-
-
-def test_codewiki_status_returns_snapshot(client: TestClient, mock_server: MagicMock) -> None:
-    snapshot = {
-        "pending_roots": ["/repo"],
-        "running_roots": [],
-        "active_flush_tasks": 0,
-        "last_run": None,
-    }
-    trigger = MagicMock()
-    trigger.status.return_value = snapshot
-    mock_server.services.codewiki_trigger = trigger
-
-    response = client.get("/api/code-index/codewiki/status")
-
-    assert response.status_code == 200
-    assert response.json() == snapshot
+    assert response.status_code == 404
+    assert status.status_code == 404
 
 
 def test_graph_file_delegates(client: TestClient, mock_server: MagicMock) -> None:
@@ -457,7 +274,7 @@ def test_agent_projection_brokers_reject_cross_project_targets(mock_server: Magi
     mock_server.services.code_indexer.invalidate.assert_not_awaited()
 
 
-def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> None:
+def test_invalidate_keeps_shared_projections() -> None:
     async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
@@ -487,22 +304,22 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
         run_db=run_db,
     )
     server = MagicMock()
-    server.services = SimpleNamespace(code_indexer=code_indexer, codewiki_trigger=None)
+    server.services = SimpleNamespace(code_indexer=code_indexer)
+    server.run_db = run_db
     app = FastAPI()
     app.include_router(create_code_index_router(server))
     test_client = TestClient(app)
 
     response = test_client.post("/api/code-index/invalidate", json={"project_id": PROJECT_ID})
 
-    assert response.status_code == 207
+    assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "partial_failure"
-    assert body["stores"]["vector"] == {
-        "status": "failed",
-        "error": "down",
-        "pending_retry": True,
-    }
-    storage.mark_prune_dirty.assert_called_once_with(PROJECT_ID, "/repo", "invalidate")
+    assert body["status"] == "ok"
+    assert body["stores"]["graph"] == {"status": "skipped"}
+    assert body["stores"]["vector"] == {"status": "skipped"}
+    assert body["failed_stores"] == []
+    gcode_gateway.vector_clear.assert_not_awaited()
+    storage.mark_prune_dirty.assert_not_called()
     storage.record_projection_cleanup_failure.assert_not_called()
 
 

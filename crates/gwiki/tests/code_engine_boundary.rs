@@ -48,13 +48,6 @@ fn moved_engine_uses_only_facade() {
             "gobby_code::models",
             "gobby_code::index",
             "gobby_code::visibility",
-            "crate::config::Context",
-            "crate::db",
-            "crate::graph::code_graph",
-            "crate::index",
-            "crate::models",
-            "crate::search::fts",
-            "crate::visibility",
             "postgres::",
         ] {
             assert!(
@@ -69,30 +62,20 @@ fn moved_engine_uses_only_facade() {
 #[test]
 fn relocation_inventory_and_composer_decomposition() {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let source_root = manifest.join("../gcode/src/commands/codewiki");
+    let legacy_root = manifest.join("../gcode/src/commands/codewiki");
     let destination_root = manifest.join("src/commands/code");
-    let source_files = rust_sources(&source_root);
     let destination_files = rust_sources(&destination_root);
 
-    assert_eq!(source_files.len(), 108, "legacy source inventory changed");
+    assert!(
+        !legacy_root.exists(),
+        "legacy gcode codewiki engine must stay deleted: {}",
+        legacy_root.display()
+    );
     assert_eq!(
         destination_files.len(),
         113,
         "moved inventory must match the plan"
     );
-    for source in source_files {
-        let relative = source
-            .strip_prefix(&source_root)
-            .expect("source is below root");
-        if relative == Path::new("diagram_compose.rs") {
-            continue;
-        }
-        assert!(
-            destination_root.join(relative).is_file(),
-            "missing moved counterpart for {}",
-            relative.display()
-        );
-    }
     for relative in [
         "diagram_compose/mod.rs",
         "diagram_compose/evidence.rs",

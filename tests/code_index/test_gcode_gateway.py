@@ -395,46 +395,6 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
 
 
 @pytest.mark.asyncio
-async def test_gateway_builds_codewiki_args(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    out_dir = tmp_path / "codewiki"
-    processes = [
-        FakeProcess(stdout=GCODE_PIN_STDOUT),
-        FakeProcess(stdout=b'{"changed_paths": ["repo.md"]}'),
-    ]
-    calls = _patch_subprocess(monkeypatch, processes)
-    gateway = GcodeGateway(binary="/tmp/gcode")
-
-    result = await gateway.codewiki(
-        tmp_path,
-        out_dir,
-        ai="auto",
-        scopes=["crates", "web", "src"],
-        complete_scope=True,
-    )
-
-    assert result == {"changed_paths": ["repo.md"]}
-    assert calls[1] == (
-        "/tmp/gcode",
-        "codewiki",
-        "--project",
-        str(tmp_path),
-        "--out",
-        str(out_dir),
-        "--scope",
-        "crates",
-        "web",
-        "src",
-        "--complete-scope",
-        "--ai",
-        "auto",
-        "--format",
-        "json",
-    )
-
-
 async def test_gateway_builds_graph_read_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

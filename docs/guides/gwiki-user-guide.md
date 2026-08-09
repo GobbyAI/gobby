@@ -678,6 +678,19 @@ Exports generated bundles and reports under `outputs/`.
   - `--output <FILE>` — Destination file (required).
   - `--from <PATH>` — Source report path (required).
 
+### Code Documentation (`code`)
+
+`gwiki code` owns CodeWiki generation. The direct command is available for
+isolated/manual use, while production-vault execution and daemon scheduling are
+operationally paused pending the wiki redesign:
+
+```bash
+gwiki --project . code --out /tmp/codewiki-check
+```
+
+See the [CodeWiki guide](./codewiki.md) for scoped and incremental modes, the
+dormant daemon status/error contract, and purge safety.
+
 ## The Vault Model
 
 A `gwiki` vault is a Markdown-first knowledge store with clear separation
@@ -688,7 +701,7 @@ between captured material and synthesized articles:
 - `inbox/` — Staging area for files dropped out of band, promoted by `collect`.
 - `knowledge/` — Compiled article pages, split into `knowledge/sources/`,
   `knowledge/concepts/`, and `knowledge/topics/` to mirror the `compile --kind` values.
-- `code/` — Generated code documentation from `gcode codewiki`.
+- `code/` — Generated code documentation owned by `gwiki code`.
 - `outputs/` — Exported bundles and reports.
 - `meta/` — Vault metadata and `meta/health/` snapshots.
 

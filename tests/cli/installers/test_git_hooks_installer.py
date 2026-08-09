@@ -385,23 +385,6 @@ class TestInstallGitHooks:
             content = hook_path.read_text()
             assert content.startswith("#!/usr/bin/env bash")
 
-    def test_post_commit_manual_json_branch_rejects_control_characters(
-        self,
-        tmp_path: Path,
-    ) -> None:
-        """Manual JSON construction refuses unsafe path control characters."""
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        hooks_dir = git_dir / "hooks"
-        hooks_dir.mkdir()
-
-        install_git_hooks(tmp_path)
-
-        content = (hooks_dir / "post-commit").read_text()
-        assert '[[ "$ROOT_PATH"' not in content
-        assert "$'" not in content
-        assert "grep -q '[[:cntrl:]]'" in content
-
     def test_skips_already_installed_hooks(self, tmp_path: Path) -> None:
         """Test that already installed hooks are skipped."""
         git_dir = tmp_path / ".git"
@@ -697,9 +680,9 @@ class TestInstallGitHooks:
             assert hook_name in result["installed"]
             content = (hooks_dir / hook_name).read_text()
             assert (
-                'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+                'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
             ) in content
-            assert "/api/code-index/codewiki/refresh" in content
+            assert "/api/code-index/codewiki/refresh" not in content
             assert "GOBBY HOOK START" in content
 
     def test_post_checkout_reindexes_changed_files_after_branch_switch(
@@ -1106,18 +1089,9 @@ class TestHookTemplates:
         assert "\0" not in content
         assert r"tr '\n' '\0'" in content
         assert (
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
         ) in content
-        assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in content
-        assert '-H "Content-Type: application/json" \\' in content
-        assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in content
-        assert 'DAEMON_URL="${GOBBY_DAEMON_URL:-}"' in content
-        assert 'DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"' in content
-        assert '"${DAEMON_URL}/api/code-index/codewiki/refresh"' in content
-        assert "codewiki refresh request failed" in content
-        assert "/api/code-index/codewiki/refresh" in content
-        assert '"http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh"' not in content
-        assert "--get" not in content
+        assert "/api/code-index/codewiki/refresh" not in content
 
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
@@ -1131,18 +1105,9 @@ class TestHookTemplates:
         assert "\0" not in installed
         assert r"tr '\n' '\0'" in installed
         assert (
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then'
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1'
         ) in installed
-        assert "curl -fsS --connect-timeout 2 --max-time 10 -X POST \\" in installed
-        assert '-H "Content-Type: application/json" \\' in installed
-        assert '--data "{\\"root_path\\":\\"$JSON_ROOT\\"}" \\' in installed
-        assert 'DAEMON_URL="${GOBBY_DAEMON_URL:-}"' in installed
-        assert 'DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"' in installed
-        assert '"${DAEMON_URL}/api/code-index/codewiki/refresh"' in installed
-        assert "codewiki refresh request failed" in installed
-        assert "/api/code-index/codewiki/refresh" in installed
-        assert '"http://localhost:${DAEMON_PORT}/api/code-index/codewiki/refresh"' not in installed
-        assert "--get" not in installed
+        assert "/api/code-index/codewiki/refresh" not in installed
 
     def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:
         """Checkout, merge, and rewrite hooks use the same reindex flow as post-commit."""
@@ -1150,15 +1115,16 @@ class TestHookTemplates:
         shared_snippets = (
             'GCODE="$HOME/.gobby/bin/gcode"',
             r"tr '\n' '\0'",
-            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then',
-            "/api/code-index/codewiki/refresh",
-            "codewiki refresh request failed",
+            'xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1',
         )
 
         for snippet in shared_snippets:
             assert snippet in post_commit
             for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
                 assert snippet in HOOK_TEMPLATES[hook_name]
+
+        for hook_name in ("post-commit", "post-checkout", "post-merge", "post-rewrite"):
+            assert "/api/code-index/codewiki/refresh" not in HOOK_TEMPLATES[hook_name]
 
         checkout = HOOK_TEMPLATES["post-checkout"]
         assert '[ "$3" = "1" ]' in checkout
@@ -1178,3 +1144,19 @@ class TestHookTemplates:
             assert "gobby tasks restore" not in content
             assert "gobby tasks sync --import" not in content
             assert "gobby memory restore" not in content
+
+    def test_post_commit_has_no_codewiki_curl(self, tmp_path: Path) -> None:
+        """Fresh post-commit hooks trigger indexing without CodeWiki refresh."""
+        content = HOOK_TEMPLATES["post-commit"]
+        assert "/api/code-index/codewiki/refresh" not in content
+
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        hooks_dir = git_dir / "hooks"
+        hooks_dir.mkdir()
+
+        result = install_git_hooks(tmp_path)
+
+        assert result["success"] is True
+        installed = (hooks_dir / "post-commit").read_text()
+        assert "/api/code-index/codewiki/refresh" not in installed

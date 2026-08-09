@@ -88,7 +88,7 @@ fn claim_source_context(
     page: &WikiPage,
     source_context: &Arc<Vec<AuditSourceContext>>,
 ) -> Arc<Vec<AuditSourceContext>> {
-    if is_generated_codewiki_page(page) {
+    if is_generated_code_projection_page(page) {
         Arc::new(Vec::new())
     } else {
         Arc::clone(source_context)
@@ -151,11 +151,6 @@ fn is_recap_page(page: &WikiPage) -> bool {
     page_path.starts_with("recaps/") && page.parsed.frontmatter.unknown.contains_key("recap_date")
 }
 
-fn is_generated_codewiki_page(page: &WikiPage) -> bool {
-    page.parsed.frontmatter.generated_by.as_deref()
-        == Some(gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE)
-}
-
 pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
     page_path.starts_with("code/")
@@ -190,10 +185,17 @@ pub(super) fn has_codewiki_frontmatter_source_spans(page: &WikiPage) -> bool {
 /// with the catalog/recap/manifest-digest exemptions and with trust gating only
 /// on *curated* broken links. This covers `code/files/**`, `code/modules/**`,
 /// and the `code/repo.md` aggregate (which carries no per-file frontmatter
-/// provenance because it rolls up the whole tree). Curated knowledge pages
-/// (`knowledge/**`) are not `code/**` and remain fully audited.
+/// provenance because it rolls up the whole tree).
+///
+/// The gate requires all three of the `gwiki-code` marker, a `code/**` path,
+/// and `trust: generated`: the path check keeps a marker stamped onto a
+/// `knowledge/**` page from dodging the audit, and the trust check keeps
+/// structural placeholder pages (`trust: structural`) fully audited.
 fn is_generated_code_projection_page(page: &WikiPage) -> bool {
-    is_generated_codewiki_page(page)
+    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
+    page_path.starts_with("code/")
+        && page.parsed.frontmatter.generated_by.as_deref()
+            == Some(gobby_core::codewiki_contract::GENERATED_BY_GWIKI_CODE)
         && page.parsed.frontmatter.trust.as_deref()
             == Some(gobby_core::codewiki_contract::TRUST_GENERATED)
 }

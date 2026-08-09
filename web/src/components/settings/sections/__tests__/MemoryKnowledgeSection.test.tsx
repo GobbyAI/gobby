@@ -368,17 +368,17 @@ describe('MemoryKnowledgeSection', () => {
       'outputs/**',
     )
     expect(
-      screen.getByRole('switch', { name: 'Refresh codewiki on commit' }),
-    ).not.toBeChecked()
+      screen.queryByRole('switch', { name: 'Refresh codewiki on commit' }),
+    ).not.toBeInTheDocument()
     expect(
-      screen.getByRole('switch', { name: 'Refresh codewiki nightly' }),
-    ).not.toBeChecked()
-    expect(screen.getByLabelText('Nightly codewiki refresh schedule')).toHaveValue(
-      '0 3 * * *',
-    )
-    expect(screen.getByLabelText('Nightly codewiki refresh timezone')).toHaveValue(
-      '',
-    )
+      screen.queryByRole('switch', { name: 'Refresh codewiki nightly' }),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('Nightly codewiki refresh schedule'),
+    ).not.toBeInTheDocument()
+    expect(
+      screen.queryByLabelText('Nightly codewiki refresh timezone'),
+    ).not.toBeInTheDocument()
   })
 
   it('persists an edited draft row through the section Save', async () => {

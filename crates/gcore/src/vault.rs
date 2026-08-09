@@ -1,7 +1,7 @@
 //! Shared wiki-vault identity: layout constants, vault detection, and the
 //! default vault-directory resolver.
 //!
-//! Both gcode (codewiki output) and gwiki (vault owner) address the same
+//! gcode index traversal and gwiki vault commands address the same
 //! on-disk vault, so the layout facts live here where neither crate can
 //! drift from the other. gwiki re-exports these constants from its
 //! `vault.rs`; the Python daemon adopts through #17513.

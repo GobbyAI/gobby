@@ -251,6 +251,7 @@ pub enum GraphBlastRadiusTarget {
     SymbolId(String),
     FilePath(String),
 }
+#[cfg(test)]
 pub fn extracted_code_edge_metadata(
     file_path: impl Into<String>,
     line: usize,

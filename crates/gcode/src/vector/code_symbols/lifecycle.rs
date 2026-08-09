@@ -16,9 +16,8 @@ use super::qdrant::{
     parse_collection_schema, qdrant_http_error, qdrant_request_for_config,
 };
 use super::types::{
-    CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput,
-    CodeSymbolVectorLifecycleStatus, CodeSymbolVectorPayload, ExistingVectorCollectionSchema,
-    VectorCollectionSchema, VectorLifecycleError,
+    CodeSymbolVectorLifecycleAction, CodeSymbolVectorLifecycleOutput, CodeSymbolVectorPayload,
+    ExistingVectorCollectionSchema, VectorCollectionSchema, VectorLifecycleError,
 };
 
 const QDRANT_LIFECYCLE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -33,25 +32,6 @@ pub struct CodeSymbolVectorLifecycle {
     settings: CodeVectorSettings,
     probed_vector_size: Option<usize>,
     client: reqwest::blocking::Client,
-}
-
-pub fn resolve_lifecycle_qdrant_config(
-    source: &mut impl gobby_core::config::ConfigSource,
-) -> Option<QdrantConfig> {
-    gobby_core::config::resolve_qdrant_config(source)
-}
-
-pub fn lifecycle_status(
-    project_id: impl Into<String>,
-    collection_prefix: &str,
-    action: CodeSymbolVectorLifecycleAction,
-) -> Result<CodeSymbolVectorLifecycleStatus, VectorLifecycleError> {
-    let project_id = project_id.into();
-    Ok(CodeSymbolVectorLifecycleStatus {
-        collection: collection_name(collection_prefix, &project_id)?,
-        project_id,
-        action,
-    })
 }
 
 impl CodeSymbolVectorLifecycle {
@@ -78,10 +58,6 @@ impl CodeSymbolVectorLifecycle {
             probed_vector_size: None,
             client,
         })
-    }
-
-    pub fn collection(&self) -> &str {
-        &self.collection
     }
 
     pub fn ensure_collection(&mut self) -> Result<VectorCollectionSchema, VectorLifecycleError> {

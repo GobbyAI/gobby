@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+#### gcode
+
+- **`gcode codewiki` CLI surface** — the CodeWiki engine moved to
+  `gwiki code` (breaking for anything scripting `gcode codewiki`). Git hooks
+  installed before this change still POST to the removed
+  `/api/code-index/codewiki/refresh` endpoint and print
+  `gobby: codewiki refresh request failed` on every commit; rerun
+  `gobby install` (or hand-edit the hook's Gobby section) to refresh them.
+  Version: `1.6.1`.
+
 ### Changed
 
 #### gobby-core
@@ -17,25 +29,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   after commit `a3b56649a` folded migration 376 into it; ship no migration assets,
   and require the shared schema runner to enforce the exact baseline receipt.
   Version: `0.9.1`.
+- **CodeWiki contract re-anchored to gwiki** — persist `generated_by:
+  gwiki-code` as the page-format identifier and pin the golden page fixture
+  against gwiki's emitter and parsers. Version: `0.9.2`.
 
 #### gdaemon
 
 - **Exclusive schema maintenance** — ship the schema CLI and single-active
   daemon lease against `gobby-core 0.9.1`. Version: `0.3.0`.
+- **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.3.1`.
 
 #### gcode
 
 - **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
   schema contract. Version: `1.6.0`.
+- **Read-only CodeWiki facts facade** — expose `codewiki_facts` as the sole
+  datastore surface for the relocated `gwiki code` engine and privatize the
+  remaining gcode datastore modules. Version: `1.6.1`.
 
 #### gwiki
 
 - **Shared schema consumer** — consume the centralized `gobby-core 0.9.1`
   schema contract. Version: `0.9.0`.
+- **CodeWiki engine ownership** — add `gwiki code`, the relocated CodeWiki
+  engine (contract v16), reading the code index only through gcode's
+  read-only `codewiki_facts` facade and writing pages marked
+  `generated_by: gwiki-code`. Version: `0.9.1`.
+- **Audit exemption re-anchored** — require the `code/**` path and
+  `trust: generated` alongside the `gwiki-code` marker before a page skips
+  claim auditing, so structural placeholders and marker-stamped knowledge
+  pages stay fully audited. Version: `0.9.2`.
 
 #### ghook
 
 - **Shared foundation floor** — require `gobby-core 0.9.1`. Version: `0.8.3`.
+- **Foundation alignment** — require `gobby-core 0.9.2`. Version: `0.8.4`.
 - **Lifecycle run identity** — enrich normalized `SessionStart`, `SessionEnd`,
   `Stop`, `AfterAgent`, and `PostInvocation` hooks with the exact
   `GOBBY_AGENT_RUN_ID`, while preserving provider terminal-context fields.

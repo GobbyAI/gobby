@@ -20,6 +20,14 @@ mod serial_db {
         0x00,
     ]);
 
+    #[test]
+    fn projection_fixture_namespace_is_canonical() {
+        assert_eq!(
+            CODE_INDEX_UUID_NAMESPACE.to_string(),
+            "c0de1de0-0000-4000-8000-000000000000"
+        );
+    }
+
     /// Parse a fixture id for binding against native-uuid hub columns.
     fn uuid_param(id: &str) -> uuid::Uuid {
         uuid::Uuid::parse_str(id).expect("fixture id is a uuid")

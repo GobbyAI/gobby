@@ -108,10 +108,6 @@ pub fn clamp_limit(limit: usize, max: usize) -> usize {
     limit.clamp(1, max)
 }
 
-pub fn clamp_offset(offset: usize, max: usize) -> usize {
-    offset.min(max)
-}
-
 pub fn id_list_literal(ids: &[String]) -> String {
     ids.iter()
         .map(|id| cypher_string_literal(id))

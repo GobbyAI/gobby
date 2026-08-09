@@ -66,8 +66,8 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
 
 # Circuit breaker for the shared feature-LLM route. Under a sustained provider
 # outage, every feature call would otherwise run the full slow try-all-candidates
-# loop before failing; a batch caller such as the codewiki nightly then multiplies
-# that per-page into a multi-hour runaway (gobby-#17696). The breaker trips a
+# loop before failing; high-volume callers then compound that latency into a
+# prolonged backlog (gobby-#17696). The breaker trips a
 # provider binding after N consecutive failures and short-circuits further calls
 # to it for a cooldown, so callers fail fast (and fall back) instead of hanging.
 # It is a no-op in healthy operation: a single success resets the counter, and the

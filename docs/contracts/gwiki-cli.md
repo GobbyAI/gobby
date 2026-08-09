@@ -11,6 +11,11 @@ Version 16 adds `gwiki code`, the project-scoped CodeWiki generation surface.
 The contract covers generation, purge, citation repair, and metadata comparison,
 including AI routing, graph degradation, and JSON output keys.
 
+The direct command remains available for isolated/manual use. Production-vault
+execution and daemon-triggered generation are operationally paused pending the
+wiki redesign; `GET /api/wiki/code/status` reports the disabled state and
+`POST /api/wiki/code/refresh` returns HTTP 409 without scheduling work.
+
 Version 15 adds `--time-budget-seconds` to `gwiki upkeep` and exposes
 `budget_exhausted` plus `deferred_clusters` in its JSON output.
 
@@ -209,16 +214,19 @@ The machine-readable side of the generated-page frontmatter contract lives in
 `gobby_core::codewiki_contract`: the shared key/value constants (`provenance`,
 `provenance_truncated` — emitted only when a page rolls up more provenance
 files than the per-page cap, recording the omitted count — `generated_by:
-gcode-codewiki`, `trust: generated`, `freshness: indexed`,
-`degraded`/`degraded_sources`) and a golden page fixture. gcode pins its
-frontmatter emitter against the golden fixture and gwiki pins its
-frontmatter/audit parsers against it, so producer and consumer cannot drift
-silently.
+gwiki-code`, `trust: generated`, `freshness: indexed`,
+`degraded`/`degraded_sources`) and a golden page fixture. gwiki pins its
+frontmatter emitter and audit parsers against the golden fixture so producer and
+consumer cannot drift silently. The `generated_by: gwiki-code` value is the
+persisted page-format identifier; pages generated before the ownership move
+still carry the legacy pre-move marker on disk and are treated as untrusted
+legacy output by the audit.
 
 ### Command Surfaces
 
 | Command | Hard dependencies | Optional dependencies | Multimodal | Degraded output shape | Degradation metadata |
 | --- | --- | --- | --- | --- | --- |
+| `code` | PostgreSQL code index, Markdown vault | FalkorDB, model synthesis | none - not used | deterministic structural pages remain available when optional signals fail | `degraded_pages[]` |
 | `graph` | PostgreSQL, Markdown | FalkorDB, embeddings/Qdrant | none - not used | available nodes/edges; missing edge classes empty and flagged | `degraded`, `degraded_sources[]` in `graph.json`/`GRAPH_REPORT.md` |
 | `graph-context` | PostgreSQL | FalkorDB, shared code graph | none - not used | wiki-link-only neighborhood | `warnings[]`, `degradation{degraded,degraded_sources[]}` |
 | `benchmark` | PostgreSQL, seeded project | FalkorDB, Qdrant+embeddings, model | none - not used | metrics for available dimensions only | per-metric `available`, `degraded_sources[]` |
@@ -232,12 +240,12 @@ silently.
 
 ### Codewiki Generated-Page Surfaces
 
-These are gcode `codewiki` output surfaces, not commands. PostgreSQL code index
-and Markdown vault are hard dependencies for every page.
+These are `gwiki code` output surfaces. PostgreSQL code index and Markdown vault
+are hard dependencies for every page.
 
 | Generated page | Hard dependencies | Optional dependencies | Multimodal | Degraded output shape | Degradation metadata |
 | --- | --- | --- | --- | --- | --- |
-| `code/_architecture.md` | PostgreSQL code index, Markdown vault | model subsystem summaries, FalkorDB/graph cross-cluster edges | none - not used | structural module summaries plus reduced or empty subsystem diagram | frontmatter `degraded`/`degraded_sources`; `generated_by: gcode-codewiki` |
+| `code/_architecture.md` | PostgreSQL code index, Markdown vault | model subsystem summaries, FalkorDB/graph cross-cluster edges | none - not used | structural module summaries plus reduced or empty subsystem diagram | frontmatter `degraded`/`degraded_sources`; `generated_by: gwiki-code` |
 | `code/_onboarding.md` | PostgreSQL code index, Markdown vault | `gobby_core::graph_analytics` centrality | none - not used | structural entry-point list with no ranked reading order | frontmatter `degraded`/`degraded_sources` |
 | `code/_hotspots.md` | PostgreSQL code index, Markdown vault | `gobby_core::graph_analytics` hotspots, god nodes, and bridges | none - not used | explicit "analytics unavailable" note | frontmatter `degraded`/`degraded_sources` |
 | `code/_ownership.md` | PostgreSQL code index, Markdown vault | git repo and blame through `gix`, `CODEOWNERS` file | none - not used | CODEOWNERS-only output, "unknown ownership", or `partial` when capped or timed out | frontmatter `degraded`/`degraded_sources`; `partial` |
@@ -249,8 +257,8 @@ Both the CLI and daemon tests load this contract. New daemon-facing flags or JSO
 keys should update this document, the JSON contract, and the corresponding drift
 tests in the same change.
 
-The pinned `ask`, `graph-context`, `benchmark`, `librarian`, `upkeep`, `recap`,
-`review-report`, and `citation-quality` command entries record their
+The pinned `ask`, `code`, `graph-context`, `benchmark`, `librarian`, `upkeep`,
+`recap`, `review-report`, and `citation-quality` command entries record their
 classification rows with top-level `hard_dependencies`, `optional_dependencies`,
 `multimodal`, and `degradation` fields so daemon consumers can detect dependency
 and degradation drift directly from the contract JSON.
@@ -263,4 +271,4 @@ threshold by design — they keep the `broken_links` degradation label and the
 total `broken_link_count`, classify the vault as `degraded`, and are
 enumerated by `librarian`.
 
-_Last verified: 2026-07-05_
+_Last verified: 2026-08-09_

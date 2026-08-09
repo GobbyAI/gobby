@@ -31,59 +31,7 @@ if [ -n "$CHANGED_FILES" ]; then
     GCODE="$HOME/.gobby/bin/gcode"
     if [ -x "$GCODE" ]; then
         (
-            if echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1; then
-                ROOT_PATH=$(git rev-parse --show-toplevel 2>/dev/null)
-                if [ -n "$ROOT_PATH" ] && command -v curl >/dev/null 2>&1; then
-                    DAEMON_URL="${GOBBY_DAEMON_URL:-}"
-                    if [ -z "$DAEMON_URL" ]; then
-                        DAEMON_PORT="${GOBBY_PORT:-${GOBBY_DAEMON_PORT:-60887}}"
-                        DAEMON_URL="http://127.0.0.1:${DAEMON_PORT}"
-                    fi
-                    DAEMON_URL="${DAEMON_URL%/}"
-                    # Empty args ensure curl runs without Authorization when token file missing.
-                    AUTH_HEADER_ARGS=()
-                    CONTEXT_HEADER_ARGS=()
-                    TOKEN="${GOBBY_AGENT_API_TOKEN:-}"
-                    TOKEN_FILE="${GOBBY_HOME:-$HOME/.gobby}/local_cli_token"
-                    if [ -z "$TOKEN" ] && [ -r "$TOKEN_FILE" ]; then
-                        IFS= read -r TOKEN < "$TOKEN_FILE" || true
-                    fi
-                    if [ -n "$TOKEN" ]; then
-                        AUTH_HEADER_ARGS=(-H "Authorization: Bearer $TOKEN")
-                    fi
-                    if [ -n "${GOBBY_AGENT_RUN_ID:-}" ]; then
-                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Agent-Run-Id: ${GOBBY_AGENT_RUN_ID}")
-                    fi
-                    if [ -n "${GOBBY_PROJECT_ID:-}" ]; then
-                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Project-Id: ${GOBBY_PROJECT_ID}")
-                    fi
-                    if [ -n "${GOBBY_SESSION_ID:-}" ]; then
-                        CONTEXT_HEADER_ARGS+=(-H "X-Gobby-Session-Id: ${GOBBY_SESSION_ID}")
-                    fi
-                    if command -v jq >/dev/null 2>&1; then
-                        if ! jq -n --arg root "$ROOT_PATH" '{"root_path":$root}' | curl -fsS --connect-timeout 2 --max-time 10 -X POST \
-                            ${AUTH_HEADER_ARGS[@]+"${AUTH_HEADER_ARGS[@]}"} \
-                            ${CONTEXT_HEADER_ARGS[@]+"${CONTEXT_HEADER_ARGS[@]}"} \
-                            -H "Content-Type: application/json" \
-                            --data-binary @- \
-                            "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
-                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
-                        fi
-                    elif printf '%s' "$ROOT_PATH" | LC_ALL=C grep -q '[[:cntrl:]]'; then
-                        echo "gobby: codewiki refresh skipped; ROOT_PATH contains control characters" >&2
-                    else
-                        JSON_ROOT=$(printf '%s' "$ROOT_PATH" | sed 's/\\/\\\\/g; s/"/\\"/g')
-                        if ! curl -fsS --connect-timeout 2 --max-time 10 -X POST \
-                            ${AUTH_HEADER_ARGS[@]+"${AUTH_HEADER_ARGS[@]}"} \
-                            ${CONTEXT_HEADER_ARGS[@]+"${CONTEXT_HEADER_ARGS[@]}"} \
-                            -H "Content-Type: application/json" \
-                            --data "{\"root_path\":\"$JSON_ROOT\"}" \
-                            "${DAEMON_URL}/api/code-index/codewiki/refresh" >/dev/null 2>&1; then
-                            echo "gobby: codewiki refresh request failed for $ROOT_PATH" >&2
-                        fi
-                    fi
-                fi
-            fi
+            echo "$CHANGED_FILES" | tr '\n' '\0' | xargs -0 "$GCODE" index --quiet --skip-if-locked --files >/dev/null 2>&1
         ) &
     fi
 fi

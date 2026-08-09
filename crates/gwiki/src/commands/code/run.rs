@@ -558,7 +558,7 @@ impl AiRunNotices {
     }
 }
 
-/// Repair-only entry for `codewiki --repair-citations`: re-anchors every
+/// Repair-only entry for `gwiki code --repair-citations`: re-anchors every
 /// generated page's `[file:line]` citations against the current index and
 /// rewrites only the pages whose citations changed. No generation, no AI/LLM
 /// calls. Loads the full visible symbol set (like [`run`]) so a citation to any

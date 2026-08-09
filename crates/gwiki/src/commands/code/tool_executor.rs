@@ -1,4 +1,4 @@
-//! gcode `ToolExecutor` for the CodeWiki tool loop (#978).
+//! Read-only code-index `ToolExecutor` for the gwiki CodeWiki tool loop (#978).
 //!
 //! Wraps the existing read-only gcode index query internals (search, outline,
 //! symbol, grep, file read, code graph) behind the gcore [`ToolExecutor`] trait

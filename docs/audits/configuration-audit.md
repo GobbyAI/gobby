@@ -58,7 +58,7 @@ Section ids are stable kebab-case ids. The matrix below assigns every `keep` row
 | 7 | prompts-templates | Prompt overrides, full YAML template, import/export. |
 | 8 | automation-workflows | Tasks, workflows, cron, pipelines, tmux automation, variables. |
 | 9 | mcp-tools | MCP proxy, tool search/recommendation, skills hub configuration. |
-| 10 | memory-knowledge | Memory, embeddings, Qdrant/FalkorDB, wiki/codewiki watchers. |
+| 10 | memory-knowledge | Memory, embeddings, Qdrant/FalkorDB, and the wiki watcher. |
 | 11 | observability | Telemetry, logs, metrics, tracing, exporters. |
 | 12 | integrations-hooks | Communications channels, webhooks, hook broadcasts. |
 | 13 | runtime-infrastructure | Daemon ports, CORS, directories, UI serving, code index, search, freshness. |
@@ -436,7 +436,7 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | wiki.debounce_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | wiki.poll_interval | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | wiki.ignore_globs | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | memory-knowledge | array items=string map= |
-| wiki.codewiki_on_commit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
+| wiki.codewiki_on_commit | DaemonConfig schema via /api/config/schema; save via /api/config/values | none (toggle removed from memory-knowledge) | dormant | drop |  | CodeWiki generation is dormant pending the wiki redesign (#19665); the config key is retained but not surfaced. |
 | clones_dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 | worktrees_dir | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 
@@ -529,6 +529,7 @@ These rows should not be rebuilt as settings overlay controls:
 | hub_backend | retired operator setting; runtime is fixed to postgres |
 | database_url | sole PostgreSQL selector; should stay out of the overlay and secret-backed storage |
 | auth.session_secret | auto-generated session cookie signing secret; schema marks it ui_hidden |
+| wiki.codewiki_on_commit | CodeWiki generation is dormant pending the wiki redesign (#19665); the retained config key gets a control again only when the daemon surface re-enables. |
 
 ## Sign-off
 

@@ -67,7 +67,7 @@ export const SETTINGS_SECTIONS = [
   {
     id: 'memory-knowledge',
     label: 'Memory & Knowledge',
-    description: 'Memory, embeddings, Qdrant/FalkorDB, and wiki/codewiki watchers.',
+    description: 'Memory, embeddings, Qdrant/FalkorDB, and the wiki watcher.',
   },
   {
     id: 'observability',

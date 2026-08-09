@@ -153,7 +153,10 @@ fn code_mode_conflicts_match_the_legacy_matrix() {
         );
     }
     assert!(Cli::try_parse_from(["gwiki", "code", "--force"]).is_err());
-    assert!(Cli::try_parse_from(["gwiki", "code", "--complete-scope"]).is_err());
+    // `--complete-scope` without `--scope` must parse: the rejection happens in
+    // run_summary so the error text matches the legacy engine (pinned end-to-end
+    // by the code_parity integration test).
+    assert!(Cli::try_parse_from(["gwiki", "code", "--complete-scope"]).is_ok());
     assert!(
         Cli::try_parse_from([
             "gwiki",

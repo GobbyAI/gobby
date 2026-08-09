@@ -18,6 +18,11 @@ DEFAULT_WIKI_IGNORE_GLOBS: tuple[str, ...] = (
     "_gwiki/**",
 )
 
+CODEWIKI_DORMANCY_NOTICE = (
+    "CodeWiki generation is paused pending the wiki redesign; this key has no effect until "
+    "#19665 re-enables orchestration."
+)
+
 
 class WikiRootConfig(BaseModel):
     """One wiki root watched by the daemon."""
@@ -68,44 +73,38 @@ class WikiConfig(BaseModel):
     codewiki_on_commit: bool = Field(
         default=False,
         description=(
-            "Refresh generated codewiki docs after post-commit code indexing. Runtime "
-            "config key wiki.codewiki_on_commit is canonical after startup."
+            f"Stored preference for post-commit CodeWiki generation. {CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
     codewiki_nightly_enabled: bool = Field(
         default=True,
         description=(
-            "Refresh generated codewiki docs on a nightly daemon cron schedule. "
-            "Hash reuse keeps steady-state runs near-free; only changed sources "
-            "regenerate after the first full run."
+            f"Stored preference for nightly CodeWiki generation. {CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
     codewiki_nightly_schedule_cron: str = Field(
         default="0 3 * * *",
         description=(
-            "Cron expression for nightly codewiki refresh, interpreted in the configured "
-            "or host-local timezone. Execution timestamps are stored in UTC."
+            f"Stored cron expression for nightly CodeWiki generation. {CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
     codewiki_nightly_timezone: str | None = Field(
         default=None,
         description=(
-            "IANA timezone for nightly codewiki refresh scheduling. Unset uses the "
-            "daemon host's local timezone when it can be resolved, otherwise UTC."
+            f"Stored IANA timezone for nightly CodeWiki generation. {CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
     codewiki_scopes: list[str] = Field(
         default_factory=list,
         description=(
-            "Default repo-relative paths passed to gcode codewiki --scope. "
-            "Empty preserves the all-core-files behavior."
+            f"Stored default repo-relative CodeWiki generation scopes. {CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
     codewiki_project_scopes_by_name: dict[str, list[str]] = Field(
         default_factory=dict,
         description=(
-            "Project-name keyed codewiki scope overrides. Project names are unique "
-            "operator-facing config keys; project UUIDs remain internal."
+            "Stored project-name keyed CodeWiki generation scope overrides. "
+            f"{CODEWIKI_DORMANCY_NOTICE}"
         ),
     )
 
@@ -136,14 +135,6 @@ class WikiConfig(BaseModel):
                 field_name=f"codewiki_project_scopes_by_name.{project_key}",
             )
         return validated
-
-
-def resolve_codewiki_scopes(wiki_config: WikiConfig, project_name: str | None) -> list[str]:
-    """Resolve codewiki scopes using project-name override then global fallback."""
-    project_key = project_name.strip() if project_name is not None else None
-    if project_key and project_key in wiki_config.codewiki_project_scopes_by_name:
-        return list(wiki_config.codewiki_project_scopes_by_name[project_key])
-    return list(wiki_config.codewiki_scopes)
 
 
 def _validate_codewiki_scope_list(value: object, *, field_name: str) -> list[str]:

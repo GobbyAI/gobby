@@ -2,8 +2,8 @@
 //! against the current index without regenerating any page. When source files
 //! drift, the cheaper fix than a full LLM regen is to move each citation to its
 //! symbol's current span. This module owns the deterministic, no-LLM repair
-//! routine; the public `codewiki --repair-citations` flag wired in a later leaf
-//! drives [`repair_citations`].
+//! routine; the public `gwiki code --repair-citations` flag drives
+//! [`repair_citations`].
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -16,7 +16,7 @@ use super::{CitationResolver, CodewikiIndexSnapshot, reanchor_citations};
 use crate::commands::code::Symbol;
 
 /// Result of a citation-repair run. This is the source-of-truth serialized
-/// shape that the gcode contract freezes for `codewiki --repair-citations`
+/// shape that the gwiki contract freezes for `code --repair-citations`
 /// (Leaf 5 / #876): a stable key set with no `dry_run` mode.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct CitationRepairSummary {
@@ -148,7 +148,7 @@ fn repair_with_resolver(
 /// Public entry: re-anchors every generated page's citations against the
 /// current `symbols`, using the index snapshot persisted in the vault meta to
 /// identify which symbol each stale citation named. No regeneration, no LLM —
-/// this is the routine the `codewiki --repair-citations` flag (Leaf 5 / #876)
+/// this is the routine the `gwiki code --repair-citations` flag (Leaf 5 / #876)
 /// drives. A vault with no persisted snapshot (`unwrap_or_default`) cannot
 /// identify moved symbols, so its stale citations all count as unresolved.
 pub fn repair_citations(

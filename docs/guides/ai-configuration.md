@@ -69,7 +69,7 @@ When text generation routes through the daemon without an explicit
 provider/model pair, requests carry a daemon feature profile (`feature_low`
 unless configured). Set `ai.text_generate.profile` to change that default;
 explicit `provider`/`model` keys take precedence and suppress the profile
-entirely. Call sites can override the profile per request — `gcode codewiki`
+entirely. Call sites can override the profile per request — `gwiki code`
 sends a heavier profile for aggregate docs (see the
 [codewiki guide](./codewiki.md)).
 
@@ -80,9 +80,11 @@ env config sources reject `$secret:` placeholders instead of passing unresolved
 secret names to providers.
 
 Daemon-side agentic generation uses the same profile routing plus a tool policy
-from the caller. `gcode codewiki` uses that path for aggregate handbook pages so
-the daemon agent can investigate through read-only gcode tools before writing;
-direct routes use the local provider-neutral tool loop when configured.
+from the caller. `gwiki code` uses that path for aggregate handbook pages during
+isolated/manual runs, so the daemon agent can investigate through read-only
+gcode tools before writing. Production CodeWiki generation remains
+operationally paused; direct routes use the local provider-neutral tool loop
+when configured.
 
 ## Mixed Routing Example
 
@@ -150,4 +152,4 @@ frames, transcription, and text calls share one limiter. Use `ai.keep_alive`
 only with providers that understand it; do not send local-provider-only fields
 to cloud OpenAI-compatible endpoints unless that endpoint documents support.
 
-_Last verified: 2026-07-01_
+_Last verified: 2026-08-09_

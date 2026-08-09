@@ -149,8 +149,8 @@ gcode path "handleAuth" "writeDb"         # Shortest CALLS path between two symb
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
 gcode blast-radius "handleAuth" --depth 3 --token-budget 160
 
-# Code documentation
-gcode codewiki --out docs/codewiki        # Vault-ready hierarchical code docs
+# Code documentation (manual use; production automation is paused)
+gwiki --project . code --out /tmp/codewiki-check
 
 # Graph lifecycle (requires FalkorDB)
 gcode graph clear                         # Clear current project's graph projection

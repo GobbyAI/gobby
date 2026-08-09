@@ -1,8 +1,11 @@
 use std::fmt;
 use std::time::Duration;
 
+#[cfg(test)]
 use anyhow::Context as _;
+#[cfg(test)]
 use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
+#[cfg(test)]
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -88,6 +91,7 @@ impl GraphLifecycleTimeouts {
         }
     }
 
+    #[cfg(test)]
     fn for_action(self, action: GraphLifecycleAction) -> Duration {
         match action {
             GraphLifecycleAction::Clear => self.clear,
@@ -127,7 +131,6 @@ pub enum GraphReadError {
     NotConfigured,
     Unreachable { message: String },
     QueryFailed { message: String },
-    InvalidTarget { message: String },
 }
 
 impl fmt::Display for GraphReadError {
@@ -145,13 +148,13 @@ impl fmt::Display for GraphReadError {
             Self::QueryFailed { message } => {
                 write!(f, "FalkorDB graph read failed: {message}")
             }
-            Self::InvalidTarget { message } => f.write_str(message),
         }
     }
 }
 
 impl std::error::Error for GraphReadError {}
 
+#[cfg(test)]
 pub fn require_daemon_url(
     daemon_url: Option<&str>,
     action: GraphLifecycleAction,
@@ -164,6 +167,7 @@ pub fn require_daemon_url(
     })
 }
 
+#[cfg(test)]
 pub(crate) fn build_lifecycle_url(
     base_url: &str,
     action: GraphLifecycleAction,
@@ -176,6 +180,7 @@ pub(crate) fn build_lifecycle_url(
     Ok(url)
 }
 
+#[cfg(test)]
 pub(crate) fn compact_detail(body: &str) -> String {
     let detail = body.split_whitespace().collect::<Vec<_>>().join(" ");
     let detail = detail.trim();
@@ -191,6 +196,7 @@ pub(crate) fn compact_detail(body: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn format_http_error(
     action: GraphLifecycleAction,
     url: &reqwest::Url,
@@ -211,6 +217,7 @@ pub(crate) fn format_http_error(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn parse_success_payload(
     action: GraphLifecycleAction,
     status: StatusCode,
@@ -248,6 +255,7 @@ pub(crate) fn extract_summary_text(payload: &Value) -> Option<String> {
     }
 }
 
+#[cfg(test)]
 pub fn run_lifecycle_action(
     request: &GraphLifecycleRequest,
     action: GraphLifecycleAction,

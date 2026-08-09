@@ -22,6 +22,7 @@ from gobby.runner_init.orchestration import (
 )
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
+from gobby.wiki.codewiki_dormant import CodewikiCronReconciliation
 from tests.runner_helpers import (
     apply_safe_runner_config_defaults,
     create_base_patches,
@@ -112,7 +113,7 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             assert runner.db_executor.max_workers >= 8
             assert runner.coverage_executor.max_concurrency >= 1
-            runner.database.resize_pool.assert_called_once_with(64)
+            cast(MagicMock, runner.database).resize_pool.assert_called_once_with(64)
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
 
@@ -210,6 +211,7 @@ class TestGobbyRunnerInit:
                 "gobby.runner_init.storage.ensure_machine_identity",
                 return_value="00000000-0000-4000-8000-000000000001",
             ),
+            patch("gobby.runner_init.storage.ensure_system_session"),
             patch("gobby.runner_init.storage.init_hub_database", return_value=mock_db),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_store),
             patch("gobby.storage.config_store.ConfigStore", return_value=mock_config_store),
@@ -678,99 +680,6 @@ class TestGobbyRunnerInitialization:
             )
             assert code_index_error.exc_info is not None
 
-    def test_init_reconciles_codewiki_crons_with_empty_target_set(self) -> None:
-        mock_config = MagicMock()
-        mock_config.code_index.enabled = True
-        patches = create_base_patches(mock_config=mock_config)
-        project_manager = MagicMock()
-        project_manager.get.return_value = None
-
-        with ExitStack() as stack:
-            for patch_context in patches:
-                stack.enter_context(patch_context)
-            stack.enter_context(
-                patch(
-                    "gobby.storage.projects.LocalProjectManager",
-                    return_value=project_manager,
-                )
-            )
-            stack.enter_context(patch("gobby.code_index.storage.CodeIndexStorage"))
-            stack.enter_context(patch("gobby.code_index.context.CodeIndexContext"))
-            stack.enter_context(patch("gobby.code_index.prune.register_code_index_prune_cron"))
-            stack.enter_context(
-                patch("gobby.code_index.nightly_reindex.register_code_index_nightly_reindex_cron")
-            )
-            register = stack.enter_context(
-                patch(
-                    "gobby.code_index.codewiki_nightly.register_codewiki_nightly_crons",
-                    return_value=0,
-                )
-            )
-
-            runner = GobbyRunner()
-
-        assert runner.code_indexer is not None
-        assert runner.cron_scheduler is not None
-        assert "codewiki_nightly_cron" not in runner.degraded_services
-        assert register.call_count == 1
-        call_kwargs = register.call_args.kwargs
-        assert call_kwargs["cron_storage"] is runner.cron_storage
-        assert call_kwargs["cron_executor"] is runner.cron_scheduler.executor
-        assert call_kwargs["projects"] == []
-        assert call_kwargs["wiki_config"] is runner.config.wiki
-
-    def test_init_preserves_codewiki_crons_when_memory_scope_enumeration_fails(
-        self,
-    ) -> None:
-        mock_config = MagicMock()
-        mock_config.code_index.enabled = True
-        memory_manager = MagicMock()
-        enumeration_cutoffs: list[str] = []
-
-        def fail_scope_enumeration(*, redream_cutoff: str) -> list[object]:
-            enumeration_cutoffs.append(redream_cutoff)
-            raise RuntimeError("enumeration failed")
-
-        memory_manager.list_dream_scopes.side_effect = fail_scope_enumeration
-        patches = create_base_patches(mock_config=mock_config)
-        patches = [
-            patch_context for patch_context in patches if "MemoryManager" not in str(patch_context)
-        ]
-        patches.append(
-            patch("gobby.runner_init.services.MemoryManager", return_value=memory_manager)
-        )
-        project_manager = MagicMock()
-        project_manager.get.return_value = None
-
-        with ExitStack() as stack:
-            for patch_context in patches:
-                stack.enter_context(patch_context)
-            stack.enter_context(
-                patch(
-                    "gobby.storage.projects.LocalProjectManager",
-                    return_value=project_manager,
-                )
-            )
-            stack.enter_context(patch("gobby.code_index.storage.CodeIndexStorage"))
-            stack.enter_context(patch("gobby.code_index.context.CodeIndexContext"))
-            stack.enter_context(patch("gobby.code_index.prune.register_code_index_prune_cron"))
-            stack.enter_context(
-                patch("gobby.code_index.nightly_reindex.register_code_index_nightly_reindex_cron")
-            )
-            register = stack.enter_context(
-                patch("gobby.code_index.codewiki_nightly.register_codewiki_nightly_crons")
-            )
-
-            runner = GobbyRunner()
-
-        assert runner.code_indexer is not None
-        assert runner.memory_manager is memory_manager
-        assert enumeration_cutoffs == ["9999-12-31T23:59:59+00:00"]
-        memory_manager.list_dream_scopes.assert_called_once_with(
-            redream_cutoff="9999-12-31T23:59:59+00:00"
-        )
-        register.assert_not_called()
-
     def test_init_with_memory_backup_manager_does_not_restore_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL restore."""
         mock_config = MagicMock()
@@ -1023,6 +932,118 @@ class TestGobbyRunnerInitialization:
 class TestCronInitializationFailures:
     def test_legacy_pipeline_heartbeat_job_is_retired(self) -> None:
         assert "gobby:pipeline-heartbeat" in RETIRED_SYSTEM_CRON_JOBS
+
+    @pytest.mark.parametrize(
+        "query_results",
+        [
+            [RuntimeError("initial prefix query failed")],
+            [[], RuntimeError("residual prefix query failed")],
+        ],
+        ids=["initial-query", "residual-query"],
+    )
+    def test_reconciliation_query_failure_does_not_block_startup(
+        self,
+        query_results: list[object],
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = False
+        patches = create_base_patches(mock_config=mock_config)
+        cron_storage = MagicMock()
+        cron_storage.list_jobs_by_name_prefix.side_effect = query_results
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(
+                patch("gobby.storage.cron.CronJobStorage", return_value=cron_storage)
+            )
+            scheduler = stack.enter_context(patch("gobby.scheduler.scheduler.CronScheduler"))
+
+            runner = GobbyRunner()
+
+        assert "codewiki_dormant_reconciliation" in runner.degraded_services
+        assert runner.cron_storage is cron_storage
+        assert runner.cron_scheduler is scheduler.return_value
+        assert cron_storage.list_jobs_by_name_prefix.call_count == len(query_results)
+        scheduler.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "reconciliation",
+        [
+            CodewikiCronReconciliation(disabled=(), failed=("failed",), residual_enabled=()),
+            CodewikiCronReconciliation(disabled=(), failed=(), residual_enabled=("residual",)),
+        ],
+        ids=["failed-update", "residual-enabled"],
+    )
+    def test_reconciliation_residue_marks_startup_degraded(
+        self,
+        reconciliation: CodewikiCronReconciliation,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = False
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(patch("gobby.storage.cron.CronJobStorage"))
+            stack.enter_context(patch("gobby.scheduler.scheduler.CronScheduler"))
+            stack.enter_context(
+                patch(
+                    "gobby.wiki.codewiki_dormant.reconcile_codewiki_crons_disabled",
+                    return_value=reconciliation,
+                )
+            )
+
+            runner = GobbyRunner()
+
+        assert "codewiki_dormant_reconciliation" in runner.degraded_services
+        assert any(
+            "CodeWiki cron reconciliation left enabled rows" in record.getMessage()
+            for record in caplog.records
+        )
+
+    @pytest.mark.parametrize("indexer_state", ["absent", "disabled", "failed"])
+    def test_reconciliation_independent_of_code_indexer(self, indexer_state: str) -> None:
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = indexer_state != "disabled"
+        patches = create_base_patches(mock_config=mock_config)
+        if indexer_state == "absent":
+            patches.extend(
+                [
+                    patch("gobby.code_index.storage.CodeIndexStorage"),
+                    patch("gobby.code_index.gcode_gateway.GcodeGateway"),
+                    patch("gobby.code_index.context.CodeIndexContext", return_value=None),
+                ]
+            )
+        elif indexer_state == "failed":
+            patches.append(
+                patch(
+                    "gobby.code_index.storage.CodeIndexStorage",
+                    side_effect=RuntimeError("code index unavailable"),
+                )
+            )
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(patch("gobby.storage.cron.CronJobStorage"))
+            scheduler = stack.enter_context(patch("gobby.scheduler.scheduler.CronScheduler"))
+            reconcile = stack.enter_context(
+                patch(
+                    "gobby.wiki.codewiki_dormant.reconcile_codewiki_crons_disabled",
+                    return_value=CodewikiCronReconciliation((), (), ()),
+                )
+            )
+
+            runner = GobbyRunner()
+
+        assert runner.code_indexer is None
+        assert runner.cron_storage is reconcile.call_args.args[0]
+        assert runner.cron_scheduler is scheduler.return_value
+        assert "codewiki_dormant_reconciliation" not in runner.degraded_services
+        reconcile.assert_called_once_with(runner.cron_storage)
 
     @pytest.mark.parametrize(
         ("failed_target", "expected_message"),

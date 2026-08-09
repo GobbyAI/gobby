@@ -4,6 +4,7 @@
 //! compact symbol/outline data instead of full file contents.
 
 /// Calculate savings percentage.
+#[cfg(test)]
 pub fn savings_pct(original_chars: usize, actual_chars: usize) -> f64 {
     if original_chars == 0 {
         return 0.0;

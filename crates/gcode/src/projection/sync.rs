@@ -682,7 +682,6 @@ fn graph_error_kind(error: &GraphReadError) -> &'static str {
         GraphReadError::NotConfigured => "missing_falkordb_config",
         GraphReadError::Unreachable { .. } => "falkordb_unreachable",
         GraphReadError::QueryFailed { .. } => "falkordb_query_failed",
-        GraphReadError::InvalidTarget { .. } => "invalid_graph_target",
     }
 }
 

@@ -98,7 +98,6 @@ GCODE_ALLOWED_TOOLS: frozenset[str] = GCODE_READONLY_TOOLS | frozenset(
         "graph",
         "vector",
         "embeddings",
-        "codewiki",
         "prune",
     }
 )

@@ -1,6 +1,6 @@
 //! The single Mermaid-validity implementation shared by both wiki engines.
 //!
-//! gcode's codewiki generator gates every diagram through [`is_valid_mermaid`]
+//! gwiki's CodeWiki generator gates every diagram through [`is_valid_mermaid`]
 //! before writing it (write-time prevention), and gwiki's `lint` report flags
 //! any invalid or ungrounded diagram that leaked into the vault. Both crates
 //! previously carried byte-identical copies of this machinery; #17514 hoisted

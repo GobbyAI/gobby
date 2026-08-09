@@ -93,86 +93,6 @@ pub fn search_symbols_by_name(
     .map_err(|error| database_query_error("symbol name query", &error))
 }
 
-pub fn search_symbols_exact_first(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    kind: Option<&str>,
-    language: Option<&str>,
-    paths: &[String],
-    limit: usize,
-) -> anyhow::Result<Vec<Symbol>> {
-    if query.trim().is_empty() || limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let mut results = Vec::new();
-    let mut seen = HashSet::new();
-    let filters = SymbolFilters {
-        kind,
-        language,
-        paths,
-    };
-
-    let mut params = Vec::new();
-    let project = push_id_param(&mut params, project_id);
-    let query_param = push_param(&mut params, query.to_string());
-    let order = SymbolOrder::ExactCaseFirst(query_param.clone());
-    let exact = query_symbols_by_conditions(
-        conn,
-        vec![
-            format!("cs.project_id = {project}"),
-            format!(
-                "(cs.name = {q} OR cs.qualified_name = {q} OR lower(cs.name) = lower({q}) OR lower(cs.qualified_name) = lower({q}))",
-                q = query_param
-            ),
-        ],
-        params,
-        filters,
-        limit,
-        order,
-    )
-    .map_err(|error| database_query_error("exact symbol query", &error))?;
-    append_unique_symbols(&mut results, &mut seen, exact, limit);
-    if results.len() >= limit {
-        return Ok(results);
-    }
-
-    let prefix_pattern = format!("{}%", escape_like(query));
-    let mut params = Vec::new();
-    let project = push_id_param(&mut params, project_id);
-    let prefix = push_param(&mut params, prefix_pattern);
-    let prefix_matches = query_symbols_by_conditions(
-        conn,
-        vec![
-            format!("cs.project_id = {project}"),
-            format!(
-                "(cs.name LIKE {prefix} ESCAPE '\\' OR cs.qualified_name LIKE {prefix} ESCAPE '\\')"
-            ),
-        ],
-        params,
-        filters,
-        limit,
-        SymbolOrder::Name,
-    )
-    .map_err(|error| database_query_error("symbol prefix query", &error))?;
-    append_unique_symbols(&mut results, &mut seen, prefix_matches, limit);
-    if results.len() >= limit {
-        return Ok(results);
-    }
-
-    let contains = search_symbols_by_name(conn, query, project_id, kind, language, paths, limit)?;
-    append_unique_symbols(&mut results, &mut seen, contains, limit);
-    if results.len() >= limit {
-        return Ok(results);
-    }
-
-    let fts = search_symbols_fts(conn, query, project_id, kind, language, paths, limit)?;
-    append_unique_symbols(&mut results, &mut seen, fts, limit);
-
-    Ok(results)
-}
-
 pub fn search_symbols_fts_visible(
     conn: &mut Client,
     query: &str,
@@ -353,23 +273,6 @@ fn query_visible_symbols_by_conditions(
 
 fn requires_explicit_project_filter(database_url: &str) -> bool {
     !gobby_core::postgres::is_managed_agent_connection(database_url)
-}
-
-/// Full-text search for symbols using pg_search BM25.
-pub fn search_text(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    language: Option<&str>,
-    paths: &[String],
-    limit: usize,
-) -> anyhow::Result<Vec<SearchResult>> {
-    Ok(
-        search_symbols_fts(conn, query, project_id, None, language, paths, limit)?
-            .into_iter()
-            .map(|s| s.to_brief())
-            .collect(),
-    )
 }
 
 pub fn search_text_visible(

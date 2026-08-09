@@ -66,7 +66,7 @@ from gobby.config.tasks import (
     WorkflowConfig,
 )
 from gobby.config.ui import UIConfig
-from gobby.config.wiki import WikiConfig, resolve_codewiki_scopes
+from gobby.config.wiki import WikiConfig
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
@@ -90,25 +90,6 @@ def test_wiki_config_codewiki_scope_defaults() -> None:
 
     assert config.codewiki_scopes == []
     assert config.codewiki_project_scopes_by_name == {}
-    assert resolve_codewiki_scopes(config, "gobby") == []
-
-
-def test_wiki_config_project_name_scopes_override_global_scopes() -> None:
-    config = WikiConfig(
-        codewiki_scopes=["src"],
-        codewiki_project_scopes_by_name={"gobby": ["crates", "web", "src"]},
-    )
-
-    assert resolve_codewiki_scopes(config, "gobby") == ["crates", "web", "src"]
-
-
-def test_wiki_config_global_scopes_are_fallback() -> None:
-    config = WikiConfig(
-        codewiki_scopes=["src"],
-        codewiki_project_scopes_by_name={"other": ["crates"]},
-    )
-
-    assert resolve_codewiki_scopes(config, "gobby") == ["src"]
 
 
 @pytest.mark.parametrize(

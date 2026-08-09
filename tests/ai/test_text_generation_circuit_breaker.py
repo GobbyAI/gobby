@@ -1,8 +1,8 @@
 """Circuit breaker for the shared feature-LLM route (gobby-#17696).
 
 Under a sustained provider outage every feature call would otherwise run the full
-slow try-all-candidates loop before failing; a batch caller (the codewiki nightly)
-then multiplies that per-page into a multi-hour runaway. The breaker trips a
+slow try-all-candidates loop before failing; high-volume callers then compound that
+latency into a prolonged backlog. The breaker trips a
 provider binding after N consecutive failures and short-circuits further calls to
 it for a cooldown, so callers fail fast (and fall back) instead of hanging. It is a
 no-op in healthy operation: a single success resets the counter, and the open state
@@ -20,6 +20,7 @@ from gobby.ai import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    TextGenerateAdapter,
     TextGenerationRequest,
     TextGenerationService,
 )
@@ -66,7 +67,12 @@ class _BlankAdapter:
         return " "
 
 
-def _breaker_service(adapter: object, *, threshold: int, cooldown: float) -> TextGenerationService:
+def _breaker_service(
+    adapter: TextGenerateAdapter,
+    *,
+    threshold: int,
+    cooldown: float,
+) -> TextGenerationService:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(

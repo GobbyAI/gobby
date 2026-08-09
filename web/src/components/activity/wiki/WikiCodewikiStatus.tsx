@@ -1,14 +1,8 @@
-/**
- * §4.2 codewiki freshness strip: one quiet line above the code-mode tree
- * with the last mirror refresh and a queued/running indicator. State is
- * carried by text (with motion as reinforcement, never hue alone) per the
- * deutan-safe contract in .impeccable.md. Polls the trigger snapshot while
- * mounted; a daemon without the trigger (503) degrades to "unavailable".
- */
+/** Dormant CodeWiki status shown above the code-mode tree. */
 
 import { useEffect, useState } from "react";
 
-import { formatRelativeTime } from "../../../utils/formatTime";
+import { Badge } from "../../ui/Badge";
 import { fetchCodewikiStatus, type CodewikiStatus } from "./WikiTabData";
 
 const POLL_INTERVAL_MS = 30_000;
@@ -18,16 +12,11 @@ type StripState =
   | { status: "unavailable" }
   | { status: "ready"; snapshot: CodewikiStatus };
 
-function lastRunText(snapshot: CodewikiStatus): string {
-  const lastRun = snapshot.lastRun;
-  if (!lastRun) return "Not refreshed yet";
-  const relative = lastRun.finishedAt ? formatRelativeTime(lastRun.finishedAt) : null;
-  const when = relative === "now" ? "just now" : relative ? `${relative} ago` : "";
-  if (lastRun.outcome === "error") {
-    return when ? `Last refresh failed ${when}` : "Last refresh failed";
+function reasonText(snapshot: CodewikiStatus): string {
+  if (snapshot.reason === "pending_wiki_redesign") {
+    return "Generation paused pending wiki redesign.";
   }
-  const docs = lastRun.changedCount !== null ? ` · ${lastRun.changedCount} docs` : "";
-  return `${when ? `Refreshed ${when}` : "Refreshed"}${docs}`;
+  return snapshot.reason.replace(/_/g, " ");
 }
 
 export function WikiCodewikiStatus() {
@@ -35,50 +24,52 @@ export function WikiCodewikiStatus() {
 
   useEffect(() => {
     let cancelled = false;
-    const load = () => {
-      fetchCodewikiStatus()
-        .then((snapshot) => {
-          if (!cancelled) setState({ status: "ready", snapshot });
-        })
-        .catch(() => {
-          if (!cancelled) setState({ status: "unavailable" });
-        });
+    let timer: number | undefined;
+
+    const load = async (): Promise<CodewikiStatus | null> => {
+      try {
+        const snapshot = await fetchCodewikiStatus();
+        if (cancelled) return null;
+        setState({ status: "ready", snapshot });
+        return snapshot;
+      } catch {
+        if (!cancelled) setState({ status: "unavailable" });
+        return null;
+      }
     };
-    load();
-    const timer = window.setInterval(load, POLL_INTERVAL_MS);
+
+    void load().then((snapshot) => {
+      if (!cancelled && snapshot !== null && snapshot.state !== "disabled") {
+        timer = window.setInterval(() => void load(), POLL_INTERVAL_MS);
+      }
+    });
+
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
+      if (timer !== undefined) window.clearInterval(timer);
     };
   }, []);
 
   if (state.status === "loading") return null;
 
   const snapshot = state.status === "ready" ? state.snapshot : null;
-  const busy = snapshot ? snapshot.running || snapshot.pending : false;
-  const failed = snapshot?.lastRun?.outcome === "error";
+  // A live surface needs no dormancy strip: render only while the daemon
+  // reports the surface disabled, or when its status is unreachable.
+  if (snapshot !== null && snapshot.state !== "disabled" && snapshot.enabled !== false) {
+    return null;
+  }
 
   return (
     <p
       role="status"
-      aria-label="Codewiki freshness"
-      title={snapshot?.lastRun?.error ?? undefined}
+      aria-label="Codewiki status"
       className="flex shrink-0 items-center gap-1.5 truncate border-b border-border px-2 py-1 text-2xs text-muted-foreground"
     >
-      {busy ? (
-        <span
-          aria-hidden="true"
-          className="size-1.5 shrink-0 animate-pulse rounded-full bg-foreground motion-reduce:animate-none"
-        />
-      ) : null}
-      <span className={`truncate ${failed ? "text-destructive-foreground" : ""}`}>
-        {snapshot === null
-          ? "Codewiki status unavailable"
-          : snapshot.running
-            ? "Refreshing codewiki…"
-            : snapshot.pending
-              ? "Codewiki refresh queued"
-              : lastRunText(snapshot)}
+      <Badge className="shrink-0 px-1.5 py-0 text-2xs">
+        {snapshot === null ? "Unavailable" : "Paused"}
+      </Badge>
+      <span className="truncate">
+        {snapshot === null ? "Codewiki status unavailable" : reasonText(snapshot)}
       </span>
     </p>
   );
