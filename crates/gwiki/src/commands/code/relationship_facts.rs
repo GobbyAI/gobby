@@ -244,8 +244,6 @@ mod tests {
             file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
         }
     }
 

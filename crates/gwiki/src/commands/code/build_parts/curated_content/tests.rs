@@ -128,31 +128,15 @@ fn compose_flow(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
 ) -> Option<String> {
-    let mut responses: Vec<String> = responses.iter().map(|s| s.to_string()).collect();
-    let mut generator = move |_prompt: &str, system: &str, _tier: PromptTier| {
-        assert_eq!(system, prompts::FLOW_DIAGRAM_SYSTEM);
-        (!responses.is_empty()).then(|| responses.remove(0))
-    };
-    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
-    let mut diagram_stats = DiagramStats::default();
-    let mut progress = CodewikiProgress::silent();
-    let module_lookup = module_lookup(modules);
-    let file_lookup = file_lookup(files);
-    let leading_chunks = BTreeMap::new();
-    curated_flow_diagram(
+    compose_flow_with_observability(
+        responses,
         member_modules,
         member_files,
-        &mut generate,
-        CuratedFlowContext {
-            page_path: "code/concepts/test.md",
-            module_lookup: &module_lookup,
-            file_lookup: &file_lookup,
-            leading_chunks: &leading_chunks,
-            graph_edges,
-            diagram_stats: &mut diagram_stats,
-            progress: &mut progress,
-        },
+        modules,
+        files,
+        graph_edges,
     )
+    .0
 }
 
 fn compose_flow_with_observability(

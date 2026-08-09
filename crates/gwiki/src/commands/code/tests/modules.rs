@@ -494,8 +494,6 @@ fn file_doc_with_symbol(path: &str, module: &str, component_id: &str) -> FileDoc
         file_content_hash: String::new(),
         content_hash: String::new(),
         summary: None,
-        created_at: String::new(),
-        updated_at: String::new(),
     };
     FileDoc {
         path: path.to_string(),

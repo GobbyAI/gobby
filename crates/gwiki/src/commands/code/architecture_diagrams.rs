@@ -55,7 +55,7 @@ pub(crate) fn render_architecture_diagrams(
     let outcome = compose_flowchart(generate, &evidence, "the workspace architecture topology");
     diagram_stats.record(
         "code/_architecture.md",
-        DiagramKind::CuratedFlow,
+        DiagramKind::Architecture,
         &outcome,
         progress,
     );
@@ -551,7 +551,7 @@ mod tests {
         assert_eq!(stats.no_generator, 1);
         assert_eq!(
             progress.into_lines(),
-            vec!["codewiki: diagram code/_architecture.md [curated_flow]: no_generator"]
+            vec!["codewiki: diagram code/_architecture.md [architecture]: no_generator"]
         );
 
         let empty = SystemModel {
@@ -609,6 +609,7 @@ mod tests {
     /// when the CLI itself cannot be resolved, so offline environments do not
     /// fail spuriously.
     #[test]
+    #[ignore = "requires npx and the Mermaid CLI"]
     fn emitted_mermaid_blocks_pass_real_mermaid_parser() {
         let probe = std::process::Command::new("npx")
             .args(["-y", "@mermaid-js/mermaid-cli", "--version"])

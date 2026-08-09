@@ -14,16 +14,21 @@ pub(crate) fn fetch_codewiki_graph_edges(
     symbols: &[Symbol],
     edge_limit: usize,
 ) -> anyhow::Result<CodewikiGraph> {
+    let core_files = files
+        .iter()
+        .filter(|file| is_core_file(file))
+        .cloned()
+        .collect::<Vec<_>>();
     let core_symbol_ids = symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .map(|symbol| symbol.id.clone())
         .collect::<HashSet<_>>();
-    if core_symbol_ids.is_empty() {
+    if core_files.is_empty() || core_symbol_ids.is_empty() {
         return Ok(CodewikiGraph::available(Vec::new()));
     }
 
-    let scope = ScopeSelector::paths(files.iter().cloned());
+    let scope = ScopeSelector::paths(core_files.iter().cloned());
     let call_outcome = runtime
         .facts
         .edges(&scope, GraphEdgeKind::Call, edge_limit)?;
@@ -46,19 +51,12 @@ pub(crate) fn fetch_codewiki_graph_edges(
         })
         .map(|(source, target)| CodewikiGraphEdge::call(source, target))
         .collect::<Vec<_>>();
-    let core_files = files
-        .iter()
-        .filter(|file| is_core_file(file))
-        .cloned()
-        .collect::<Vec<_>>();
-    if !core_files.is_empty() {
-        let file_symbols = symbols_by_file_component(symbols);
-        edges.extend(import_edges_from_pairs(
-            &import_pairs,
-            &core_files,
-            &file_symbols,
-        ));
-    }
+    let file_symbols = symbols_by_file_component(symbols);
+    edges.extend(import_edges_from_pairs(
+        &import_pairs,
+        &core_files,
+        &file_symbols,
+    ));
 
     if call_truncated || import_truncated {
         Ok(CodewikiGraph::truncated(edges))

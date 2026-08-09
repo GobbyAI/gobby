@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use gobby_code::codewiki_facts::CodewikiFacts;
+use gobby_code::index::languages::is_supported_language;
 use gobby_core::ai::generation::DirectGenerationTarget;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::AiCapability;
@@ -84,6 +85,15 @@ pub(crate) fn print_text(text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(crate) fn resolve_output_path(project_root: &Path, out: Option<&str>) -> PathBuf {
+    let path = Path::new(out.unwrap_or(super::DEFAULT_OUT_DIR));
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    }
+}
+
 pub(crate) mod hasher {
     use std::path::Path;
 
@@ -111,19 +121,23 @@ pub(crate) fn normalize_storage_path_str(path: &str) -> String {
     }
 }
 
-pub(crate) fn normalize_file_arg(runtime: &CodeEngineRuntime, file: &str) -> String {
+pub(crate) fn normalize_file_arg(
+    runtime: &CodeEngineRuntime,
+    file: &str,
+) -> anyhow::Result<String> {
     let path = Path::new(file);
     if path.is_absolute() {
         if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
-            return clean_relative_path(relative);
+            return Ok(clean_relative_path(relative));
         }
         if let (Ok(absolute), Ok(root)) = (path.canonicalize(), runtime.project_root.canonicalize())
             && let Ok(relative) = absolute.strip_prefix(root)
         {
-            return clean_relative_path(relative);
+            return Ok(clean_relative_path(relative));
         }
+        anyhow::bail!("codewiki scope path `{file}` is outside the project root");
     }
-    clean_relative_path(path)
+    Ok(clean_relative_path(path))
 }
 
 fn clean_relative_path(path: &Path) -> String {
@@ -142,53 +156,26 @@ fn clean_relative_path(path: &Path) -> String {
 }
 
 pub(crate) fn is_indexed_language(file_path: &str) -> bool {
-    let extension = Path::new(file_path)
-        .extension()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "bash"
-            | "c"
-            | "cc"
-            | "cjs"
-            | "cpp"
-            | "cs"
-            | "cxx"
-            | "dart"
-            | "ex"
-            | "exs"
-            | "gemspec"
-            | "go"
-            | "h"
-            | "hh"
-            | "hpp"
-            | "hxx"
-            | "java"
-            | "js"
-            | "jsx"
-            | "json"
-            | "jsonc"
-            | "kt"
-            | "kts"
-            | "lua"
-            | "m"
-            | "mm"
-            | "mjs"
-            | "php"
-            | "py"
-            | "pyi"
-            | "rake"
-            | "rb"
-            | "rs"
-            | "sc"
-            | "scala"
-            | "sh"
-            | "swift"
-            | "ts"
-            | "tsx"
-            | "yaml"
-            | "yml"
-    )
+    is_supported_language(file_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::resolve_output_path;
+
+    #[test]
+    fn output_paths_are_resolved_from_the_project_root() {
+        let project_root = Path::new("/tmp/project");
+
+        assert_eq!(
+            resolve_output_path(project_root, Some("docs/wiki")),
+            project_root.join("docs/wiki")
+        );
+        assert_eq!(
+            resolve_output_path(project_root, Some("/tmp/gwiki-output")),
+            PathBuf::from("/tmp/gwiki-output")
+        );
+    }
 }

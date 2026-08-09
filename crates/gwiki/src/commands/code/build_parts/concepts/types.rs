@@ -16,6 +16,7 @@ pub(super) struct CuratedNavigationPlan {
 pub(super) struct ConceptModule {
     #[serde(default)]
     pub(super) slug: String,
+    #[serde(default)]
     pub(super) title: String,
     #[serde(default)]
     pub(super) summary: String,
@@ -44,6 +45,7 @@ pub(super) struct ConceptModule {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ConceptSection {
+    #[serde(default)]
     pub(super) title: String,
     #[serde(default)]
     pub(super) summary: String,
@@ -55,6 +57,7 @@ pub(super) struct ConceptSection {
 pub(super) struct NarrativePage {
     #[serde(default)]
     pub(super) slug: String,
+    #[serde(default)]
     pub(super) title: String,
     #[serde(default)]
     pub(super) summary: String,

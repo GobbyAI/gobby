@@ -428,6 +428,8 @@ fn git_changed_files_lists_diff_against_ref() {
     git(&["init", "-q"]);
     git(&["config", "user.email", "test@example.com"]);
     git(&["config", "user.name", "Test"]);
+    git(&["config", "commit.gpgSign", "false"]);
+    git(&["config", "core.hooksPath", "/dev/null"]);
     std::fs::write(root.join("a.rs"), "fn a() {}\n").expect("write a");
     std::fs::write(root.join("b.rs"), "fn b() {}\n").expect("write b");
     git(&["add", "."]);

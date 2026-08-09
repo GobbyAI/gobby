@@ -303,4 +303,20 @@ mod tests {
             "stub-only vault should not keep stubs alive: {docs:?}"
         );
     }
+
+    #[test]
+    fn real_nested_file_page_seeds_breadcrumb_stubs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_page(temp.path(), "code/files/src/nested/lib.rs.md");
+
+        let docs = breadcrumb_stub_docs(temp.path(), &BTreeMap::new()).expect("compute stubs");
+        let paths = docs
+            .iter()
+            .map(|doc| doc.path.as_str())
+            .collect::<BTreeSet<_>>();
+
+        assert!(paths.contains("code/modules/src.md"), "{paths:?}");
+        assert!(paths.contains("code/modules/src/nested.md"), "{paths:?}");
+        assert!(paths.contains(REPO_DOC_PATH), "{paths:?}");
+    }
 }

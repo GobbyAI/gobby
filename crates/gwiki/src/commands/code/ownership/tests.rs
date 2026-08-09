@@ -16,6 +16,7 @@ fn codewiki_ownership_codeowners_only_maps_declared_owners() {
     let mut meta = OwnershipMeta::default();
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/api/mod.rs".to_string()],
         &modules([("src/api/mod.rs", "src/api")]),
         &emitted(["src/api"]),
@@ -42,6 +43,7 @@ fn codewiki_ownership_derives_top_committers_from_git_blame() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
         &emitted(["src"]),
@@ -59,8 +61,59 @@ fn codewiki_ownership_derives_top_committers_from_git_blame() {
     assert_eq!(meta.files.len(), 1);
     let serialized = serde_json::to_string(&meta).expect("serialize ownership meta");
     assert!(serialized.contains("contributor_id"));
-    assert!(!serialized.contains("alice@example.com"));
-    assert!(!serialized.contains("bob@example.com"));
+    assert!(!serialized.contains("alice@example.test"));
+    assert!(!serialized.contains("bob@example.test"));
+}
+
+#[test]
+fn codewiki_ownership_resalts_contributors_when_project_identity_changes() {
+    let project = git_project_with_history();
+    let files = ["src/lib.rs".to_string()];
+    let file_modules = modules([("src/lib.rs", "src")]);
+    let emitted_modules = emitted(["src"]);
+    let options = OwnershipOptions {
+        blame_file_cap: 10,
+        blame_timeout: Duration::from_secs(10),
+    };
+    let mut meta = OwnershipMeta::default();
+
+    build_ownership_doc(
+        project.path(),
+        "first-project",
+        &files,
+        &file_modules,
+        &emitted_modules,
+        &mut meta,
+        OwnershipOptions {
+            blame_file_cap: 10,
+            blame_timeout: Duration::from_secs(10),
+        },
+    )
+    .expect("first ownership doc");
+    let first_ids = meta.files["src/lib.rs"]
+        .contributors
+        .iter()
+        .map(|contributor| contributor.contributor_id.clone())
+        .collect::<Vec<_>>();
+
+    build_ownership_doc(
+        project.path(),
+        "second-project",
+        &files,
+        &file_modules,
+        &emitted_modules,
+        &mut meta,
+        options,
+    )
+    .expect("resalted ownership doc");
+    let second_ids = meta.files["src/lib.rs"]
+        .contributors
+        .iter()
+        .map(|contributor| contributor.contributor_id.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(meta.contributor_salt.as_deref(), Some("second-project"));
+    assert_ne!(first_ids, second_ids);
 }
 
 #[test]
@@ -92,6 +145,7 @@ fn codewiki_ownership_declared_owners_take_primary_precedence() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
         &emitted(["src"]),
@@ -117,6 +171,7 @@ fn codewiki_ownership_without_sources_degrades_to_unknown() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src")]),
         &emitted(["src"]),
@@ -141,6 +196,7 @@ fn codewiki_ownership_file_cap_marks_partial() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/a.rs".to_string(), "src/b.rs".to_string()],
         &modules([("src/a.rs", "src"), ("src/b.rs", "src")]),
         &emitted(["src"]),
@@ -168,6 +224,7 @@ fn codewiki_ownership_file_cap_counts_only_cache_misses() {
         lines: 1,
     };
     let mut meta = OwnershipMeta {
+        contributor_salt: Some("ownership-test-project".to_string()),
         files: BTreeMap::from([(
             "src/a.rs".to_string(),
             CachedBlameSummary {
@@ -179,6 +236,7 @@ fn codewiki_ownership_file_cap_counts_only_cache_misses() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/a.rs".to_string(), "src/b.rs".to_string()],
         &modules([("src/a.rs", "src"), ("src/b.rs", "src")]),
         &emitted(["src"]),
@@ -208,6 +266,7 @@ fn codewiki_ownership_blame_error_marks_partial_without_caching() {
 
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/untracked.rs".to_string()],
         &modules([("src/untracked.rs", "src")]),
         &emitted(["src"]),
@@ -252,6 +311,7 @@ fn codewiki_ownership_remaps_unemitted_cluster_to_nearest_emitted_ancestor() {
     // as a module page (#18005); ownership must link the emitted ancestor.
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["crates/gwiki/src/lib.rs".to_string()],
         &modules([("crates/gwiki/src/lib.rs", "crates/gwiki/src/source_file")]),
         &emitted(["crates/gwiki/src", "crates/gwiki", "crates"]),
@@ -278,6 +338,7 @@ fn codewiki_ownership_falls_back_to_repo_overview_when_no_ancestor_is_emitted() 
     let mut meta = OwnershipMeta::default();
     let doc = build_ownership_doc(
         project.path(),
+        "ownership-test-project",
         &["src/lib.rs".to_string()],
         &modules([("src/lib.rs", "src/synthetic_cluster")]),
         &emitted([]),
@@ -327,14 +388,16 @@ fn git_project_with_two_files() -> tempfile::TempDir {
 }
 
 fn git_author(repo: &Path, name: &str, email: &str, message: &str) {
-    let status = Command::new("git")
-        .arg("-C")
-        .arg(repo)
+    let status = isolated_git(repo)
         .args([
             "-c",
             &format!("user.name={name}"),
             "-c",
             &format!("user.email={email}"),
+            "-c",
+            "commit.gpgSign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
             "commit",
             "-m",
             message,
@@ -345,11 +408,17 @@ fn git_author(repo: &Path, name: &str, email: &str, message: &str) {
 }
 
 fn git(repo: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = isolated_git(repo).args(args).status().expect("run git");
+    assert!(status.success(), "git {args:?} failed");
+}
+
+fn isolated_git(repo: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(repo)
-        .args(args)
-        .status()
-        .expect("run git");
-    assert!(status.success(), "git {args:?} failed");
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("HOME", repo);
+    command
 }

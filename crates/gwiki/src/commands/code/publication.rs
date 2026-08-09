@@ -16,7 +16,7 @@ use super::lock::CodewikiWriterLock;
 use super::truth_digest::TRUTH_DIGEST_META_PATH;
 use super::{
     AiGenerationSettings, CODEWIKI_META_PATH, CodewikiAiOutcome, CodewikiIndexSnapshot,
-    CodewikiMeta, OWNERSHIP_META_PATH, hash_snapshot_file,
+    CodewikiMeta, OWNERSHIP_META_PATH, canonical_project_root, hash_snapshot_file_at_root,
 };
 use crate::commands::code::runtime::hasher;
 
@@ -62,13 +62,14 @@ impl PublicationFingerprint {
         since_changed: Option<&BTreeSet<String>>,
         index_snapshot: &CodewikiIndexSnapshot,
     ) -> anyhow::Result<Self> {
+        let canonical_root = canonical_project_root(project_root)?;
         let mut source_hashes = BTreeMap::new();
         for source in source_files {
             // Indexed files can vanish from disk before the run starts (the
             // index lags external commits that delete sources); skip them like
             // the snapshot builder does instead of aborting the run (#18248).
-            let Some(hash) = hash_snapshot_file(project_root, source)? else {
-                eprintln!("warning: skipping codewiki source file missing from disk: {source}");
+            let Some(hash) = hash_snapshot_file_at_root(&canonical_root, source)? else {
+                log::warn!("skipping codewiki source file missing from disk: {source}");
                 continue;
             };
             source_hashes.insert(source.clone(), hash);
@@ -79,11 +80,7 @@ impl PublicationFingerprint {
         let snapshot = serde_json::to_vec(index_snapshot)?;
         Ok(Self {
             version: STAGE_VERSION,
-            project_root: project_root
-                .canonicalize()
-                .unwrap_or_else(|_| project_root.to_path_buf())
-                .to_string_lossy()
-                .into_owned(),
+            project_root: canonical_root.to_string_lossy().into_owned(),
             ai_mode: ai_mode.to_string(),
             leaf_ai_outcome: ai_outcome_key(leaf_ai_outcome),
             aggregate_ai_outcome: ai_outcome_key(aggregate_ai_outcome),
@@ -153,7 +150,16 @@ impl CodewikiPublication {
         let stage_out = stage_root.join(STAGE_VAULT);
         let mut recovered_changed = BTreeSet::new();
         if live_out.join(PUBLICATION_JOURNAL).exists() {
-            recovered_changed.extend(publish_staged(live_out, &stage_root, None)?);
+            match publish_staged(live_out, &stage_root, None) {
+                Ok(changed) => recovered_changed.extend(changed),
+                Err(error) => {
+                    log::warn!(
+                        "discarding incomplete CodeWiki publication stage {}: {error:#}",
+                        stage_root.display()
+                    );
+                    remove_publication_journal(live_out)?;
+                }
+            }
             remove_stage(&stage_root)?;
         }
         let force_full_hash_scan = match read_stage_manifest(&stage_root) {
@@ -353,6 +359,7 @@ fn validate_and_plan(live_out: &Path, stage_out: &Path) -> anyhow::Result<Public
     stage_pages.sort();
     let stage_set = stage_pages.iter().cloned().collect::<BTreeSet<_>>();
     for path in meta.docs.keys() {
+        validate_relative_path(path)?;
         if path.starts_with("code/") && !stage_set.contains(path) {
             anyhow::bail!("completed codewiki stage is missing generated target {path}");
         }
@@ -572,7 +579,18 @@ fn files_differ(left: &Path, right: &Path) -> anyhow::Result<bool> {
     if !right.is_file() {
         return Ok(true);
     }
+    if fs::metadata(left)?.len() != fs::metadata(right)?.len() {
+        return Ok(true);
+    }
     Ok(fs::read(left)? != fs::read(right)?)
+}
+
+fn remove_publication_journal(live_out: &Path) -> anyhow::Result<()> {
+    match fs::remove_file(live_out.join(PUBLICATION_JOURNAL)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn read_journal(live_out: &Path) -> Option<PublicationJournal> {
@@ -651,6 +669,7 @@ fn safe_join(root: &Path, relative: &str) -> anyhow::Result<PathBuf> {
 
 fn validate_relative_path(relative: &str) -> anyhow::Result<()> {
     let safe = !relative.is_empty()
+        && !relative.chars().any(char::is_control)
         && Path::new(relative)
             .components()
             .all(|component| matches!(component, Component::Normal(_)));

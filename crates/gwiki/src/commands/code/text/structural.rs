@@ -37,7 +37,8 @@ pub(crate) fn structural_file_summary(file: &str, symbols: &[SymbolDoc]) -> Stri
 /// stub prose.
 pub(crate) fn display_child_summary(summary: &str, file: &str) -> Option<String> {
     let filler = structural_file_summary(file, &[]);
-    (summary.trim() != filler).then(|| summary.trim().to_string())
+    let summary = summary.trim();
+    (!summary.is_empty() && summary != filler).then(|| summary.to_string())
 }
 
 pub(crate) fn structural_module_summary(
@@ -75,4 +76,22 @@ pub(crate) fn collect_link_spans(files: &[FileLink], modules: &[ModuleLink]) -> 
         spans.extend(module.source_spans.iter().cloned());
     }
     spans.into_iter().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_child_summary;
+
+    #[test]
+    fn display_child_summary_omits_empty_and_filler_text() {
+        assert_eq!(display_child_summary("   ", "src/lib.rs"), None);
+        assert_eq!(
+            display_child_summary("`src/lib.rs` has no indexed API symbols.", "src/lib.rs"),
+            None
+        );
+        assert_eq!(
+            display_child_summary("Useful summary", "src/lib.rs").as_deref(),
+            Some("Useful summary")
+        );
+    }
 }

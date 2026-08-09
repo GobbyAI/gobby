@@ -2,7 +2,7 @@ use super::*;
 use std::path::{Path, PathBuf};
 
 /// Resolve the workspace repo root from this crate's manifest dir.
-/// `CARGO_MANIFEST_DIR` points at `crates/gcode`, so two levels up is the root.
+/// `CARGO_MANIFEST_DIR` points at `crates/gwiki`, so two levels up is the root.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -130,8 +130,13 @@ fn absent_boundary_is_omitted_from_rendered_doc() {
     assert!(!rendered.contains("Qdrant vectors"));
     assert!(!rendered.contains("Embedding API"));
     assert!(!rendered.contains("Media toolchain"));
-    // The Postgres adapter is still cited (as a `path:line` citation).
-    assert!(rendered.contains("crates/gcore/src/postgres.rs:16"));
+    // The Postgres adapter is still cited with the expected path and line.
+    assert_eq!(
+        doc.sections[0].adapter_module.rsplit_once(':'),
+        Some(("crates/gcore/src/postgres.rs", "16"))
+    );
+    assert!(rendered.contains("crates/gcore/src/postgres.rs"));
+    assert!(rendered.contains(":16"));
     // The documented adapter file is stamped as frontmatter provenance
     // (#17781); an undocumented adapter would stamp nothing.
     assert!(

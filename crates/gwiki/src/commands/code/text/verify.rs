@@ -85,7 +85,8 @@ struct VerifyNoteResponse {
 /// notes. Returns `None` when no object array is present, and `Some(vec![])`
 /// when every block is supported. Out-of-range and duplicate IDs are dropped.
 pub(crate) fn parse_verify_notes(response: &str, block_count: usize) -> Option<Vec<VerifyNote>> {
-    let notes = serde_json::from_str::<Vec<VerifyNoteResponse>>(response.trim()).ok()?;
+    let response = strip_optional_fence(response.trim());
+    let notes = serde_json::from_str::<Vec<VerifyNoteResponse>>(response).ok()?;
     let mut filtered = notes
         .into_iter()
         .filter(|note| (1..=block_count).contains(&note.id))
@@ -94,6 +95,16 @@ pub(crate) fn parse_verify_notes(response: &str, block_count: usize) -> Option<V
     filtered.sort_by_key(|note| note.id);
     filtered.dedup_by_key(|note| note.id);
     Some(filtered)
+}
+
+fn strip_optional_fence(response: &str) -> &str {
+    let Some(rest) = response
+        .strip_prefix("```json\n")
+        .or_else(|| response.strip_prefix("```\n"))
+    else {
+        return response;
+    };
+    rest.strip_suffix("\n```").unwrap_or(response)
 }
 
 #[cfg(test)]
@@ -149,6 +160,17 @@ mod tests {
             ),
             Some(vec![VerifyNote::new(2, "kept")])
         );
+    }
+
+    #[test]
+    fn parse_verify_notes_accepts_plain_and_json_fences() {
+        for response in [
+            "```json\n[{\"id\":1,\"reason\":\"unsupported\"}]\n```",
+            "```\n[{\"id\":1,\"reason\":\"unsupported\"}]\n```",
+        ] {
+            let notes = parse_verify_notes(response, 1).expect("fenced verdict");
+            assert_eq!(notes.len(), 1);
+        }
     }
 
     #[test]

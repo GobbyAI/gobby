@@ -43,6 +43,8 @@ pub(crate) fn build_onboarding_doc(
 }
 
 fn onboarding_entry_points(files: &[FileDoc]) -> Vec<OnboardingEntryPoint> {
+    const MAX_PUBLIC_ENTRY_POINTS: usize = 24;
+
     let mut entries = Vec::new();
     let mut seen = BTreeSet::new();
 
@@ -71,6 +73,7 @@ fn onboarding_entry_points(files: &[FileDoc]) -> Vec<OnboardingEntryPoint> {
         }
     }
 
+    let mut public_entries = Vec::new();
     for file in files {
         for symbol in &file.symbols {
             if !is_public_api_symbol(&symbol.symbol) {
@@ -81,20 +84,37 @@ fn onboarding_entry_points(files: &[FileDoc]) -> Vec<OnboardingEntryPoint> {
                 .signature
                 .as_deref()
                 .unwrap_or(&symbol.symbol.qualified_name);
-            let key = format!("symbol:{}", symbol.symbol.id);
+            let key = format!(
+                "symbol:{}:{}:{}",
+                file.path, symbol.symbol.qualified_name, symbol.source_span.line_start
+            );
             if seen.insert(key) {
-                entries.push(OnboardingEntryPoint {
-                    link: file_wikilink(&file.path),
-                    description: format!(
-                        "{} public API {}",
-                        symbol.symbol.qualified_name,
-                        inline_code(signature)
+                public_entries.push((
+                    (
+                        file.path.as_str(),
+                        symbol.symbol.qualified_name.as_str(),
+                        symbol.source_span.line_start,
                     ),
-                    source_span: symbol.source_span.clone(),
-                });
+                    OnboardingEntryPoint {
+                        link: file_wikilink(&file.path),
+                        description: format!(
+                            "{} public API {}",
+                            symbol.symbol.qualified_name,
+                            inline_code(signature)
+                        ),
+                        source_span: symbol.source_span.clone(),
+                    },
+                ));
             }
         }
     }
+    public_entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.extend(
+        public_entries
+            .into_iter()
+            .take(MAX_PUBLIC_ENTRY_POINTS)
+            .map(|(_, entry)| entry),
+    );
 
     entries
 }
@@ -233,8 +253,6 @@ mod tests {
             file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
         }
     }
 

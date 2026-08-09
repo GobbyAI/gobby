@@ -21,6 +21,7 @@ impl DiagramOutcome {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum DiagramKind {
+    Architecture,
     ModuleDependency,
     ModuleCallSequence,
     CuratedFlow,
@@ -29,6 +30,7 @@ pub(crate) enum DiagramKind {
 impl DiagramKind {
     fn label(self) -> &'static str {
         match self {
+            Self::Architecture => "architecture",
             Self::ModuleDependency => "module_dependency",
             Self::ModuleCallSequence => "module_call_sequence",
             Self::CuratedFlow => "curated_flow",

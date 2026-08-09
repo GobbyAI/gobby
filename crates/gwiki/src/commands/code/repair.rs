@@ -57,19 +57,26 @@ impl IndexCitationResolver {
     fn build(symbols: &[Symbol], snapshot: &CodewikiIndexSnapshot) -> Self {
         let mut current_spans: BTreeMap<String, Vec<(usize, usize)>> = BTreeMap::new();
         let mut current_by_identity = BTreeMap::new();
+        let mut ambiguous_current = BTreeSet::new();
         for symbol in symbols {
             current_spans
                 .entry(symbol.file_path.clone())
                 .or_default()
                 .push((symbol.line_start, symbol.line_end));
-            current_by_identity.insert(
-                (
-                    symbol.file_path.clone(),
-                    symbol.qualified_name.clone(),
-                    symbol.kind.clone(),
-                ),
-                (symbol.line_start, symbol.line_end),
+            let key = (
+                symbol.file_path.clone(),
+                symbol.qualified_name.clone(),
+                symbol.kind.clone(),
             );
+            if current_by_identity
+                .insert(key.clone(), (symbol.line_start, symbol.line_end))
+                .is_some()
+            {
+                ambiguous_current.insert(key);
+            }
+        }
+        for key in ambiguous_current {
+            current_by_identity.remove(&key);
         }
 
         let mut snapshot_anchor: BTreeMap<(String, usize), (String, String)> = BTreeMap::new();

@@ -281,12 +281,12 @@ impl ReusePlan {
         }
         let expected = entry
             .source_hashes
-            .clone()
-            .into_iter()
-            .chain(entry.neighbor_hashes.clone())
-            .collect::<BTreeMap<_, _>>();
-        for (file, expected_hash) in &expected {
-            if self.current_hash(file).as_deref() != Some(expected_hash.as_str()) {
+            .iter()
+            .chain(entry.neighbor_hashes.iter())
+            .map(|(file, hash)| (file.clone(), hash.clone()))
+            .collect::<Vec<_>>();
+        for (file, expected_hash) in expected {
+            if self.current_hash(&file).as_deref() != Some(expected_hash.as_str()) {
                 return false;
             }
         }

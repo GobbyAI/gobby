@@ -9,7 +9,7 @@ use super::doc_paths::{
 use super::io::read_codewiki_meta;
 use super::runtime::{self as output, CodeEngineRuntime, Format};
 use super::truth_digest::TRUTH_DIGEST_META_PATH;
-use super::{CODEWIKI_META_PATH, DEFAULT_OUT_DIR, OWNERSHIP_META_PATH};
+use super::{CODEWIKI_META_PATH, OWNERSHIP_META_PATH};
 
 #[derive(Debug, Serialize)]
 pub struct CodewikiPurgeSummary {
@@ -49,13 +49,13 @@ pub(crate) fn purge_summary(
     out: Option<String>,
     force: bool,
 ) -> anyhow::Result<Option<CodewikiPurgeSummary>> {
-    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    let out_path = Path::new(&out_dir);
+    let out_path = output::resolve_output_path(&ctx.project_root, out.as_deref());
+    let out_dir = out_path.display().to_string();
     if !force {
         return Ok(None);
     }
 
-    let counts = purge_generated_output(out_path)?;
+    let counts = purge_generated_output(&out_path)?;
     let summary = CodewikiPurgeSummary {
         command: "codewiki purge",
         project_id: ctx.project_id.clone(),
@@ -68,10 +68,10 @@ pub(crate) fn purge_summary(
 }
 
 pub(crate) fn purge_confirmation(ctx: &CodeEngineRuntime, out: Option<&str>) -> String {
-    let out_dir = out.unwrap_or(DEFAULT_OUT_DIR);
+    let out_dir = output::resolve_output_path(&ctx.project_root, out);
     format!(
         "This will purge generated CodeWiki output under {} for project {}. Re-run with --force to confirm.",
-        Path::new(out_dir).display(),
+        out_dir.display(),
         ctx.project_id
     )
 }

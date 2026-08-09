@@ -143,8 +143,11 @@ pub(super) fn verify_candidate(
 /// the component drawn first.
 fn keep_largest_component(edges: Vec<EvidenceEdge>) -> (Vec<EvidenceEdge>, Option<FlowchartIssue>) {
     fn root<'a>(parent: &BTreeMap<&'a str, &'a str>, mut id: &'a str) -> &'a str {
-        while parent[id] != id {
-            id = parent[id];
+        while let Some(next) = parent.get(id).copied() {
+            if next == id {
+                break;
+            }
+            id = next;
         }
         id
     }

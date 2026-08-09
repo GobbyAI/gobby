@@ -31,22 +31,24 @@ fn reuse_project() -> (tempfile::TempDir, CodewikiInput) {
     (project, input)
 }
 
+fn fixture_generator(_prompt: &str, system: &str, _tier: PromptTier) -> Option<String> {
+    if system == prompts::CURATED_NAVIGATION_SYSTEM {
+        Some(test_curated_navigation_json())
+    } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+        Some(test_concept_handbook_body())
+    } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+        Some(test_narrative_handbook_body())
+    } else {
+        Some("Generated prose.".to_string())
+    }
+}
+
 #[test]
 fn unchanged_sources_are_reused_without_any_generation_call() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -127,17 +129,7 @@ fn skewed_nav_set_falls_through_reuse_to_regeneration() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -361,17 +353,7 @@ fn stale_render_version_disables_reuse() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -451,17 +433,7 @@ fn per_category_render_version_isolates_invalidation() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -720,17 +692,7 @@ fn reusable_pages_are_rewritten_after_strict_normalization_without_regeneration(
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         sink.persist(&doc)?;
@@ -795,18 +757,8 @@ fn interrupted_run_resumes_from_persisted_docs() {
     let out_dir = project.path().join("codewiki");
 
     // Run 1 dies before any module doc lands: every file doc must already be
-    // on disk with a matching meta entry, because the sink flushes per doc.
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    // on disk with a matching journal entry, because the sink journals per doc.
+    let mut first_generator = fixture_generator;
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         if doc.path.starts_with("code/modules/") {
@@ -828,10 +780,9 @@ fn interrupted_run_resumes_from_persisted_docs() {
     assert!(out_dir.join("code/files/src/lib.rs.md").exists());
     assert!(out_dir.join("code/files/src/nested/api.rs.md").exists());
     assert!(!out_dir.join("code/modules/src.md").exists());
-    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("interim meta");
-    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse interim meta");
-    assert!(meta["docs"].get("code/files/src/lib.rs.md").is_some());
-    assert!(meta["docs"].get("code/modules/src.md").is_none());
+    let meta = io::read_codewiki_meta(&out_dir).expect("replay interim journal");
+    assert!(meta.docs.contains_key("code/files/src/lib.rs.md"));
+    assert!(!meta.docs.contains_key("code/modules/src.md"));
 
     // A killed run's process exit releases the per-out_dir writer lock
     // (#17732); dropping the interrupted sink stands in for that here.
@@ -881,17 +832,7 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
 
     // Simulate a meta written before summaries existed (#681): same pages on
     // disk, healthy entries, but nothing recorded to reuse.
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let mut first = collect_docs(
         &input,
@@ -983,17 +924,7 @@ fn missing_page_on_disk_regenerates_that_doc() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -1158,17 +1089,7 @@ fn aggregate_profile_change_regenerates_only_aggregate_pages() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -1251,17 +1172,7 @@ fn aggregate_candidate_change_regenerates_only_aggregate_pages() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -1344,17 +1255,7 @@ fn prose_depth_and_register_changes_regenerate_every_ai_page() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -1470,17 +1371,7 @@ fn unchanged_generation_settings_still_reuse_without_llm_calls() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -1857,7 +1748,7 @@ fn cluster_rename_rewrites_stale_ownership_module_links() {
     let first = collect_docs(
         &input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut first_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut first_meta)),
             generate: Some(&mut first_generator),
             ai_depth: AiDepth::Symbols,
             progress: Some(&mut progress),
@@ -1893,7 +1784,7 @@ fn cluster_rename_rewrites_stale_ownership_module_links() {
     let second = collect_docs(
         &second_input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut second_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut second_meta)),
             generate: Some(&mut second_generator),
             ai_depth: AiDepth::Symbols,
             reuse,
@@ -1954,7 +1845,7 @@ fn deleted_file_rewrites_stale_ownership_file_links() {
     let first = collect_docs(
         &input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut first_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut first_meta)),
             generate: Some(&mut first_generator),
             ai_depth: AiDepth::Symbols,
             progress: Some(&mut progress),
@@ -1992,7 +1883,7 @@ fn deleted_file_rewrites_stale_ownership_file_links() {
         // snapshot.
         &input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut second_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut second_meta)),
             generate: Some(&mut second_generator),
             ai_depth: AiDepth::Symbols,
             reuse,
@@ -2052,17 +1943,7 @@ fn on_disk_degraded_file_page_regenerates_while_healthy_pages_reuse() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::CURATED_NAVIGATION_SYSTEM {
-            Some(test_curated_navigation_json())
-        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
-            Some(test_concept_handbook_body())
-        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
-            Some(test_narrative_handbook_body())
-        } else {
-            Some("Generated prose.".to_string())
-        }
-    };
+    let mut first_generator = fixture_generator;
     let mut progress = CodewikiProgress::silent();
     let first = collect_docs(
         &input,
@@ -2161,7 +2042,7 @@ fn on_disk_degraded_ownership_page_regenerates_despite_healthy_meta() {
     let first = collect_docs(
         &input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut first_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut first_meta)),
             generate: Some(&mut generator),
             ai_depth: AiDepth::Symbols,
             progress: Some(&mut progress),
@@ -2199,7 +2080,7 @@ fn on_disk_degraded_ownership_page_regenerates_despite_healthy_meta() {
     let second = collect_docs(
         &input,
         GenerateDocsOptions {
-            ownership: Some((project.path(), &mut second_meta)),
+            ownership: Some((project.path(), "ownership-reuse-project", &mut second_meta)),
             generate: Some(&mut generator),
             ai_depth: AiDepth::Symbols,
             reuse: Some(&mut plan),
@@ -2364,5 +2245,22 @@ fn unchanged_stamped_page_keeps_original_commit_without_churn() {
         std::fs::read_to_string(out_dir.join(&doc.path)).expect("refreshed page"),
         original_page,
         "normalization refresh must preserve the original commit and generated timestamp"
+    );
+}
+
+#[test]
+fn persisted_page_preserves_generated_relevant_source_details() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    let content = "# Page\n\n<details>\n<summary>Relevant source files</summary>\n\n- `src/lib.rs`\n\n</details>\n";
+    let doc = BuiltDoc::healthy("code/page.md", content.to_string());
+
+    let mut sink = DocSink::open(project.path(), &out_dir, "off").expect("sink opens");
+    sink.persist(&doc).expect("page persists");
+    sink.finish(None).expect("sink finishes");
+
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join("code/page.md")).expect("published page"),
+        content
     );
 }

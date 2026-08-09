@@ -1,3 +1,5 @@
+use std::fmt::Write as _;
+
 use super::super::build::default_chapter_links;
 use super::super::*;
 use super::cell_summary;
@@ -191,18 +193,16 @@ pub(crate) fn render_repo_doc(
     doc.push_str("## Start here — guided tour\n\n");
     let chapter_links = default_chapter_links();
     if let Some((slug, title)) = chapter_links.first() {
-        let _ = std::fmt::Write::write_fmt(
-            &mut doc,
-            format_args!("New to this codebase? Begin with [[code/narrative/{slug}|{title}]].\n\n"),
+        let _ = writeln!(
+            doc,
+            "New to this codebase? Begin with [[code/narrative/{slug}|{title}]].\n"
         );
     }
     for (index, (slug, title)) in chapter_links.iter().enumerate() {
-        let _ = std::fmt::Write::write_fmt(
-            &mut doc,
-            format_args!(
-                "{index}. [[code/narrative/{slug}|{title}]]\n",
-                index = index + 1
-            ),
+        let _ = writeln!(
+            doc,
+            "{index}. [[code/narrative/{slug}|{title}]]",
+            index = index + 1
         );
     }
     doc.push('\n');
@@ -247,7 +247,8 @@ pub(crate) fn render_repo_doc(
             // it never reads as a wall of "has no indexed API symbols".
             match display_child_summary(&file.summary, &file.path) {
                 Some(summary) => {
-                    let summary = replace_citations_with_markers(&summary, source_spans);
+                    let summary =
+                        replace_citations_with_markers(&cell_summary(&summary), source_spans);
                     write_markdown_table_row(&mut doc, [file_wikilink(&file.path), summary]);
                 }
                 None => {

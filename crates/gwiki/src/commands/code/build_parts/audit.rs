@@ -134,12 +134,12 @@ fn lookback_lines<'a>(lines: &[&'a str], line_start: usize) -> Vec<&'a str> {
             break;
         }
         // Keep collecting attr/doc-ish lines; a code line that is not part of an
-        // attribute block also ends the block, but we still capture multi-line
-        // attribute continuations (which may not start with `#`).
-        collected.push(line);
+        // attribute block ends the block, while multi-line attribute
+        // continuations may omit the leading `#`.
         if !is_attr_or_doc && !looks_like_attribute_continuation(trimmed) {
             break;
         }
+        collected.push(line);
         if idx == 0 {
             break;
         }

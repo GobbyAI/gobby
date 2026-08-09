@@ -38,13 +38,13 @@ pub(crate) fn collect_docs(
     options: GenerateDocsOptions<'_, '_>,
 ) -> Vec<BuiltDoc> {
     let mut docs = Vec::new();
-    if let Err(error) = generate_hierarchical_docs(input, options, &mut |doc| {
+    generate_hierarchical_docs(input, options, &mut |doc| {
         docs.push(doc);
         Ok(())
-    }) {
-        log::warn!("codewiki generation failed without ownership metadata: {error}");
-        return Vec::new();
-    }
+    })
+    .unwrap_or_else(|error| {
+        panic!("codewiki generation failed without ownership metadata: {error:#}")
+    });
     docs
 }
 
@@ -159,7 +159,7 @@ fn test_fence_start(line: &str) -> Option<(u8, usize)> {
     }
     let trimmed = &line[leading_spaces..];
     let marker = match trimmed.as_bytes().first().copied()? {
-        b'`' | b'~' => trimmed.as_bytes()[0],
+        marker @ (b'`' | b'~') => marker,
         _ => return None,
     };
     let len = trimmed.bytes().take_while(|byte| *byte == marker).count();

@@ -269,11 +269,11 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "diagram evidence edge references missing target node `ghost`")]
-    fn evidence_edges_must_reference_existing_nodes() {
+    fn evidence_edges_with_missing_endpoints_are_ignored() {
         let mut evidence = DiagramEvidence::default();
         evidence.push_node("a", "Alpha", NodeShape::Box);
         evidence.push_edge("a", "ghost", None, false);
+        assert!(evidence.edges.is_empty());
     }
 
     #[test]

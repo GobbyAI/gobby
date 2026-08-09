@@ -8,89 +8,25 @@ const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
 const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_EDGE_LIMIT: usize = 100_000;
-/// Cache epoch for generated pages. Bumped 9 -> 10 so reused pages re-render
-/// with compact navigation-table cells: a subsystem / child-module / module
-/// summary inlined into a parent table cell is reduced to its leading paragraph
-/// (the full multi-table brief stays on the module's own page) instead of a wall
-/// of pipe-escaped pseudo-tables.
-/// Bumped 8 -> 9 for the deep-wiki narrative
-/// pass: file pages demote `## Key components` to a capped `## Reference` table
-/// with test-gated symbols collapsed into a single behavior-spec line; the
-/// architecture topology diagram stitches fixed required/degraded service-edge
-/// labels; the page prompts demand design rationale, failure/degradation
-/// behavior, and evaluator context; and the grounding pass no longer appends the
-/// trailing bare-citation dump when a page already cites inline (#895). All
-/// reused pages must regenerate into the new shape.
-/// Bumped 7 -> 8 so reused pages regenerate
-/// without the auto-generated mermaid code-graph diagrams (per-module
-/// dependency/call diagrams, repo/architecture subsystem maps), which were the
-/// sole source of `graph-truncated`/`graph-unavailable` page degradation; graph
-/// availability is now informational only and never marks a page degraded.
-/// Bumped 10 -> 11 so narrative chapters re-render under the deterministic,
-/// reading-ordered slug scheme (`code/narrative/01-introduction.md`, #900): the
-/// old alphabetical bare-slug pages become orphans that `finish`'s cache-
-/// independent GC reclaims on this first full regen.
-/// Bumped 6 -> 7 so verifier audit notes appear in frontmatter even when source
-/// hashes are unchanged. Bumped 5 -> 6 so file and module pages written in the
-/// old symbol-dump shape (API Symbols / Component ID / Lines table, full-range
-/// `<details>` provenance) cannot be reused from disk: the new shape renders a
-/// verified narrative body plus a human Key components table. (5 was the
-/// grounded verification pass; 4 the pre-verify pages.)
-// 14 (#966): generated Markdown is normalized at the shared formatter boundary
-// so mutable codewiki pages refresh without MD012 blank-line violations.
-// 13 (#905): curated concept/narrative pages strip a duplicate leading `# H1`
-// the model writes at the top of its body (the renderer owns the canonical
-// `# {title}`), so prior on-disk pages with two H1s re-render with one.
-// 12 (#904): repo overview links the analysis/catalog pages (feature catalog,
-// infrastructure, deprecations, dead-code candidates) from a new "Analysis &
-// catalogs" section, narrative extra chapters carry readable `NN-<title>` slugs,
-// and aggregate prose is written opus-first — so prior on-disk pages re-render.
-// 16 (#976): tier -> feature profile is owned by gcore's `profile_for_tier`
-// (Aggregate -> feature_high, Module -> feature_mid, Standard -> feature_low) and
-// the Direct route honors per-tier profile targets, so cached pages written under
-// the prior None-profile defaults re-render.
-// 18 (#985): AI route/fallback/status frontmatter and metadata are explicit, and
-// the rejected repo-level code-graph dependency diagram is absent again.
-// 19 (#978): repo overview and architecture pages are produced by the tool loop
-// when a tool-chat route resolves, recording `lane: tool_loop` +
-// tool-call/turn counts in frontmatter; a tool-loop failure hard-fails the page
-// instead of degrading to a skeleton, so prior on-disk aggregate pages re-render
-// under the new shape. Curated and leaf pages continue to use one-shot generation.
-// 20 (#980): generalized handbook taxonomy (Overview/Architecture/Capabilities/
-// Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
-// semantic cross-directory concept-cluster names, and an enumerable `Reference |
-// Summary` table on curated pages, so prior narrative/concept pages re-render.
-// 21 (#17521, architecture + curated only): diagrams are LLM-composed from
-// supplied evidence and edge-verified — the architecture page carries one
-// normalized topology flowchart (deterministic sequence diagrams retired) and
-// curated conceptual flows draw documented-chain plus code-index member edges
-// under new captions — so prior on-disk architecture/curated pages re-render.
-// 21 (#17780, deprecations only): the aggregate lists only core (documented)
-// files, so headings never wikilink test/fixture file pages that are never
-// generated — prior on-disk deprecations pages re-render without the dead
-// links.
-// 21 (#17781, deterministic aggregates): deprecations, features,
-// infrastructure, changes, and ownership (misc) now stamp frontmatter
-// provenance naming their derivation inputs (scanned files with deprecation
-// markers; contract JSONs + handler files; documented adapter files; diffed
-// index files; blame-analyzed files) instead of `provenance: []`, so prior
-// on-disk pages re-render with provenance recorded.
-//
 // Per-category render versions (#1007): the single global version was replaced
 // by per-category constants so a template change in one renderer only
-// invalidates the pages it affects. All categories start at 20 (the prior
-// global value) for backward compatibility with existing _meta/codewiki.json.
+// invalidates only affected pages. Epoch 20 is the baseline inherited from the
+// former global render version.
 const RENDER_VERSION_DEFAULT: u32 = 20;
 const RENDER_VERSION_FILE: u32 = 20;
 // 21 (#18570): module pages regenerate once with both restored deterministic
 // dependency and depth-bearing call-sequence diagram sections.
 const RENDER_VERSION_MODULE: u32 = 21;
 const RENDER_VERSION_REPO: u32 = 20;
+// Architecture and deterministic aggregate pages use epoch 21 for their
+// current diagram/provenance shapes.
 const RENDER_VERSION_ARCHITECTURE: u32 = 21;
 const RENDER_VERSION_INFRASTRUCTURE: u32 = 21;
 const RENDER_VERSION_FEATURES: u32 = 21;
 const RENDER_VERSION_DEPRECATIONS: u32 = 21;
 const RENDER_VERSION_MISC: u32 = 21;
+// Curated handbook pages advance independently as their narrative and diagram
+// contract changes.
 const RENDER_VERSION_CURATED: u32 = 22;
 const RENDER_VERSION_CHANGES: u32 = 21;
 
@@ -103,11 +39,11 @@ pub(crate) fn render_version_for_path(path: &str) -> u32 {
         RENDER_VERSION_FILE
     } else if path.starts_with("code/modules/") {
         RENDER_VERSION_MODULE
-    } else if path.starts_with("code/concepts/") || path.starts_with("code/narrative/") {
+    } else if types::is_curated_doc(path) {
         RENDER_VERSION_CURATED
-    } else if path == "code/repo.md" {
+    } else if path == types::REPO_DOC_PATH {
         RENDER_VERSION_REPO
-    } else if path == "code/_architecture.md" {
+    } else if path == types::ARCHITECTURE_DOC_PATH {
         RENDER_VERSION_ARCHITECTURE
     } else if path == "code/infrastructure.md" {
         RENDER_VERSION_INFRASTRUCTURE
@@ -175,7 +111,8 @@ pub(crate) use build::{
     build_codewiki_changes_doc, build_codewiki_index_snapshot, build_curated_navigation_docs,
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    hash_snapshot_file, resolve_file_reuse, resolve_tool_loop_dump_dir,
+    canonical_project_root, hash_snapshot_file_at_root, resolve_file_reuse,
+    resolve_tool_loop_dump_dir,
 };
 pub use command::{CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, run_command};
 #[cfg(test)]
@@ -227,15 +164,15 @@ pub use system_model::{
 // same one, so generator and lint cannot drift.
 pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
 #[cfg(test)]
-pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
-// Evidence-grounded LLM diagram composition (#17521): the model composes,
-// deterministic code verifies every arrow against supplied evidence.
-#[cfg(test)]
 pub(crate) use compare::compare_to;
 pub use compare::{
     CodewikiChangedDoc, CodewikiCommitMetadata, CodewikiCompareDoc, CodewikiCompareSummary,
     run_compare,
 };
+#[cfg(test)]
+pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
+// Evidence-grounded LLM diagram composition (#17521): the model composes,
+// deterministic code verifies every arrow against supplied evidence.
 pub(crate) use diagram_compose::{
     DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
 };

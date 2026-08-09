@@ -109,21 +109,6 @@ pub(crate) fn build_module_docs_with_filter(
                 module: child,
             })
             .collect::<Vec<_>>();
-        let file_summaries = direct_files
-            .iter()
-            .map(|file| prompts::ChildSummary {
-                name: file.path.clone(),
-                summary: file.summary.clone(),
-            })
-            .collect::<Vec<_>>();
-        let child_summaries = child_modules
-            .iter()
-            .map(|module| prompts::ChildSummary {
-                name: module.module.clone(),
-                summary: module.summary.clone(),
-            })
-            .collect::<Vec<_>>();
-        let prompt_component_ids = prompt_component_ids_for_module(files, &module);
         let dependency_outcome = render_module_dependency_mermaid_with_context(
             &module,
             &diagram_context,
@@ -190,6 +175,21 @@ pub(crate) fn build_module_docs_with_filter(
         let (summary, reused_page) = match reused {
             Some((page, summary)) => (summary, Some(page)),
             None => {
+                let file_summaries = direct_files
+                    .iter()
+                    .map(|file| prompts::ChildSummary {
+                        name: file.path.clone(),
+                        summary: file.summary.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let child_summaries = child_modules
+                    .iter()
+                    .map(|module| prompts::ChildSummary {
+                        name: module.module.clone(),
+                        summary: module.summary.clone(),
+                    })
+                    .collect::<Vec<_>>();
+                let prompt_component_ids = prompt_component_ids_for_module(files, &module);
                 // Real retrieved input alongside summaries-of-summaries: the
                 // module's busiest member files contribute leading source
                 // excerpts to the brief.

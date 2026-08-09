@@ -10,13 +10,13 @@ use super::prompts;
 
 mod ai;
 
+pub(crate) use ai::{
+    ARCHITECTURE_DOC_PATH, AiGenerationSettings, AiGenerationStatus, CodewikiAiOutcome,
+    REPO_DOC_PATH, SyncTextGenerator, SyncTextVerifier, ai_outcome_for_doc, is_curated_doc,
+};
 pub use ai::{
     AiDepth, CodewikiAiOptions, PromptTier, ProseDepth, ProseRegister, TextGenerator, TextVerifier,
     VerifyScope,
-};
-pub(crate) use ai::{
-    AiGenerationSettings, AiGenerationStatus, CodewikiAiOutcome, SyncTextGenerator,
-    SyncTextVerifier,
 };
 
 /// Wiki-owned projection of an indexed symbol.
@@ -39,8 +39,6 @@ pub struct Symbol {
     pub(crate) file_content_hash: String,
     pub(crate) content_hash: String,
     pub(crate) summary: Option<String>,
-    pub(crate) created_at: String,
-    pub(crate) updated_at: String,
 }
 
 impl Symbol {
@@ -79,8 +77,6 @@ impl Symbol {
             file_content_hash: fact.file_content_hash,
             content_hash: fact.content_hash,
             summary: fact.summary,
-            created_at: String::new(),
-            updated_at: String::new(),
         }
     }
 }

@@ -26,8 +26,14 @@ fn input(
     edges: Vec<CodewikiGraphEdge>,
     availability: CodewikiGraphAvailability,
 ) -> CodewikiInput {
+    let files = symbols
+        .iter()
+        .map(|symbol| symbol.file_path.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     CodewikiInput {
-        files: symbols.iter().map(|s| s.file_path.clone()).collect(),
+        files,
         graph_edges: edges,
         graph_availability: availability,
         symbols,

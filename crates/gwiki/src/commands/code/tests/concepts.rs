@@ -50,13 +50,6 @@ fn concept_input() -> CodewikiInput {
     }
 }
 
-fn rendered_doc<'a>(docs: &'a [(String, String)], path: &str) -> &'a str {
-    docs.iter()
-        .find(|(doc_path, _)| doc_path == path)
-        .map(|(_, content)| content.as_str())
-        .unwrap_or_else(|| panic!("missing doc {path}"))
-}
-
 #[test]
 fn curated_navigation_uses_one_structured_aggregate_pass() {
     let mut curated_calls = 0;

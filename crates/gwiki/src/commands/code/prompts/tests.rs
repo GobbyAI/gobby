@@ -69,7 +69,12 @@ fn aggregate_prompts_bound_each_child_summary() {
         architecture_prompt("src", &children, &children, &[], &[]),
         repo_prompt(&children, &children, &[]),
     ] {
-        for line in prompt.lines().filter(|line| line.starts_with("| src/")) {
+        let source_rows = prompt
+            .lines()
+            .filter(|line| line.starts_with("| src/"))
+            .collect::<Vec<_>>();
+        assert!(!source_rows.is_empty(), "prompt contains source rows");
+        for line in source_rows {
             assert!(
                 line.chars().count()
                     <= CHILD_SUMMARY_EXCERPT_MAX_CHARS + "| src/module_0 |  |".chars().count(),

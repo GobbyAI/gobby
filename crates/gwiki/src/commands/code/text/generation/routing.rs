@@ -90,16 +90,13 @@ pub(super) fn resolve_direct_tier_targets(
     }
 }
 
-pub(super) fn resolve_ai_context(
-    ctx: &CodeEngineRuntime,
-    ai: Option<AiRouting>,
-) -> anyhow::Result<AiContext> {
+pub(super) fn resolve_ai_context(ctx: &CodeEngineRuntime, ai: Option<AiRouting>) -> AiContext {
     let mut context = ctx.ai.clone();
     context.project_id = Some(ctx.project_id.clone());
     if let Some(routing) = ai {
         context.bindings.text_generate.routing = routing;
     }
-    Ok(context)
+    context
 }
 
 #[cfg(test)]

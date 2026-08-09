@@ -60,28 +60,28 @@ fn deterministic_generation(prompt: &str, system: &str, tier: PromptTier) -> Opt
 }
 
 fn collect_serial(input: &CodewikiInput) -> Vec<(String, String)> {
-    let mut generate = deterministic_generation;
+    let mut serial_generate = deterministic_generation;
     collect_doc_pairs(
         input,
         GenerateDocsOptions {
-            generate: Some(&mut generate),
+            generate: Some(&mut serial_generate),
             ..Default::default()
         },
     )
 }
 
 fn collect_pooled(input: &CodewikiInput, workers: usize) -> Vec<(String, String)> {
-    let sync_generate = |prompt: &str, system: &str, tier: PromptTier| {
+    let pooled_generate = |prompt: &str, system: &str, tier: PromptTier| {
         deterministic_generation(prompt, system, tier)
     };
-    let mut generate = deterministic_generation;
+    let mut serial_generate = deterministic_generation;
     collect_doc_pairs(
         input,
         GenerateDocsOptions {
-            generate: Some(&mut generate),
+            generate: Some(&mut serial_generate),
             file_workers: Some(FileGenerationWorkers {
                 workers: NonZeroUsize::new(workers).expect("worker count"),
-                generate: &sync_generate,
+                generate: &pooled_generate,
                 verify: None,
             }),
             ..Default::default()
@@ -120,23 +120,25 @@ fn pool_bounds_concurrent_generation_calls() {
     let input = multi_file_input(8);
     let in_flight = AtomicUsize::new(0);
     let max_in_flight = AtomicUsize::new(0);
-    let sync_generate = |prompt: &str, system: &str, tier: PromptTier| {
+    let arrivals = AtomicUsize::new(0);
+    let rendezvous = std::sync::Barrier::new(3);
+    let pooled_generate = |prompt: &str, system: &str, tier: PromptTier| {
         let now = in_flight.fetch_add(1, Ordering::SeqCst) + 1;
         max_in_flight.fetch_max(now, Ordering::SeqCst);
-        // Long enough that queued files would overlap if the pool over-ran
-        // its width; short enough to keep the test fast.
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        if arrivals.fetch_add(1, Ordering::SeqCst) < 3 {
+            rendezvous.wait();
+        }
         in_flight.fetch_sub(1, Ordering::SeqCst);
         deterministic_generation(prompt, system, tier)
     };
-    let mut generate = deterministic_generation;
+    let mut serial_generate = deterministic_generation;
     let docs = collect_docs(
         &input,
         GenerateDocsOptions {
-            generate: Some(&mut generate),
+            generate: Some(&mut serial_generate),
             file_workers: Some(FileGenerationWorkers {
                 workers: NonZeroUsize::new(3).expect("worker count"),
-                generate: &sync_generate,
+                generate: &pooled_generate,
                 verify: None,
             }),
             ..Default::default()
@@ -144,14 +146,7 @@ fn pool_bounds_concurrent_generation_calls() {
     );
     assert!(!docs.is_empty());
     let peak = max_in_flight.load(Ordering::SeqCst);
-    assert!(
-        peak <= 3,
-        "pool must bound in-flight calls to 3, saw {peak}"
-    );
-    assert!(
-        peak >= 2,
-        "8 files on 3 workers with sleeping calls must actually overlap, saw {peak}"
-    );
+    assert_eq!(peak, 3, "three workers must rendezvous concurrently");
 }
 
 #[test]

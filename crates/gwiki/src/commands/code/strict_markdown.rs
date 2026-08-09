@@ -99,15 +99,26 @@ fn normalize_outside_lines(lines: &[String]) -> Vec<String> {
 fn strip_details_blocks(lines: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len());
     let mut in_details = false;
-    for line in lines {
+    let mut preserve_details = false;
+    for (index, line) in lines.iter().enumerate() {
         let trimmed = line.trim_start();
         if in_details {
+            if preserve_details {
+                out.push(line.clone());
+            }
             if trimmed.contains("</details>") {
                 in_details = false;
+                preserve_details = false;
             }
             continue;
         }
         if trimmed.starts_with("<details") {
+            preserve_details = lines
+                .get(index + 1)
+                .is_some_and(|next| next.trim() == "<summary>Relevant source files</summary>");
+            if preserve_details {
+                out.push(line.clone());
+            }
             in_details = !trimmed.contains("</details>");
             continue;
         }
@@ -300,6 +311,15 @@ fn wrap_breakable_lines(lines: &[String]) -> Vec<String> {
             in_list = false;
             continue;
         }
+        if line.trim_start().starts_with("<details")
+            || line.trim() == "<summary>Relevant source files</summary>"
+            || line.trim() == "</details>"
+        {
+            flush_paragraph(&mut paragraph, &mut out);
+            out.push(line.clone());
+            in_list = false;
+            continue;
+        }
         if parse_atx_heading(line).is_some() {
             flush_paragraph(&mut paragraph, &mut out);
             push_blank(&mut out);
@@ -461,9 +481,13 @@ fn wrap_units(text: &str) -> Vec<String> {
     let mut paren_depth = 0usize;
     let mut in_code = false;
 
-    for ch in text.chars() {
+    for (byte_index, ch) in text.char_indices() {
         if ch == '`' {
-            in_code = !in_code;
+            if in_code {
+                in_code = false;
+            } else if text[byte_index + ch.len_utf8()..].contains('`') {
+                in_code = true;
+            }
         }
         if ch.is_whitespace() && bracket_depth == 0 && paren_depth == 0 && !in_code {
             if !current.is_empty() {
@@ -574,6 +598,19 @@ mod tests {
         let normalized = normalize_codewiki_markdown(input);
 
         assert_eq!(normalized, "# Page\n\nBefore\n\nAfter\n");
+    }
+
+    #[test]
+    fn preserves_generated_provenance_details_blocks() {
+        let input = "# Page\n\n<details>\n<summary>Relevant source files</summary>\n\n- `src/lib.rs`\n\n</details>\n";
+        assert_eq!(normalize_codewiki_markdown(input), input);
+    }
+
+    #[test]
+    fn unmatched_backtick_does_not_capture_following_words() {
+        let input = "# Page\n\nA dangling ` marker followed by words that should wrap across the configured width because no closing code delimiter exists in this paragraph at all.\n";
+        let normalized = normalize_codewiki_markdown(input);
+        assert!(normalized.lines().count() > 3, "{normalized}");
     }
 
     #[test]

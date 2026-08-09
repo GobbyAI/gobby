@@ -213,7 +213,38 @@ fn run_summary_serializes_daemon_contract_keys() {
 fn component_id_uses_stored_symbol_id() {
     let mut symbol = test_symbol("src/lib.rs", "Client", "class", 1, "pub struct Client;");
     symbol.id = "stored-symbol-id".to_string();
-    assert_eq!(symbol.id, "stored-symbol-id");
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![symbol],
+    };
+    let mut saw_stored_id = false;
+    let mut generator = |prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::MODULE_SYSTEM {
+            saw_stored_id = prompt.contains("Client [class] (stored-symbol-id)");
+            Some("The module exposes Client [src/lib.rs:1].".to_string())
+        } else {
+            None
+        }
+    };
+    let docs = collect_doc_pairs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut generator),
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        saw_stored_id,
+        "module prompt must use the stored component ID"
+    );
+    assert!(
+        rendered_doc(&docs, "code/modules/src.md").contains("The module exposes Client"),
+        "generated module prose must reach rendered output"
+    );
 }
 
 #[test]
@@ -457,30 +488,12 @@ fn repo_marker_input() -> CodewikiInput {
     }
 }
 
-fn rendered_doc<'a>(docs: &'a [(String, String)], path: &str) -> &'a str {
-    docs.iter()
-        .find(|(doc_path, _)| doc_path == path)
-        .map(|(_, content)| content.as_str())
-        .expect("rendered doc")
-}
-
 fn markdown_section<'a>(rendered: &'a str, heading: &str) -> &'a str {
     let (_, after_heading) = rendered.split_once(heading).expect("section heading");
     after_heading
         .split_once("\n## ")
         .map(|(section, _)| section)
         .unwrap_or(after_heading)
-}
-
-fn inline_marker_count(text: &str) -> usize {
-    text.split_whitespace()
-        .filter(|token| {
-            token
-                .strip_prefix('[')
-                .and_then(|value| value.strip_suffix(']'))
-                .is_some_and(|value| value.chars().all(|ch| ch.is_ascii_digit()))
-        })
-        .count()
 }
 
 #[test]

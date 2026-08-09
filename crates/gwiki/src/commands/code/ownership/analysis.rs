@@ -22,6 +22,7 @@ enum BlameContributorsOutcome {
 
 pub(super) fn derived_owners_for_files(
     project_root: &Path,
+    project_id: &str,
     files: &[String],
     meta: &mut OwnershipMeta,
     options: &OwnershipOptions,
@@ -61,7 +62,13 @@ pub(super) fn derived_owners_for_files(
         }
         blame_misses += 1;
         let remaining_timeout = options.blame_timeout.saturating_sub(started.elapsed());
-        match blame_file_contributors_with_timeout(project_root, head, file, remaining_timeout) {
+        match blame_file_contributors_with_timeout(
+            project_root,
+            project_id,
+            head,
+            file,
+            remaining_timeout,
+        ) {
             BlameContributorsOutcome::Success(contributors) => {
                 meta.files.insert(
                     file.clone(),
@@ -92,11 +99,12 @@ pub(super) fn content_hash(project_root: &Path, file: &str) -> Option<String> {
 
 fn blame_file_contributors_with_timeout(
     project_root: &Path,
+    project_id: &str,
     head: gix::ObjectId,
     file: &str,
     timeout: Duration,
 ) -> BlameContributorsOutcome {
-    match blame_file_contributors(project_root, head, file, timeout) {
+    match blame_file_contributors(project_root, project_id, head, file, timeout) {
         Ok(Some(contributors)) => BlameContributorsOutcome::Success(contributors),
         Ok(None) => BlameContributorsOutcome::Timeout,
         Err(error) => BlameContributorsOutcome::Error(error),
@@ -122,6 +130,7 @@ pub(super) fn take_last_timed_out_git_blame_pid() -> Option<u32> {
 
 fn blame_file_contributors(
     project_root: &Path,
+    project_id: &str,
     head: gix::ObjectId,
     file: &str,
     timeout: Duration,
@@ -140,7 +149,7 @@ fn blame_file_contributors(
         anyhow::bail!("git blame failed for `{file}`: {stderr}");
     }
 
-    Ok(Some(parse_git_blame_porcelain(&output.stdout)))
+    Ok(Some(parse_git_blame_porcelain(project_id, &output.stdout)))
 }
 
 pub(super) fn git_blame_output_with_timeout(
@@ -184,7 +193,7 @@ fn read_tempfile(file: &mut std::fs::File) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-fn parse_git_blame_porcelain(raw: &str) -> Vec<OwnershipContributor> {
+fn parse_git_blame_porcelain(project_id: &str, raw: &str) -> Vec<OwnershipContributor> {
     let mut line_counts: BTreeMap<String, (String, Option<String>, usize)> = BTreeMap::new();
     let mut current_name: Option<String> = None;
     let mut current_email: Option<String> = None;
@@ -205,7 +214,7 @@ fn parse_git_blame_porcelain(raw: &str) -> Vec<OwnershipContributor> {
             .clone()
             .unwrap_or_else(|| "Unknown".to_string());
         let email = current_email.clone();
-        let contributor_id = contributor_id(&name, email.as_deref());
+        let contributor_id = contributor_id(project_id, &name, email.as_deref());
         match line_counts.entry(contributor_id) {
             Entry::Occupied(mut stored) => {
                 let (stored_name, stored_email, lines) = stored.get_mut();
@@ -248,14 +257,14 @@ fn git_blame_email(value: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
-fn contributor_id(name: &str, email: Option<&str>) -> String {
+fn contributor_id(project_id: &str, name: &str, email: Option<&str>) -> String {
     let identity = email
         .map(str::trim)
         .filter(|email| !email.is_empty())
         .unwrap_or(name)
         .trim()
         .to_ascii_lowercase();
-    let digest = Sha256::digest(identity.as_bytes());
+    let digest = Sha256::digest(format!("{project_id}\0{identity}").as_bytes());
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 

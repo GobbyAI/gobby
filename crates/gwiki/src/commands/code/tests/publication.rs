@@ -459,6 +459,50 @@ fn publish_still_fails_on_real_broken_link_after_unmatched_backtick() {
 }
 
 #[test]
+fn incomplete_recovery_stage_is_discarded_and_reseeded() {
+    let (_temp, project, live) = fixture();
+    write_file(&live, "code/live.md", "# Live\n");
+    write_meta(&live, &["code/live.md"], "live");
+    write_file(
+        &live,
+        "_meta/codewiki-publication.json",
+        r#"{"version":1,"phase":"prepared","changed_paths":[]}"#,
+    );
+    write_file(
+        &live,
+        "_meta/codewiki-stage/vault/code/partial.md",
+        "# Partial\n",
+    );
+
+    let publication = CodewikiPublication::prepare(&live, &fingerprint(&project, &[]))
+        .expect("discard incomplete stage");
+
+    assert!(!live.join("_meta/codewiki-publication.json").exists());
+    assert!(!publication.stage_out().join("code/partial.md").exists());
+    assert_eq!(
+        fs::read_to_string(publication.stage_out().join("code/live.md")).expect("reseeded live"),
+        "# Live\n"
+    );
+}
+
+#[test]
+fn publication_rejects_control_characters_in_metadata_paths() {
+    let (_temp, project, live) = fixture();
+    let publication =
+        CodewikiPublication::prepare(&live, &fingerprint(&project, &[])).expect("prepare stage");
+    write_meta(publication.stage_out(), &["code/bad\nname.md"], "staged");
+
+    let error = publication.publish().expect_err("reject control character");
+
+    assert!(
+        error
+            .to_string()
+            .contains("unsafe codewiki publication path"),
+        "unexpected publication error: {error:#}"
+    );
+}
+
+#[test]
 fn fingerprint_skips_sources_missing_from_disk() {
     // The index can list files deleted (or not yet born on a frozen checkout)
     // between indexing and the run; fingerprinting must skip them like the

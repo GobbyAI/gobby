@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use glob::MatchOptions;
+
 #[derive(Debug)]
 pub(super) struct Codeowners {
     entries: Vec<CodeownersEntry>,
@@ -66,6 +68,10 @@ pub(super) fn declared_owners_for_files(
 }
 
 fn codeowners_pattern_matches(pattern: &str, file: &str) -> bool {
+    let match_options = MatchOptions {
+        require_literal_separator: true,
+        ..MatchOptions::new()
+    };
     let normalized = pattern.trim_start_matches('/');
     if normalized.ends_with('/') {
         return file.starts_with(normalized);
@@ -73,7 +79,7 @@ fn codeowners_pattern_matches(pattern: &str, file: &str) -> bool {
     if normalized.contains('*') || normalized.contains('?') || normalized.contains('[') {
         if pattern.starts_with('/') || normalized.contains('/') {
             return match glob::Pattern::new(normalized) {
-                Ok(glob) => glob.matches(file),
+                Ok(glob) => glob.matches_with(file, match_options),
                 Err(error) => {
                     log::warn!(
                         "failed to parse CODEOWNERS pattern {pattern:?} as glob {normalized:?} for file {file:?}: {error}"
@@ -86,7 +92,7 @@ fn codeowners_pattern_matches(pattern: &str, file: &str) -> bool {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| match glob::Pattern::new(normalized) {
-                Ok(glob) => glob.matches(name),
+                Ok(glob) => glob.matches_with(name, match_options),
                 Err(error) => {
                     log::warn!(
                         "failed to parse CODEOWNERS pattern {pattern:?} as basename glob {normalized:?} for file {file:?} name {name:?}: {error}"
@@ -99,5 +105,18 @@ fn codeowners_pattern_matches(pattern: &str, file: &str) -> bool {
         file == normalized || file.starts_with(&format!("{normalized}/"))
     } else {
         Path::new(file).file_name().and_then(|name| name.to_str()) == Some(normalized)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::codeowners_pattern_matches;
+
+    #[test]
+    fn glob_segments_do_not_cross_directory_separators() {
+        assert!(codeowners_pattern_matches("src/*.rs", "src/lib.rs"));
+        assert!(!codeowners_pattern_matches("src/*.rs", "src/nested/lib.rs"));
+        assert!(codeowners_pattern_matches("*.rs", "src/nested/lib.rs"));
+        assert!(!codeowners_pattern_matches("*.rs", "src/nested/lib.py"));
     }
 }

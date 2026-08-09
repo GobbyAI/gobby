@@ -232,8 +232,12 @@ pub fn build_system_model(repo_root: &Path) -> SystemModel {
     let mut feature_keys_by_crate: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for (name, manifest) in &manifests {
+        let runtime_dependencies = runtime_dependency_names(manifest);
         for (dep_name, dep_value) in dependency_entries(manifest) {
-            if member_names.contains(&dep_name) && dep_name != *name {
+            if runtime_dependencies.contains(&dep_name)
+                && member_names.contains(&dep_name)
+                && dep_name != *name
+            {
                 edges.push(Edge {
                     from: name.clone(),
                     to: dep_name.clone(),
@@ -348,6 +352,23 @@ fn dependency_entries(manifest: &toml::Value) -> Vec<(String, toml::Value)> {
         }
     }
     out
+}
+
+fn runtime_dependency_names(manifest: &toml::Value) -> BTreeSet<String> {
+    let mut names = manifest
+        .get("dependencies")
+        .and_then(toml::Value::as_table)
+        .into_iter()
+        .flat_map(|dependencies| dependencies.keys().cloned())
+        .collect::<BTreeSet<_>>();
+    if let Some(targets) = manifest.get("target").and_then(toml::Value::as_table) {
+        for target in targets.values().filter_map(toml::Value::as_table) {
+            if let Some(dependencies) = target.get("dependencies").and_then(toml::Value::as_table) {
+                names.extend(dependencies.keys().cloned());
+            }
+        }
+    }
+    names
 }
 
 /// Features enabled on a dependency entry. A bare `dep = "1"` string has no
@@ -911,5 +932,39 @@ mod tests {
                 .any(|s| s.kind == ServiceKind::MediaToolchain),
             "MediaToolchain must be omitted without a crates/gwiki member"
         );
+    }
+
+    #[test]
+    fn architecture_edges_exclude_dev_and_build_dependencies() {
+        let (_dir, root) = fixture_workspace(&[
+            (
+                "crates/app",
+                "[package]\nname = \"app\"\nversion = \"0.1.0\"\n\n[dependencies]\nruntime = { path = \"../runtime\" }\n\n[dev-dependencies]\ntest-support = { path = \"../test-support\" }\n\n[build-dependencies]\nbuild-support = { path = \"../build-support\" }\n",
+            ),
+            (
+                "crates/runtime",
+                "[package]\nname = \"runtime\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/test-support",
+                "[package]\nname = \"test-support\"\nversion = \"0.1.0\"\n",
+            ),
+            (
+                "crates/build-support",
+                "[package]\nname = \"build-support\"\nversion = \"0.1.0\"\n",
+            ),
+        ]);
+
+        let model = build_system_model(&root);
+
+        assert!(
+            model
+                .edges
+                .iter()
+                .any(|edge| edge.from == "app" && edge.to == "runtime")
+        );
+        assert!(!model.edges.iter().any(|edge| {
+            edge.from == "app" && matches!(edge.to.as_str(), "test-support" | "build-support")
+        }));
     }
 }

@@ -1,25 +1,29 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
 
 use gobby_code::codewiki_facts::{FileId, ScopeSelector};
-use gobby_core::ai::AiNoticeKind;
 use gobby_core::config::AiRouting;
 
 use crate::commands::code::Symbol;
 
 use super::runtime::{self as output, CodeEngineRuntime, Format};
+use super::types::ai_outcome_for_doc;
 use super::{
-    AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput,
-    CodewikiProgress, CodewikiPublication, CodewikiRunSummary, CommitStamp, DEFAULT_OUT_DIR,
-    DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, PromptTier, PublicationFingerprint,
-    ReusePlan, TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
-    build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
-    build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
-    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
-    resolve_tool_loop_dump_dir, resolve_tool_loop_generator, write_ownership_meta,
-    write_truth_digest,
+    AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiProgress, CodewikiPublication,
+    CodewikiRunSummary, CommitStamp, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT,
+    PromptTier, PublicationFingerprint, ReusePlan, TextGenerator, TextVerifier,
+    build_codewiki_changes_doc, build_codewiki_index_snapshot, generation, io, is_core_file,
+    read_ownership_meta, resolve_tool_loop_dump_dir, write_ownership_meta,
 };
+
+mod ai;
+mod finalization;
+mod preparation;
+
+use ai::ResolvedAiRun;
+use finalization::{FinalizeRun, RunCounts, finalize_run};
+use preparation::prepare_run;
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
 // argument count tracks the command surface rather than hidden coupling.
@@ -72,111 +76,27 @@ pub(crate) fn run_summary(
     verbose: bool,
 ) -> anyhow::Result<CodewikiRunSummary> {
     validate_edge_limit(edge_limit)?;
-    let commit_stamp = capture_commit_stamp(&ctx.project_root);
-    if complete_scope && scope_args.is_empty() {
-        anyhow::bail!("--complete-scope requires at least one --scope path");
-    }
     let ai_depth = ai.depth;
     let verify_scope = ai.verify_scope;
-
     let mut progress = CodewikiProgress::stderr((verbose || ctx.verbose) && !ctx.quiet);
-
-    let scopes = scope_args
-        .iter()
-        .map(|value| output::normalize_file_arg(ctx, value))
-        .collect::<Vec<_>>();
-    let selector = if scopes.is_empty() {
-        ScopeSelector::all()
-    } else {
-        ScopeSelector::paths(scopes.iter().cloned())
-    };
-    progress.emit("loading indexed files");
-    let files = ctx
-        .facts
-        .scoped_files(&selector)?
-        .into_iter()
-        .filter(|file| should_document_file(&file.path, include_docs))
-        .map(|file| file.path)
-        .filter(|file| in_scope(file, &scopes))
-        .collect::<Vec<_>>();
-    let symbols = load_symbols_for_codewiki(&files, &mut progress, |paths| {
-        let file_ids = paths.iter().cloned().map(FileId::new).collect::<Vec<_>>();
-        Ok(ctx
-            .facts
-            .symbols_in(&file_ids)?
-            .into_iter()
-            .map(|symbol| Symbol::from_fact(symbol, &ctx.project_id))
-            .collect())
-    })?;
-
-    progress.emit(format!(
-        "fetching graph edges for {} files and {} symbols (limit {})",
-        files.len(),
-        symbols.len(),
-        edge_limit
-    ));
-    progress.emit("loading leading content chunks");
-    let leading_chunks = load_leading_chunks(ctx, &files)?;
-
-    let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
-    let input = CodewikiInput {
-        files,
-        graph_edges: graph.edges,
-        graph_availability: graph.availability,
-        symbols,
-        leading_chunks,
-    };
-    // Deterministic workspace model (#891), read straight off the project's
-    // Cargo manifests. Seeds the architecture page's model-derived Mermaid
-    // diagrams. A partial/empty model simply omits diagrams — never an error.
-    let system_model = build_system_model(&ctx.project_root);
-    // Deterministic feature catalog (#888), built from the pinned CLI contract
-    // JSONs + dispatch resolver. Read straight off the project root; missing or
-    // unparseable contracts simply omit that binary's section — never an error.
-    let feature_catalog = build_feature_catalog_doc(&ctx.project_root, &input.files);
-    // Deterministic audit context (#889): scans the documented source for
-    // deprecation markers and the test-gated symbol set. Drives the per-symbol
-    // deprecation badge, the `code/deprecations.md` page, and the file page's
-    // test-count collapse. Read straight off the project root; unreadable files
-    // are skipped — never an error, never degrading.
-    let audit_context = build_audit_context(&ctx.project_root, &input);
-    let resolved_generator = resolve_text_generator(ctx, &ai);
-    let mut ai_notices = AiRunNotices::default();
-    ai_notices.warn_once(ctx, resolved_generator.notice_kind());
-    let ai_outcome = resolved_generator.ai_outcome();
-    let no_generator_reason = resolved_generator.no_generator_reason;
-    let shared_generator = resolved_generator.generator;
-    // Declared before `tool_loop_generator` so the serial adapters' borrows
-    // outlive that box's drop.
-    let shared_verifier = resolve_text_verifier(ctx, &ai);
-    // Tool-loop aggregate generator (#978): resolved for the `tool_chat` capability,
-    // threaded alongside the one-shot generator. `None` when no tool-chat route
-    // resolves (AI off) — aggregates then fall back to the one-shot path. The run's
-    // resolved graph availability lets the executor's graph tools return an
-    // explicit graph-unavailable result instead of an empty one.
-    let resolved_tool_loop_generator =
-        resolve_tool_loop_generator(ctx, &ai, input.graph_availability);
-    // A pinned candidate chain (--ai-aggregate-candidate) is daemon-only: fail
-    // the run loudly before generation if either aggregate writing lane
-    // resolved to the Direct route, rather than degrading every page.
-    if let Some(error) = direct_route_candidate_error(
-        &ai.aggregate_candidates,
-        resolved_generator.ai_route,
-        resolved_tool_loop_generator
-            .generator
-            .is_some()
-            .then_some(resolved_tool_loop_generator.ai_outcome.route),
-    ) {
-        anyhow::bail!(error);
-    }
-    let aggregate_ai_outcome = if resolved_tool_loop_generator.generator.is_some() {
-        resolved_tool_loop_generator.ai_outcome
-    } else {
-        ai_outcome
-    };
-    let mut tool_loop_generator = resolved_tool_loop_generator.generator;
-    // `--max-workers 1` (the default) resolves to `None`: the exact serial
-    // path, byte-identical to the pre-#17532 sequential code.
+    let prepared = prepare_run(
+        ctx,
+        &scope_args,
+        complete_scope,
+        include_docs,
+        edge_limit,
+        &mut progress,
+    )?;
+    let ResolvedAiRun {
+        generator: shared_generator,
+        verifier: shared_verifier,
+        mut tool_loop_generator,
+        ai_outcome,
+        aggregate_ai_outcome,
+        ai_enabled,
+        ai_mode,
+        mut notices,
+    } = ResolvedAiRun::resolve(ctx, &ai, prepared.input.graph_availability)?;
     let file_workers = NonZeroUsize::new(max_workers)
         .filter(|workers| workers.get() > 1)
         .and_then(|workers| {
@@ -188,17 +108,8 @@ pub(crate) fn run_summary(
                     verify: shared_verifier.as_deref(),
                 })
         });
-    let ai_enabled = shared_generator.is_some();
-    let ai_mode = if ai_outcome.route == AiRouting::Off
-        && !ai_outcome.fallback
-        && no_generator_reason.is_none()
-    {
-        "off"
-    } else {
-        ai_depth.mode_label()
-    };
-    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    let out_path = Path::new(&out_dir);
+    let out_path = output::resolve_output_path(&ctx.project_root, out.as_deref());
+    let out_dir = out_path.display().to_string();
     // Destructive-downgrade guard (#17776): `--ai auto` that resolves NO
     // generator on either lane must not rewrite a previously AI-generated
     // vault as structural docs — the #17530 settings invalidation would
@@ -211,7 +122,7 @@ pub(crate) fn run_summary(
         && ai_outcome.route == AiRouting::Off
         && ai_outcome.fallback
     {
-        let previous = super::io::read_codewiki_meta(out_path)?;
+        let previous = super::io::read_codewiki_meta(&out_path)?;
         let ai_pages = ai_generated_page_count(&previous);
         if ai_pages > 0 {
             anyhow::bail!(
@@ -223,11 +134,6 @@ pub(crate) fn run_summary(
             );
         }
     }
-    // Scheduled generation can declare configured roots as the complete vault
-    // boundary. Input remains filtered to those roots, while unscoped pruning
-    // and generation refresh every global/curated page and remove stale docs
-    // outside the boundary. Ordinary `--scope` keeps its partial-write contract.
-    let doc_scope = codewiki_doc_scope(&scopes, complete_scope);
     // `--since <ref>` scopes regeneration to the files git reports changed since
     // the ref plus their dependents, instead of a full content-hash scan of
     // every page (Leaf H, #893). A source page whose own sources and neighbors
@@ -241,13 +147,16 @@ pub(crate) fn run_summary(
         }
         None => None,
     };
-    if doc_scope.is_unscoped() {
+    if prepared.doc_scope.is_unscoped() {
         progress.emit("reading metadata and hashing snapshot");
     } else {
         progress.emit("reading metadata for scoped write");
     }
-    let staging_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
-    let index_snapshot = doc_scope.is_unscoped().then(|| staging_snapshot.clone());
+    let staging_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &prepared.input)?;
+    let index_snapshot = prepared
+        .doc_scope
+        .is_unscoped()
+        .then(|| staging_snapshot.clone());
     // The requested generation settings are part of the reuse comparison
     // (#17530): flags like `--ai-aggregate-candidate` change what a page would
     // say without changing any source hash. With AI off they shape nothing, so
@@ -259,28 +168,28 @@ pub(crate) fn run_summary(
     };
     let fingerprint = PublicationFingerprint::from_run(
         &ctx.project_root,
-        &input.files,
+        &prepared.input.files,
         ai_mode,
         &ai_settings,
         ai_outcome,
         aggregate_ai_outcome,
-        &scopes,
+        &prepared.scopes,
         since_changed.as_ref(),
         &staging_snapshot,
     )?;
-    let publication = CodewikiPublication::prepare(out_path, &fingerprint)?;
+    let publication = CodewikiPublication::prepare(&out_path, &fingerprint)?;
     let stage_path = publication.stage_out().to_path_buf();
     let effective_since_changed = if publication.requires_full_hash_scan() {
         None
     } else {
         since_changed
     };
-    let previous_meta = if doc_scope.is_unscoped() {
+    let previous_meta = if prepared.doc_scope.is_unscoped() {
         Some(io::read_codewiki_meta(&stage_path)?)
     } else {
         None
     };
-    let mut ownership_meta = if doc_scope.is_unscoped() {
+    let mut ownership_meta = if prepared.doc_scope.is_unscoped() {
         Some(read_ownership_meta(&stage_path)?)
     } else {
         None
@@ -293,12 +202,16 @@ pub(crate) fn run_summary(
         ai_outcome,
     )?
     .with_ai_settings(ai_settings.clone());
-    let mut sink =
-        DocSink::open_with_prune_scope(&ctx.project_root, &stage_path, ai_mode, doc_scope.clone())?
-            .with_ai_outcome(ai_outcome)
-            .with_commit_stamp(commit_stamp.clone())
-            .with_ai_settings(ai_settings)
-            .with_since(effective_since_changed);
+    let mut sink = DocSink::open_with_prune_scope(
+        &ctx.project_root,
+        &stage_path,
+        ai_mode,
+        prepared.doc_scope.clone(),
+    )?
+    .with_ai_outcome(ai_outcome)
+    .with_commit_stamp(prepared.commit_stamp.clone())
+    .with_ai_settings(ai_settings)
+    .with_since(effective_since_changed);
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
     let mut file_count = 0_usize;
@@ -325,7 +238,7 @@ pub(crate) fn run_summary(
         std::env::var("GOBBY_CODEWIKI_TOOL_LOOP_DUMP_DIR")
             .ok()
             .as_deref(),
-        out_path,
+        &out_path,
     );
     // Serial `FnMut` adapters over the shared thread-safe callables; the file
     // worker pool (`file_workers` above) shares the originals across threads
@@ -337,14 +250,14 @@ pub(crate) fn run_summary(
         .as_deref()
         .map(|verifier| move |prompt: &str, system: &str| verifier(prompt, system));
     let diagram_stats = generation::generate_hierarchical_docs(
-        &input,
+        &prepared.input,
         generation::GenerateDocsOptions {
             ownership: ownership_meta
                 .as_mut()
-                .map(|meta| (ctx.project_root.as_path(), meta)),
-            system_model: Some(&system_model),
-            feature_catalog: feature_catalog.as_ref(),
-            audit: Some(&audit_context),
+                .map(|meta| (ctx.project_root.as_path(), ctx.project_id.as_str(), meta)),
+            system_model: Some(&prepared.system_model),
+            feature_catalog: prepared.feature_catalog.as_ref(),
+            audit: Some(&prepared.audit_context),
             generate: sequential_generator
                 .as_mut()
                 .map(|generator| generator as &mut TextGenerator<'_>),
@@ -357,7 +270,7 @@ pub(crate) fn run_summary(
             aggregate_ai_outcome,
             reuse: Some(&mut reuse_plan),
             progress: Some(&mut progress),
-            doc_scope: Some(&doc_scope),
+            doc_scope: Some(&prepared.doc_scope),
             tool_loop_dump_dir: Some(&tool_loop_dump_dir),
             file_workers,
         },
@@ -378,59 +291,33 @@ pub(crate) fn run_summary(
     if let Some(ownership_meta) = ownership_meta.as_ref() {
         write_ownership_meta(&stage_path, ownership_meta)?;
     }
-    let symbol_count = input
+    let symbol_count = prepared
+        .input
         .symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    sink.set_diagram_stats(diagram_stats);
-    // Surface degraded pages (a failed AI pass fell back to the structural
-    // body, #900) instead of letting them hide silently in the meta cache. Read
-    // before `finish` consumes the sink.
-    let degraded_pages = sink.degraded_docs().to_vec();
-    if !degraded_pages.is_empty() && !ctx.quiet {
-        ai_notices.warn_once(ctx, Some(AiNoticeKind::GenerationFailed));
-        // Warn on stderr at parity with the per-file "text generation failed ...
-        // record degraded: true" line (text/generation.rs), so a degraded
-        // curated/aggregate pass is visible regardless of --verbose rather than
-        // only summarized in the run result.
-        eprintln!(
-            "codewiki: {} page(s) degraded to structural fallback (AI content \
-             pass failed): {}",
-            degraded_pages.len(),
-            degraded_pages.join(", ")
-        );
-    }
-    sink.finish(index_snapshot)?;
-    if doc_scope.is_unscoped() {
-        let truth_digest = build_truth_digest(
-            &system_model,
-            &ctx.project_id,
-            file_count,
-            module_count,
-            commit_stamp.as_ref(),
-        );
-        write_truth_digest(&stage_path, &doc_scope, &truth_digest)?;
-    }
     progress.emit("publishing completed codewiki stage");
-    let changed_paths = publication.publish()?;
-    let skipped = generated_pages.saturating_sub(changed_paths.len());
-
-    let summary = CodewikiRunSummary {
-        command: "codewiki",
-        project_id: ctx.project_id.clone(),
-        project_root: ctx.project_root.display().to_string(),
+    finalize_run(FinalizeRun {
+        ctx,
         out_dir,
-        generated_pages,
-        changed_paths,
-        skipped,
-        files: file_count,
-        modules: module_count,
-        symbols: symbol_count,
+        publication,
+        stage_path: &stage_path,
+        sink,
+        index_snapshot,
+        doc_scope: prepared.doc_scope,
+        system_model: &prepared.system_model,
+        commit_stamp: prepared.commit_stamp.as_ref(),
+        diagram_stats,
+        counts: RunCounts {
+            generated_pages,
+            files: file_count,
+            modules: module_count,
+            symbols: symbol_count,
+        },
         ai_enabled,
-        degraded_pages,
-    };
-    Ok(summary)
+        notices: &mut notices,
+    })
 }
 
 pub(crate) fn run_summary_text(summary: &CodewikiRunSummary, unscoped: bool) -> String {
@@ -452,109 +339,6 @@ fn codewiki_doc_scope(scopes: &[String], complete_scope: bool) -> DocPruneScope 
         DocPruneScope::unscoped()
     } else {
         DocPruneScope::from_scopes(scopes)
-    }
-}
-
-#[cfg(test)]
-mod scope_tests {
-    use super::*;
-
-    #[test]
-    fn complete_scope_switches_to_global_generation_and_pruning() {
-        let scopes = vec!["src".to_string()];
-
-        let partial = codewiki_doc_scope(&scopes, false);
-        assert!(!partial.is_unscoped());
-        assert!(partial.includes_file("src/lib.rs"));
-        assert!(!partial.includes_file("tools/helper.rs"));
-
-        let complete = codewiki_doc_scope(&scopes, true);
-        assert!(complete.is_unscoped());
-        assert!(complete.includes_file("tools/helper.rs"));
-    }
-
-    #[test]
-    fn capture_commit_stamp_detects_dirty_worktrees_and_non_git_roots() {
-        let project = tempfile::tempdir().expect("project tempdir");
-        let root = project.path();
-        assert_eq!(capture_commit_stamp(root), None);
-
-        let git = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(root)
-                .args(args)
-                .status()
-                .expect("run git");
-            assert!(status.success(), "git {args:?} failed");
-        };
-        git(&["init", "-q", "--object-format=sha1"]);
-        git(&["config", "user.email", "test@example.com"]);
-        git(&["config", "user.name", "Test"]);
-        git(&["config", "commit.gpgSign", "false"]);
-        std::fs::write(root.join("tracked.rs"), "fn tracked() {}\n").expect("write source");
-        git(&["add", "tracked.rs"]);
-        git(&["commit", "-q", "-m", "base"]);
-
-        let clean = capture_commit_stamp(root).expect("clean commit stamp");
-        assert_eq!(clean.sha.len(), 40);
-        assert!(clean.sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert!(!clean.dirty);
-
-        std::fs::write(root.join("tracked.rs"), "fn tracked() { let _ = 1; }\n")
-            .expect("modify source");
-        let dirty = capture_commit_stamp(root).expect("dirty commit stamp");
-        assert_eq!(dirty.sha, clean.sha);
-        assert!(dirty.dirty);
-    }
-}
-
-fn ai_outcome_for_doc(
-    path: &str,
-    one_shot: CodewikiAiOutcome,
-    aggregate: CodewikiAiOutcome,
-) -> CodewikiAiOutcome {
-    match path {
-        "code/concepts/index.md" => one_shot,
-        "code/repo.md" | "code/_architecture.md" => aggregate,
-        path if path.starts_with("code/concepts/") || path.starts_with("code/narrative/") => {
-            aggregate
-        }
-        _ => one_shot,
-    }
-}
-
-#[derive(Default)]
-struct AiRunNotices {
-    emitted: BTreeSet<AiNoticeKind>,
-}
-
-impl AiRunNotices {
-    fn warn_once(&mut self, ctx: &CodeEngineRuntime, notice: Option<AiNoticeKind>) {
-        if ctx.quiet {
-            return;
-        }
-        let Some(notice) = notice else {
-            return;
-        };
-        if !self.emitted.insert(notice) {
-            return;
-        }
-        let message = match notice {
-            AiNoticeKind::AutoFallbackToDirect => {
-                "codewiki: AI auto routing could not use the daemon; falling back to Direct generation"
-            }
-            AiNoticeKind::AutoFallbackToOff => {
-                "codewiki: AI auto routing found no daemon or usable Direct config; writing structural docs"
-            }
-            AiNoticeKind::NoGenerator => {
-                "codewiki: AI generation was requested but no usable generator is configured; writing structural docs"
-            }
-            AiNoticeKind::GenerationFailed => {
-                "codewiki: AI generation failed; affected pages record degraded status"
-            }
-        };
-        eprintln!("{message}");
     }
 }
 
@@ -592,8 +376,8 @@ pub(crate) fn repair_summary(
         .into_iter()
         .map(|symbol| Symbol::from_fact(symbol, &ctx.project_id))
         .collect::<Vec<_>>();
-    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    super::repair_citations(Path::new(&out_dir), &symbols)
+    let out_path = output::resolve_output_path(&ctx.project_root, out.as_deref());
+    super::repair_citations(&out_path, &symbols)
 }
 
 pub(crate) fn repair_summary_text(summary: &super::CitationRepairSummary) -> String {
@@ -635,7 +419,13 @@ pub(crate) fn git_changed_files(
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(project_root)
-        .args(["diff", "--name-only", "--relative", since_ref])
+        .args([
+            "diff",
+            "--name-only",
+            "--relative",
+            "--end-of-options",
+            since_ref,
+        ])
         .output()
         .map_err(|err| anyhow::anyhow!("failed to run git diff for --since {since_ref}: {err}"))?;
     if !output.status.success() {
@@ -727,4 +517,58 @@ fn load_leading_chunks(
             )
         })
         .collect())
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn complete_scope_switches_to_global_generation_and_pruning() {
+        let scopes = vec!["src".to_string()];
+
+        let partial = codewiki_doc_scope(&scopes, false);
+        assert!(!partial.is_unscoped());
+        assert!(partial.includes_file("src/lib.rs"));
+        assert!(!partial.includes_file("tools/helper.rs"));
+
+        let complete = codewiki_doc_scope(&scopes, true);
+        assert!(complete.is_unscoped());
+        assert!(complete.includes_file("tools/helper.rs"));
+    }
+
+    #[test]
+    fn capture_commit_stamp_detects_dirty_worktrees_and_non_git_roots() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let root = project.path();
+        assert_eq!(capture_commit_stamp(root), None);
+
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q", "--object-format=sha1"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        git(&["config", "commit.gpgSign", "false"]);
+        std::fs::write(root.join("tracked.rs"), "fn tracked() {}\n").expect("write source");
+        git(&["add", "tracked.rs"]);
+        git(&["commit", "-q", "-m", "base"]);
+
+        let clean = capture_commit_stamp(root).expect("clean commit stamp");
+        assert_eq!(clean.sha.len(), 40);
+        assert!(clean.sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        assert!(!clean.dirty);
+
+        std::fs::write(root.join("tracked.rs"), "fn tracked() { let _ = 1; }\n")
+            .expect("modify source");
+        let dirty = capture_commit_stamp(root).expect("dirty commit stamp");
+        assert_eq!(dirty.sha, clean.sha);
+        assert!(dirty.dirty);
+    }
 }

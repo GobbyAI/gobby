@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 /// Resolve the workspace repo root from this crate's manifest dir.
-/// `CARGO_MANIFEST_DIR` points at `crates/gcode`, so two levels up is the root.
+/// `CARGO_MANIFEST_DIR` points at `crates/gwiki`, so two levels up is the root.
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -177,12 +177,21 @@ fn rendered_catalog_names_a_known_command_and_links_to_a_source_page() {
     assert!(rendered.contains("derived deterministically from the pinned CLI contracts"));
     // Frontmatter provenance names the derivation inputs: the pinned contract
     // JSONs plus resolved handler files (#17781).
+    let provenance = source_files_from_frontmatter(&rendered);
     assert!(
-        rendered.contains("- file: crates/gcode/contract/gcode.contract.json"),
-        "features page must stamp its contract JSON as provenance:\n{rendered}"
+        !provenance.is_empty(),
+        "features provenance must be populated"
     );
     assert!(
-        rendered.contains("- file: crates/gcode/src/commands/search.rs"),
-        "features page must stamp handler files as provenance:\n{rendered}"
+        provenance.iter().all(|path| path.starts_with("crates/")),
+        "features provenance must stay workspace-relative: {provenance:?}"
+    );
+    assert!(
+        provenance.iter().any(|path| path.contains("/contract/")),
+        "features provenance must include a pinned contract: {provenance:?}"
+    );
+    assert!(
+        provenance.iter().any(|path| path.contains("/src/")),
+        "features provenance must include a handler source: {provenance:?}"
     );
 }

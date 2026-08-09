@@ -27,6 +27,7 @@ pub(crate) fn build_truth_digest(
     module_count: usize,
     commit_stamp: Option<&CommitStamp>,
 ) -> CodewikiTruthDigest {
+    let stack_was_truncated = system_model.services.len() > MAX_STACK_ENTRIES;
     let mut stack = system_model
         .services
         .iter()
@@ -54,11 +55,12 @@ pub(crate) fn build_truth_digest(
         .iter()
         .map(|entry| (entry.service.clone(), entry.adapter_module.clone()))
         .collect::<BTreeMap<_, _>>();
-    let stack_authority = if stack.is_empty() || !system_model.notes.is_empty() {
-        STACK_AUTHORITY_PARTIAL
-    } else {
-        STACK_AUTHORITY_COMPLETE
-    };
+    let stack_authority =
+        if stack.is_empty() || stack_was_truncated || !system_model.notes.is_empty() {
+            STACK_AUTHORITY_PARTIAL
+        } else {
+            STACK_AUTHORITY_COMPLETE
+        };
 
     CodewikiTruthDigest {
         schema_version: SCHEMA_VERSION,

@@ -1,12 +1,13 @@
 use super::super::*;
 use crate::commands::code::runtime::hasher;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) fn build_codewiki_index_snapshot(
     project_root: &Path,
     input: &CodewikiInput,
 ) -> anyhow::Result<CodewikiIndexSnapshot> {
+    let canonical_root = canonical_project_root(project_root)?;
     let mut files = input
         .files
         .iter()
@@ -32,8 +33,8 @@ pub(crate) fn build_codewiki_index_snapshot(
         // Indexed files can vanish from disk before the run starts (the index
         // lags external commits that delete sources); skip them instead of
         // aborting the whole run (#18109).
-        let Some(content_hash) = hash_snapshot_file(project_root, &file)? else {
-            eprintln!("warning: skipping codewiki source file missing from disk: {file}");
+        let Some(content_hash) = hash_snapshot_file_at_root(&canonical_root, &file)? else {
+            log::warn!("skipping codewiki source file missing from disk: {file}");
             continue;
         };
         file_snapshots.insert(
@@ -84,14 +85,17 @@ pub(crate) fn build_codewiki_index_snapshot(
 
 /// Hash one snapshot source from disk; `Ok(None)` means the file no longer
 /// exists (deleted since indexing) and the caller should skip it (#18109).
-pub(crate) fn hash_snapshot_file(
-    project_root: &Path,
+pub(crate) fn canonical_project_root(project_root: &Path) -> anyhow::Result<PathBuf> {
+    project_root
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))
+}
+
+pub(crate) fn hash_snapshot_file_at_root(
+    canonical_root: &Path,
     file: &str,
 ) -> anyhow::Result<Option<String>> {
-    let canonical_root = project_root
-        .canonicalize()
-        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;
-    let source_path = project_root.join(file);
+    let source_path = canonical_root.join(file);
     let canonical_source = match source_path.canonicalize() {
         Ok(path) => path,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -101,7 +105,7 @@ pub(crate) fn hash_snapshot_file(
             ));
         }
     };
-    if !canonical_source.starts_with(&canonical_root) {
+    if !canonical_source.starts_with(canonical_root) {
         anyhow::bail!("codewiki source file {file} resolves outside project root");
     }
     match hasher::file_content_hash(&canonical_source) {

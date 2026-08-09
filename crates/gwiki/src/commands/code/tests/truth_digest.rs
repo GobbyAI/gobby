@@ -75,6 +75,22 @@ fn truth_digest_marks_empty_stack_partial() {
 }
 
 #[test]
+fn truth_digest_marks_truncated_stack_partial() {
+    let services = (0..13)
+        .map(|index| ServiceBoundary {
+            name: format!("service-{index:02}"),
+            kind: ServiceKind::Postgres,
+            pulled_in_by: vec!["gobby-code".to_string()],
+        })
+        .collect();
+
+    let digest = build_truth_digest(&model_with_services(services), "project-1", 1, 1, None);
+
+    assert_eq!(digest.stack.len(), 12);
+    assert_eq!(digest.stack_authority, "partial");
+}
+
+#[test]
 fn truth_digest_write_is_unscoped_only() {
     let digest = build_truth_digest(&model_with_services(Vec::new()), "project-1", 0, 0, None);
     let json = serde_json::to_string(&digest).expect("serialize digest");

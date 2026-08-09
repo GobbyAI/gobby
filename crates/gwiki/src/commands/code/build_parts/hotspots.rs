@@ -84,32 +84,12 @@ pub(crate) fn build_hotspots_doc(
     let god_nodes = analytics
         .god_nodes
         .into_iter()
-        .filter_map(|node_ref| {
-            let node = nodes.get(&node_ref.id)?.clone();
-            let (degree, score) = centrality.get(&node.id).copied().unwrap_or_default();
-            Some(HotspotFinding {
-                node,
-                degree: Some(degree),
-                score: Some(score),
-                frequency: None,
-                weight: None,
-            })
-        })
+        .filter_map(|node_ref| centrality_finding(&node_ref.id, &nodes, &centrality))
         .collect::<Vec<_>>();
     let bridges = analytics
         .bridges
         .into_iter()
-        .filter_map(|node_ref| {
-            let node = nodes.get(&node_ref.id)?.clone();
-            let (degree, score) = centrality.get(&node.id).copied().unwrap_or_default();
-            Some(HotspotFinding {
-                node,
-                degree: Some(degree),
-                score: Some(score),
-                frequency: None,
-                weight: None,
-            })
-        })
+        .filter_map(|node_ref| centrality_finding(&node_ref.id, &nodes, &centrality))
         .collect::<Vec<_>>();
     let mut source_spans = hotspots
         .iter()
@@ -130,6 +110,22 @@ pub(crate) fn build_hotspots_doc(
         bridges,
         degraded_sources: Vec::new(),
     }
+}
+
+fn centrality_finding(
+    node_id: &str,
+    nodes: &BTreeMap<String, HotspotNode>,
+    centrality: &BTreeMap<String, (usize, f64)>,
+) -> Option<HotspotFinding> {
+    let node = nodes.get(node_id)?.clone();
+    let (degree, score) = centrality.get(node_id).copied().unwrap_or_default();
+    Some(HotspotFinding {
+        node,
+        degree: Some(degree),
+        score: Some(score),
+        frequency: None,
+        weight: None,
+    })
 }
 
 fn hotspot_source_spans(nodes: &BTreeMap<String, HotspotNode>) -> Vec<SourceSpan> {

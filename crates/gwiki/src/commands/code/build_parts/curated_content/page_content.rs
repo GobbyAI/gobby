@@ -56,7 +56,7 @@ pub(super) fn symbol_evidence_rows(
             }
         }
     }
-    // Most important first (most defined symbols → most central), stable on ties.
+    // Retain the alphabetically first rows for deterministic bounded prompts.
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     rows.truncate(MAX_PAGE_SYMBOL_ROWS);
     rows

@@ -8,6 +8,7 @@ use super::super::{
     structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::commands::code::Symbol;
+use crate::commands::code::render::cell_summary;
 
 /// 1-based position of a file within the generation run, for progress output.
 #[derive(Clone, Copy, Debug)]
@@ -197,6 +198,7 @@ pub(crate) fn build_file_doc(
             (summary, body, None)
         }
     };
+    let summary = cell_summary(&summary);
 
     FileDoc {
         path: file.to_string(),

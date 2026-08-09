@@ -205,52 +205,35 @@ fn incremental_regenerates_only_changed() {
     // rewritten (empty source-hash sets cannot prove the doc unchanged).
     // Docs are listed in build order — leaves before the aggregates that
     // consume them — because each one is persisted as soon as it is built.
-    assert_eq!(
-        changed_written,
-        vec![
-            "code/files/src/lib.rs.md".to_string(),
-            "code/modules/src.md".to_string(),
-            "code/concepts/index.md".to_string(),
-            "code/concepts/src.md".to_string(),
-            "code/narrative/01-overview.md".to_string(),
-            "code/narrative/02-architecture.md".to_string(),
-            "code/narrative/03-capabilities.md".to_string(),
-            "code/narrative/04-workflows.md".to_string(),
-            "code/narrative/05-getting-started.md".to_string(),
-            "code/narrative/06-operations.md".to_string(),
-            "code/narrative/07-data-model.md".to_string(),
-            "code/narrative/08-cli-api.md".to_string(),
-            "code/narrative/09-troubleshooting.md".to_string(),
-            "code/repo.md".to_string(),
-            "code/_architecture.md".to_string(),
-            "code/_onboarding.md".to_string(),
-            "code/_hotspots.md".to_string()
-        ]
-    );
+    let expected_order = [
+        "code/files/src/lib.rs.md",
+        "code/modules/src.md",
+        "code/concepts/index.md",
+        "code/concepts/src.md",
+        "code/narrative/01-overview.md",
+        "code/narrative/02-architecture.md",
+        "code/narrative/03-capabilities.md",
+        "code/narrative/04-workflows.md",
+        "code/narrative/05-getting-started.md",
+        "code/narrative/06-operations.md",
+        "code/narrative/07-data-model.md",
+        "code/narrative/08-cli-api.md",
+        "code/narrative/09-troubleshooting.md",
+        "code/repo.md",
+        "code/_architecture.md",
+        "code/_onboarding.md",
+        "code/_hotspots.md",
+    ];
+    assert_eq!(changed_written, expected_order.map(str::to_string).to_vec());
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta log");
     let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta log");
     let generated_docs = meta["generated_docs"].as_array().expect("generated docs");
     assert_eq!(
-        generated_docs,
-        &vec![
-            serde_json::Value::String("code/files/src/lib.rs.md".to_string()),
-            serde_json::Value::String("code/modules/src.md".to_string()),
-            serde_json::Value::String("code/concepts/index.md".to_string()),
-            serde_json::Value::String("code/concepts/src.md".to_string()),
-            serde_json::Value::String("code/narrative/01-overview.md".to_string()),
-            serde_json::Value::String("code/narrative/02-architecture.md".to_string()),
-            serde_json::Value::String("code/narrative/03-capabilities.md".to_string()),
-            serde_json::Value::String("code/narrative/04-workflows.md".to_string()),
-            serde_json::Value::String("code/narrative/05-getting-started.md".to_string()),
-            serde_json::Value::String("code/narrative/06-operations.md".to_string()),
-            serde_json::Value::String("code/narrative/07-data-model.md".to_string()),
-            serde_json::Value::String("code/narrative/08-cli-api.md".to_string()),
-            serde_json::Value::String("code/narrative/09-troubleshooting.md".to_string()),
-            serde_json::Value::String("code/repo.md".to_string()),
-            serde_json::Value::String("code/_architecture.md".to_string()),
-            serde_json::Value::String("code/_onboarding.md".to_string()),
-            serde_json::Value::String("code/_hotspots.md".to_string())
-        ]
+        generated_docs
+            .iter()
+            .map(|value| value.as_str().expect("generated path"))
+            .collect::<Vec<_>>(),
+        expected_order
     );
 
     let reduced_input = CodewikiInput {
@@ -777,6 +760,9 @@ fn compare_git(root: &std::path::Path, args: &[&str]) -> std::process::Output {
         .arg("-C")
         .arg(root)
         .args(args)
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("HOME", root)
         .output()
         .expect("run git")
 }

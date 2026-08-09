@@ -73,6 +73,10 @@ pub(crate) fn cluster_file_modules(
     }
 
     let roots = subsystem_roots(files);
+    let roots_by_file = files
+        .iter()
+        .map(|file| (file.as_str(), subsystem_root_for_file(file, &roots)))
+        .collect::<HashMap<_, _>>();
     let mut parents = files
         .iter()
         .map(|file| (file.clone(), file.clone()))
@@ -94,9 +98,7 @@ pub(crate) fn cluster_file_modules(
         // Call edges never merge clusters across subsystem roots; otherwise
         // one cross-subsystem call collapses the decomposition to the common
         // container (`crates`) and every page above it loses its structure.
-        if subsystem_root_for_file(source_file, &roots)
-            != subsystem_root_for_file(target_file, &roots)
-        {
+        if roots_by_file.get(source_file.as_str()) != roots_by_file.get(target_file.as_str()) {
             continue;
         }
         union_files(&mut parents, &mut ranks, source_file, target_file);
@@ -327,7 +329,7 @@ pub(crate) fn find_file_root(parents: &mut HashMap<String, String>, file: &str) 
                 .cloned()
                 .unwrap_or_else(|| current.clone());
             debug_assert!(
-                path.iter().any(|node| node == &current),
+                false,
                 "codewiki file union parent cycle detected while resolving `{file}`"
             );
             log::debug!(
@@ -549,8 +551,6 @@ mod cluster_tests {
                 file_content_hash: "hash".to_string(),
                 content_hash: String::new(),
                 summary: None,
-                created_at: String::new(),
-                updated_at: String::new(),
             };
             symbols_by_file.insert(file.to_string(), vec![symbol]);
         }

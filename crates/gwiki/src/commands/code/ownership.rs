@@ -33,6 +33,8 @@ impl Default for OwnershipOptions {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct OwnershipMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contributor_salt: Option<String>,
     #[serde(default)]
     pub files: BTreeMap<String, CachedBlameSummary>,
 }
@@ -68,19 +70,25 @@ struct FileOwnership {
 
 pub(crate) fn build_ownership_doc(
     project_root: &Path,
+    project_id: &str,
     files: &[String],
     file_modules: &HashMap<String, String>,
     emitted_modules: &BTreeSet<String>,
     meta: &mut OwnershipMeta,
     options: OwnershipOptions,
 ) -> anyhow::Result<String> {
+    if meta.contributor_salt.as_deref() != Some(project_id) {
+        meta.files.clear();
+        meta.contributor_salt = Some(project_id.to_string());
+    }
     let codeowners = read_codeowners(project_root)?;
     let mut status = OwnershipStatus {
         codeowners_available: codeowners.is_some(),
         ..OwnershipStatus::default()
     };
     let declared = declared_owners_for_files(codeowners.as_ref(), files);
-    let derived = derived_owners_for_files(project_root, files, meta, &options, &mut status);
+    let derived =
+        derived_owners_for_files(project_root, project_id, files, meta, &options, &mut status);
 
     let mut by_file = BTreeMap::new();
     for file in files {

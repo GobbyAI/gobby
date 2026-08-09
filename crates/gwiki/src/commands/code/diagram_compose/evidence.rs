@@ -75,14 +75,9 @@ impl DiagramEvidence {
     ) {
         let from = from.into();
         let to = to.into();
-        debug_assert!(
-            self.node(&from).is_some(),
-            "diagram evidence edge references missing source node `{from}`"
-        );
-        debug_assert!(
-            self.node(&to).is_some(),
-            "diagram evidence edge references missing target node `{to}`"
-        );
+        if self.node(&from).is_none() || self.node(&to).is_none() {
+            return;
+        }
         let edge = EvidenceEdge {
             from,
             to,

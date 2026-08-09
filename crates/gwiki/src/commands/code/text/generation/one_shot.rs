@@ -68,21 +68,7 @@ pub(crate) fn resolve_text_generator(
     ctx: &CodeEngineRuntime,
     ai: &CodewikiAiOptions,
 ) -> ResolvedTextGenerator {
-    let ai_context = match resolve_ai_context(ctx, ai.routing) {
-        Ok(ai_context) => ai_context,
-        Err(_) => {
-            let requested = ai.routing.unwrap_or(AiRouting::Auto);
-            let (route, fallback) = match requested {
-                AiRouting::Auto => (AiRouting::Off, true),
-                route => (route, false),
-            };
-            return ResolvedTextGenerator::skipped(
-                route,
-                fallback,
-                Some(AiNoticeKind::NoGenerator),
-            );
-        }
-    };
+    let ai_context = resolve_ai_context(ctx, ai.routing);
     let observed = resolve_route_observed(&ai_context, AiCapability::TextGenerate);
     let route = observed.route;
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
@@ -164,7 +150,7 @@ pub(crate) fn resolve_text_verifier(
     ctx: &CodeEngineRuntime,
     ai: &CodewikiAiOptions,
 ) -> Option<Box<SyncTextVerifier<'static>>> {
-    let mut ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
+    let mut ai_context = resolve_ai_context(ctx, ai.routing);
     let route = effective_route(&ai_context, AiCapability::TextGenerate);
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
         return None;

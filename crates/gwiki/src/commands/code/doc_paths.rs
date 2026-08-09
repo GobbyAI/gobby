@@ -154,7 +154,13 @@ pub(crate) fn prune_empty_doc_dirs(out_dir: &Path, target: &Path) -> anyhow::Res
             {
                 break;
             }
-            Err(err) => return Err(err.into()),
+            Err(err) => {
+                log::warn!(
+                    "failed to prune empty codewiki directory {}: {err}",
+                    dir.display()
+                );
+                break;
+            }
         }
     }
     Ok(())

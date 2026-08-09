@@ -4,11 +4,12 @@ use std::path::{Component, Path, PathBuf};
 use anyhow::Context as _;
 use serde::Serialize;
 
+use super::CODEWIKI_META_PATH;
 use super::runtime as output;
 use super::types::{CodewikiDocMeta, CodewikiMeta};
-use super::{CODEWIKI_META_PATH, DEFAULT_OUT_DIR};
 use crate::commands::code::CodeEngineRuntime;
 use crate::commands::code::runtime::normalize_storage_path_str;
+use crate::output::Format;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct CodewikiCommitMetadata {
@@ -51,9 +52,26 @@ pub fn run_compare(
     ctx: &CodeEngineRuntime,
     out: Option<String>,
     base_ref: &str,
+    format: Format,
 ) -> anyhow::Result<()> {
     let summary = compare_to(&ctx.project_root, out.as_deref(), base_ref)?;
-    output::print_json(&summary)
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => output::print_text(&compare_summary_text(&summary)),
+    }
+}
+
+pub(crate) fn compare_summary_text(summary: &CodewikiCompareSummary) -> String {
+    let mut lines = vec![format!(
+        "CodeWiki compare: {} added, {} removed, {} changed",
+        summary.added.len(),
+        summary.removed.len(),
+        summary.changed.len()
+    )];
+    lines.extend(summary.added.iter().map(|doc| format!("+ {}", doc.path)));
+    lines.extend(summary.removed.iter().map(|doc| format!("- {}", doc.path)));
+    lines.extend(summary.changed.iter().map(|doc| format!("~ {}", doc.path)));
+    lines.join("\n")
 }
 
 pub(crate) fn compare_to(
@@ -121,16 +139,10 @@ struct CompareTarget<'a> {
 }
 
 fn compare_paths(project_root: &Path, out: Option<&str>) -> anyhow::Result<ComparePaths> {
-    let out = Path::new(out.unwrap_or(DEFAULT_OUT_DIR));
-    let relative = if out.is_absolute() {
-        out.strip_prefix(project_root).map_err(|_| {
-            anyhow::anyhow!(
-                "codewiki --compare-to requires --out to be inside the source repository"
-            )
-        })?
-    } else {
-        out
-    };
+    let out = output::resolve_output_path(project_root, out);
+    let relative = out.strip_prefix(project_root).map_err(|_| {
+        anyhow::anyhow!("codewiki --compare-to requires --out to be inside the source repository")
+    })?;
     let mut normalized = PathBuf::new();
     for component in relative.components() {
         match component {
@@ -150,7 +162,7 @@ fn compare_paths(project_root: &Path, out: Option<&str>) -> anyhow::Result<Compa
             .context("codewiki --compare-to metadata path is not valid UTF-8")?,
     );
     Ok(ComparePaths {
-        current_meta: project_root.join(relative_meta),
+        current_meta: out.join(CODEWIKI_META_PATH),
         default_git_meta: git_meta,
     })
 }

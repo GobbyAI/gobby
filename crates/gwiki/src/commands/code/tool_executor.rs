@@ -68,8 +68,6 @@ pub(crate) struct CodewikiToolExecutor {
 }
 
 impl CodewikiToolExecutor {
-    /// Clone the immutable project context. Each call opens its own read-only
-    /// connection so detached timeout workers never share connection state.
     pub(crate) fn new(
         runtime: &CodeEngineRuntime,
         graph_availability: CodewikiGraphAvailability,
@@ -180,6 +178,9 @@ impl CodewikiToolExecutor {
                 .get("ignore_case")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            context: None,
+            before_context: None,
+            after_context: None,
             limit: max_count,
         };
         let result = self
@@ -218,11 +219,13 @@ impl CodewikiToolExecutor {
             ));
         }
         let end = clamped_end_line(start_line, end_line, total);
-        let mut out = format!("`{path}` lines {start_line}-{end} of {total}:\n```\n");
+        let mut body = String::new();
         for (offset, line) in lines[start_line - 1..end].iter().enumerate() {
-            let _ = writeln!(out, "{}: {}", start_line + offset, line);
+            let _ = writeln!(body, "{}: {}", start_line + offset, line);
         }
-        out.push_str("```");
+        let fence = markdown_fence(&body);
+        let mut out = format!("`{path}` lines {start_line}-{end} of {total}:\n{fence}\n{body}");
+        out.push_str(&fence);
         Ok(out)
     }
 
@@ -263,6 +266,15 @@ impl CodewikiToolExecutor {
             Err(error) => Err(tool_err(format!("{tool} failed: {error}"))),
         }
     }
+}
+
+fn markdown_fence(content: &str) -> String {
+    let longest = content
+        .split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or_default();
+    "`".repeat(3.max(longest + 1))
 }
 
 fn safe_read_path(project_root: &Path, relative_path: &str) -> Result<PathBuf, ToolError> {
@@ -463,7 +475,8 @@ pub(crate) fn codewiki_tool_schemas() -> Vec<ToolSchema> {
             json!({
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "Project-relative file path."}
+                    "path": {"type": "string", "description": "Project-relative file path."},
+                    "limit": {"type": "integer", "description": "Max imports (default 25, max 50)."}
                 },
                 "required": ["path"]
             }),
@@ -661,6 +674,13 @@ mod tests {
         );
     }
 
+    #[test]
+    fn markdown_fence_exceeds_embedded_backtick_runs() {
+        assert_eq!(markdown_fence("plain"), "```");
+        assert_eq!(markdown_fence("nested ``` fence"), "````");
+        assert_eq!(markdown_fence("nested ````` fence"), "``````");
+    }
+
     #[cfg(unix)]
     #[test]
     fn read_byte_snippet_rejects_symlink_outside_project() {
@@ -687,8 +707,6 @@ mod tests {
             file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
         };
 
         let error = read_byte_snippet_from_root(project.path(), &symbol)
@@ -735,8 +753,6 @@ mod tests {
             file_content_hash: String::new(),
             content_hash: String::new(),
             summary: None,
-            created_at: String::new(),
-            updated_at: String::new(),
         };
         let list = format_symbol_list("1 symbol(s)", std::slice::from_ref(&symbol));
         assert!(list.contains("mymod::do_thing"));

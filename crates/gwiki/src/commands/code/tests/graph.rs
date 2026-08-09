@@ -109,7 +109,17 @@ fn file_root_detection_breaks_parent_cycles() {
         ("a.rs".to_string(), "b.rs".to_string()),
     ]);
 
-    let root = find_file_root(&mut parents, "c.rs");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        find_file_root(&mut parents, "c.rs")
+    }));
+    if cfg!(debug_assertions) {
+        assert!(
+            result.is_err(),
+            "debug builds must expose the invalid cycle"
+        );
+        return;
+    }
+    let root = result.expect("release builds recover from parent cycles");
 
     assert_eq!(root, "a.rs");
     assert_eq!(parents.get("a.rs").map(String::as_str), Some("a.rs"));

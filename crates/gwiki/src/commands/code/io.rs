@@ -9,6 +9,10 @@ use super::frontmatter::{
 use super::text::{stamp_commit, strip_commit_lines};
 use super::*;
 
+mod progress_journal;
+
+use progress_journal::ProgressJournal;
+
 const CONTENT_SENSITIVE_INVALIDATION_PREFIX: &str = "content-sensitive:";
 
 pub(crate) fn content_sensitive_invalidation_key(content: &str) -> String {
@@ -157,6 +161,7 @@ pub(crate) struct DocSink<'a> {
     /// not rewritten — so the rewrite set stays scoped to the change set plus
     /// dependents. `None` is the full-scan default.
     since: Option<BTreeSet<String>>,
+    progress_journal: ProgressJournal,
 }
 
 impl<'a> DocSink<'a> {
@@ -180,6 +185,7 @@ impl<'a> DocSink<'a> {
         // resumes from can never be a concurrent writer's half-flushed state.
         let writer_lock = lock::CodewikiWriterLock::acquire(out_dir)?;
         let previous = read_codewiki_meta(out_dir)?;
+        let progress_journal = ProgressJournal::open(out_dir)?;
         Ok(Self {
             _writer_lock: writer_lock,
             project_root,
@@ -200,6 +206,7 @@ impl<'a> DocSink<'a> {
             degraded_docs: Vec::new(),
             diagram_stats: None,
             since: None,
+            progress_journal,
         })
     }
 
@@ -270,7 +277,7 @@ impl<'a> DocSink<'a> {
         // Deterministic docs can explicitly key their generated content. Their
         // metadata may still compare equal while a killed/resumed run leaves
         // an older body on disk, so require byte equality before reusing them.
-        let content_sensitive_target_matches = content_sensitive_target_matches(
+        let target_content_matches = content_sensitive_target_matches(
             doc.invalidation_key.as_deref(),
             existing_target.as_deref(),
             &content,
@@ -282,7 +289,7 @@ impl<'a> DocSink<'a> {
             && doc.invalidation_key == meta.invalidation_key
             && target.exists()
             && !target_blocks_reuse
-            && content_sensitive_target_matches
+            && target_content_matches
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
             && meta.ai_route == ai_outcome.route_label()
@@ -304,7 +311,7 @@ impl<'a> DocSink<'a> {
             }
             self.next_docs.insert(doc.path.clone(), meta.clone());
             self.seen.insert(doc.path.clone());
-            self.flush()?;
+            self.progress_journal.upsert(&doc.path, meta)?;
             return Ok(refreshed);
         }
 
@@ -329,7 +336,7 @@ impl<'a> DocSink<'a> {
         //   invalidates content hashes cannot see.
         let unchanged = target.exists()
             && !target_blocks_reuse
-            && content_sensitive_target_matches
+            && target_content_matches
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
@@ -367,7 +374,7 @@ impl<'a> DocSink<'a> {
         let since_unchanged = !source_hashes.is_empty()
             && target.exists()
             && !target_blocks_reuse
-            && content_sensitive_target_matches
+            && target_content_matches
             && previous_meta.is_some_and(|meta| {
                 meta.invalidation_key == doc.invalidation_key
                     && !meta.degraded
@@ -444,9 +451,9 @@ impl<'a> DocSink<'a> {
                 ai_aggregate_candidates: doc_ai_settings.aggregate_candidates,
             }
         };
-        self.next_docs.insert(doc.path.clone(), entry);
+        self.next_docs.insert(doc.path.clone(), entry.clone());
         self.seen.insert(doc.path.clone());
-        self.flush()?;
+        self.progress_journal.upsert(&doc.path, &entry)?;
         Ok(!unchanged || refreshed)
     }
 
@@ -454,22 +461,6 @@ impl<'a> DocSink<'a> {
     /// build order. Read before `finish` consumes the sink.
     pub(crate) fn degraded_docs(&self) -> &[String] {
         &self.degraded_docs
-    }
-
-    fn flush(&self) -> anyhow::Result<()> {
-        let meta = CodewikiMeta {
-            docs: self.next_docs.clone(),
-            generated_docs: self.generated_docs.clone(),
-            commit: self.commit_stamp.as_ref().map(|stamp| stamp.sha.clone()),
-            commit_dirty: self.commit_stamp.as_ref().map(|stamp| stamp.dirty),
-            // The previous snapshot is kept until the run completes so an
-            // interrupted run still diffs changes against the last complete
-            // one.
-            index_snapshot: self.previous_snapshot.clone(),
-            ai_mode: self.ai_mode.clone(),
-            diagram_stats: self.diagram_stats.clone(),
-        };
-        write_codewiki_meta(self.out_dir, &meta)
     }
 
     /// Deletes one stale page from disk and drops its meta entry.
@@ -482,6 +473,7 @@ impl<'a> DocSink<'a> {
             Err(err) => return Err(err.into()),
         }
         self.next_docs.remove(doc_path);
+        self.progress_journal.remove(doc_path)?;
         Ok(())
     }
 
@@ -562,6 +554,7 @@ impl<'a> DocSink<'a> {
             diagram_stats: self.diagram_stats,
         };
         write_codewiki_meta(self.out_dir, &meta)?;
+        self.progress_journal.compact()?;
         Ok(self.generated_docs)
     }
 }
@@ -569,11 +562,10 @@ pub(crate) fn read_codewiki_meta(out_dir: &Path) -> anyhow::Result<CodewikiMeta>
     let path = safe_doc_path(out_dir, CODEWIKI_META_PATH)?;
     let mut meta: CodewikiMeta = match std::fs::read_to_string(&path) {
         Ok(raw) => serde_json::from_str(&raw)?,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(CodewikiMeta::default());
-        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => CodewikiMeta::default(),
         Err(err) => return Err(err.into()),
     };
+    progress_journal::replay(out_dir, &mut meta)?;
     // Entries written before per-doc AI modes existed inherit the run-level
     // mode they were generated under.
     let run_mode = meta.ai_mode.clone();
@@ -621,7 +613,7 @@ pub(crate) fn source_hashes_for_doc(
         let canonical_source = match source_path.canonicalize() {
             Ok(path) => path,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                eprintln!("warning: skipping codewiki source hash for deleted file: {file}");
+                log::warn!("skipping codewiki source hash for deleted file: {file}");
                 continue;
             }
             Err(err) => {
@@ -640,7 +632,7 @@ pub(crate) fn source_hashes_for_doc(
                     .downcast_ref::<std::io::Error>()
                     .is_some_and(|io_err| io_err.kind() == std::io::ErrorKind::NotFound) =>
             {
-                eprintln!("warning: skipping codewiki source hash for deleted file: {file}");
+                log::warn!("skipping codewiki source hash for deleted file: {file}");
                 continue;
             }
             Err(err) => {

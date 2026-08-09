@@ -85,7 +85,7 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(rendered.contains("- Subsystem: [[code/modules/src/domain|src/domain]]"));
     assert!(rendered.contains("- Subsystem: [[code/modules/src/storage|src/storage]]"));
     assert!(rendered.contains("`src/api` contains 2 direct files and 0 child modules."));
-    assert!(!rendered.contains("<details>"));
+    assert!(rendered.contains("<summary>Relevant source files</summary>"));
     for line in rendered
         .lines()
         .filter(|line| line.starts_with("- Subsystem: [[code/modules/"))
@@ -315,17 +315,6 @@ fn architecture_page_has_no_diagram_and_range_free_frontmatter_without_graph_edg
     assert!(!rendered.contains("graph-unavailable"), "{rendered}");
     assert!(provenance.iter().all(|entry| entry.get("file").is_some()));
     assert!(provenance.iter().all(|entry| entry.get("ranges").is_none()));
-}
-
-fn inline_marker_count(text: &str) -> usize {
-    text.split_whitespace()
-        .filter(|token| {
-            token
-                .strip_prefix('[')
-                .and_then(|value| value.strip_suffix(']'))
-                .is_some_and(|value| value.chars().all(|ch| ch.is_ascii_digit()))
-        })
-        .count()
 }
 
 // --- Model-seeded architecture diagrams (#891) -----------------------------

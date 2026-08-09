@@ -37,7 +37,7 @@ pub(crate) fn module_diagram_context(
         })
         .collect();
     ModuleDiagramContext {
-        dependency_edges: collect_module_dependency_edges(files, graph_edges),
+        dependency_edges: collect_module_dependency_edges(&component_modules, graph_edges),
         call_edges,
         component_labels,
         component_modules,
@@ -132,18 +132,9 @@ pub(crate) fn render_module_dependency_mermaid_with_context(
 }
 
 fn collect_module_dependency_edges(
-    files: &[FileDoc],
+    component_to_module: &BTreeMap<String, String>,
     graph_edges: &[CodewikiGraphEdge],
 ) -> BTreeSet<(String, String)> {
-    let component_to_module = files
-        .iter()
-        .flat_map(|file| {
-            file.component_ids
-                .iter()
-                .map(|component_id| (component_id.as_str(), file.module.as_str()))
-        })
-        .collect::<HashMap<_, _>>();
-
     graph_edges
         .iter()
         .filter(|edge| {
@@ -153,9 +144,9 @@ fn collect_module_dependency_edges(
             )
         })
         .filter_map(|edge| {
-            let source = component_to_module.get(edge.source_component_id.as_str())?;
-            let target = component_to_module.get(edge.target_component_id.as_str())?;
-            (source != target).then(|| ((*source).to_string(), (*target).to_string()))
+            let source = component_to_module.get(&edge.source_component_id)?;
+            let target = component_to_module.get(&edge.target_component_id)?;
+            (source != target).then(|| (source.clone(), target.clone()))
         })
         .collect()
 }

@@ -205,9 +205,12 @@ fn unsafe_link_replacements(text: &str) -> Vec<Replacement> {
             }
             Event::End(TagEnd::Link) => {
                 if let Some(frame) = active_links.pop_if(|frame| frame.range == range) {
+                    let label = source_link_label(text, &frame.range)
+                        .map(str::to_string)
+                        .unwrap_or(frame.label);
                     replacements.push(Replacement {
                         range: frame.range,
-                        label: frame.label,
+                        label,
                     });
                 }
             }
@@ -231,6 +234,12 @@ fn unsafe_link_replacements(text: &str) -> Vec<Replacement> {
     }
 
     replacements
+}
+
+fn source_link_label<'a>(text: &'a str, range: &Range<usize>) -> Option<&'a str> {
+    let source = text.get(range.clone())?.strip_prefix('[')?;
+    let end = source.rfind("](").or_else(|| source.rfind("]["))?;
+    Some(&source[..end])
 }
 
 fn push_label_text(active_links: &mut [LinkFrame], value: &str) {
@@ -321,7 +330,7 @@ mod tests {
         let grounded = ground_text(text, &valid_spans, Some("[fallback.rs:1]"));
 
         assert_eq!(
-            "The parser uses mod.rs [crates/gcode/src/index/import_resolution/parser/mod.rs:1]",
+            "The parser uses `mod.rs` [crates/gcode/src/index/import_resolution/parser/mod.rs:1]",
             grounded
         );
     }
@@ -388,6 +397,12 @@ mod tests {
         let sanitized = sanitize_model_markdown_links(text);
 
         assert_eq!("up drive unc file tilde", sanitized);
+    }
+
+    #[test]
+    fn unsafe_links_preserve_formatted_label_source() {
+        let input = "[**bold** and `code`](../secret.md)";
+        assert_eq!(sanitize_model_markdown_links(input), "**bold** and `code`");
     }
 
     #[test]

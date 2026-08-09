@@ -34,11 +34,19 @@ impl CodewikiWriterLock {
     /// needed. Fails fast with the current holder's identity when another
     /// codewiki run is already writing this out_dir.
     pub(crate) fn acquire(out_dir: &Path) -> anyhow::Result<Self> {
+        Self::acquire_with_timeout(out_dir, CODE_WRITER_LOCK_TIMEOUT)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn acquire_with_timeout(
+        out_dir: &Path,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
         let lock_path = out_dir.join(CODE_WRITER_LOCK_RELATIVE_PATH);
         if let Some(parent) = lock_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        Self::acquire_at(out_dir, lock_path)
+        Self::acquire_at(out_dir, lock_path, timeout)
     }
 
     /// Unix: advisory `flock(2)` on `_meta/codewiki.lock`. The file is left
@@ -52,7 +60,11 @@ impl CodewikiWriterLock {
     /// held for a few milliseconds. A genuine holder keeps the lock for the
     /// whole generation run, far past this bound, and still fails fast.
     #[cfg(unix)]
-    fn acquire_at(out_dir: &Path, lock_path: PathBuf) -> anyhow::Result<Self> {
+    fn acquire_at(
+        out_dir: &Path,
+        lock_path: PathBuf,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
         use std::io::Write as _;
         use std::os::unix::io::AsRawFd as _;
 
@@ -79,7 +91,7 @@ impl CodewikiWriterLock {
                 return Err(anyhow::Error::new(err)
                     .context(format!("failed to lock {}", lock_path.display())));
             }
-            if started.elapsed() >= CODE_WRITER_LOCK_TIMEOUT {
+            if started.elapsed() >= timeout {
                 anyhow::bail!(held_by_message(out_dir, &lock_path));
             }
             std::thread::sleep(POLL);
@@ -95,7 +107,11 @@ impl CodewikiWriterLock {
     /// an atomic create-new. A crashed run leaves the file behind, so the
     /// refusal message names it for manual removal.
     #[cfg(not(unix))]
-    fn acquire_at(out_dir: &Path, lock_path: PathBuf) -> anyhow::Result<Self> {
+    fn acquire_at(
+        out_dir: &Path,
+        lock_path: PathBuf,
+        _timeout: std::time::Duration,
+    ) -> anyhow::Result<Self> {
         use std::io::Write as _;
 
         let mut file = match File::create_new(&lock_path) {
@@ -160,8 +176,11 @@ mod tests {
         let out_dir = tempfile::tempdir().expect("tempdir");
         let _held = CodewikiWriterLock::acquire(out_dir.path()).expect("first acquire");
 
-        let refused = CodewikiWriterLock::acquire(out_dir.path())
-            .expect_err("second acquire must be refused");
+        let refused = CodewikiWriterLock::acquire_with_timeout(
+            out_dir.path(),
+            std::time::Duration::from_millis(25),
+        )
+        .expect_err("second acquire must be refused");
 
         let message = refused.to_string();
         assert!(

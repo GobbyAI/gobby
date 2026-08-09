@@ -10,7 +10,7 @@ use gobby_core::ai_context::AiContext;
 use crate::output::Format;
 use crate::{CommandOutcome, ScopeIdentity};
 
-use super::compare::compare_to;
+use super::compare::{compare_summary_text, compare_to};
 use super::purge::{purge_confirmation, purge_summary, purge_summary_text};
 use super::run::{repair_summary, repair_summary_text, run_summary, run_summary_text};
 use super::{CodeEngineRuntime, CodewikiAiOptions};
@@ -45,15 +45,12 @@ impl CodeCommandOptions {
 }
 
 pub fn run_command(options: CodeCommandOptions) -> anyhow::Result<CommandOutcome> {
+    let facts = CodewikiFacts::open(&options.project_root)?;
+    let project_id = facts.project_id().to_string();
     if let Some(base_ref) = options.compare_to.as_deref() {
         let summary = compare_to(&options.project_root, options.out.as_deref(), base_ref)?;
-        let text = serde_json::to_string_pretty(&summary)?;
-        return code_outcome(
-            ScopeIdentity::project(options.project_root.display().to_string()),
-            summary,
-            text,
-            None,
-        );
+        let text = compare_summary_text(&summary);
+        return code_outcome(ScopeIdentity::project(project_id), summary, text, None);
     }
     let freshness = check_freshness(
         options.requires_freshness(),
@@ -64,8 +61,6 @@ pub fn run_command(options: CodeCommandOptions) -> anyhow::Result<CommandOutcome
     let busy_warning = matches!(freshness, Some(FreshnessStatus::SkippedBusy)).then_some(
         "warning: gcode index refresh already running; reading existing index".to_string(),
     );
-    let facts = CodewikiFacts::open(&options.project_root)?;
-    let project_id = facts.project_id().to_string();
     let mut source = crate::support::config::hub_ai_config_source("gwiki code")?;
     let ai_context = AiContext::resolve(Some(project_id.clone()), &mut source);
     let profiles = direct_profiles(&options.ai);

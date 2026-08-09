@@ -92,9 +92,8 @@ fn bound_seed_prompt(prompt: &str) -> String {
         end -= 1;
     }
     format!(
-        "{}\n\n[Seed truncated to fit context. Use the provided tools (search_code, \
-         outline_file, read_symbol, read_file, grep_repo, find_callers, find_usages, \
-         imports) to investigate the codebase for any details beyond this excerpt.]",
+        "{}\n\n[Seed truncated to fit context. Use the available tools to investigate \
+         the codebase for details beyond this excerpt.]",
         &prompt[..end]
     )
 }
@@ -185,20 +184,7 @@ pub(crate) fn resolve_tool_loop_generator(
     ai: &CodewikiAiOptions,
     graph_availability: CodewikiGraphAvailability,
 ) -> ResolvedToolLoopGenerator {
-    let ai_context = match resolve_ai_context(ctx, ai.routing) {
-        Ok(ai_context) => ai_context,
-        Err(_) => {
-            let requested = ai.routing.unwrap_or(AiRouting::Auto);
-            let (route, fallback) = match requested {
-                AiRouting::Auto => (AiRouting::Off, true),
-                route => (route, false),
-            };
-            return ResolvedToolLoopGenerator {
-                generator: None,
-                ai_outcome: CodewikiAiOutcome::skipped(route, fallback),
-            };
-        }
-    };
+    let ai_context = resolve_ai_context(ctx, ai.routing);
     let observed = resolve_route_observed(&ai_context, AiCapability::ToolChat);
     let route = observed.route;
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
@@ -350,7 +336,7 @@ mod tests {
         let bounded = bound_seed_prompt(&prompt);
         assert!(bounded.is_char_boundary(0) && std::str::from_utf8(bounded.as_bytes()).is_ok());
         assert!(bounded.contains("[Seed truncated to fit context."));
-        assert!(bounded.contains("search_code"));
+        assert!(bounded.contains("Use the available tools"));
         assert!(bounded.len() < prompt.len());
         assert!(bounded.len() <= TOOL_LOOP_SEED_MAX_BYTES + 512);
     }

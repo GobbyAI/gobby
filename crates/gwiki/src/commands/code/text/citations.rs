@@ -12,9 +12,6 @@ const FALLBACK_CITATION_LINE_WIDTH: usize = 240;
 /// downstream summaries and prompts (#699).
 pub(crate) const MAX_FALLBACK_CITATIONS: usize = 5;
 
-/// Representative subset of `spans` for fallback citations: at most
-/// [`MAX_FALLBACK_CITATIONS`] entries, preferring one span per distinct file
-/// so broad pages cite breadth rather than one file's span run.
 /// Extensions whose files are asset/data provenance rather than behavior;
 /// they rank behind source files in fallback citations unless they are the
 /// only provenance available.
@@ -54,7 +51,8 @@ fn citation_relevance(text_tokens: &BTreeSet<String>, file: &str) -> usize {
 /// tokens overlap the text rank first, asset/data files rank last (still
 /// used when they are the sole provenance), and ties keep deterministic
 /// path order. Distinct files are preferred before a second span of the
-/// same file is taken.
+/// same file is taken. Returns at most [`MAX_FALLBACK_CITATIONS`] entries, so
+/// broad pages cite a representative subset instead of one file's span run.
 pub(super) fn fallback_spans(spans: &[SourceSpan], text: &str) -> Vec<SourceSpan> {
     let deduped = spans.iter().cloned().collect::<BTreeSet<_>>();
     let text_tokens = lexical_tokens(text);

@@ -2,6 +2,12 @@ use gobby_core::config::{AiRouting, FeatureCandidate};
 
 use super::CodewikiDocMeta;
 
+pub(crate) const REPO_DOC_PATH: &str = "code/repo.md";
+pub(crate) const ARCHITECTURE_DOC_PATH: &str = "code/_architecture.md";
+pub(crate) const CONCEPT_INDEX_DOC_PATH: &str = "code/concepts/index.md";
+pub(crate) const CONCEPT_DOC_PREFIX: &str = "code/concepts/";
+pub(crate) const NARRATIVE_DOC_PREFIX: &str = "code/narrative/";
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum AiGenerationStatus {
     Generated,
@@ -150,10 +156,27 @@ impl AiGenerationSettings {
 /// pages (infrastructure, features, deprecations) render without an LLM and are
 /// excluded.
 fn aggregate_writer_page(doc_path: &str) -> bool {
-    doc_path == "code/repo.md"
-        || doc_path == "code/_architecture.md"
-        || doc_path.starts_with("code/concepts/")
-        || doc_path.starts_with("code/narrative/")
+    doc_path == REPO_DOC_PATH || doc_path == ARCHITECTURE_DOC_PATH || is_curated_doc(doc_path)
+}
+
+pub(crate) fn is_curated_doc(doc_path: &str) -> bool {
+    doc_path.starts_with(CONCEPT_DOC_PREFIX) || doc_path.starts_with(NARRATIVE_DOC_PREFIX)
+}
+
+pub(crate) fn ai_outcome_for_doc(
+    doc_path: &str,
+    one_shot: CodewikiAiOutcome,
+    aggregate: CodewikiAiOutcome,
+) -> CodewikiAiOutcome {
+    if doc_path != CONCEPT_INDEX_DOC_PATH
+        && (doc_path == REPO_DOC_PATH
+            || doc_path == ARCHITECTURE_DOC_PATH
+            || is_curated_doc(doc_path))
+    {
+        aggregate
+    } else {
+        one_shot
+    }
 }
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String> + 'a;
