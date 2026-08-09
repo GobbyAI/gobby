@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -64,6 +65,16 @@ _RETAINED_FILE = ".retained-generations.json"
 _GENERATION_MARKER = "-generation-"
 _REVISION_PATTERN = re.compile(r"chrome\s*:\s*['\"](?P<build>[^'\"]+)['\"]")
 _VERSION_PATTERN = re.compile(r"^v?(?P<version>\d+\.\d+\.\d+)$")
+_IMPECCABLE_HOOK_MARKER = "skills/impeccable/scripts/"
+_HOOK_COMMAND_KEYS = ("command", "args", "bash", "powershell")
+_SHARED_HOOK_MANIFESTS = (
+    Path(".claude/settings.local.json"),
+    Path(".claude/settings.json"),
+    Path(".codex/hooks.json"),
+    Path(".cursor/hooks.json"),
+)
+_COPILOT_HOOK_MANIFEST = Path(".github/hooks/impeccable.json")
+_IMPECCABLE_LOCAL_CONFIG = Path(".impeccable/config.local.json")
 _BARRIER_PROGRAM = """
 import os
 import sys
@@ -229,6 +240,142 @@ def remove_impeccable_runtime() -> ImpeccableRemovalResult:
                     fsync_directory(namespace)
                     removed.append(root)
     return ImpeccableRemovalResult(tuple(removed), tuple(skipped))
+
+
+def reconcile_impeccable_installation(project_path: Path) -> None:
+    """Remove obsolete provider hooks and record Gobby rule ownership."""
+    for relative_path in _SHARED_HOOK_MANIFESTS:
+        _reconcile_hook_manifest(project_path / relative_path, dedicated=False)
+    _reconcile_hook_manifest(project_path / _COPILOT_HOOK_MANIFEST, dedicated=True)
+    _merge_declined_hook_consent(project_path / _IMPECCABLE_LOCAL_CONFIG)
+
+
+def _reconcile_hook_manifest(path: Path, *, dedicated: bool) -> None:
+    if not path.exists():
+        return
+    manifest = _read_reconciliation_object(path, label="hook manifest")
+    if manifest is None:
+        return
+
+    reconciled = copy.deepcopy(manifest)
+    hooks = reconciled.get("hooks")
+    if hooks is not None:
+        pruned_hooks = _prune_hook_container(hooks)
+        if _hook_container_is_empty(pruned_hooks):
+            reconciled.pop("hooks", None)
+        else:
+            reconciled["hooks"] = pruned_hooks
+
+    should_delete = not reconciled
+    if dedicated and set(reconciled) <= {"version"} and "hooks" not in reconciled:
+        should_delete = True
+    if should_delete:
+        path.unlink()
+    elif reconciled != manifest:
+        _write_json(path, reconciled)
+
+
+def _prune_hook_container(value: object) -> object:
+    if isinstance(value, list):
+        kept: list[object] = []
+        for item in value:
+            if isinstance(item, dict):
+                pruned = _prune_hook_entry(item)
+                if pruned is not None:
+                    kept.append(pruned)
+            elif not _value_has_impeccable_hook_marker(item):
+                kept.append(item)
+        return kept
+
+    if isinstance(value, dict):
+        if _entry_has_direct_impeccable_hook(value):
+            return {}
+        kept_mapping: dict[str, object] = {}
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                pruned_item = _prune_hook_container(item)
+                if not _hook_container_is_empty(pruned_item):
+                    kept_mapping[key] = pruned_item
+            else:
+                kept_mapping[key] = item
+        return kept_mapping
+
+    return value
+
+
+def _prune_hook_entry(entry: dict[str, object]) -> dict[str, object] | None:
+    if _entry_has_direct_impeccable_hook(entry):
+        return None
+    nested_hooks = entry.get("hooks")
+    if nested_hooks is None:
+        return entry
+
+    pruned_hooks = _prune_hook_container(nested_hooks)
+    if _hook_container_is_empty(pruned_hooks):
+        if _value_has_impeccable_hook_marker(nested_hooks):
+            return None
+        result = dict(entry)
+        result.pop("hooks", None)
+        return result
+
+    result = dict(entry)
+    result["hooks"] = pruned_hooks
+    return result
+
+
+def _entry_has_direct_impeccable_hook(entry: dict[str, object]) -> bool:
+    return any(_value_has_impeccable_hook_marker(entry.get(key)) for key in _HOOK_COMMAND_KEYS)
+
+
+def _value_has_impeccable_hook_marker(value: object) -> bool:
+    if isinstance(value, str):
+        return _IMPECCABLE_HOOK_MARKER in value
+    if isinstance(value, list):
+        return any(_value_has_impeccable_hook_marker(item) for item in value)
+    if isinstance(value, dict):
+        return any(_value_has_impeccable_hook_marker(item) for item in value.values())
+    return False
+
+
+def _hook_container_is_empty(value: object) -> bool:
+    return isinstance(value, (dict, list)) and not value
+
+
+def _merge_declined_hook_consent(path: Path) -> None:
+    if path.exists():
+        config = _read_reconciliation_object(path, label="Impeccable local config")
+        if config is None:
+            return
+    else:
+        config = {}
+
+    next_config = copy.deepcopy(config)
+    hook = next_config.get("hook")
+    if hook is None:
+        hook_config: dict[str, object] = {}
+    elif isinstance(hook, dict):
+        hook_config = dict(hook)
+    else:
+        logger.warning(
+            "Leaving Impeccable local config untouched because hook is not an object: %s", path
+        )
+        return
+    hook_config["consent"] = "declined"
+    next_config["hook"] = hook_config
+    if next_config != config:
+        _write_json(path, next_config)
+
+
+def _read_reconciliation_object(path: Path, *, label: str) -> dict[str, object] | None:
+    try:
+        parsed = json.loads(path.read_bytes())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        logger.warning("Leaving malformed %s untouched at %s: %s", label, path, exc)
+        return None
+    if not isinstance(parsed, dict):
+        logger.warning("Leaving non-object %s untouched at %s", label, path)
+        return None
+    return parsed
 
 
 def _removal_checkpoint(_name: str) -> None:

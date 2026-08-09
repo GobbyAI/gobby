@@ -389,7 +389,11 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")
 
     homebrew_mode = is_homebrew_distribution()
-    from .install_setup_impeccable import ImpeccableInstallError, install_impeccable_cli
+    from .install_setup_impeccable import (
+        ImpeccableInstallError,
+        install_impeccable_cli,
+        reconcile_impeccable_installation,
+    )
 
     try:
         impeccable_result = install_impeccable_cli()
@@ -399,6 +403,7 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     click.echo(
         f"{action} managed Impeccable CLI {impeccable_result.version}: {impeccable_result.path}"
     )
+    reconcile_impeccable_installation(project_path)
 
     if homebrew_mode:
         try:

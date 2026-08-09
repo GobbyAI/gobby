@@ -273,7 +273,12 @@ class TestHandleSessionStart:
             event.metadata["_platform_session_id"] = "platform-session-1"
             return HookResponse(decision="allow")
 
-        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+        def mock_workflow_handle(
+            event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            assert blocking_deadline is not None
             call_order.append("rules")
             return HookResponse(decision="allow")
 
@@ -301,7 +306,12 @@ class TestHandleSessionStart:
             call_order.append("handler")
             return HookResponse(decision="block", reason="identity conflict")
 
-        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+        def mock_workflow_handle(
+            event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            assert blocking_deadline is not None
             call_order.append("rules")
             return HookResponse(decision="allow")
 
@@ -332,7 +342,12 @@ class TestHandleSessionStart:
             call_order.append("handler")
             return HookResponse(decision="allow")
 
-        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+        def mock_workflow_handle(
+            event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            del blocking_deadline
             call_order.append("rules")
             return HookResponse(decision="allow")
 
@@ -463,6 +478,23 @@ class TestHandleNonSessionStart:
         assert rules_deadline == webhooks_deadline
         assert 100.0 < rules_deadline < 120.0
 
+    def test_workflow_rule_evaluator_propagates_shared_deadline(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        manager = manager_with_mocks
+        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        event = make_event(event_type=HookEventType.AFTER_TOOL)
+
+        result = manager._create_rule_evaluator(123.5).evaluate(event)
+
+        assert result == (None, None)
+        manager._workflow_handler.handle.assert_called_once_with(
+            event,
+            blocking_deadline=123.5,
+        )
+
     def test_non_session_start_runs_rules_before_handler(
         self,
         manager_with_mocks: HookManager,
@@ -476,7 +508,12 @@ class TestHandleNonSessionStart:
             call_order.append("handler")
             return HookResponse(decision="allow")
 
-        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+        def mock_workflow_handle(
+            event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            assert blocking_deadline is not None
             call_order.append("rules")
             return HookResponse(decision="allow")
 
@@ -1723,9 +1760,9 @@ def test_rules_block_delivers_staged_memory_on_returned_response(
     from gobby.workflows.engine.delivery_formatting import _STAGED_MEMORY_RECALLS
 
     manager = manager_with_mocks
-    manager._event_handlers.get_handler.return_value = MagicMock()
-    manager._session_lookup.resolve.return_value = None
-    manager._workflow_handler.handle.return_value = HookResponse(
+    cast(MagicMock, manager._event_handlers.get_handler).return_value = MagicMock()
+    cast(MagicMock, manager._session_lookup.resolve).return_value = None
+    cast(MagicMock, manager._workflow_handler.handle).return_value = HookResponse(
         decision="block",
         reason="Blocked by rule",
     )

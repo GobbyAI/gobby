@@ -629,6 +629,7 @@ class HookManager:
             format_discovery_result=self._format_discovery_result,
             database=self._database,
             logger=self.logger,
+            blocking_deadline=blocking_deadline,
         )
 
     def _evaluate_blocking_webhooks(

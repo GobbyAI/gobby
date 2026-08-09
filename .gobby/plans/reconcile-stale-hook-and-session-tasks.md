@@ -157,8 +157,7 @@ Targets:
 - `src/gobby/workflows/engine/effects.py::EffectsMixin._apply_run_command`
 - `src/gobby/workflows/engine/effects.py::EffectsMixin._execute_run_command`
 - `src/gobby/workflows/engine/effects.py::EffectsMixin._run_command_then_deliver`
-- `src/gobby/workflows/engine/effects.py::_extract_command_context`
-- `src/gobby/workflows/engine/run_command.py`
+- `src/gobby/workflows/engine/run_command.py::*` — scope-reason: own subprocess execution, payload shaping, output limits, and result parsing
 - `src/gobby/hooks/hook_manager.py::HookManager._create_rule_evaluator`
 - `src/gobby/hooks/rule_evaluator.py::WorkflowRuleEvaluator.__init__`
 - `src/gobby/hooks/rule_evaluator.py::WorkflowRuleEvaluator.evaluate`
@@ -173,7 +172,7 @@ Targets:
 - `tests/cli/test_install_setup.py::*` — scope-reason: cover daemon-setup reconciliation wiring
 - `tests/workflows/test_run_command_effect.py::*` — scope-reason: cover subprocess limits, deadlines, delivery, and audits
 - `tests/hooks/test_hook_manager.py::*` — scope-reason: cover shared deadline propagation
-- `tests/workflows/test_impeccable_rules.py`
+- `tests/workflows/test_impeccable_rules.py::*` — scope-reason: cover provider payloads and six-source detector synchronization
 - `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: refresh generated shared-content inventory
 
 After managed Impeccable install/verification, reconcile:

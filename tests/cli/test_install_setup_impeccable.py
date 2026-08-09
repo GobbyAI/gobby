@@ -968,3 +968,159 @@ def test_uninstall_tools_without_hooks(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert str(removed) in result.output
     remove.assert_called_once_with()
+
+
+def _write_manifest(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def test_reconcile_impeccable_manifests_preserves_foreign_entries_and_metadata(
+    tmp_path: Path,
+) -> None:
+    marker = "skills/impeccable/scripts/hook.mjs"
+    foreign = {"type": "command", "command": "python foreign.py", "meta": {}}
+    claude_local = tmp_path / ".claude/settings.local.json"
+    claude_shared = tmp_path / ".claude/settings.json"
+    codex = tmp_path / ".codex/hooks.json"
+    cursor = tmp_path / ".cursor/hooks.json"
+    copilot = tmp_path / ".github/hooks/impeccable.json"
+    _write_manifest(
+        claude_local,
+        {
+            "theme": "dark",
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Edit",
+                        "hooks": [
+                            {"command": f"node .claude/{marker}"},
+                            foreign,
+                        ],
+                    }
+                ]
+            },
+        },
+    )
+    _write_manifest(
+        claude_shared,
+        {"foreign": True, "hooks": {"Stop": [{"args": ["node", marker]}]}},
+    )
+    _write_manifest(codex, {"hooks": {"Stop": [{"hooks": [{"command": marker}]}]}})
+    _write_manifest(cursor, {"version": 1, "hooks": {"preToolUse": [{"command": marker}]}})
+    _write_manifest(
+        copilot,
+        {
+            "version": 1,
+            "owner": "foreign",
+            "hooks": {
+                "postToolUse": [
+                    {"bash": marker},
+                    {"powershell": marker},
+                    {"bash": "node foreign.mjs"},
+                ]
+            },
+        },
+    )
+
+    installer.reconcile_impeccable_installation(tmp_path)
+    first_pass = {
+        path: path.read_bytes() for path in (claude_local, claude_shared, cursor, copilot)
+    }
+    installer.reconcile_impeccable_installation(tmp_path)
+
+    assert json.loads(claude_local.read_text()) == {
+        "theme": "dark",
+        "hooks": {
+            "PostToolUse": [
+                {"matcher": "Edit", "hooks": [foreign]},
+            ]
+        },
+    }
+    assert json.loads(claude_shared.read_text()) == {"foreign": True}
+    assert not codex.exists()
+    assert json.loads(cursor.read_text()) == {"version": 1}
+    assert json.loads(copilot.read_text()) == {
+        "version": 1,
+        "owner": "foreign",
+        "hooks": {"postToolUse": [{"bash": "node foreign.mjs"}]},
+    }
+    assert all(path.read_bytes() == content for path, content in first_pass.items())
+
+
+def test_reconcile_deletes_owned_only_copilot_scaffolding(tmp_path: Path) -> None:
+    path = tmp_path / ".github/hooks/impeccable.json"
+    _write_manifest(
+        path,
+        {
+            "version": 1,
+            "hooks": {"postToolUse": [{"bash": "node .github/skills/impeccable/scripts/hook.mjs"}]},
+        },
+    )
+
+    installer.reconcile_impeccable_installation(tmp_path)
+
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "contents"),
+    [
+        (".claude/settings.local.json", b"{broken\n"),
+        (".claude/settings.json", b"[]\n"),
+        (".codex/hooks.json", b"null\n"),
+        (".cursor/hooks.json", b'"string"\n'),
+        (".github/hooks/impeccable.json", b"42\n"),
+    ],
+)
+def test_reconcile_leaves_malformed_and_non_object_manifests_byte_identical(
+    tmp_path: Path,
+    relative_path: str,
+    contents: bytes,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    path = tmp_path / relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(contents)
+
+    installer.reconcile_impeccable_installation(tmp_path)
+
+    assert path.read_bytes() == contents
+    assert "untouched" in caplog.text
+
+
+def test_reconcile_merges_declined_consent_and_preserves_detector_config(tmp_path: Path) -> None:
+    path = tmp_path / ".impeccable/config.local.json"
+    _write_manifest(
+        path,
+        {
+            "hook": {"consent": "accepted", "custom": True},
+            "detector": {"timeout": 17},
+            "foreign": ["value"],
+        },
+    )
+
+    installer.reconcile_impeccable_installation(tmp_path)
+
+    assert json.loads(path.read_text()) == {
+        "hook": {"consent": "declined", "custom": True},
+        "detector": {"timeout": 17},
+        "foreign": ["value"],
+    }
+
+
+def test_vendored_hook_admin_contains_no_manifest_repair_machinery() -> None:
+    script = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/skills/impeccable/scripts/hook-admin.mjs"
+    ).read_text(encoding="utf-8")
+
+    for obsolete in (
+        "HOOK_MANIFEST_TARGETS",
+        "repairHookManifests",
+        "mergeHookManifests",
+        "pruneImpeccableHookFromManifest",
+        ".codex/hooks.json",
+        ".github/hooks/impeccable.json",
+    ):
+        assert obsolete not in script

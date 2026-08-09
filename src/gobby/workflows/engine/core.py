@@ -116,6 +116,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
         """Evaluate all matching rules for an event.
 
@@ -124,6 +125,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             session_id: Current session ID.
             variables: Session variables dict (mutated in-place by set_variable).
             eval_context: Additional eval context (LazyBool thunks, etc).
+            blocking_deadline: Shared aggregate deadline for inline blocking effects.
 
         Returns:
             HookResponse with merged results from all matching rules.
@@ -193,6 +195,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if eval_context is None:
                     eval_context = {}
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
+                eval_context.setdefault("_blocking_deadline", blocking_deadline)
 
                 active_agent_wait = False
                 if is_turn_end:

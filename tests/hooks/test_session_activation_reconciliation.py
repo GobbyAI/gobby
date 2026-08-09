@@ -1090,9 +1090,10 @@ def test_hook_manager_reconciles_before_rules(
         side_effect=lambda event: call_order.append("handler") or HookResponse(decision="allow")
     )
     components.event_handlers.get_handler.return_value = handler
-    components.workflow_handler.handle.side_effect = lambda event: call_order.append(
-        "rules"
-    ) or HookResponse(decision="allow")
+    components.workflow_handler.handle.side_effect = (
+        lambda event, blocking_deadline=None: call_order.append("rules")
+        or HookResponse(decision="allow")
+    )
 
     event = HookEvent(
         event_type=event_type,

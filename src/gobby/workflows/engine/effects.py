@@ -4,8 +4,6 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, run_command, and block matching.
 """
 
-import asyncio
-import contextlib
 import json
 import logging
 import re
@@ -14,7 +12,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.background_tasks import create_background_task
-from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS
+from gobby.hooks.effect_deadline import (
+    BLOCKING_EFFECT_BUDGET_SECONDS,
+    remaining_blocking_effect_seconds,
+)
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
@@ -24,6 +25,11 @@ from gobby.workflows.engine.delivery_formatting import (
     DeliveryFormattingMixin,
     _is_empty_inject_payload,
 )
+from gobby.workflows.engine.run_command import (
+    RunCommandResult,
+    build_run_command_payload,
+    execute_run_command,
+)
 from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
@@ -31,29 +37,6 @@ logger = logging.getLogger(__name__)
 
 _RUN_COMMAND_DEFAULT_TIMEOUT_SECONDS = 5.0
 _RUN_COMMAND_BACKGROUND_DEFAULT_TIMEOUT_SECONDS = 30.0
-
-
-def _extract_command_context(stdout_text: str) -> str | None:
-    """Pull injectable context from a hook-shaped JSON command output.
-
-    Accepts the Claude hook response shape (hookSpecificOutput.additionalContext)
-    and a top-level additionalContext. Anything else is treated as no output.
-    """
-    try:
-        parsed = json.loads(stdout_text)
-    except (json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    hook_specific = parsed.get("hookSpecificOutput")
-    if isinstance(hook_specific, dict):
-        context = hook_specific.get("additionalContext")
-        if isinstance(context, str) and context.strip():
-            return context
-    context = parsed.get("additionalContext")
-    if isinstance(context, str) and context.strip():
-        return context
-    return None
 
 
 class EffectsMixin(DeliveryFormattingMixin):
@@ -396,28 +379,25 @@ class EffectsMixin(DeliveryFormattingMixin):
         ctx: dict[str, Any],
         context_parts: list[str],
     ) -> None:
-        """Spawn a local command with the hook event JSON on stdin.
-
-        Fail-open by contract: a missing executable, non-zero exit, timeout, or
-        unparseable output never blocks the event. Inline runs are clamped to
-        the aggregate blocking-effect budget and append extracted
-        additionalContext to this turn's context; background runs deliver their
-        output as a command_result inter-session message, which the next
-        context-capable hook piggybacks into the session.
-        """
+        """Execute a bounded detector command and fail open on every failure."""
         event = ctx.get("event")
         command = [str(part) for part in (effect.command or [])]
         if not command or not isinstance(event, HookEvent):
             return
 
-        cwd = event.cwd or event.data.get("cwd")
-        stdin_payload = json.dumps(event.data)
+        try:
+            payload = build_run_command_payload(event)
+            stdin_payload = json.dumps(payload).encode("utf-8")
+        except Exception:
+            logger.warning("run_command[%s]: event payload could not be encoded", row.name)
+            return
+        cwd = str(payload["cwd"])
+        platform_session_id = event.metadata.get("_platform_session_id") if event.metadata else None
+        if not isinstance(platform_session_id, str) or not platform_session_id:
+            platform_session_id = None
 
         if effect.background:
             timeout = effect.timeout_seconds or _RUN_COMMAND_BACKGROUND_DEFAULT_TIMEOUT_SECONDS
-            platform_session_id = (
-                event.metadata.get("_platform_session_id") if event.metadata else None
-            )
             create_background_task(
                 self._run_command_then_deliver(
                     command,
@@ -425,80 +405,94 @@ class EffectsMixin(DeliveryFormattingMixin):
                     stdin_payload,
                     timeout,
                     rule_name=row.name,
+                    rule_id=str(row.id),
                     platform_session_id=platform_session_id,
                 )
             )
             return
 
-        timeout = min(
+        maximum = min(
             effect.timeout_seconds or _RUN_COMMAND_DEFAULT_TIMEOUT_SECONDS,
             BLOCKING_EFFECT_BUDGET_SECONDS,
         )
-        output = await self._execute_run_command(
-            command, cwd, stdin_payload, timeout, rule_name=row.name
+        deadline = ctx.get("_blocking_deadline")
+        if not isinstance(deadline, (int, float)) or isinstance(deadline, bool):
+            deadline = None
+        timeout = remaining_blocking_effect_seconds(deadline, maximum=maximum)
+        if timeout <= 0:
+            result = RunCommandResult.deadline_exhausted(timeout_seconds=timeout)
+            self._audit_run_command(
+                result,
+                rule_name=row.name,
+                rule_id=str(row.id),
+                platform_session_id=platform_session_id,
+            )
+            return
+        result = await self._execute_run_command(
+            command,
+            cwd,
+            stdin_payload,
+            timeout,
+            rule_name=row.name,
+            rule_id=str(row.id),
+            platform_session_id=platform_session_id,
+            background=False,
         )
-        if output and effect.inject_result:
-            context_parts.append(output)
+        if result.context and effect.inject_result:
+            context_parts.append(result.context)
 
     async def _execute_run_command(
         self,
         command: list[str],
-        cwd: str | None,
-        stdin_payload: str,
+        cwd: str,
+        stdin_payload: bytes,
         timeout: float,
         *,
         rule_name: str,
-    ) -> str | None:
-        """Run the command and return its extracted context, or None (fail-open)."""
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-            )
-        except (OSError, ValueError) as exc:
-            logger.debug("run_command[%s]: spawn failed (fail-open): %s", rule_name, exc)
-            return None
-
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(stdin_payload.encode()), timeout=timeout
-            )
-        except TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            await proc.wait()
-            logger.warning("run_command[%s]: timed out after %.1fs (fail-open)", rule_name, timeout)
-            return None
-
-        if proc.returncode != 0:
-            logger.debug(
-                "run_command[%s]: exit %s (fail-open): %s",
-                rule_name,
-                proc.returncode,
-                stderr.decode(errors="replace")[:500],
-            )
-            return None
-
-        return _extract_command_context(stdout.decode(errors="replace"))
+        rule_id: str,
+        platform_session_id: str | None,
+        background: bool,
+    ) -> RunCommandResult:
+        result = await execute_run_command(
+            command,
+            cwd=cwd,
+            stdin_payload=stdin_payload,
+            timeout_seconds=timeout,
+            background=background,
+        )
+        self._audit_run_command(
+            result,
+            rule_name=rule_name,
+            rule_id=rule_id,
+            platform_session_id=platform_session_id,
+        )
+        if result.status != "success":
+            logger.warning("run_command[%s]: %s (fail-open)", rule_name, result.status)
+        return result
 
     async def _run_command_then_deliver(
         self,
         command: list[str],
-        cwd: str | None,
-        stdin_payload: str,
+        cwd: str,
+        stdin_payload: bytes,
         timeout: float,
         *,
         rule_name: str,
+        rule_id: str,
         platform_session_id: str | None,
     ) -> None:
         """Background variant: run the command, deliver output on the next turn."""
-        output = await self._execute_run_command(
-            command, cwd, stdin_payload, timeout, rule_name=rule_name
+        result = await self._execute_run_command(
+            command,
+            cwd,
+            stdin_payload,
+            timeout,
+            rule_name=rule_name,
+            rule_id=rule_id,
+            platform_session_id=platform_session_id,
+            background=True,
         )
-        if not output or not platform_session_id:
+        if not result.context or not platform_session_id:
             return
         try:
             from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -506,11 +500,43 @@ class EffectsMixin(DeliveryFormattingMixin):
             InterSessionMessageManager(self.db).create_message(
                 from_session=platform_session_id,
                 to_session=platform_session_id,
-                content=output,
+                content=result.context,
                 message_type="command_result",
             )
         except Exception:
             logger.warning("run_command[%s]: background delivery failed", rule_name, exc_info=True)
+
+    def _audit_run_command(
+        self,
+        result: RunCommandResult,
+        *,
+        rule_name: str,
+        rule_id: str,
+        platform_session_id: str | None,
+    ) -> None:
+        if not platform_session_id or getattr(self, "db", None) is None:
+            return
+        try:
+            from gobby.storage.workflow_audit import WorkflowAuditManager
+
+            WorkflowAuditManager(self.db).log(
+                session_id=platform_session_id,
+                step=rule_name,
+                event_type="effect",
+                result=result.status,
+                rule_id=rule_id,
+                context={
+                    "duration_ms": result.duration_ms,
+                    "exit_code": result.exit_code,
+                    "stdout_bytes": result.stdout_bytes,
+                    "stderr_bytes": result.stderr_bytes,
+                    "timeout_seconds": result.timeout_seconds,
+                    "overflow_stream": result.overflow_stream,
+                    "background": result.background,
+                },
+            )
+        except Exception:
+            logger.warning("run_command[%s]: audit write failed", rule_name, exc_info=True)
 
     def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
         """Check whether an effect's tool and command selectors match this event."""

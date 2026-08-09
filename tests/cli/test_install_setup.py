@@ -137,6 +137,7 @@ class TestEnsureDaemonConfig:
 
 
 class TestRunDaemonSetup:
+    @patch("gobby.cli.install_setup_impeccable.reconcile_impeccable_installation")
     @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
@@ -157,6 +158,7 @@ class TestRunDaemonSetup:
         mock_init,
         mock_srt,
         mock_impeccable,
+        mock_reconcile,
         tmp_path,
         capsys: pytest.CaptureFixture[str],
     ):
@@ -203,6 +205,7 @@ class TestRunDaemonSetup:
         assert mock_mcp.call_args is not None
         mock_srt.assert_called_once_with()
         mock_impeccable.assert_called_once_with()
+        mock_reconcile.assert_called_once_with(tmp_path)
         mock_gcode.assert_called_once()
         assert mock_gcode.call_count == 1
         assert mock_gcode.call_args is not None

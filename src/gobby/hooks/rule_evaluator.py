@@ -79,18 +79,23 @@ class WorkflowRuleEvaluator:
         format_discovery_result: FormatDiscoveryResult,
         database: Any,
         logger: logging.Logger,
+        blocking_deadline: float | None = None,
     ) -> None:
         self.workflow_handler = workflow_handler
         self.dispatch_mcp_calls = dispatch_mcp_calls
         self.format_discovery_result = format_discovery_result
         self.database = database
         self.logger = logger
+        self.blocking_deadline = blocking_deadline
 
     def evaluate(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and return context or a blocking response."""
         try:
             with create_span("hook.rules.evaluate"):
-                workflow_response = self.workflow_handler.handle(event)
+                workflow_response = self.workflow_handler.handle(
+                    event,
+                    blocking_deadline=self.blocking_deadline,
+                )
 
             mcp_calls = (workflow_response.metadata or {}).get("mcp_calls", [])
 

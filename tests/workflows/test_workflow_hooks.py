@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
@@ -119,7 +120,7 @@ def test_hook_manager_integration() -> None:
             ):
                 response = manager.handle(event)
 
-            assert MockHandlerClass.call_args.kwargs["timeout"] == 15.0
+            assert MockHandlerClass.call_args.kwargs["timeout"] == DEFAULT_WORKFLOW_TIMEOUT_SECONDS
             mock_handler_instance.handle.assert_called_once()
             assert mock_handler_instance.handle.call_count == 1
             assert mock_handler_instance.handle.call_args is not None

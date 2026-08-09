@@ -4,9 +4,9 @@ tags: [impeccable, design, gobby, default]
 # skill's references/hooks.md). The detector scripts live in the project's
 # installed skill root; when that root is absent the run_command effect
 # fail-opens and the rules are inert. The detector reads the raw hook event
-# JSON on stdin and routes on hook_event_name (Claude-style names), so the
-# deep pass activates where the raw stop event carries hook_event_name: Stop
-# and degrades to a silent no-op elsewhere.
+# JSON on stdin and routes on hook_event_name (Claude-style names). The
+# run_command boundary preserves provider fields and synthesizes PostToolUse or
+# Stop only when the provider omitted that envelope field.
 
 rules:
   impeccable-edit-pass:

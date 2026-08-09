@@ -382,7 +382,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         return failures
 
-    async def _evaluate_rules(self, event: HookEvent) -> HookResponse:
+    async def _evaluate_rules(
+        self,
+        event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
         """Evaluate rules for a hook event using the RuleEngine.
 
         Loads variables, runs observers to populate tracking state,
@@ -666,6 +671,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     session_id=session_id,
                     variables=variables,
                     eval_context=eval_context,
+                    blocking_deadline=blocking_deadline,
                 )
 
                 # Persist all variables changed by observers OR rule effects.
@@ -695,15 +701,23 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             logger.exception("RuleEngine evaluation failed: %s", e)
             raise
 
-    async def evaluate_async(self, event: HookEvent) -> HookResponse:
+    async def evaluate_async(
+        self,
+        event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
         if not self._enabled:
             return HookResponse(decision="allow")
         if self.timeout is None:
-            return await self._evaluate_rules(event)
+            return await self._evaluate_rules(event, blocking_deadline=blocking_deadline)
 
         try:
-            return await asyncio.wait_for(self._evaluate_rules(event), timeout=self.timeout)
+            return await asyncio.wait_for(
+                self._evaluate_rules(event, blocking_deadline=blocking_deadline),
+                timeout=self.timeout,
+            )
         except TimeoutError as exc:
             session_id = event.metadata.get("_platform_session_id") or ""
             raise WorkflowEvaluationTimeout(
@@ -712,7 +726,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 timeout_seconds=self.timeout,
             ) from exc
 
-    def evaluate(self, event: HookEvent) -> HookResponse:
+    def evaluate(
+        self,
+        event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
         """Evaluate rules for a hook event.
 
         Primary entry point for workflow evaluation.
@@ -730,7 +749,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     raise RuntimeError(
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
-                return self._evaluation_runtime.run(self.evaluate_async(event))
+                return self._evaluation_runtime.run(
+                    self.evaluate_async(event, blocking_deadline=blocking_deadline)
+                )
 
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
@@ -745,6 +766,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         if self._evaluation_runtime is not None:
             self._evaluation_runtime.shutdown()
 
-    def handle(self, event: HookEvent) -> HookResponse:
+    def handle(
+        self,
+        event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
         """Handle a hook event by evaluating declarative rules."""
-        return self.evaluate(event)
+        return self.evaluate(event, blocking_deadline=blocking_deadline)
