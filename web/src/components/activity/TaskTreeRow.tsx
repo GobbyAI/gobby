@@ -17,6 +17,9 @@ import {
 } from "./TasksTabModel";
 import { DEFAULT_TASK_PRIORITY } from "../../lib/taskOptions";
 import { KebabIcon } from "./QuickMenu";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 interface TaskTreeRowProps {
   row: VisibleTaskRow;
@@ -122,8 +125,14 @@ function TaskTreeRowComponent({
       onKeyDown={(event) => onRowKeyDown(task.id, event)}
     >
       {row.isInternal ? (
-        <button
-          className="activity-task-row-toggle"
+        <Button
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn(
+            coarseHitAreaCls,
+            "activity-task-row-toggle h-6 min-h-0 w-6 p-0",
+          )}
           onClick={(event) => {
             event.stopPropagation();
             onToggleOpen(task.id);
@@ -147,7 +156,7 @@ function TaskTreeRowComponent({
               />
             </svg>
           </span>
-        </button>
+        </Button>
       ) : (
         <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
       )}
@@ -175,16 +184,19 @@ function TaskTreeRowComponent({
           </span>
         </span>
       )}
-      <button
+      <Button
         type="button"
-        className="task-more-btn"
+        variant="ghost"
+        size="icon"
+        dense
+        className={cn(coarseHitAreaCls, "task-more-btn h-auto min-h-0 w-auto p-0")}
         onClick={(event) => onMenuButtonClick(event, task)}
         title="Task actions"
         aria-label="Task actions"
         disabled={isBusy}
       >
         <KebabIcon />
-      </button>
+      </Button>
     </div>
   );
 }

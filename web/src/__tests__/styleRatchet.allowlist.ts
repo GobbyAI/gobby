@@ -37,8 +37,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/SessionsTabList.tsx': 1,
     'src/components/activity/SkillsTab.tsx': 1,
     'src/components/activity/StagesTab.tsx': 1,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
-    'src/components/activity/TaskTreeRow.tsx': 2,
     'src/components/activity/TasksTabDetailPanel.tsx': 1,
     'src/components/activity/TracesTab.tsx': 2,
     'src/components/activity/fields/KeyValueField.tsx': 2,
@@ -78,8 +76,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
     'src/components/shared/DiffBlock.tsx': 1,
     'src/components/shared/MermaidBlock.tsx': 1,
-    'src/components/tasks/QuickCaptureTask.tsx': 2,
-    'src/components/tasks/TaskCreateForm.tsx': 3,
   },
   input: {
     'src/components/ProjectSelector.tsx': 1,
@@ -88,7 +84,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/FilterPrimitives.tsx': 1,
     'src/components/activity/MemoryTab.tsx': 3,
     'src/components/activity/SessionsFilterDropdown.tsx': 5,
-    'src/components/activity/TaskFieldEditors.tsx': 2,
     'src/components/activity/fields/KeyValueField.tsx': 2,
     'src/components/activity/integrations/ChannelDetailPanel.tsx': 1,
     'src/components/activity/skills/SkillsHubView.tsx': 1,
@@ -103,28 +98,21 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/settings/sections/McpToolsSection.tsx': 1,
     'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
     'src/components/settings/sections/ToolApprovalsSection.tsx': 1,
-    'src/components/tasks/QuickCaptureTask.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 2,
   },
   select: {
     'src/components/activity/RulesTab.tsx': 4,
     'src/components/activity/SkillsTab.tsx': 2,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
     'src/components/activity/integrations/IntegrationsFilterPanel.tsx': 2,
     'src/components/activity/skills/SkillsHubView.tsx': 1,
     'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 4,
   },
   textarea: {
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/SessionInteractionModal.tsx': 1,
-    'src/components/activity/TaskCloseDialog.tsx': 1,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
     'src/components/activity/wiki/WikiAskMode.tsx': 1, // 4.11 deferral: Ask surface replacement
     'src/components/chat/ChatInput.tsx': 1,
     'src/components/chat/PlanApprovalActions.tsx': 1,
     'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 2,
   },
 }
 
@@ -132,9 +120,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
 export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
   'src/components/ValidationDetectionEditor.tsx': 9,
   'src/components/chat/AgentPickerDropdown.tsx': 11,
-  'src/components/tasks/QuickCaptureTask.tsx': 12,
-  'src/components/tasks/TaskCreateForm.tsx': 14,
-  'src/components/tasks/taskModalStyles.ts': 3,
 }
 
 // The complete recorded stylesheet set. New .css files are banned outright.

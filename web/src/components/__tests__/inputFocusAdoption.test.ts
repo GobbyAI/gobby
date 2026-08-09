@@ -5,7 +5,6 @@ import { describe, expect, it } from 'vitest'
 
 const focusManagedInputs = [
   'ValidationDetectionEditor.tsx',
-  'tasks/QuickCaptureTask.tsx',
 ]
 
 describe('shared input focus styles', () => {

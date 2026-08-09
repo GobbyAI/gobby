@@ -5,6 +5,12 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
+import { Textarea } from "../ui/Textarea";
 
 /**
  * D4 — inline field editors for PATCH-family task fields.
@@ -85,7 +91,7 @@ export function TaskTextField({
   }, [committed, skipNextBlurCommit, value]);
 
   return (
-    <input
+    <Input
       type="text"
       className="task-inline-edit task-inline-edit--text"
       aria-label={ariaLabel}
@@ -186,7 +192,7 @@ export function TaskTextAreaField({
   );
 
   return (
-    <textarea
+    <Textarea
       className="task-inline-edit task-inline-edit--textarea"
       aria-label={ariaLabel}
       placeholder={placeholder}
@@ -224,7 +230,7 @@ export function TaskSelectField({
   ariaLabel,
 }: TaskSelectFieldProps) {
   return (
-    <select
+    <NativeSelect
       className="task-inline-edit task-inline-edit--select"
       aria-label={ariaLabel}
       value={value}
@@ -238,7 +244,7 @@ export function TaskSelectField({
           {option.label}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -322,20 +328,27 @@ export function TaskTagsField({
       {tags.map((tag) => (
         <span key={tag} className="task-inline-edit__tag">
           {tag}
-          <button
+          <Button
             type="button"
-            className="task-inline-edit__tag-remove"
+            variant="ghost"
+            size="icon"
+            dense
+            className={cn(
+              coarseHitAreaCls,
+              "task-inline-edit__tag-remove h-auto min-h-0 w-auto p-0",
+            )}
             aria-label={`Remove label ${tag}`}
             disabled={disabled}
             onClick={() => removeTag(tag)}
           >
             ×
-          </button>
+          </Button>
         </span>
       ))}
-      <input
+      <Input
         type="text"
         className="task-inline-edit__tag-input"
+        wrapperClassName="w-auto min-w-16 flex-1"
         aria-label="Add label"
         value={entry}
         disabled={disabled}
