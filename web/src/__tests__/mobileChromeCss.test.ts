@@ -300,7 +300,7 @@ describe('mobile chrome CSS', () => {
     ])
   })
 
-  it('loads the app shell stylesheet after the segmented control styles', () => {
+  it('loads the app shell after segmented controls and omits the retired settings sheet', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
     const segmentedControlIndex = imports.indexOf('./styles/segmented-control.css')
@@ -309,6 +309,7 @@ describe('mobile chrome CSS', () => {
     expect(segmentedControlIndex).toBeGreaterThanOrEqual(0)
     expect(appShellIndex).toBeGreaterThanOrEqual(0)
     expect(segmentedControlIndex).toBeLessThan(appShellIndex)
+    expect(imports).not.toContain('./styles/settings.css')
   })
 
   it('loads activity styles from each standalone owner', () => {

@@ -152,11 +152,13 @@ describe('ChatVoiceSection', () => {
     expect(ctx.clientSettings?.updateVoiceInputMode).toHaveBeenCalledWith('vad')
   })
 
-  it('renders the client default chat mode select from CHAT_MODES', () => {
+  it('ports the legacy default-mode control to the client chat-mode select', () => {
     const ctx = makeContext()
     renderSection(ctx)
 
-    const select = screen.getByLabelText('Default chat mode') as HTMLSelectElement
+    const select = screen.getByRole('combobox', {
+      name: 'Default chat mode',
+    }) as HTMLSelectElement
     expect(select).toHaveValue('normal')
     expect(within(select).getAllByRole('option')).toHaveLength(3)
     fireEvent.change(select, { target: { value: 'bypass' } })

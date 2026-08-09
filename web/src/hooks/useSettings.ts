@@ -76,7 +76,7 @@ const PERSISTABLE_KEYS: PersistableKey[] = [
   'planPendingVariant',
 ]
 
-function loadFromLocalStorage(): Partial<Settings> {
+function loadFromLocalStorage(): unknown {
   try {
     const stored = localStorage.getItem(STORAGE_KEY)
     if (stored) return JSON.parse(stored)
@@ -101,8 +101,20 @@ function normalizeDensity(value: unknown): Density {
   return DENSITY_VALUES.includes(value as Density) ? (value as Density) : 'comfortable'
 }
 
-function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settings> {
+const FONT_SIZE_MIN = 12
+const FONT_SIZE_MAX = 24
+
+function normalizePersistedSettings(value: unknown): Partial<Settings> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {}
+
+  const settings = value as Partial<Settings>
   const normalized: Partial<Settings> = { ...settings }
+  if (Object.prototype.hasOwnProperty.call(value, 'fontSize')) {
+    normalized.fontSize =
+      typeof settings.fontSize === 'number' && Number.isFinite(settings.fontSize)
+        ? Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, settings.fontSize))
+        : DEFAULT_SETTINGS.fontSize
+  }
   if (settings.chatMode) normalized.chatMode = normalizeChatMode(settings.chatMode)
   if (settings.defaultChatMode) {
     normalized.defaultChatMode = normalizeChatMode(settings.defaultChatMode)
@@ -204,7 +216,7 @@ export function useSettings() {
       setSettings((prev) => {
         const merged = {
           ...prev,
-          ...normalizePersistedSettings(remote ?? {}),
+          ...normalizePersistedSettings(remote),
           ...changes,
         }
         // Also update localStorage with the API values

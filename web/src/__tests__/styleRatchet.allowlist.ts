@@ -20,7 +20,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/App.tsx': 1,
     'src/components/FilesPage.tsx': 4,
     'src/components/ProjectSelector.tsx': 2,
-    'src/components/Settings.tsx': 4,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityFilterDropdown.tsx': 1,
     'src/components/activity/ActivityMcpTab.tsx': 4,
@@ -111,7 +110,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
   },
   input: {
     'src/components/ProjectSelector.tsx': 1,
-    'src/components/Settings.tsx': 1,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityPanelSearch.tsx': 1,
     'src/components/activity/FilesTab.tsx': 3,
@@ -239,7 +237,6 @@ export const CSS_FILE_ALLOWLIST: readonly string[] = [
   'src/styles/markdown.css',
   'src/styles/segmented-control.css',
   'src/styles/settings-overlay.css',
-  'src/styles/settings.css',
   'src/styles/tailwind-theme.css',
   'src/styles/tokens.css',
 ]
@@ -253,5 +250,5 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Total lines across all recorded stylesheets. The ceiling only moves down;
 // once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 7025
+export const CSS_TOTAL_LINE_CEILING = 6749
 export const CSS_LINE_TIGHTEN_SLACK = 200

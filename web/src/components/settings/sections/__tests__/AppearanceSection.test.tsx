@@ -58,18 +58,25 @@ function renderSection(clientSettings: UseSettingsReturn | undefined): void {
 }
 
 describe('AppearanceSection', () => {
-  it('reflects the active theme and routes a change to updateTheme', () => {
+  it('exposes the selected theme through labelled single-select group semantics', () => {
     const client = makeClient(makeSettings({ theme: 'dark' }))
     renderSection(client)
 
     const themeGroup = screen.getByRole('radiogroup', { name: 'Theme' })
-    expect(within(themeGroup).getByRole('radio', { name: 'Dark' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
+    expect(within(themeGroup).getByRole('radio', { name: 'Dark' })).toBeChecked()
+    expect(within(themeGroup).getByRole('radio', { name: 'Light' })).not.toBeChecked()
 
     fireEvent.click(within(themeGroup).getByRole('radio', { name: 'Light' }))
     expect(client.updateTheme).toHaveBeenCalledWith('light')
+  })
+
+  it('resets client appearance settings to their defaults', () => {
+    const client = makeClient(makeSettings({ fontSize: 20, theme: 'light' }))
+    renderSection(client)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reset to defaults' }))
+
+    expect(client.resetSettings).toHaveBeenCalledOnce()
   })
 
   it('routes a density change to updateDensity', () => {

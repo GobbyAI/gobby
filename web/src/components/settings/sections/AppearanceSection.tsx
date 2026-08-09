@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { SegmentedControl } from '../../ui/SegmentedControl'
+import { Button } from '../../ui/Button'
 import type { SegmentedControlOption } from '../../ui/SegmentedControl'
 import type { Density, Theme, UseSettingsReturn } from '../../../hooks/useSettings'
 import type { PlanPendingVariant } from '../../chat/planPendingSurface'
@@ -61,7 +62,14 @@ function AppearanceField({ label, description, htmlFor, children }: AppearanceFi
 }
 
 function AppearanceControls({ client }: { client: UseSettingsReturn }) {
-  const { settings, updateTheme, updateDensity, updateFontSize, updatePlanPendingVariant } = client
+  const {
+    settings,
+    updateTheme,
+    updateDensity,
+    updateFontSize,
+    updatePlanPendingVariant,
+    resetSettings,
+  } = client
 
   return (
     <>
@@ -119,6 +127,10 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
           onChange={updatePlanPendingVariant}
         />
       </AppearanceField>
+
+      <Button type="button" variant="secondary" onClick={resetSettings}>
+        Reset to defaults
+      </Button>
     </>
   )
 }

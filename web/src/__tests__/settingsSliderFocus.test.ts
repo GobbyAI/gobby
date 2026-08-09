@@ -1,44 +1,93 @@
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import postcss, { type Declaration, type Rule } from 'postcss'
-import { describe, expect, it } from 'vitest'
+import { AppearanceSection } from '../components/settings/sections/AppearanceSection'
+import {
+  SettingsSectionContext,
+  type SettingsSectionContextValue,
+} from '../components/settings/sections/SettingsSectionContext'
+import type { Settings, UseSettingsReturn } from '../hooks/useSettings'
 
-const stylesheet = postcss.parse(
-  readFileSync(resolve(process.cwd(), 'src/styles/settings.css'), 'utf8'),
-)
+let styleElement: HTMLStyleElement
 
-function declarationsFor(selector: string): Map<string, string> {
-  let matchingRule: Rule | undefined
-  stylesheet.walkRules((rule) => {
-    if (rule.selector === selector) matchingRule = rule
-  })
-
-  expect(matchingRule, `Expected CSS rule ${selector}`).toBeDefined()
-  return new Map(
-    matchingRule?.nodes
-      .filter((node): node is Declaration => node.type === 'decl')
-      .map((declaration) => [declaration.prop, declaration.value]),
+beforeEach(() => {
+  styleElement = document.createElement('style')
+  styleElement.textContent = readFileSync(
+    resolve(process.cwd(), 'src/styles/settings-overlay.css'),
+    'utf8',
   )
+  document.head.appendChild(styleElement)
+})
+
+afterEach(() => {
+  cleanup()
+  styleElement.remove()
+})
+
+function renderAppearanceSlider(): HTMLElement {
+  const settings: Settings = {
+    fontSize: 16,
+    model: 'opus',
+    chatMode: 'plan',
+    theme: 'dark',
+    defaultChatMode: 'plan',
+    sttEnabled: false,
+    ttsEnabled: false,
+    voiceInputMode: 'ptt',
+    planPendingVariant: 'info',
+    density: 'comfortable',
+  }
+  const clientSettings: UseSettingsReturn = {
+    settings,
+    updateFontSize: vi.fn(),
+    updateModel: vi.fn(),
+    updateChatMode: vi.fn(),
+    updateTheme: vi.fn(),
+    updateDefaultChatMode: vi.fn(),
+    updateSttEnabled: vi.fn(),
+    updateTtsEnabled: vi.fn(),
+    updateVoiceInputMode: vi.fn(),
+    updatePlanPendingVariant: vi.fn(),
+    updateDensity: vi.fn(),
+    resetSettings: vi.fn(),
+  }
+  const context: SettingsSectionContextValue = {
+    schema: null,
+    configValues: {},
+    secretKeys: [],
+    isLoading: false,
+    saveConfig: async () => ({ ok: true }),
+    registerDirtyGuard: () => () => {},
+    clientSettings,
+  }
+
+  render(
+    createElement(
+      SettingsSectionContext.Provider,
+      { value: context },
+      createElement(AppearanceSection),
+    ),
+  )
+  return screen.getByRole('slider', { name: 'Font size' })
 }
 
 describe('settings slider focus treatment', () => {
-  it('shows an accent focus indicator on the track and both browser thumbs', () => {
-    expect(declarationsFor('.slider').get('outline')).toBeUndefined()
+  it('has no resting outline and shows the accent ring on focus-visible', () => {
+    const slider = renderAppearanceSlider()
 
-    expect(declarationsFor('.slider:focus-visible')).toMatchObject(
-      new Map([
-        ['outline', '2px solid var(--accent)'],
-        ['outline-offset', '3px'],
-      ]),
+    expect(getComputedStyle(slider).outline).toBe('')
+
+    slider.focus()
+    expect(slider).toHaveFocus()
+    const focusRingRule = Array.from(styleElement.sheet?.cssRules ?? []).find(
+      (rule): rule is CSSStyleRule =>
+        rule instanceof CSSStyleRule &&
+        rule.selectorText === '.appearance-font-size__range:focus-visible',
     )
-
-    for (const selector of [
-      '.slider:focus-visible::-webkit-slider-thumb',
-      '.slider:focus-visible::-moz-range-thumb',
-    ]) {
-      expect(declarationsFor(selector).get('box-shadow')).toBe(
-        '0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent)',
-      )
-    }
+    expect(focusRingRule).toBeDefined()
+    expect(slider.matches(focusRingRule?.selectorText ?? '')).toBe(true)
+    expect(focusRingRule?.style.outline).toBe('2px solid var(--accent)')
   })
 })

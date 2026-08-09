@@ -20,7 +20,6 @@ import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { ActivityTab } from "./components/activity/ActivityPanelTabs";
-import { Settings } from "./components/Settings";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
@@ -138,15 +137,12 @@ export default function App() {
   const clientSettings = useSettings();
   const {
     settings,
-    updateFontSize,
     updateModel,
     updateChatMode,
     updateTheme,
-    updateDefaultChatMode,
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,
-    resetSettings,
   } = clientSettings;
   const voiceConversationId =
     attachedSessionId && sessionInteractionMode === "proxy"
@@ -200,7 +196,6 @@ export default function App() {
   const [activeModal, setActiveModal] = useState<"skills" | "gobby" | null>(
     null,
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOverlay = useSettingsOverlay();
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
@@ -442,7 +437,7 @@ export default function App() {
     sendMode,
     addSystemMessage,
     setActiveModal,
-    setSettingsOpen,
+    settingsOverlay,
     setResumeModalOpen,
     showPlanRef,
     openActivityTab: handleOpenActivityTab,
@@ -681,15 +676,6 @@ export default function App() {
         activeTab="modal"
         onReturnToChat={() => setActiveTab("chat")}
       >
-        <Settings
-          isOpen={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          settings={settings}
-          onFontSizeChange={updateFontSize}
-          onThemeChange={updateTheme}
-          onDefaultChatModeChange={updateDefaultChatMode}
-          onReset={resetSettings}
-        />
         {settingsOverlay.isOpen && (
           <Suspense fallback={null}>
             <SettingsOverlay
