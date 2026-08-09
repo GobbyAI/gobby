@@ -377,8 +377,8 @@ Sources: [`src/gobby/mcp_proxy/tools/skills/`](src/gobby/mcp_proxy/tools/skills/
 - Qdrant vector and FalkorDB graph projection sync, rebuild, clear, and orphan cleanup.
 - Freshness checks, stale-project pruning, embedding diagnostics, daemon-triggered post-edit
   indexing, nightly refresh, and optional symbol summaries.
-- CodeWiki generation with scoped and incremental builds, Git-ref changes, grounded verification,
-  citation repair, comparison, audience and prose controls, and purge.
+- Rust `gcode` owns indexing and the read-only `codewiki_facts` facade consumed by CodeWiki;
+  Python [`src/gobby/code_index/`](src/gobby/code_index/) owns daemon-side indexing orchestration.
 
 Sources: [`crates/gcode/src/cli.rs`](crates/gcode/src/cli.rs),
 [`crates/gcode/src/commands/`](crates/gcode/src/commands/), and
@@ -400,10 +400,13 @@ Sources: [`crates/gcode/src/cli.rs`](crates/gcode/src/cli.rs),
 - Audit, lint, normalization, trust, status, health, benchmarks, citation-quality reports,
   librarian proposals, upkeep, daily recaps, and review reports.
 - Unified graph export, graph-context packs, and generated workflow and report bundles.
+- `gwiki code` generation with scoped and incremental builds, Git-ref changes, grounded
+  verification, citation repair, comparison, audience and prose controls, and purge.
 - MCP, HTTP, CLI, and Activity-panel UI surfaces.
 
 Sources: [`crates/gwiki/src/cli.rs`](crates/gwiki/src/cli.rs),
 [`crates/gwiki/src/commands/`](crates/gwiki/src/commands/),
+[`crates/gwiki/src/commands/code/`](crates/gwiki/src/commands/code/),
 [`src/gobby/mcp_proxy/tools/wiki.py`](src/gobby/mcp_proxy/tools/wiki.py), and
 [`src/gobby/wiki/`](src/gobby/wiki/).
 
@@ -570,7 +573,6 @@ Sources: [`src/gobby/test_quality/`](src/gobby/test_quality/),
   `.codex-plugin/plugin.json` runtime was not found.
 - TDD enforcement exists through rules and required skills. A universal fixed
   red/green/refactor task-node generator was not found.
-- CodeWiki ownership is mid-cutover: source exposes `gwiki code`, while daemon nightly and
-  on-commit refresh still call `GcodeGateway.codewiki`. The current gwiki contract update targets
-  contract v16 while the committed contract remains v15.
+- `gwiki code` owns manual CodeWiki generation; production-vault scheduling remains dormant while
+  the wiki redesign is pending. `gcode` supplies indexing and the `codewiki_facts` facade.
 - Multi-machine Pro, Rust-daemon replacement, and other roadmap-only capabilities are excluded.

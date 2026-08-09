@@ -150,6 +150,8 @@ A bare extension such as `.tsx` is not a path and never requires an entry.
 
 ## Deferrals
 
+`kind: deferred`
+
 Typed deferral object:
 
 ```yaml
