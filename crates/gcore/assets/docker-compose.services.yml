@@ -25,7 +25,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
+    restart: always
     profiles: [falkordb, all]
 
   qdrant:
@@ -44,7 +44,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
+    restart: always
     profiles:
       - qdrant
       - all
@@ -109,7 +109,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-    restart: unless-stopped
+    restart: always
     profiles:
       - postgres
       - all

@@ -10,7 +10,6 @@ import pytest
 import yaml
 
 from gobby.cli.installers.container_restart import (
-    DEFAULT_RESTART_POLICY,
     DISABLED_RESTART_POLICY,
     MANAGED_SERVICE_CONTAINERS,
     apply_managed_service_restart_policy,
@@ -22,7 +21,7 @@ pytestmark = pytest.mark.unit
 @pytest.mark.parametrize(
     ("enabled", "expected_policy"),
     [
-        (True, DEFAULT_RESTART_POLICY),
+        (True, "always"),
         (False, DISABLED_RESTART_POLICY),
     ],
 )
