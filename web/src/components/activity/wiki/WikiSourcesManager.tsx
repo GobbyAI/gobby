@@ -12,6 +12,8 @@ import type {
   WikiSourceRecord,
 } from "../../../hooks/useWiki";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { ActivityPanelSearch } from "../ActivityPanelSearch";
 import { WikiSourceRemovalDialog } from "../WikiSourceRemovalDialog";
 
@@ -124,13 +126,15 @@ export function WikiSourcesManager({
         <h3 className="text-sm font-semibold text-foreground">Wiki sources</h3>
         <span className="text-xs text-muted-foreground">{sources.length}</span>
         <div className="ml-auto flex items-center gap-2">
-          <button
+          <Button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
           >
             Back to wiki
-          </button>
+          </Button>
         </div>
       </div>
       <div className="border-b border-border px-3 py-2">
@@ -170,10 +174,12 @@ export function WikiSourcesManager({
                       isSelected && "bg-muted/50",
                     )}
                   >
-                    <button
+                    <Button
                       type="button"
                       onClick={() => setSelectedId(isSelected ? null : source.id)}
-                      className="min-w-0 flex-1 text-left"
+                      variant="ghost"
+                      size="sm"
+                      className={`${coarseHitAreaCls} h-auto min-w-0 flex-1 flex-col items-start justify-start gap-0 px-0 py-0 text-left`}
                       aria-expanded={isSelected}
                     >
                       <span className="block truncate text-sm text-foreground">
@@ -184,15 +190,17 @@ export function WikiSourcesManager({
                           {detail}
                         </span>
                       ) : null}
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
                       onClick={() => void startRemoval(source)}
-                      className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-destructive/10 hover:text-destructive-foreground"
+                      variant="secondary"
+                      size="sm"
+                      className={`${coarseHitAreaCls} shrink-0 hover:bg-destructive/10 hover:text-destructive-foreground`}
                       aria-label={`Remove ${sourceTitle(source)}`}
                     >
                       Remove
-                    </button>
+                    </Button>
                   </div>
                   {isSelected && selected ? (
                     <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 px-3 pb-3 text-xs">

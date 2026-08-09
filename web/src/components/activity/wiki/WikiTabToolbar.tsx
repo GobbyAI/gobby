@@ -6,6 +6,8 @@
  */
 
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { SegmentedControl, type SegmentedControlOption } from "../../ui/SegmentedControl";
 import { ActivityPanelSearch } from "../ActivityPanelSearch";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
@@ -109,16 +111,18 @@ export function WikiTabToolbar({
         {wide ? <div className="min-w-0 flex-1">{searchInput}</div> : null}
         <div className={cn("flex items-center gap-1", !wide && "ml-auto")}>
           {showGraph ? (
-            <button
+            <Button
               type="button"
               onClick={onOpenGraph}
               aria-label="Open graph"
               title="Open graph"
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              variant="secondary"
+              size="sm"
+              className={coarseHitAreaCls}
             >
               <GraphIcon />
               Graph
-            </button>
+            </Button>
           ) : null}
           <QuickMenu items={menuItems} menuLabel="Wiki actions" triggerLabel="Wiki actions" />
         </div>

@@ -17,6 +17,9 @@ import {
 } from "react";
 
 import { useWiki } from "../../hooks/useWiki";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { Input } from "../ui/Input";
 import { useDirtyGuard } from "./dirtyGuard";
 import { WikiAskMode } from "./wiki/WikiAskMode";
 import { WikiBrowse } from "./wiki/WikiBrowse";
@@ -52,9 +55,6 @@ type WikiView = "main" | "sources" | "graph";
 const WIDE_THRESHOLD = 560;
 
 const noop = () => {};
-
-const ghostButton =
-  "rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground";
 
 interface ModeBodyProps {
   mode: WikiMode;
@@ -283,20 +283,32 @@ export const WikiTab = memo(function WikiTab({
           <label htmlFor="wiki-topic-scope" className="text-xs text-muted-foreground">
             Topic scope
           </label>
-          <input
+          <Input
             id="wiki-topic-scope"
             name="wiki-topic-scope"
             value={topicDraft}
             onChange={(event) => setTopicDraft(event.target.value)}
             placeholder="All topics"
-            className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-foreground"
+            wrapperClassName="min-w-0 flex-1"
+            className="h-8 px-2 text-sm"
           />
-          <button type="submit" className={ghostButton}>
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
+          >
             Apply
-          </button>
-          <button type="button" onClick={handleTopicClear} className={ghostButton}>
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
+            onClick={handleTopicClear}
+          >
             Clear
-          </button>
+          </Button>
         </form>
       ) : null}
 
@@ -308,18 +320,24 @@ export const WikiTab = memo(function WikiTab({
           <label htmlFor="wiki-ingest-url" className="text-xs text-muted-foreground">
             Ingest URL
           </label>
-          <input
+          <Input
             id="wiki-ingest-url"
             name="wiki-ingest-url"
             type="url"
             value={ingestDraft}
             onChange={(event) => setIngestDraft(event.target.value)}
             placeholder="https://…"
-            className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 text-sm text-foreground"
+            wrapperClassName="min-w-0 flex-1"
+            className="h-8 px-2 text-sm"
           />
-          <button type="submit" className={ghostButton}>
+          <Button
+            type="submit"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
+          >
             Ingest
-          </button>
+          </Button>
         </form>
       ) : null}
 
@@ -346,10 +364,11 @@ export const WikiTab = memo(function WikiTab({
         onSearchVault={handleSearchVault}
       />
 
-      <input
+      <Input
         ref={fileInputRef}
         type="file"
         className="hidden"
+        wrapperClassName="hidden"
         aria-label="Attach file to wiki"
         onChange={(event) => {
           const file = event.target.files?.[0];

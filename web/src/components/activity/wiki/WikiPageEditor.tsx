@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
 import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
 import { Card } from "../../ui/Card";
+import { Input } from "../../ui/Input";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DetailActionButton, DetailPaneHeader, useDetailDraft } from "../fields";
 import { fetchPage, type WikiFetchScope } from "./WikiTabData";
@@ -243,7 +244,7 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             <label htmlFor="wiki-create-path" className="shrink-0 text-xs text-muted-foreground">
               Page path
             </label>
-            <input
+            <Input
               id="wiki-create-path"
               value={draft?.path ?? ""}
               onChange={(event) => {
@@ -252,7 +253,8 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
               }}
               spellCheck={false}
               placeholder="knowledge/concepts/example.md"
-              className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 font-mono text-xs text-foreground"
+              wrapperClassName="min-w-0 flex-1"
+              className="h-7 px-2 font-mono text-xs"
             />
           </div>
           {formError ? (
