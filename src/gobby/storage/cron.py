@@ -337,6 +337,32 @@ class CronJobStorage(CronRunStorageMixin):
         )
         return [CronJob.from_row(row) for row in rows]
 
+    def list_jobs_by_name_prefix(
+        self,
+        prefix: str,
+        *,
+        enabled: bool | None = True,
+    ) -> list[CronJob]:
+        """List cron rows whose name starts with prefix, regardless of ownership."""
+        if not prefix:
+            raise ValueError("prefix must not be empty")
+        pattern = _escape_like_prefix(prefix)
+        conditions = ["name LIKE %s ESCAPE '\\'"]
+        params: list[Any] = [pattern]
+        if enabled is not None:
+            conditions.append("enabled = %s")
+            params.append(bool(enabled))
+
+        rows = self.db.fetchall(
+            f"""
+            SELECT * FROM cron_jobs
+            WHERE {" AND ".join(conditions)}
+            ORDER BY name
+            """,  # nosec B608
+            tuple(params),
+        )
+        return [CronJob.from_row(row) for row in rows]
+
     _VALID_UPDATE_FIELDS = frozenset(
         {
             "name",

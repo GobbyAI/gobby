@@ -461,6 +461,47 @@ def test_list_system_jobs_by_name_prefix_escapes_like_wildcards(
     assert cron_storage.list_system_jobs_by_name_prefix("gobby_wiki-research:") == []
 
 
+def test_list_jobs_by_name_prefix_includes_system_and_legacy_rows(
+    cron_storage: CronJobStorage,
+) -> None:
+    system = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:codewiki-nightly:project:alpha",
+        is_system=True,
+    )
+    legacy = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:codewiki-nightly:project:legacy",
+        is_system=False,
+    )
+    disabled = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:codewiki-nightly:project:disabled",
+        is_system=False,
+    )
+    cron_storage.update_job(disabled.id, enabled=False)
+    _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobbyXcodewiki-nightly:project:lookalike",
+        is_system=True,
+    )
+
+    enabled = cron_storage.list_jobs_by_name_prefix("gobby:codewiki-nightly:")
+
+    assert [job.id for job in enabled] == [system.id, legacy.id]
+    assert [
+        job.id
+        for job in cron_storage.list_jobs_by_name_prefix("gobby:codewiki-nightly:", enabled=False)
+    ] == [disabled.id]
+
+    with pytest.raises(ValueError, match="prefix"):
+        cron_storage.list_jobs_by_name_prefix("")
+
+
 def test_delete_system_jobs_by_project_and_name_prefix_isolates_rows(
     cron_storage: CronJobStorage,
     temp_db: Any,

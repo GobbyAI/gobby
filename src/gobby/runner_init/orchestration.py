@@ -117,6 +117,32 @@ def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | 
         return None
 
 
+def _reconcile_codewiki_dormant_state(runner: GobbyRunner) -> None:
+    """Disable persisted CodeWiki cron rows without blocking scheduler startup."""
+    from gobby.wiki.codewiki_dormant import reconcile_codewiki_crons_disabled
+
+    cron_storage = runner.cron_storage
+    if cron_storage is None:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.warning("Skipping dormant CodeWiki reconciliation; cron storage is unavailable")
+        return
+
+    try:
+        result = reconcile_codewiki_crons_disabled(cron_storage)
+    except Exception:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.exception("Failed to reconcile dormant CodeWiki cron rows")
+        return
+
+    if result.failed or result.residual_enabled:
+        mark_service_degraded(runner, "codewiki_dormant_reconciliation")
+        logger.warning(
+            "CodeWiki cron reconciliation left enabled rows; failed=%s residual_enabled=%s",
+            result.failed,
+            result.residual_enabled,
+        )
+
+
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
     runner.project_purge_service = None
@@ -342,6 +368,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
             runner.cron_storage.normalize_system_job_timezones()
         except Exception:
             logger.exception("Failed to normalize system cron schedule timezones")
+
+        _reconcile_codewiki_dormant_state(runner)
 
         try:
             from gobby.scheduler.executor import CronExecutor
