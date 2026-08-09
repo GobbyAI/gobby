@@ -20,16 +20,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/App.tsx': 1,
     'src/components/ProjectSelector.tsx': 2,
     'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/ActivityFilterDropdown.tsx': 1,
-    'src/components/activity/ActivityPanel.tsx': 2,
-    'src/components/activity/QuickMenu.tsx': 2,
-    'src/components/activity/SessionInteractionModal.tsx': 2,
-    'src/components/activity/SessionsFilterDropdown.tsx': 1,
-    'src/components/activity/SessionsTab.tsx': 1,
-    'src/components/activity/SessionsTabDetail.tsx': 1,
-    'src/components/activity/SessionsTabList.tsx': 1,
-    'src/components/activity/terminal/TerminalKeysBar.tsx': 2,
-    'src/components/activity/terminal/TerminalView.tsx': 2,
     'src/components/activity/wiki/WikiAskMode.tsx': 7, // 4.11 deferral: Ask surface replacement
     'src/components/app/AppErrorBoundary.tsx': 2,
     'src/components/auth/LoginPage.tsx': 1,
@@ -57,10 +47,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
   input: {
     'src/components/ProjectSelector.tsx': 1,
     'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/ActivityPanelSearch.tsx': 1,
-    'src/components/activity/FilterPrimitives.tsx': 1,
-    'src/components/activity/SessionsFilterDropdown.tsx': 5,
-    'src/components/activity/terminal/TerminalKeysBar.tsx': 1,
     'src/components/auth/LoginPage.tsx': 3,
     'src/components/chat/ChatInputToolbar.tsx': 1,
     'src/components/chat/CommandPalette.tsx': 1,
@@ -77,7 +63,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
   },
   textarea: {
     'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/SessionInteractionModal.tsx': 1,
     'src/components/activity/wiki/WikiAskMode.tsx': 1, // 4.11 deferral: Ask surface replacement
     'src/components/chat/ChatInput.tsx': 1,
     'src/components/chat/PlanApprovalActions.tsx': 1,

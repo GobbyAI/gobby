@@ -1,5 +1,10 @@
 import { useState, type FormEvent } from "react";
 
+import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { Input } from "../../ui/Input";
+
 interface TerminalKeysBarProps {
   sendInput: (data: string) => void;
 }
@@ -38,22 +43,26 @@ export function TerminalKeysBar({ sendInput }: TerminalKeysBarProps) {
         Terminal input
       </label>
       <div className="flex min-w-0 gap-2">
-        <input
+        <Input
           id="terminal-input"
-          className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 font-mono text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background pointer-coarse:min-h-11"
+          wrapperClassName="min-w-0 flex-1"
+          className="min-h-9 min-w-0 bg-[var(--bg-secondary)] px-3 py-2 font-mono text-sm"
           type="text"
           autoComplete="off"
           spellCheck={false}
           value={value}
           onChange={(event) => setValue(event.target.value)}
         />
-        <button
-          className="min-h-9 rounded-md bg-accent px-3 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+        <Button
+          variant="primary"
+          size="md"
+          dense
+          className={cn("min-h-9", coarseHitAreaCls)}
           type="submit"
           disabled={value.length === 0}
         >
           Send
-        </button>
+        </Button>
       </div>
       <div
         className="flex flex-wrap gap-1.5"
@@ -61,15 +70,21 @@ export function TerminalKeysBar({ sendInput }: TerminalKeysBarProps) {
         aria-label="Terminal quick keys"
       >
         {QUICK_KEYS.map(({ label, accessibleLabel, data }) => (
-          <button
+          <Button
             key={label}
-            className="min-h-8 min-w-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background active:bg-muted/80 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+            variant="secondary"
+            size="sm"
+            dense
+            className={cn(
+              "min-h-8 min-w-8 bg-[var(--bg-secondary)] px-2 font-mono text-xs active:bg-muted/80",
+              coarseHitAreaCls,
+            )}
             type="button"
             aria-label={accessibleLabel}
             onClick={() => sendInput(data)}
           >
             {label}
-          </button>
+          </Button>
         ))}
       </div>
     </form>

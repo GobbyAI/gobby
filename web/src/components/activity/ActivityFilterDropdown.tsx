@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
 
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { FilterDropdownShell } from "./FilterPrimitives";
+
 export interface ActivityFilterOption<T extends string> {
   value: T;
   label: string;
@@ -31,42 +36,38 @@ export function ActivityFilterDropdown<T extends string>({
   }, [onClose]);
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-[99]"
-        onClick={onClose}
-        aria-hidden="true"
-      />
-      <div
-        ref={panelRef}
-        className="absolute top-full right-2 z-[100] w-[min(220px,calc(100vw-1.5rem))] border border-border rounded-md shadow-xl flex flex-col p-1"
-        style={{ background: "var(--bg-secondary)" }}
-        role="listbox"
-        aria-label={ariaLabel}
-      >
-        {options.map((option) => {
-          const isActive = option.value === value;
-          return (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={isActive}
-              className={
-                isActive
-                  ? "activity-filter-dropdown__item activity-filter-dropdown__item--active"
-                  : "activity-filter-dropdown__item"
-              }
-              onClick={() => {
-                onChange(option.value);
-                onClose();
-              }}
-            >
-              {option.label}
-            </button>
-          );
-        })}
-      </div>
-    </>
+    <FilterDropdownShell
+      panelRef={panelRef}
+      onClose={onClose}
+      role="listbox"
+      ariaLabel={ariaLabel}
+      className="absolute top-full right-2 w-[min(220px,calc(100vw-1.5rem))] p-1"
+    >
+      {options.map((option) => {
+        const isActive = option.value === value;
+        return (
+          <Button
+            key={option.value}
+            type="button"
+            variant="ghost"
+            size="sm"
+            dense
+            role="option"
+            aria-selected={isActive}
+            className={cn(
+              "activity-filter-dropdown__item",
+              isActive && "activity-filter-dropdown__item--active",
+              coarseHitAreaCls,
+            )}
+            onClick={() => {
+              onChange(option.value);
+              onClose();
+            }}
+          >
+            {option.label}
+          </Button>
+        );
+      })}
+    </FilterDropdownShell>
   );
 }

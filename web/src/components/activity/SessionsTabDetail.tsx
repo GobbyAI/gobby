@@ -1,8 +1,10 @@
 import type { Dispatch, SetStateAction } from "react";
 
 import type { SessionMessage } from "../../hooks/useSessionDetail";
+import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import {
   ClipboardListIcon,
@@ -165,15 +167,33 @@ export function SessionsTabDetailPane({
               </>
             )}
           </span>
-          <button
+          <Button
             type="button"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]"
+            variant="ghost"
+            size="icon"
+            dense
+            className={cn(
+              "h-6 min-h-6 w-6 shrink-0 text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]",
+              coarseHitAreaCls,
+            )}
             onClick={clearSessionError}
             aria-label="Dismiss session error"
             title="Dismiss"
           >
-            &times;
-          </button>
+            <svg
+              aria-hidden="true"
+              viewBox="0 0 16 16"
+              className="size-3.5"
+              fill="none"
+            >
+              <path
+                d="m4 4 8 8m0-8-8 8"
+                stroke="currentColor"
+                strokeWidth="1.75"
+                strokeLinecap="round"
+              />
+            </svg>
+          </Button>
         </div>
       )}
 

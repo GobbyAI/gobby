@@ -7,6 +7,7 @@ import {
   useActivityActions,
   type ActivityPanelActions,
 } from "./activityActions";
+import { FilterDropdownTrigger } from "./FilterPrimitives";
 
 export function ActivityActionsProvider({ children }: { children: ReactNode }) {
   const [actions, setActions] = useState<ActivityPanelActions | null>(null);
@@ -134,22 +135,14 @@ export function ActivityActionButtons() {
         />
       )}
       {actions.filter && (
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn"
+        <FilterDropdownTrigger
+          open={actions.filter.open}
+          activeCount={actions.filter.activeCount}
+          icon={<FilterGlyph />}
           onClick={actions.filter.onToggle}
           aria-label={actions.filter.ariaLabel}
           title={actions.filter.ariaLabel}
-          aria-expanded={actions.filter.open}
-        >
-          <FilterGlyph />
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {(actions.filter.activeCount ?? 0) > 0 && (
-            <span className="activity-filter-badge">{actions.filter.activeCount}</span>
-          )}
-        </Button>
+        />
       )}
       {actions.search && (
         <Button

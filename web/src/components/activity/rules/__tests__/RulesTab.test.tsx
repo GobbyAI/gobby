@@ -292,6 +292,43 @@ describe("Rules activity tab", () => {
     expect(within(rulesList).queryByText("template-rule")).not.toBeInTheDocument();
   });
 
+  it("preserves popup close, reset, outside-click, Escape, and focus transitions", async () => {
+    installRulesFetch();
+    const user = userEvent.setup();
+
+    render(<RulesTab />);
+
+    const rulesList = await screen.findByRole("list", { name: "Rules" });
+    const trigger = screen.getByRole("button", { name: "Filter rules" });
+
+    await user.click(trigger);
+    expect(screen.getByRole("dialog", { name: "Rule filters" })).toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Filter by event"), "before_tool");
+    expect(within(rulesList).queryByText("gamma-rule")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reset rule filters" }));
+    expect(screen.getByLabelText("Filter by event")).toHaveValue("");
+    expect(await within(rulesList).findByText("gamma-rule")).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    fireEvent.click(screen.getByTestId("rules-filter-overlay"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveFocus();
+
+    await user.click(trigger);
+    await user.click(trigger);
+    expect(screen.queryByRole("dialog", { name: "Rule filters" })).not.toBeInTheDocument();
+  });
+
   it("selects the first rule by default so the detail pane is populated (#19152)", async () => {
     installRulesFetch();
     render(<RulesTab />);

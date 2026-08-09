@@ -1,7 +1,10 @@
 import type { MouseEvent, ReactNode } from "react";
 
+import { cn } from "../../lib/utils";
 import { getSessionDisplayTitle } from "../../lib/sessionTitle";
 import { SourceIcon } from "../shared/SourceIcon";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import { KebabIcon } from "./QuickMenu";
@@ -119,15 +122,19 @@ function SessionEntryRow({
       </div>
       <div className="flex items-center gap-1.5">
         {renderBadges(entry)}
-        <button
-          className="session-more-btn"
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn("session-more-btn", coarseHitAreaCls)}
           onClick={(event) => onMenuButtonClick(event, entry)}
           title="Session actions"
           aria-label="Session actions"
           aria-haspopup="menu"
         >
           <KebabIcon />
-        </button>
+        </Button>
       </div>
     </div>
   );

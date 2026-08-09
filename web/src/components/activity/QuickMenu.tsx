@@ -9,6 +9,8 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 export interface QuickMenuAnchor {
   x: number;
@@ -239,10 +241,13 @@ export function QuickMenu({
   return (
     <>
       {!anchor && (
-        <button
+        <Button
           ref={triggerRef}
           type="button"
-          className="quick-menu-trigger"
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn("quick-menu-trigger", coarseHitAreaCls)}
           aria-label={triggerLabel}
           title={triggerLabel}
           aria-haspopup="menu"
@@ -258,7 +263,7 @@ export function QuickMenu({
           }}
         >
           <KebabIcon />
-        </button>
+        </Button>
       )}
       {isOpen && (
         <>
@@ -283,14 +288,19 @@ export function QuickMenu({
               }
               const currentActionIndex = actionIndexFor(items, index);
               return (
-                <button
+                <Button
                   key={`${item.label}-${index}`}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
                   ref={(node) => {
                     if (node) itemRefs.current[currentActionIndex] = node;
                   }}
                   className={cn(
                     "session-ctx-item quick-menu-item",
                     item.destructive && "session-ctx-item--destructive",
+                    coarseHitAreaCls,
                   )}
                   role="menuitem"
                   disabled={item.disabled}
@@ -306,7 +316,7 @@ export function QuickMenu({
                     </span>
                   )}
                   <span>{item.label}</span>
-                </button>
+                </Button>
               );
             })}
           </div>

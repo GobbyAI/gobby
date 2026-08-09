@@ -6,8 +6,10 @@ import {
 } from "react";
 
 import "../chat/styles/activity-panel.css";
+import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { DropdownCaret } from "../ui/DropdownCaret";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
@@ -136,9 +138,11 @@ function ActivityDropdown({
 }: ActivityDropdownProps) {
   return (
     <div className="activity-panel-mobile-select-wrap" ref={wrapperRef}>
-      <button
+      <Button
         type="button"
-        className="activity-panel-mobile-trigger"
+        variant="ghost"
+        size="sm"
+        className={cn("activity-panel-mobile-trigger", coarseHitAreaCls)}
         onClick={onToggle}
         aria-expanded={isOpen}
       >
@@ -147,20 +151,27 @@ function ActivityDropdown({
           <span>{activeTabConfig.label}</span>
         </span>
         <DropdownCaret open={isOpen} />
-      </button>
+      </Button>
       {isOpen && (
         <div className="activity-panel-mobile-menu">
           {[...tabs].sort((a, b) => a.label.localeCompare(b.label)).map((tab) => (
-            <button
+            <Button
               key={tab.id}
               type="button"
+              variant="ghost"
+              size="sm"
+              dense
               aria-current={activeTab === tab.id ? "page" : undefined}
-              className={`activity-panel-mobile-menu__item${activeTab === tab.id ? " active" : ""}`}
+              className={cn(
+                "activity-panel-mobile-menu__item",
+                activeTab === tab.id && "active",
+                coarseHitAreaCls,
+              )}
               onClick={() => onSelect(tab.id)}
             >
               <span className="activity-panel-tab-icon">{tab.icon}</span>
               <span>{tab.label}</span>
-            </button>
+            </Button>
           ))}
         </div>
       )}

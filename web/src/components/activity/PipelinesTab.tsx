@@ -10,6 +10,7 @@ import { formatDateTime, formatDuration } from '../shared/executions/executionFo
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityFilterDropdown } from './ActivityFilterDropdown'
+import { FilterDropdownTrigger } from './FilterPrimitives'
 import {
   deletePipelineDefinition,
   exportPipelineYaml,
@@ -411,34 +412,29 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           className="activity-panel-toolbar-segmented"
         />
         {segment === 'live' && (
-          <Button
-            type="button"
-            variant="accent"
-            size="sm"
-            className={`activity-panel-action-btn activity-filter-button ml-auto ${coarseHitAreaCls}`}
+          <FilterDropdownTrigger
+            open={showFilterDropdown}
+            activeCount={statusFilter === 'all' ? 0 : 1}
+            className="ml-auto"
             onClick={() => setShowFilterDropdown((v) => !v)}
             title="Filter pipelines"
             aria-label="Filter pipelines"
-            aria-expanded={showFilterDropdown}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-            </svg>
-            <span className="activity-panel-action-btn__label">Filter</span>
-            {statusFilter !== 'all' && (
-              <span className="activity-filter-badge">1</span>
-            )}
-          </Button>
+            icon={
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+            }
+          />
         )}
         {segment === 'live' && showFilterDropdown && (
           <ActivityFilterDropdown<StatusFilter>

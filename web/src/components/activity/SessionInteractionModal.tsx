@@ -1,10 +1,14 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   DialogDescription,
 } from "../ui/Dialog";
+import { Textarea } from "../ui/Textarea";
 import { getToolCallError, isSuccessfulToolCall } from "./toolCallStatus";
 
 interface SessionEntry {
@@ -136,9 +140,10 @@ export function SessionInteractionModal({
         </DialogDescription>
 
         <div className="mt-3">
-          <textarea
+          <Textarea
             ref={inputRef}
             className="session-modal-textarea"
+            wrapperClassName="w-full"
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="Enter context to inject..."
@@ -153,19 +158,28 @@ export function SessionInteractionModal({
           {error && <p className="text-xs text-error mt-2">{error}</p>}
 
           <div className="flex justify-end gap-2 mt-3">
-            <button
-              className="session-modal-btn session-modal-btn--secondary"
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className={cn(
+                "session-modal-btn session-modal-btn--secondary",
+                coarseHitAreaCls,
+              )}
               onClick={onClose}
             >
               Cancel
-            </button>
-            <button
-              className="session-modal-btn"
+            </Button>
+            <Button
+              type="button"
+              variant="accent"
+              size="sm"
+              className={cn("session-modal-btn", coarseHitAreaCls)}
               onClick={handleSend}
               disabled={sending || !text.trim()}
             >
               {sending ? "Sending..." : "Send"}
-            </button>
+            </Button>
           </div>
         </div>
       </DialogContent>

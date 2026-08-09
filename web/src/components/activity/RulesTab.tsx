@@ -9,6 +9,7 @@ import { coarseHitAreaCls } from "../ui/controlStyles";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { FilterDropdownShell, FilterFieldRow } from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { SelectField } from "./fields";
@@ -42,6 +43,8 @@ interface RulesFilterDropdownProps {
   enforcementEnabled: boolean;
   onFiltersChange: (filters: RulesFilters) => void;
   onEnforcementChange: (enabled: boolean) => void;
+  onReset: () => void;
+  onClose: () => void;
 }
 
 function RulesFilterDropdown({
@@ -52,68 +55,98 @@ function RulesFilterDropdown({
   enforcementEnabled,
   onFiltersChange,
   onEnforcementChange,
+  onReset,
+  onClose,
 }: RulesFilterDropdownProps) {
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.defaultPrevented) onClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
   return (
-    <div className="activity-filter-panel">
-      <div className="activity-filter-panel__field">
-        <SelectField
-          label="Event"
-          ariaLabel="Filter by event"
-          value={filters.event}
-          onChange={(event) => onFiltersChange({ ...filters, event })}
-          options={[
-            { value: "", label: "Any event" },
-            ...eventOptions.map((eventName) => ({ value: eventName, label: eventName })),
-          ]}
-        />
+    <FilterDropdownShell
+      ariaLabel="Rule filters"
+      onClose={onClose}
+      overlayTestId="rules-filter-overlay"
+      className="absolute top-1 right-2 w-[min(24rem,calc(100vw-1.5rem))] max-h-[70vh] overflow-y-auto"
+    >
+      <div className="grid grid-cols-2 gap-1 p-1.5">
+        <FilterFieldRow>
+          <SelectField
+            label="Event"
+            ariaLabel="Filter by event"
+            value={filters.event}
+            onChange={(event) => onFiltersChange({ ...filters, event })}
+            options={[
+              { value: "", label: "Any event" },
+              ...eventOptions.map((eventName) => ({ value: eventName, label: eventName })),
+            ]}
+          />
+        </FilterFieldRow>
+        <FilterFieldRow>
+          <SelectField
+            label="Group"
+            ariaLabel="Filter by group"
+            value={filters.group}
+            onChange={(group) => onFiltersChange({ ...filters, group })}
+            options={[
+              { value: "", label: "Any group" },
+              ...groupOptions.map((group) => ({ value: group, label: group })),
+            ]}
+          />
+        </FilterFieldRow>
+        <FilterFieldRow>
+          <SelectField
+            label="Source"
+            ariaLabel="Filter by source"
+            value={filters.source}
+            onChange={(source) =>
+              onFiltersChange({
+                ...filters,
+                source: source as RulesFilters["source"],
+              })
+            }
+            options={[...RULE_SOURCE_OPTIONS]}
+          />
+        </FilterFieldRow>
+        <FilterFieldRow>
+          <SelectField
+            label="Tag"
+            ariaLabel="Filter by tag"
+            value={filters.tag}
+            onChange={(tag) => onFiltersChange({ ...filters, tag })}
+            options={[
+              { value: "", label: "Any tag" },
+              ...tagOptions.map((tag) => ({ value: tag, label: tag })),
+            ]}
+          />
+        </FilterFieldRow>
       </div>
-      <div className="activity-filter-panel__field">
-        <SelectField
-          label="Group"
-          ariaLabel="Filter by group"
-          value={filters.group}
-          onChange={(group) => onFiltersChange({ ...filters, group })}
-          options={[
-            { value: "", label: "Any group" },
-            ...groupOptions.map((group) => ({ value: group, label: group })),
-          ]}
-        />
+      <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          dense
+          className={coarseHitAreaCls}
+          onClick={onReset}
+          aria-label="Reset rule filters"
+        >
+          Reset
+        </Button>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span>Enforcement</span>
+          <Switch
+            checked={enforcementEnabled}
+            aria-label="Rules enforcement"
+            onChange={onEnforcementChange}
+          />
+        </div>
       </div>
-      <div className="activity-filter-panel__field">
-        <SelectField
-          label="Source"
-          ariaLabel="Filter by source"
-          value={filters.source}
-          onChange={(source) =>
-            onFiltersChange({
-              ...filters,
-              source: source as RulesFilters["source"],
-            })
-          }
-          options={[...RULE_SOURCE_OPTIONS]}
-        />
-      </div>
-      <div className="activity-filter-panel__field">
-        <SelectField
-          label="Tag"
-          ariaLabel="Filter by tag"
-          value={filters.tag}
-          onChange={(tag) => onFiltersChange({ ...filters, tag })}
-          options={[
-            { value: "", label: "Any tag" },
-            ...tagOptions.map((tag) => ({ value: tag, label: tag })),
-          ]}
-        />
-      </div>
-      <div className="activity-filter-panel__footer">
-        <span>Enforcement</span>
-        <Switch
-          checked={enforcementEnabled}
-          aria-label="Rules enforcement"
-          onChange={onEnforcementChange}
-        />
-      </div>
-    </div>
+    </FilterDropdownShell>
   );
 }
 
@@ -129,6 +162,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
   const [busyRuleName, setBusyRuleName] = useState<string | null>(null);
   const [detailRefreshToken, setDetailRefreshToken] = useState(0);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
+  const filterTriggerRef = useRef<HTMLElement | null>(null);
   const { fetchRuleDetail } = data;
 
   const existingNames = useMemo(() => data.rules.map((rule) => rule.name), [data.rules]);
@@ -201,10 +235,20 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
     setSearchOpen(false);
     data.setSearch("");
   };
+  const closeFilters = useCallback(() => {
+    setShowFilters(false);
+    filterTriggerRef.current?.focus();
+  }, []);
   const toggleFilters = () => {
-    const opening = !showFilters;
-    setShowFilters(opening);
-    if (opening) closeSearch();
+    if (showFilters) {
+      closeFilters();
+      return;
+    }
+    if (document.activeElement instanceof HTMLElement) {
+      filterTriggerRef.current = document.activeElement;
+    }
+    setShowFilters(true);
+    closeSearch();
   };
   const openSearch = () => {
     setShowFilters(false);
@@ -332,6 +376,8 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           enforcementEnabled={data.enforcementEnabled}
           onFiltersChange={handleFiltersChange}
           onEnforcementChange={(enabled) => void data.setEnforcement(enabled)}
+          onReset={() => handleFiltersChange(DEFAULT_RULE_FILTERS)}
+          onClose={closeFilters}
         />
       )}
 
