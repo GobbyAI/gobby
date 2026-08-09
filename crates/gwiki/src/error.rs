@@ -70,6 +70,9 @@ pub enum WikiError {
     Setup {
         source: SetupError,
     },
+    Freshness {
+        detail: String,
+    },
     Generation {
         detail: String,
     },
@@ -94,6 +97,7 @@ impl WikiError {
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
             Self::Setup { .. } => "setup_error",
+            Self::Freshness { .. } => "freshness_error",
             Self::Generation { .. } => "generation_error",
         }
     }
@@ -121,6 +125,7 @@ impl fmt::Display for WikiError {
             Self::InvalidScope { detail }
             | Self::Config { detail }
             | Self::Registry { detail }
+            | Self::Freshness { detail }
             | Self::Generation { detail } => {
                 write!(f, "{detail} ({})", self.code())
             }

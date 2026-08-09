@@ -1,10 +1,12 @@
 use std::path::PathBuf;
 
-use gobby_wiki::commands::code::{AiDepth, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth, VerifyScope};
+use gobby_wiki::{
+    AiDepth, CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth, VerifyScope,
+};
 
 use super::*;
 
-fn map_code(args: &[&str]) -> gobby_wiki::commands::code::CodeCommandOptions {
+fn map_code(args: &[&str]) -> CodeCommandOptions {
     let argv = std::iter::once("gwiki")
         .chain(std::iter::once("code"))
         .chain(args.iter().copied())
@@ -41,11 +43,11 @@ fn code_defaults_match_the_legacy_flat_command() {
     assert!(!options.force);
     assert!(options.scope.is_empty());
     assert!(!options.complete_scope);
-    assert_eq!(options.ai.routing, None);
-    assert_eq!(options.ai.depth, AiDepth::Files);
-    assert_eq!(options.ai.prose_depth, ProseDepth::Standard);
-    assert_eq!(options.ai.register, None);
-    assert_eq!(options.ai.verify_scope, VerifyScope::Aggregates);
+    assert_eq!(options.ai, None);
+    assert_eq!(options.ai_depth, AiDepth::Files);
+    assert_eq!(options.ai_prose_depth, ProseDepth::Standard);
+    assert_eq!(options.ai_register, None);
+    assert_eq!(options.ai_verify_scope, VerifyScope::Aggregates);
     assert_eq!(options.edge_limit, DEFAULT_CODE_GRAPH_EDGE_LIMIT);
     assert!(!options.include_docs);
     assert_eq!(options.since, None);
@@ -93,6 +95,16 @@ fn code_generation_flags_map_through_the_public_command() {
     assert_eq!(options.out.as_deref(), Some("wiki"));
     assert_eq!(options.scope, ["crates", "src"]);
     assert!(options.complete_scope);
+    assert_eq!(options.ai, Some(gobby_core::config::AiRouting::Daemon));
+    assert_eq!(options.ai_depth, AiDepth::Symbols);
+    assert_eq!(options.ai_prose_depth, ProseDepth::Deep);
+    assert_eq!(options.ai_register.as_deref(), Some("maintainer"));
+    assert_eq!(
+        options.ai_aggregate_profile.as_deref(),
+        Some("feature_high")
+    );
+    assert_eq!(options.ai_verify_profile.as_deref(), Some("feature_mid"));
+    assert_eq!(options.ai_verify_scope, VerifyScope::All);
     assert_eq!(options.edge_limit, 42);
     assert!(options.include_docs);
     assert_eq!(options.since.as_deref(), Some("HEAD~1"));
@@ -153,6 +165,22 @@ fn code_mode_conflicts_match_the_legacy_matrix() {
         );
     }
     assert!(Cli::try_parse_from(["gwiki", "code", "--force"]).is_err());
+    let allowed_mode_flags: &[&[&str]] = &[&["--out", "wiki"], &["--no-freshness"]];
+    for flags in allowed_mode_flags {
+        let mut purge = vec!["gwiki", "code", "--purge", "--force"];
+        purge.extend_from_slice(flags);
+        assert!(
+            Cli::try_parse_from(purge).is_ok(),
+            "purge rejected allowed flags {flags:?}"
+        );
+
+        let mut compare = vec!["gwiki", "code", "--compare-to", "HEAD"];
+        compare.extend_from_slice(flags);
+        assert!(
+            Cli::try_parse_from(compare).is_ok(),
+            "compare rejected allowed flags {flags:?}"
+        );
+    }
     // `--complete-scope` without `--scope` must parse: the rejection happens in
     // run_summary so the error text matches the legacy engine (pinned end-to-end
     // by the code_parity integration test).
@@ -172,9 +200,29 @@ fn code_mode_conflicts_match_the_legacy_matrix() {
 
 #[test]
 fn code_positive_limits_keep_the_legacy_bound() {
-    assert!(Cli::try_parse_from(["gwiki", "code", "--edge-limit", "0"]).is_err());
+    for value in ["invalid", "0"] {
+        let error = Cli::try_parse_from(["gwiki", "code", "--edge-limit", value])
+            .expect_err("invalid positive limit must be rejected")
+            .to_string();
+        assert!(error.contains(value), "rejected value missing from {error}");
+    }
     assert!(Cli::try_parse_from(["gwiki", "code", "--max-workers", "0"]).is_err());
     assert!(Cli::try_parse_from(["gwiki", "code", "--edge-limit", "1000000001"]).is_err());
+}
+
+#[test]
+fn code_detect_scope_uses_the_nearest_project_root() -> anyhow::Result<()> {
+    let project = tempfile::tempdir()?;
+    let nested = project.path().join("nested/deeper");
+    std::fs::create_dir_all(project.path().join(".gobby"))?;
+    std::fs::create_dir_all(&nested)?;
+    std::fs::write(project.path().join(".gobby/project.json"), "{}")?;
+
+    assert_eq!(
+        mapping::detect_project_root_from(&nested)?,
+        project.path().to_path_buf()
+    );
+    Ok(())
 }
 
 #[test]
@@ -186,7 +234,7 @@ fn code_modes_require_freshness_only_for_generation() {
 }
 
 #[test]
-fn code_mapping_preserves_cli_output_controls() {
+fn code_mapping_preserves_cli_runtime_controls() {
     let cli = Cli::try_parse_from([
         "gwiki",
         "--format",
@@ -200,7 +248,6 @@ fn code_mapping_preserves_cli_output_controls() {
     let command = mapping::command_from_cli_with_runtime(
         cli.command,
         cli.scope.into(),
-        cli.format,
         cli.quiet,
         cli.verbose,
     )
@@ -208,7 +255,6 @@ fn code_mapping_preserves_cli_output_controls() {
     let Command::Code(options) = command else {
         panic!("expected public code command");
     };
-    assert_eq!(options.format, gobby_wiki::output::Format::Text);
     assert!(options.quiet);
     assert!(!options.verbose);
 }

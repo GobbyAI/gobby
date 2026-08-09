@@ -7,8 +7,6 @@ use gobby_core::ai::generation::DirectGenerationTarget;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::AiCapability;
 
-pub(crate) use crate::output::Format;
-
 /// Non-datastore state carried by the wiki-owned CodeWiki engine.
 #[derive(Clone)]
 pub struct CodeEngineRuntime {
@@ -16,7 +14,6 @@ pub struct CodeEngineRuntime {
     pub(crate) project_id: String,
     pub(crate) quiet: bool,
     pub(crate) verbose: bool,
-    pub(crate) output: Format,
     pub(crate) ai: AiContext,
     direct_targets: BTreeMap<String, DirectGenerationTarget>,
     pub(crate) facts: CodewikiFacts,
@@ -28,7 +25,6 @@ impl CodeEngineRuntime {
         project_id: String,
         quiet: bool,
         verbose: bool,
-        output: Format,
         ai: AiContext,
         facts: CodewikiFacts,
     ) -> Self {
@@ -37,7 +33,6 @@ impl CodeEngineRuntime {
             project_id,
             quiet,
             verbose,
-            output,
             ai,
             direct_targets: BTreeMap::new(),
             facts,
@@ -50,10 +45,6 @@ impl CodeEngineRuntime {
     ) -> Self {
         self.direct_targets = targets.into_iter().collect();
         self
-    }
-
-    pub fn output(&self) -> &Format {
-        &self.output
     }
 
     pub(crate) fn direct_target(&self, profile: &str) -> DirectGenerationTarget {
@@ -71,18 +62,6 @@ impl CodeEngineRuntime {
                 }
             })
     }
-}
-
-pub(crate) fn print_json<T: serde::Serialize + ?Sized>(value: &T) -> anyhow::Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    crate::output::print_json(&mut stdout, value)?;
-    Ok(())
-}
-
-pub(crate) fn print_text(text: &str) -> anyhow::Result<()> {
-    let mut stdout = std::io::stdout().lock();
-    crate::output::print_text(&mut stdout, text)?;
-    Ok(())
 }
 
 pub(crate) fn resolve_output_path(project_root: &Path, out: Option<&str>) -> PathBuf {

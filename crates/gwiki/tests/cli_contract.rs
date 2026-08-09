@@ -79,10 +79,12 @@ fn command<'a>(contract: &'a Value, name: &str) -> &'a Value {
 
 fn assert_classification(
     command: &Value,
+    daemon_consumed: bool,
     hard_dependencies: Value,
     optional_dependencies: Value,
     degradation: Value,
 ) {
+    assert_eq!(command["daemon_consumed"], daemon_consumed);
     assert_eq!(command["hard_dependencies"], hard_dependencies);
     assert_eq!(command["optional_dependencies"], optional_dependencies);
     assert_eq!(command["multimodal"], "none");
@@ -281,7 +283,6 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     assert_eq!(contract["contract_version"], 16);
 
     let code = command(&contract, "code");
-    assert_eq!(code["daemon_consumed"], false);
     assert_eq!(code["positionals"], serde_json::json!([]));
     assert_eq!(
         code["flags"]
@@ -313,18 +314,21 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "--no-freshness",
         ]
     );
-    assert_eq!(
-        code["hard_dependencies"],
-        serde_json::json!(["PostgreSQL", "vault"])
-    );
-    assert_eq!(
-        code["optional_dependencies"],
-        serde_json::json!(["FalkorDB", "model synthesis"])
+    assert_classification(
+        code,
+        false,
+        serde_json::json!(["PostgreSQL", "vault"]),
+        serde_json::json!(["FalkorDB", "model synthesis"]),
+        serde_json::json!({
+            "output_shape": "graph outages fall back to indexed facts; AI off or failed writes structural pages",
+            "metadata_keys": ["degraded_pages[]"]
+        }),
     );
 
     let ask = command(&contract, "ask");
     assert_classification(
         ask,
+        true,
         serde_json::json!(["PostgreSQL"]),
         serde_json::json!([
             "model synthesis",
@@ -369,6 +373,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
 
     assert_classification(
         graph_context,
+        true,
         serde_json::json!(["PostgreSQL"]),
         serde_json::json!(["FalkorDB", "shared code graph"]),
         serde_json::json!({
@@ -412,6 +417,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let librarian = command(&contract, "librarian");
     assert_classification(
         librarian,
+        true,
         serde_json::json!(["PostgreSQL", "vault"]),
         serde_json::json!(["FalkorDB/code graph", "Qdrant+embeddings", "model"]),
         serde_json::json!({
@@ -423,6 +429,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let review_report = command(&contract, "review-report");
     assert_classification(
         review_report,
+        true,
         serde_json::json!(["PostgreSQL", "change set"]),
         serde_json::json!(["FalkorDB/code graph and analytics"]),
         serde_json::json!({
@@ -434,6 +441,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let citation_quality = command(&contract, "citation-quality");
     assert_classification(
         citation_quality,
+        true,
         serde_json::json!(["PostgreSQL"]),
         serde_json::json!(["credibility signals", "model contradiction detection"]),
         serde_json::json!({

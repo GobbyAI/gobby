@@ -7,7 +7,7 @@ use gobby_core::config::AiRouting;
 
 use crate::commands::code::Symbol;
 
-use super::runtime::{self as output, CodeEngineRuntime, Format};
+use super::runtime::{self as output, CodeEngineRuntime};
 use super::types::ai_outcome_for_doc;
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiProgress, CodewikiPublication,
@@ -25,43 +25,7 @@ use ai::ResolvedAiRun;
 use finalization::{FinalizeRun, RunCounts, finalize_run};
 use preparation::prepare_run;
 
-// CLI entry point: each parameter maps to a distinct codewiki flag, so the
-// argument count tracks the command surface rather than hidden coupling.
-#[allow(clippy::too_many_arguments)]
-pub fn run(
-    ctx: &CodeEngineRuntime,
-    out: Option<String>,
-    scope_args: Vec<String>,
-    complete_scope: bool,
-    ai: CodewikiAiOptions,
-    edge_limit: usize,
-    include_docs: bool,
-    since: Option<String>,
-    max_workers: usize,
-    format: Format,
-    verbose: bool,
-) -> anyhow::Result<()> {
-    let unscoped = complete_scope || scope_args.is_empty();
-    let summary = run_summary(
-        ctx,
-        out,
-        scope_args,
-        complete_scope,
-        ai,
-        edge_limit,
-        include_docs,
-        since,
-        max_workers,
-        verbose,
-    )?;
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&run_summary_text(&summary, unscoped)),
-    }
-}
-
-// Summary-producing twin of the flat CLI entry point; each parameter still
-// maps one-to-one to an existing code flag.
+// Each parameter maps one-to-one to a Code command flag.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn run_summary(
     ctx: &CodeEngineRuntime,
@@ -345,20 +309,8 @@ fn codewiki_doc_scope(scopes: &[String], complete_scope: bool) -> DocPruneScope 
 /// Repair-only entry for `gwiki code --repair-citations`: re-anchors every
 /// generated page's `[file:line]` citations against the current index and
 /// rewrites only the pages whose citations changed. No generation, no AI/LLM
-/// calls. Loads the full visible symbol set (like [`run`]) so a citation to any
-/// indexed file can resolve, then prints the [`super::CitationRepairSummary`].
-pub fn run_repair(
-    ctx: &CodeEngineRuntime,
-    out: Option<String>,
-    format: Format,
-) -> anyhow::Result<()> {
-    let summary = repair_summary(ctx, out)?;
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&repair_summary_text(&summary)),
-    }
-}
-
+/// calls. Loads the full visible symbol set used by generation so a citation to
+/// any indexed file can resolve.
 pub(crate) fn repair_summary(
     ctx: &CodeEngineRuntime,
     out: Option<String>,

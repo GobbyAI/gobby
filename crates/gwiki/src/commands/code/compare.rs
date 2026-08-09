@@ -7,9 +7,7 @@ use serde::Serialize;
 use super::CODEWIKI_META_PATH;
 use super::runtime as output;
 use super::types::{CodewikiDocMeta, CodewikiMeta};
-use crate::commands::code::CodeEngineRuntime;
 use crate::commands::code::runtime::normalize_storage_path_str;
-use crate::output::Format;
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct CodewikiCommitMetadata {
@@ -46,19 +44,6 @@ pub struct CodewikiCompareSummary {
     added: Vec<CodewikiCompareDoc>,
     removed: Vec<CodewikiCompareDoc>,
     changed: Vec<CodewikiChangedDoc>,
-}
-
-pub fn run_compare(
-    ctx: &CodeEngineRuntime,
-    out: Option<String>,
-    base_ref: &str,
-    format: Format,
-) -> anyhow::Result<()> {
-    let summary = compare_to(&ctx.project_root, out.as_deref(), base_ref)?;
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&compare_summary_text(&summary)),
-    }
 }
 
 pub(crate) fn compare_summary_text(summary: &CodewikiCompareSummary) -> String {

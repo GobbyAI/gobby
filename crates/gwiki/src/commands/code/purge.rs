@@ -4,10 +4,11 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::doc_paths::{
-    collect_generated_doc_pages, prune_empty_doc_dirs, reject_symlinked_doc_path, safe_doc_path,
+    collect_generated_doc_pages, is_catalog_owned_code_page, prune_empty_doc_dirs,
+    reject_symlinked_doc_path, safe_doc_path,
 };
 use super::io::read_codewiki_meta;
-use super::runtime::{self as output, CodeEngineRuntime, Format};
+use super::runtime::{self as output, CodeEngineRuntime};
 use super::truth_digest::TRUTH_DIGEST_META_PATH;
 use super::{CODEWIKI_META_PATH, OWNERSHIP_META_PATH};
 
@@ -25,23 +26,6 @@ pub struct CodewikiPurgeSummary {
 pub(crate) struct CodewikiPurgeCounts {
     pub(crate) markdown_removed: usize,
     pub(crate) metadata_removed: usize,
-}
-
-pub fn run_purge(
-    ctx: &CodeEngineRuntime,
-    out: Option<String>,
-    force: bool,
-    format: Format,
-) -> anyhow::Result<()> {
-    let confirmation_out = out.clone();
-    let Some(summary) = purge_summary(ctx, out, force)? else {
-        eprintln!("{}", purge_confirmation(ctx, confirmation_out.as_deref()));
-        return Ok(());
-    };
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&purge_summary_text(&summary)),
-    }
 }
 
 pub(crate) fn purge_summary(
@@ -92,7 +76,7 @@ pub(crate) fn purge_generated_output(out_dir: &Path) -> anyhow::Result<CodewikiP
 
     let mut counts = CodewikiPurgeCounts::default();
     for doc_path in generated_docs {
-        if !doc_path.ends_with(".md") {
+        if !doc_path.ends_with(".md") || is_catalog_owned_code_page(&doc_path) {
             continue;
         }
         if remove_generated_path(out_dir, &doc_path)? {

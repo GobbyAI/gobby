@@ -4,10 +4,10 @@ use std::rc::Rc;
 
 use super::*;
 use crate::commands::code::{
-    CODE_WRITER_LOCK_RELATIVE_PATH, CODE_WRITER_LOCK_TIMEOUT, CodeCommandOptions, CodewikiAiOptions,
+    AiDepth, CODE_WRITER_LOCK_RELATIVE_PATH, CODE_WRITER_LOCK_TIMEOUT, CodeCommandOptions,
+    ProseDepth, VerifyScope,
 };
 use crate::commands::session_sync::run_persistent_write_phases;
-use crate::output::Format;
 use crate::project_lock::{
     ProjectLockBackend, ProjectRowState, acquire_writer_lock_for_test, run_with_project_lock,
 };
@@ -23,7 +23,14 @@ fn code_options() -> CodeCommandOptions {
         force: false,
         scope: Vec::new(),
         complete_scope: false,
-        ai: CodewikiAiOptions::default(),
+        ai: None,
+        ai_depth: AiDepth::default(),
+        ai_prose_depth: ProseDepth::default(),
+        ai_register: None,
+        ai_aggregate_profile: None,
+        ai_aggregate_candidates: Vec::new(),
+        ai_verify_profile: None,
+        ai_verify_scope: VerifyScope::default(),
         edge_limit: 5_000,
         include_docs: false,
         since: None,
@@ -31,7 +38,6 @@ fn code_options() -> CodeCommandOptions {
         max_workers: 1,
         repair_citations: false,
         no_freshness: false,
-        format: Format::Json,
         quiet: false,
         verbose: false,
     }
@@ -68,6 +74,25 @@ fn code_compare_is_admitted_as_an_engine_owned_read_path() {
         acquire_command_lock(&command)
             .expect("compare admission")
             .is_none()
+    );
+}
+
+#[test]
+fn code_purge_remains_lock_free_code_admission() {
+    let mut options = code_options();
+    options.purge = true;
+    options.force = true;
+    let command = Command::Code(options);
+
+    assert!(matches!(
+        classify_command(&command),
+        CommandClassification::Code
+    ));
+    assert!(
+        acquire_command_lock(&command)
+            .expect("purge admission")
+            .is_none(),
+        "code purge must remain outside generic project-row locking"
     );
 }
 

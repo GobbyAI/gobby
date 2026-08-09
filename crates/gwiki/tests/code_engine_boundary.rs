@@ -46,13 +46,23 @@ fn moved_engine_uses_only_facade() {
             "gobby_code::db",
             "gobby_code::graph",
             "gobby_code::models",
-            "gobby_code::index",
             "gobby_code::visibility",
             "postgres::",
         ] {
             assert!(
                 !source.contains(forbidden),
                 "{} imports forbidden datastore surface {forbidden}",
+                path.display()
+            );
+        }
+        for import in source
+            .lines()
+            .filter(|line| line.contains("use gobby_code::index"))
+        {
+            assert_eq!(
+                import.trim(),
+                "use gobby_code::index::languages::is_supported_language;",
+                "{} imports an unsupported gcode index surface",
                 path.display()
             );
         }
@@ -73,7 +83,7 @@ fn relocation_inventory_and_composer_decomposition() {
     );
     assert_eq!(
         destination_files.len(),
-        113,
+        119,
         "moved inventory must match the plan"
     );
     for relative in [
@@ -114,7 +124,6 @@ fn runtime_carries_non_datastore_context() {
         "project_id: String",
         "quiet: bool",
         "verbose: bool",
-        "output: Format",
         "ai: AiContext",
         "facts: CodewikiFacts",
     ] {
@@ -135,20 +144,61 @@ fn runtime_carries_non_datastore_context() {
         assert!(one_shot.contains(route), "one-shot omits `{route}`");
         assert!(tool_loop.contains(route), "tool loop omits `{route}`");
     }
-    for (path, entrypoint) in [
-        ("run.rs", "pub fn run("),
-        ("run.rs", "pub fn run_repair("),
-        ("compare.rs", "pub fn run_compare("),
-        ("purge.rs", "pub fn run_purge("),
+    for (path, entrypoint, retired_entrypoint) in [
+        ("run.rs", "pub(crate) fn run_summary(", "pub fn run("),
+        (
+            "run.rs",
+            "pub(crate) fn repair_summary(",
+            "pub fn run_repair(",
+        ),
+        (
+            "compare.rs",
+            "pub(crate) fn compare_to(",
+            "pub fn run_compare(",
+        ),
+        (
+            "purge.rs",
+            "pub(crate) fn purge_summary(",
+            "pub fn run_purge(",
+        ),
     ] {
         let source = fs::read_to_string(root.join(path))
             .unwrap_or_else(|error| panic!("failed to read {path}: {error}"));
         assert!(source.contains(entrypoint), "{path} omits `{entrypoint}`");
         assert!(
-            source.contains("&CodeEngineRuntime"),
-            "{path} bypasses runtime"
+            !source.contains(retired_entrypoint),
+            "{path} retains retired entrypoint `{retired_entrypoint}`"
         );
     }
+}
+
+#[test]
+fn code_public_surface_exports_only_cli_options() {
+    let lib = fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"))
+        .expect("library source is readable");
+    assert!(!lib.contains("pub mod commands;"));
+
+    let export = lib
+        .split_once("pub use commands::code::{")
+        .and_then(|(_, rest)| rest.split_once("};"))
+        .map(|(exports, _)| {
+            exports
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .expect("Code CLI export block");
+    assert_eq!(
+        export,
+        [
+            "AiDepth",
+            "CodeCommandOptions",
+            "DEFAULT_CODE_GRAPH_EDGE_LIMIT",
+            "ProseDepth",
+            "VerifyScope",
+        ]
+    );
 }
 
 #[test]
@@ -215,7 +265,6 @@ fn graph_outcomes_match_legacy_mapping() {
     let executor =
         fs::read_to_string(root.join("tool_executor.rs")).expect("executor source is readable");
     let graph = fs::read_to_string(root.join("graph.rs")).expect("graph source is readable");
-    let module = fs::read_to_string(root.join("mod.rs")).expect("module source is readable");
     let frontmatter = fs::read_to_string(root.join("text/frontmatter.rs"))
         .expect("frontmatter source is readable");
     let diagrams = fs::read_to_string(root.join("render/diagrams.rs"))
@@ -233,7 +282,7 @@ fn graph_outcomes_match_legacy_mapping() {
     assert!(graph.contains("CodewikiGraph::unavailable"));
     assert!(!executor.contains("GRAPH_TRUNCATED"));
     assert!(executor.contains("Err(error) => Err(tool_err"));
-    assert!(module.contains("availability is now informational only"));
+    assert!(graph.contains("GraphOutcome::Unavailable { .. } => None"));
     assert!(frontmatter.contains("code != GRAPH_UNAVAILABLE"));
     assert!(diagrams.contains("source graph was truncated"));
 }

@@ -118,7 +118,6 @@ impl Invocation {
         mapping::command_from_cli_with_runtime(
             self.command,
             self.scope.into(),
-            self.format,
             self.quiet,
             self.verbose,
         )

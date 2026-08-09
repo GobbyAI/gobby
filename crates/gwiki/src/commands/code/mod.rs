@@ -114,7 +114,8 @@ pub(crate) use build::{
     canonical_project_root, hash_snapshot_file_at_root, resolve_file_reuse,
     resolve_tool_loop_dump_dir,
 };
-pub use command::{CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, run_command};
+pub(crate) use command::run_command;
+pub use command::{CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT};
 #[cfg(test)]
 pub(crate) use lock::{CODE_WRITER_LOCK_RELATIVE_PATH, CODE_WRITER_LOCK_TIMEOUT};
 pub(crate) use publication::{CodewikiPublication, PublicationFingerprint, code_wikilinks};
@@ -122,7 +123,7 @@ pub(crate) use reuse_guard::{
     file_module_link_key, module_child_links_key, nav_set_invalidation_key,
     restamp_file_module_link, reused_module_child_links_current,
 };
-pub use runtime::CodeEngineRuntime;
+pub(crate) use runtime::CodeEngineRuntime;
 pub(crate) use truth_digest::build_truth_digest;
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -154,9 +155,9 @@ pub(crate) use paths::{
 pub(crate) use relationship_facts::{RelationshipFacts, relationship_facts_for_file};
 // Deterministic, no-LLM workspace system model (#887, epic #886). Consumed by
 // the architecture diagram leaf (#891) below to seed model-derived diagrams.
-pub use system_model::{
-    Crate, Edge, RuntimeMode, ServiceBoundary, ServiceKind, SystemModel, build_system_model,
-};
+#[cfg(test)]
+pub(crate) use system_model::{Crate, Edge, RuntimeMode, ServiceBoundary};
+pub(crate) use system_model::{ServiceKind, SystemModel, build_system_model};
 // Model-seeded architectural diagram evidence for the architecture page
 // (#891); since #17521 the diagrams themselves are LLM-composed from that
 // evidence and edge-verified by `diagram_compose`. The Valid-Mermaid gate is
@@ -165,10 +166,6 @@ pub use system_model::{
 pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
 #[cfg(test)]
 pub(crate) use compare::compare_to;
-pub use compare::{
-    CodewikiChangedDoc, CodewikiCommitMetadata, CodewikiCompareDoc, CodewikiCompareSummary,
-    run_compare,
-};
 #[cfg(test)]
 pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
 // Evidence-grounded LLM diagram composition (#17521): the model composes,
@@ -188,13 +185,11 @@ pub(crate) use render::{render_module_call_sequence, render_module_dependency_me
 // Reuse of unchanged docs without regeneration.
 #[cfg(test)]
 pub(crate) use purge::purge_generated_output;
-pub use purge::{CodewikiPurgeSummary, run_purge};
 pub(crate) use reuse::{ReusePlan, span_files};
 #[cfg(test)]
 pub(crate) use run::{
     git_changed_files, load_symbols_for_codewiki, should_document_file, validate_edge_limit,
 };
-pub use run::{run, run_repair};
 // Citation repair: re-anchor on-disk citations against the current index with
 // no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
 pub use repair::{CitationRepairSummary, repair_citations};
@@ -221,19 +216,19 @@ pub(crate) use text::{
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 pub use types::{
-    AiDepth, CodewikiAiOptions, CodewikiGraphAvailability, CodewikiGraphEdge,
-    CodewikiGraphEdgeKind, CodewikiInput, CodewikiRunSummary, LeadingChunk, PromptTier, ProseDepth,
-    ProseRegister, TextGenerator, TextVerifier, VerifyScope,
+    AiDepth, CodewikiGraphAvailability, CodewikiGraphEdge, CodewikiGraphEdgeKind, CodewikiInput,
+    CodewikiRunSummary, LeadingChunk, PromptTier, ProseDepth, ProseRegister, TextGenerator,
+    TextVerifier, VerifyScope,
 };
 pub(crate) use types::{
     AiGenerationSettings, AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc,
-    CodewikiAiOutcome, CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph, CodewikiIndexSnapshot,
-    CodewikiMeta, CodewikiSymbolSnapshot, CodewikiTruthDigest, CodewikiTruthStackEntry,
-    CodewikiTruthSuperseded, CommitStamp, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
-    FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding, HotspotNode, HotspotsDoc, InfraSection,
-    InfrastructureDoc, ModuleDoc, ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep,
-    SourceSpan, SymbolDoc, SyncTextGenerator, SyncTextVerifier, TestIndex, VerifyNote,
-    ranked_source_excerpts, source_excerpt_for_file,
+    CodewikiAiOptions, CodewikiAiOutcome, CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph,
+    CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot, CodewikiTruthDigest,
+    CodewikiTruthStackEntry, CodewikiTruthSuperseded, CommitStamp, DeprecatedSymbol,
+    DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding,
+    HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc, ModuleLink,
+    OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, SyncTextGenerator,
+    SyncTextVerifier, TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
 };
 // Feature catalog row/section types (#888) are only named by the catalog's
 // drift-guard tests; the lib builds the page through `FeatureCatalogDoc`.
@@ -248,7 +243,8 @@ pub(crate) use io::{
     DocPruneScope, DocSink, content_sensitive_invalidation_key, read_ownership_meta,
     write_ownership_meta,
 };
-pub use io::{write_doc_set, write_incremental_doc_set};
+#[cfg(test)]
+pub(crate) use io::{write_doc_set, write_incremental_doc_set};
 #[cfg(test)]
 pub(crate) use truth_digest::TRUTH_DIGEST_META_PATH;
 pub(crate) use truth_digest::write_truth_digest;

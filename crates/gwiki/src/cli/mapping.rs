@@ -2,6 +2,7 @@ use gobby_wiki::{
     BenchmarkOptions, Command, GraphCommandOptions, IngestFileOptions, PageWriteMode, PurgeTarget,
     ReadTarget, ScopeSelection, SyncSessionsOptions, WikiError,
 };
+use std::path::{Path, PathBuf};
 
 use super::{
     CliCommand, CompileKind, ExportArgs, ExportSubcommand, PageMode, PageSubcommand,
@@ -13,19 +14,12 @@ pub(super) fn command_from_cli(
     command: CliCommand,
     scope: ScopeSelection,
 ) -> Result<Command, WikiError> {
-    command_from_cli_with_runtime(
-        command,
-        scope,
-        gobby_wiki::output::Format::Json,
-        false,
-        false,
-    )
+    command_from_cli_with_runtime(command, scope, false, false)
 }
 
 pub(super) fn command_from_cli_with_runtime(
     command: CliCommand,
     scope: ScopeSelection,
-    format: gobby_wiki::output::Format,
     quiet: bool,
     verbose: bool,
 ) -> Result<Command, WikiError> {
@@ -34,11 +28,13 @@ pub(super) fn command_from_cli_with_runtime(
         CliCommand::Code(args) => {
             let project_root = match scope {
                 ScopeSelection::Detect => {
-                    std::env::current_dir().map_err(|source| WikiError::Io {
-                        action: "resolve current project directory",
-                        path: None,
-                        source,
-                    })?
+                    detect_project_root_from(&std::env::current_dir().map_err(|source| {
+                        WikiError::Io {
+                            action: "resolve current project directory",
+                            path: None,
+                            source,
+                        }
+                    })?)?
                 }
                 ScopeSelection::ProjectRoot(project_root) => project_root,
                 ScopeSelection::Topic(topic) => {
@@ -51,7 +47,6 @@ pub(super) fn command_from_cli_with_runtime(
             };
             Ok(Command::Code(args.into_options(
                 project_root,
-                format,
                 quiet,
                 verbose,
             )))
@@ -257,6 +252,12 @@ pub(super) fn command_from_cli_with_runtime(
         CliCommand::Trust => Ok(Command::Trust { scope }),
         CliCommand::CitationQuality => Ok(Command::CitationQuality { scope }),
     }
+}
+
+pub(super) fn detect_project_root_from(start: &Path) -> Result<PathBuf, WikiError> {
+    gobby_core::project::find_project_root(start).ok_or_else(|| WikiError::InvalidScope {
+        detail: format!("no Gobby project found from {}", start.display()),
+    })
 }
 
 impl From<CompileKind> for gobby_wiki::synthesis::ArticleKind {

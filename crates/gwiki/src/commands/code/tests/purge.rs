@@ -6,15 +6,18 @@ fn purge_removes_generated_docs_and_metadata_only() -> anyhow::Result<()> {
     let out_dir = temp.path();
     write_doc(out_dir, "code/files/src/lib.rs.md", "# Lib\n")?;
     write_doc(out_dir, "code/modules/src.md", "# Src\n")?;
+    write_doc(out_dir, "code/INDEX.md", "# Catalog\n")?;
+    write_doc(out_dir, "code/modules/_context.md", "# Context\n")?;
     write_doc(out_dir, "notes/manual.md", "# Manual\n")?;
     write_doc(
         out_dir,
         CODEWIKI_META_PATH,
         r#"{
             "docs": {
-                "code/files/src/lib.rs.md": { "source_hashes": {} }
+                "code/files/src/lib.rs.md": { "source_hashes": {} },
+                "code/INDEX.md": { "source_hashes": {} }
             },
-            "generated_docs": ["code/modules/src.md"],
+            "generated_docs": ["code/modules/src.md", "code/modules/_context.md"],
             "ai_mode": "off"
         }"#,
     )?;
@@ -30,6 +33,8 @@ fn purge_removes_generated_docs_and_metadata_only() -> anyhow::Result<()> {
     assert!(!out_dir.join(CODEWIKI_META_PATH).exists());
     assert!(!out_dir.join(OWNERSHIP_META_PATH).exists());
     assert!(!out_dir.join(TRUTH_DIGEST_META_PATH).exists());
+    assert!(out_dir.join("code/INDEX.md").exists());
+    assert!(out_dir.join("code/modules/_context.md").exists());
     assert!(out_dir.join("notes/manual.md").exists());
     Ok(())
 }

@@ -1007,6 +1007,9 @@ fn finish_reclaims_on_disk_orphans_absent_from_a_cleared_cache() {
     // gwiki research notes) must never be walked or deleted.
     std::fs::create_dir_all(out_dir.join("research")).expect("research dir");
     std::fs::write(out_dir.join("research/notes.md"), "user note").expect("plant vault note");
+    write_doc(&out_dir, "code/INDEX.md", "catalog index").expect("plant catalog index");
+    write_doc(&out_dir, "code/modules/_context.md", "catalog context")
+        .expect("plant catalog context");
 
     // A completed run that produces one healthy page and nothing else.
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
@@ -1030,6 +1033,14 @@ fn finish_reclaims_on_disk_orphans_absent_from_a_cleared_cache() {
     assert!(
         out_dir.join("research/notes.md").exists(),
         "GC must not walk or delete outside the `code/` tree"
+    );
+    assert!(
+        out_dir.join("code/INDEX.md").exists(),
+        "catalog index must survive CodeWiki pruning"
+    );
+    assert!(
+        out_dir.join("code/modules/_context.md").exists(),
+        "catalog context must survive CodeWiki pruning"
     );
 }
 

@@ -1,6 +1,7 @@
 use super::doc_paths::{
-    collect_generated_doc_pages, prune_empty_doc_dirs, refresh_doc_if_needed,
-    reject_symlinked_doc_path, safe_doc_path, scoped_file_doc, scoped_module_doc, write_doc,
+    collect_generated_doc_pages, is_catalog_owned_code_page, prune_empty_doc_dirs,
+    refresh_doc_if_needed, reject_symlinked_doc_path, safe_doc_path, scoped_file_doc,
+    scoped_module_doc, write_doc,
 };
 use super::frontmatter::{
     apply_ai_outcome_to_markdown, lane_observability_from_content, page_frontmatter_blocks_reuse,
@@ -32,7 +33,8 @@ fn content_sensitive_target_matches(
             .is_some_and(|existing| strip_commit_lines(existing) == strip_commit_lines(generated))
 }
 
-pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
+#[cfg(test)]
+pub(crate) fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir)?;
     for (relative_path, content) in docs {
         write_doc(out_dir, relative_path, content)?;
@@ -40,7 +42,8 @@ pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Resul
     Ok(())
 }
 
-pub fn write_incremental_doc_set(
+#[cfg(test)]
+pub(crate) fn write_incremental_doc_set(
     project_root: &Path,
     out_dir: &Path,
     docs: &[(String, String)],
@@ -59,6 +62,7 @@ pub fn write_incremental_doc_set(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn write_incremental_doc_set_with_snapshot(
     project_root: &Path,
     out_dir: &Path,
@@ -472,9 +476,13 @@ impl<'a> DocSink<'a> {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
-        self.next_docs.remove(doc_path);
-        self.progress_journal.remove(doc_path)?;
+        self.forget_doc(doc_path)?;
         Ok(())
+    }
+
+    fn forget_doc(&mut self, doc_path: &str) -> anyhow::Result<()> {
+        self.next_docs.remove(doc_path);
+        self.progress_journal.remove(doc_path)
     }
 
     /// Complete the run: delete docs the run no longer produced, then write
@@ -516,7 +524,11 @@ impl<'a> DocSink<'a> {
             }
         }
         for stale_path in stale {
-            self.remove_doc(&stale_path)?;
+            if is_catalog_owned_code_page(&stale_path) {
+                self.forget_doc(&stale_path)?;
+            } else {
+                self.remove_doc(&stale_path)?;
+            }
         }
         // Breadcrumb closure (#17639): a scoped run emits module pages whose
         // Parent chain — and `code/repo.md` — can fall outside the scope
@@ -542,7 +554,11 @@ impl<'a> DocSink<'a> {
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         for stale_path in stale_stubs {
-            self.remove_doc(&stale_path)?;
+            if is_catalog_owned_code_page(&stale_path) {
+                self.forget_doc(&stale_path)?;
+            } else {
+                self.remove_doc(&stale_path)?;
+            }
         }
         let meta = CodewikiMeta {
             docs: self.next_docs,

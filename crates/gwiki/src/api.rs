@@ -576,16 +576,39 @@ mod tests {
 
     #[test]
     fn dependency_direction_is_one_way() {
+        fn dependency_tables(manifest: &toml::Value) -> Vec<&toml::map::Map<String, toml::Value>> {
+            const TABLE_NAMES: [&str; 3] =
+                ["dependencies", "dev-dependencies", "build-dependencies"];
+
+            let root = manifest.as_table().expect("manifest root is a table");
+            let mut tables = TABLE_NAMES
+                .iter()
+                .filter_map(|name| root.get(*name).and_then(toml::Value::as_table))
+                .collect::<Vec<_>>();
+            if let Some(targets) = root.get("target").and_then(toml::Value::as_table) {
+                for target in targets.values().filter_map(toml::Value::as_table) {
+                    tables.extend(
+                        TABLE_NAMES
+                            .iter()
+                            .filter_map(|name| target.get(*name).and_then(toml::Value::as_table)),
+                    );
+                }
+            }
+            tables
+        }
+
+        fn declares_dependency(manifest: &toml::Value, dependency: &str) -> bool {
+            dependency_tables(manifest)
+                .iter()
+                .any(|table| table.contains_key(dependency))
+        }
+
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("manifest is readable");
         let manifest: toml::Value = toml::from_str(&manifest).expect("manifest is valid TOML");
-        let dependencies = manifest
-            .get("dependencies")
-            .and_then(toml::Value::as_table)
-            .expect("manifest has dependencies table");
 
         assert!(
-            dependencies.contains_key("gobby-code"),
+            declares_dependency(&manifest, "gobby-code"),
             "gobby-wiki must depend on gobby-code"
         );
 
@@ -594,12 +617,8 @@ mod tests {
                 .expect("gcode manifest is readable");
         let gcode_manifest: toml::Value =
             toml::from_str(&gcode_manifest).expect("gcode manifest is valid TOML");
-        let gcode_dependencies = gcode_manifest
-            .get("dependencies")
-            .and_then(toml::Value::as_table)
-            .expect("gcode manifest has dependencies table");
         assert!(
-            !gcode_dependencies.contains_key("gobby-wiki"),
+            !declares_dependency(&gcode_manifest, "gobby-wiki"),
             "gobby-code must not depend on gobby-wiki"
         );
     }

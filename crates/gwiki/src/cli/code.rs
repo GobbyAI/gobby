@@ -2,11 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Args, ValueEnum};
 use gobby_core::config::{AiRouting, FeatureCandidate};
-use gobby_wiki::commands::code::{
-    AiDepth, CodeCommandOptions, CodewikiAiOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth,
-    ProseRegister, VerifyScope,
+use gobby_wiki::{
+    AiDepth, CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth, VerifyScope,
 };
-use gobby_wiki::output::Format;
 
 const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
 
@@ -129,7 +127,6 @@ impl CodeArgs {
     pub(super) fn into_options(
         self,
         project_root: PathBuf,
-        format: Format,
         quiet: bool,
         verbose: bool,
     ) -> CodeCommandOptions {
@@ -140,18 +137,14 @@ impl CodeArgs {
             force: self.force,
             scope: self.scope,
             complete_scope: self.complete_scope,
-            ai: CodewikiAiOptions {
-                routing: self.ai,
-                depth: self.ai_depth.into(),
-                prose_depth: self.ai_prose_depth.into(),
-                register: self.ai_register.map(Into::into),
-                aggregate_profile: self.ai_aggregate_profile,
-                aggregate_candidates: self.ai_aggregate_candidate,
-                verify_profile: self.ai_verify_profile,
-                verify_model: None,
-                verify_api_key: None,
-                verify_scope: self.ai_verify_scope.into(),
-            },
+            ai: self.ai,
+            ai_depth: self.ai_depth.into(),
+            ai_prose_depth: self.ai_prose_depth.into(),
+            ai_register: self.ai_register.map(AiRegisterArg::label),
+            ai_aggregate_profile: self.ai_aggregate_profile,
+            ai_aggregate_candidates: self.ai_aggregate_candidate,
+            ai_verify_profile: self.ai_verify_profile,
+            ai_verify_scope: self.ai_verify_scope.into(),
             edge_limit: self.edge_limit,
             include_docs: self.include_docs,
             since: self.since,
@@ -159,7 +152,6 @@ impl CodeArgs {
             max_workers: self.max_workers,
             repair_citations: self.repair_citations,
             no_freshness: self.no_freshness,
-            format,
             quiet,
             verbose,
         }
@@ -209,13 +201,14 @@ enum AiRegisterArg {
     Agent,
 }
 
-impl From<AiRegisterArg> for ProseRegister {
-    fn from(value: AiRegisterArg) -> Self {
-        match value {
-            AiRegisterArg::Newcomer => Self::Newcomer,
-            AiRegisterArg::Maintainer => Self::Maintainer,
-            AiRegisterArg::Agent => Self::Agent,
+impl AiRegisterArg {
+    fn label(self) -> String {
+        match self {
+            Self::Newcomer => "newcomer",
+            Self::Maintainer => "maintainer",
+            Self::Agent => "agent",
         }
+        .to_string()
     }
 }
 
@@ -238,9 +231,9 @@ impl From<AiVerifyScopeArg> for VerifyScope {
 fn parse_positive_usize(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| "value must be a positive integer".to_string())?;
+        .map_err(|_| format!("value '{value}' must be a positive integer"))?;
     if parsed == 0 {
-        Err("value must be a positive integer".to_string())
+        Err(format!("value '{value}' must be a positive integer"))
     } else if parsed > MAX_POSITIVE_USIZE_ARG {
         Err(format!(
             "value must be no more than {MAX_POSITIVE_USIZE_ARG}"

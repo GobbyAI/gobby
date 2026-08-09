@@ -3,6 +3,11 @@ use super::text::{preserve_commit_lines, strip_commit_lines};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+pub(crate) fn is_catalog_owned_code_page(relative_path: &str) -> bool {
+    relative_path == "code/INDEX.md"
+        || (relative_path.starts_with("code/") && relative_path.ends_with("/_context.md"))
+}
+
 /// On-disk `.md` pages under the codewiki-owned `code/` tree, as out-dir-relative
 /// slash paths (e.g. `code/narrative/01-introduction.md`). Drives `finish`'s
 /// cache-independent orphan GC (#900): a page on disk but absent from this run's

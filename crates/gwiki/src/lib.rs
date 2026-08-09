@@ -13,7 +13,7 @@ pub(crate) mod catalog;
 pub(crate) mod citations;
 pub(crate) mod code_graph;
 pub(crate) mod collect;
-pub mod commands;
+mod commands;
 pub(crate) mod compile;
 pub mod contract;
 pub(crate) mod credibility;
@@ -65,6 +65,9 @@ pub use api::{
     IngestFileOptions, PageWriteMode, PurgeTarget, ReadTarget, RecapOptions, ReviewReportOptions,
     RunOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions, SyncSessionsOptions,
     UpkeepOptions,
+};
+pub use commands::code::{
+    AiDepth, CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, ProseDepth, VerifyScope,
 };
 pub use error::WikiError;
 pub use graph::GraphInclude;
