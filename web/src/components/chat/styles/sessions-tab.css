@@ -233,25 +233,6 @@
   animation: session-dot-pulse 2s ease-in-out infinite;
 }
 
-.session-kill-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.25rem;
-  height: 1.25rem;
-  border: 1px solid color-mix(in srgb, var(--color-error) 30%, transparent);
-  border-radius: 0.25rem;
-  background: transparent;
-  color: var(--color-error);
-  font-size: var(--text-2xs);
-  cursor: pointer;
-  transition: background-color 0.1s;
-}
-
-.session-kill-btn:hover {
-  background: color-mix(in srgb, var(--color-error) 10%, transparent);
-}
-
 .session-expire-btn {
   display: flex;
   align-items: center;

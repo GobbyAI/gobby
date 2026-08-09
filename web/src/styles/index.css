@@ -4,6 +4,5 @@
 @import "./tailwind-theme.css";
 @import "./tokens.css";
 @import "./base.css";
-@import "./session-primitives.css";
 @import "./markdown.css";
 @import "./accessibility.css";

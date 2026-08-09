@@ -307,7 +307,7 @@ export function TraceIcon() {
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
-      className="workflow-trace-icon"
+      className="mr-1.5 align-middle"
     >
       <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
     </svg>
