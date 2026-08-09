@@ -154,10 +154,6 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gcode/src/commands/graph/reads.rs",
             "commands::graph::blast_radius",
         ),
-        "codewiki" => (
-            "crates/gcode/src/commands/codewiki/run.rs",
-            "commands::codewiki::run",
-        ),
         "graph sync-file" => (
             "crates/gcode/src/commands/graph/lifecycle.rs",
             "commands::graph::sync_file",

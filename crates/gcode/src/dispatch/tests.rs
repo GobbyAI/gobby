@@ -87,7 +87,7 @@ fn lookup_commands_skip_service_config_resolution() {
 }
 
 #[test]
-fn graph_and_ai_commands_request_only_needed_services() {
+fn graph_and_vector_commands_request_only_needed_services() {
     assert_eq!(
         services_for(&["search", "concept"]),
         config::ServiceConfigSelection::hybrid_search()
@@ -99,14 +99,6 @@ fn graph_and_ai_commands_request_only_needed_services() {
     assert_eq!(
         services_for(&["callers", "needle"]),
         config::ServiceConfigSelection::falkordb_only()
-    );
-    assert_eq!(
-        services_for(&["codewiki"]),
-        config::ServiceConfigSelection::falkordb_only()
-    );
-    assert_eq!(
-        services_for(&["codewiki", "--purge"]),
-        config::ServiceConfigSelection::projection_cleanup()
     );
     assert_eq!(
         services_for(&["vector", "cleanup-orphans"]),
@@ -133,58 +125,4 @@ fn invalidate_requests_projection_cleanup_services() {
         ]),
         config::ServiceConfigSelection::projection_cleanup()
     );
-}
-
-#[test]
-fn codewiki_ai_options_routes_verify_profile_override() {
-    let options = codewiki_ai_options(
-        Some(AiRouteArg::Daemon),
-        cli::AiDepthArg::Files,
-        cli::AiProseDepthArg::Deep,
-        Some(cli::AiRegisterArg::Newcomer),
-        Some("aggregate_profile".to_string()),
-        Vec::new(),
-        Some("feature_mid".to_string()),
-        cli::AiVerifyScopeArg::All,
-    );
-
-    assert_eq!(
-        options.aggregate_profile.as_deref(),
-        Some("aggregate_profile")
-    );
-    assert!(options.aggregate_candidates.is_empty());
-    assert_eq!(options.verify_profile.as_deref(), Some("feature_mid"));
-    assert_eq!(
-        options.prose_depth,
-        gobby_code::commands::codewiki::ProseDepth::Deep
-    );
-    assert_eq!(
-        options.register,
-        Some(gobby_code::commands::codewiki::ProseRegister::Newcomer)
-    );
-    assert_eq!(
-        options.verify_scope,
-        gobby_code::commands::codewiki::VerifyScope::All
-    );
-}
-
-#[test]
-fn codewiki_ai_options_threads_aggregate_candidates() {
-    let candidates = vec![gobby_core::config::FeatureCandidate {
-        candidate: "claude/sonnet".to_string(),
-        reasoning_effort: Some("xhigh".to_string()),
-    }];
-    let options = codewiki_ai_options(
-        Some(AiRouteArg::Daemon),
-        cli::AiDepthArg::Files,
-        cli::AiProseDepthArg::Standard,
-        None,
-        None,
-        candidates.clone(),
-        None,
-        cli::AiVerifyScopeArg::Aggregates,
-    );
-
-    assert_eq!(options.aggregate_candidates, candidates);
-    assert!(options.aggregate_profile.is_none());
 }

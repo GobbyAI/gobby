@@ -9,7 +9,7 @@ use crate::vector::code_symbols;
 use super::content_gc::{ContentGcCandidate, discover_content_gc, prune_content_versions};
 use super::invalidate::invalidate_project_locked;
 use super::projects::stale_projects;
-use super::shared::{collect_projects, display_name};
+use super::shared::{collect_projects, collect_projects_from, display_name};
 
 mod inventory;
 mod reconcile;
@@ -329,7 +329,7 @@ fn discover_project_scoped_records(
     ctx: &Context,
     retention_days: u32,
 ) -> anyhow::Result<GlobalPruneDiscovery> {
-    let all_projects = collect_projects()?;
+    let all_projects = collect_projects_from(&ctx.database_url)?;
     let stale_projects = stale_projects(&all_projects)
         .into_iter()
         .filter(|project| project.project.id == ctx.project_id)

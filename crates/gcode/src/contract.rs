@@ -6,7 +6,7 @@ pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
         // Additive optional flags are backward-compatible and do not bump this version.
-        contract_version: 2,
+        contract_version: 3,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -311,64 +311,6 @@ pub fn contract() -> CliContract {
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![
-                    FlagContract::value("--out", "DIR"),
-                    FlagContract::repeatable_value("--scope", "PATH"),
-                    FlagContract::switch("--complete-scope"),
-                    FlagContract::value("--since", "GIT_REF"),
-                    FlagContract::value("--compare-to", "GIT_REF[:META_PATH]"),
-                    ai_flag(),
-                    ai_depth_flag(),
-                    FlagContract::value("--ai-aggregate-profile", "PROFILE"),
-                    FlagContract::repeatable_value(
-                        "--ai-aggregate-candidate",
-                        "PROVIDER/MODEL[@EFFORT]",
-                    ),
-                    FlagContract::value("--ai-verify-profile", "PROFILE"),
-                    ai_verify_scope_flag(),
-                    ai_prose_depth_flag(),
-                    ai_register_flag(),
-                    FlagContract::value("--edge-limit", "N"),
-                    FlagContract::switch("--include-docs"),
-                    FlagContract::value("--max-workers", "N"),
-                    FlagContract::switch("--repair-citations"),
-                ],
-                // Three JSON shapes: a generation run-summary; under
-                // `--repair-citations`, the no-LLM citation-repair summary
-                // (`pages_scanned`..`citations_unresolved`, frozen by the repair
-                // routine); or under `--compare-to`, the metadata comparison
-                // summary. The declared key set is their union.
-                json_output_keys: vec![
-                    "command",
-                    "project_id",
-                    "project_root",
-                    "out_dir",
-                    "generated_pages",
-                    "changed_paths",
-                    "skipped",
-                    "files",
-                    "modules",
-                    "symbols",
-                    "ai_enabled",
-                    "degraded_pages",
-                    "base",
-                    "current",
-                    "added",
-                    "removed",
-                    "changed",
-                    "pages_scanned",
-                    "pages_repaired",
-                    "citations_repaired",
-                    "citations_unresolved",
-                ],
-                ..CommandContract::new(
-                    "codewiki",
-                    "Generate vault-ready hierarchical code documentation.",
-                )
-            },
-            CommandContract {
-                daemon_consumed: true,
-                positionals: vec![],
-                flags: vec![
                     FlagContract::value("--file", "FILE"),
                     FlagContract::switch("--allow-missing-indexed-file"),
                     format_flag(),
@@ -563,33 +505,6 @@ pub fn contract() -> CliContract {
 
 fn format_flag() -> FlagContract {
     FlagContract::value("--format", "json|text").allowed(vec!["json", "text"])
-}
-
-fn ai_flag() -> FlagContract {
-    FlagContract::value("--ai", "auto|daemon|direct|off")
-        .allowed(vec!["auto", "daemon", "direct", "off"])
-}
-
-fn ai_depth_flag() -> FlagContract {
-    FlagContract::value("--ai-depth", "sections|files|symbols")
-        .allowed(vec!["sections", "files", "symbols"])
-}
-
-fn ai_prose_depth_flag() -> FlagContract {
-    FlagContract::value("--ai-prose-depth", "brief|standard|deep")
-        .allowed(vec!["brief", "standard", "deep"])
-}
-
-fn ai_verify_scope_flag() -> FlagContract {
-    FlagContract::value("--ai-verify-scope", "aggregates|all").allowed(vec!["aggregates", "all"])
-}
-
-fn ai_register_flag() -> FlagContract {
-    FlagContract::value("--ai-register", "newcomer|maintainer|agent").allowed(vec![
-        "newcomer",
-        "maintainer",
-        "agent",
-    ])
 }
 
 fn token_budget_flag() -> FlagContract {

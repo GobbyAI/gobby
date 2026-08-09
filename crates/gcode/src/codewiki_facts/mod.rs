@@ -6,26 +6,20 @@
 //!
 //! # Dependency inventory
 //!
-//! The ownership move started with
-//! `gcode grep 'crate::' crates/gcode/src/commands/codewiki`. Every hit is in
-//! one of these buckets:
+//! The wiki-owned engine depends on these bounded capability families:
 //!
 //! - `db`, `visibility`, `models::Symbol`, `search::fts`, `commands::grep`,
 //!   `graph::{code_graph,typed_query}`, and `commands::scope` are datastore
 //!   consumers. They map to the scoped-file, symbol, search, grep, graph, and
-//!   leading-chunk families in this module. The grouped
-//!   `use crate::{db, visibility}` form in `tool_executor.rs` is included.
-//! - `config::Context` in `run`, `graph`, compare/purge, AI generation/routing,
-//!   and the tool executor splits at the boundary: this facade resolves and
+//!   leading-chunk families in this module.
+//! - `config::Context` splits at the boundary: this facade resolves and
 //!   keeps a private context for facts, while project identity, output format,
 //!   quiet/verbose behavior, and AI/daemon routing live in gwiki's runtime
 //!   carrier. No context or service configuration crosses this API.
 //! - `output`, `index::hasher`, storage-path normalization, language detection,
-//!   and `index::security` are output or filesystem concerns. They move with
-//!   the engine; filesystem-only tool operations remain there.
-//! - `commands::codewiki::*` imports are engine-internal references and move as
-//!   a unit. Coupling remains an engine-derived projection over typed call and
-//!   import facts.
+//!   and `index::security` are output or filesystem concerns owned by gwiki.
+//! - Engine coupling remains a derived projection over typed call and import
+//!   facts exposed here.
 //!
 //! The command wrapper was inventoried separately. [`ensure_project_fresh`]
 //! is the sole non-query admission helper: it runs gcode's existing

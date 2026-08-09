@@ -1,7 +1,7 @@
 use crate::{commands, config, freshness, output, setup};
 use clap::Parser as _;
 
-use crate::cli::{self, AiRouteArg, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
+use crate::cli::{self, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
 static STDERR_LOGGER: StderrLogger = StderrLogger;
 
@@ -84,17 +84,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         Command::Index { .. } => ServiceConfigSelection::all(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
-        Command::Codewiki {
-            purge: true,
-            compare_to: None,
-            ..
-        }
-        | Command::Codewiki {
-            compare_to: Some(_),
-            ..
-        } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
-        | Command::Codewiki { .. }
         | Command::Callers { .. }
         | Command::Usages { .. }
         | Command::Imports { .. }
@@ -127,31 +117,6 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Tree
         | Command::RepoOutline => ServiceConfigSelection::database_only(),
         Command::Prune { .. } => ServiceConfigSelection::projection_cleanup(),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn codewiki_ai_options(
-    ai: Option<AiRouteArg>,
-    ai_depth: cli::AiDepthArg,
-    ai_prose_depth: cli::AiProseDepthArg,
-    ai_register: Option<cli::AiRegisterArg>,
-    ai_aggregate_profile: Option<String>,
-    ai_aggregate_candidate: Vec<gobby_core::config::FeatureCandidate>,
-    ai_verify_profile: Option<String>,
-    ai_verify_scope: cli::AiVerifyScopeArg,
-) -> commands::codewiki::CodewikiAiOptions {
-    commands::codewiki::CodewikiAiOptions {
-        routing: ai.map(AiRouteArg::into),
-        depth: ai_depth.into(),
-        prose_depth: ai_prose_depth.into(),
-        register: ai_register.map(Into::into),
-        aggregate_profile: ai_aggregate_profile,
-        aggregate_candidates: ai_aggregate_candidate,
-        verify_profile: ai_verify_profile,
-        verify_model: None,
-        verify_api_key: None,
-        verify_scope: ai_verify_scope.into(),
     }
 }
 
@@ -578,61 +543,6 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::symbols::tree(&ctx, format)
         }
-        Command::Codewiki {
-            out,
-            purge,
-            force,
-            scope,
-            complete_scope,
-            ai,
-            ai_depth,
-            ai_aggregate_profile,
-            ai_aggregate_candidate,
-            ai_verify_profile,
-            ai_verify_scope,
-            ai_prose_depth,
-            ai_register,
-            edge_limit,
-            include_docs,
-            since,
-            compare_to,
-            max_workers,
-            repair_citations,
-        } => {
-            if let Some(base_ref) = compare_to {
-                return commands::codewiki::run_compare(&ctx, out, &base_ref);
-            }
-            if purge {
-                return commands::codewiki::run_purge(&ctx, out, force, format);
-            }
-            if repair_citations {
-                return commands::codewiki::run_repair(&ctx, out, format);
-            }
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::codewiki::run(
-                &ctx,
-                out,
-                scope,
-                complete_scope,
-                codewiki_ai_options(
-                    ai,
-                    ai_depth,
-                    ai_prose_depth,
-                    ai_register,
-                    ai_aggregate_profile,
-                    ai_aggregate_candidate,
-                    ai_verify_profile,
-                    ai_verify_scope,
-                ),
-                edge_limit,
-                include_docs,
-                since,
-                max_workers,
-                format,
-                cli.verbose,
-            )
-        }
-
         Command::Callers {
             symbol_name,
             limit,

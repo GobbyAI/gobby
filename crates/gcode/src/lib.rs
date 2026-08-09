@@ -1,6 +1,6 @@
 pub(crate) mod bm25_health;
 pub mod codewiki_facts;
-pub mod commands;
+mod commands;
 #[allow(
     unused_imports,
     reason = "private implementation retains test-only imports"

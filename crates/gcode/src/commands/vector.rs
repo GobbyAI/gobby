@@ -7,19 +7,11 @@ use crate::projection::{
 };
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
-    CodeSymbolVectorLifecycleOutput, CodeSymbolVectorLifecycleStatus, EmbeddingSource,
-    VectorLifecycleError, VectorOrphanCleanup, embedding_source_from_context,
+    CodeSymbolVectorLifecycleOutput, EmbeddingSource, VectorLifecycleError, VectorOrphanCleanup,
+    embedding_source_from_context,
 };
 use serde::Serialize;
 use std::collections::HashSet;
-
-pub fn lifecycle_status(
-    ctx: &Context,
-    action: CodeSymbolVectorLifecycleAction,
-) -> Result<CodeSymbolVectorLifecycleStatus, VectorLifecycleError> {
-    let prefix = CODE_SYMBOL_COLLECTION_PREFIX;
-    code_symbols::lifecycle_status(ctx.project_id.clone(), prefix, action)
-}
 
 pub(crate) fn lifecycle_from_context(
     ctx: &Context,

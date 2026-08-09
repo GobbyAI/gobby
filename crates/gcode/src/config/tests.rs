@@ -98,10 +98,7 @@ fn config_value_for<'a>(
 #[test]
 fn production_ai_sources_use_effective_config_helpers() {
     let sources = [
-        (
-            "codewiki generation",
-            include_str!("../commands/codewiki/text/generation.rs"),
-        ),
+        ("search", include_str!("../commands/search.rs")),
         ("symbols", include_str!("../commands/symbols.rs")),
         (
             "code symbol embeddings",

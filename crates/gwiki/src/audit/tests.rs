@@ -307,7 +307,7 @@ fn inline_source_support_requires_link_like_target() {
 #[test]
 fn inline_source_support_accepts_codewiki_source_spans() {
     assert!(has_inline_source_support(
-        "Purpose: documents the builder. [crates/gcode/src/commands/codewiki/build.rs:3-73]"
+        "Purpose: documents the builder. [crates/gwiki/src/commands/code/build.rs:3-73]"
     ));
     assert!(has_inline_source_support(
         "Root metadata is loaded from [Cargo.toml:1]"

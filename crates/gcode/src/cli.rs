@@ -1,8 +1,6 @@
 use crate::output;
-use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
-use gobby_core::config::{AiRouting, FeatureCandidate};
+use clap::{ArgGroup, Parser, Subcommand};
 
-const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
     crate::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
 const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
@@ -43,96 +41,6 @@ pub(crate) struct Cli {
 
     #[command(subcommand)]
     pub(crate) command: Command,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AiRouteArg {
-    Auto,
-    Daemon,
-    Direct,
-    Off,
-}
-
-impl From<AiRouteArg> for AiRouting {
-    fn from(value: AiRouteArg) -> Self {
-        match value {
-            AiRouteArg::Auto => AiRouting::Auto,
-            AiRouteArg::Daemon => AiRouting::Daemon,
-            AiRouteArg::Direct => AiRouting::Direct,
-            AiRouteArg::Off => AiRouting::Off,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AiDepthArg {
-    Sections,
-    #[default]
-    Files,
-    Symbols,
-}
-
-impl From<AiDepthArg> for crate::commands::codewiki::AiDepth {
-    fn from(value: AiDepthArg) -> Self {
-        match value {
-            AiDepthArg::Sections => Self::Sections,
-            AiDepthArg::Files => Self::Files,
-            AiDepthArg::Symbols => Self::Symbols,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AiProseDepthArg {
-    Brief,
-    #[default]
-    Standard,
-    Deep,
-}
-
-impl From<AiProseDepthArg> for crate::commands::codewiki::ProseDepth {
-    fn from(value: AiProseDepthArg) -> Self {
-        match value {
-            AiProseDepthArg::Brief => Self::Brief,
-            AiProseDepthArg::Standard => Self::Standard,
-            AiProseDepthArg::Deep => Self::Deep,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AiVerifyScopeArg {
-    /// Verify only the aggregate/curated pages (default); skip per-file leaves.
-    #[default]
-    Aggregates,
-    /// Verify every page, including per-file leaves (the prior behavior).
-    All,
-}
-
-impl From<AiVerifyScopeArg> for crate::commands::codewiki::VerifyScope {
-    fn from(value: AiVerifyScopeArg) -> Self {
-        match value {
-            AiVerifyScopeArg::Aggregates => Self::Aggregates,
-            AiVerifyScopeArg::All => Self::All,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum AiRegisterArg {
-    Newcomer,
-    Maintainer,
-    Agent,
-}
-
-impl From<AiRegisterArg> for crate::commands::codewiki::ProseRegister {
-    fn from(value: AiRegisterArg) -> Self {
-        match value {
-            AiRegisterArg::Newcomer => Self::Newcomer,
-            AiRegisterArg::Maintainer => Self::Maintainer,
-            AiRegisterArg::Agent => Self::Agent,
-        }
-    }
 }
 
 #[derive(Subcommand)]
@@ -379,141 +287,6 @@ pub(crate) enum Command {
     Kinds,
     /// File tree with symbol counts
     Tree,
-    /// Generate vault-ready hierarchical code documentation
-    Codewiki {
-        /// Output directory for generated Markdown docs
-        #[arg(long)]
-        out: Option<String>,
-        /// Remove generated CodeWiki output/cache under --out and exit.
-        #[arg(
-            long,
-            conflicts_with_all = [
-                "scope",
-                "complete_scope",
-                "ai",
-                "ai_depth",
-                "ai_aggregate_profile",
-                "ai_aggregate_candidate",
-                "ai_verify_profile",
-                "ai_verify_scope",
-                "ai_prose_depth",
-                "ai_register",
-                "edge_limit",
-                "include_docs",
-                "since",
-                "max_workers",
-                "repair_citations",
-                "compare_to",
-            ]
-        )]
-        purge: bool,
-        /// Confirm destructive CodeWiki output purge.
-        #[arg(long, requires = "purge")]
-        force: bool,
-        /// Limit docs to indexed files under one or more paths
-        #[arg(long, num_args = 1.., value_name = "PATH")]
-        scope: Vec<String>,
-        /// Treat --scope paths as the complete CodeWiki publication boundary:
-        /// generate global/curated pages and prune docs outside those roots.
-        /// Ordinary --scope remains a non-destructive partial update.
-        #[arg(long, requires = "scope")]
-        complete_scope: bool,
-        /// Override AI routing for generated summaries
-        #[arg(long, value_enum)]
-        ai: Option<AiRouteArg>,
-        /// AI prose depth: sections (architecture/modules/repo), files (+ per-file
-        /// summaries), symbols (+ one call per symbol — expensive on large repos)
-        #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
-        ai_depth: AiDepthArg,
-        /// Daemon feature profile for aggregate docs (architecture/modules/repo)
-        /// [default: feature_high — daemon chain codex/gpt-5.6-sol@xhigh, then claude/opus@high]
-        #[arg(long, value_name = "PROFILE")]
-        ai_aggregate_profile: Option<String>,
-        /// Pin the aggregate writer to an explicit provider/model candidate
-        /// chain (repeatable, ordered; e.g. claude/sonnet@xhigh). Daemon route
-        /// only; supersedes profile routing for aggregate docs.
-        #[arg(
-            long,
-            value_name = "PROVIDER/MODEL[@EFFORT]",
-            value_parser = feature_candidate_label,
-            conflicts_with = "ai_aggregate_profile"
-        )]
-        ai_aggregate_candidate: Vec<FeatureCandidate>,
-        /// Daemon feature profile for grounded verification
-        /// [default: feature_mid]
-        #[arg(long, value_name = "PROFILE")]
-        ai_verify_profile: Option<String>,
-        /// Which pages run grounded verification: aggregates (curated/handbook
-        /// pages only — the default) or all (also per-file leaves, slower).
-        #[arg(long, value_enum, default_value_t = AiVerifyScopeArg::Aggregates)]
-        ai_verify_scope: AiVerifyScopeArg,
-        /// Prose verbosity: brief (terser), standard (default), or deep (longer,
-        /// richer). Orthogonal to --ai-depth; raises the per-page token budget.
-        #[arg(long, value_enum, default_value_t = AiProseDepthArg::Standard)]
-        ai_prose_depth: AiProseDepthArg,
-        /// Audience register for generated prose: newcomer (ELI5, plain
-        /// language), maintainer (why + trade-offs), or agent (terse build
-        /// substrate). Omit to keep the base voice. Grounding holds in all.
-        #[arg(long, value_enum)]
-        ai_register: Option<AiRegisterArg>,
-        /// Maximum graph edges to fetch from FalkorDB
-        #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
-        edge_limit: usize,
-        /// Also document content-only files (markdown, plain text). By default
-        /// codewiki documents only code and structured config (json/yaml);
-        /// narrative markdown belongs to gwiki.
-        #[arg(long)]
-        include_docs: bool,
-        /// Incremental driver: regenerate only pages whose sources or cross-file
-        /// neighbors changed since this git ref, plus aggregate pages whose model
-        /// digest changed. `git diff --name-only <ref>` selects the change set;
-        /// omitting it runs a full content-hash scan. Out-of-scope pages and
-        /// `_meta` are preserved either way.
-        #[arg(long, value_name = "GIT_REF")]
-        since: Option<String>,
-        /// Compare current CodeWiki metadata with a Git snapshot. An optional
-        /// repository-relative metadata path addresses publication branches
-        /// whose vault is rooted differently from --out.
-        #[arg(
-            long,
-            value_name = "GIT_REF[:META_PATH]",
-            conflicts_with_all = [
-                "purge",
-                "force",
-                "scope",
-                "complete_scope",
-                "ai",
-                "ai_depth",
-                "ai_aggregate_profile",
-                "ai_aggregate_candidate",
-                "ai_verify_profile",
-                "ai_verify_scope",
-                "ai_prose_depth",
-                "ai_register",
-                "edge_limit",
-                "include_docs",
-                "since",
-                "max_workers",
-                "repair_citations",
-            ]
-        )]
-        compare_to: Option<String>,
-        /// Bounded worker pool for Standard-tier (file) page generation. The
-        /// default 1 keeps generation fully sequential; N>1 fans per-file
-        /// symbol/narrative LLM calls out to N workers while page writes stay
-        /// serialized and deterministic. Aggregate/curated pages are always
-        /// sequential, and in-flight LLM calls remain capped by
-        /// `ai.max_concurrency`.
-        #[arg(long, default_value_t = 1, value_name = "N", value_parser = positive_usize)]
-        max_workers: usize,
-        /// Repair-only mode: re-anchor existing pages' `[file:line]` citations
-        /// against the current index and exit. No generation, no AI/LLM calls.
-        /// Ignores generation flags (`--ai`, `--scope`, `--ai-depth`, …); honors
-        /// `--out`/`--format`.
-        #[arg(long)]
-        repair_citations: bool,
-    },
-
     // ── Dependency Graph (requires graph backend) ──────────────────────
     /// Find callers of a symbol query, resolved to a canonical symbol ID [requires graph backend]
     Callers {
@@ -675,10 +448,6 @@ fn non_empty_grep_pattern(value: &str) -> Result<String, String> {
     } else {
         Ok(value.to_string())
     }
-}
-
-fn feature_candidate_label(value: &str) -> Result<FeatureCandidate, String> {
-    FeatureCandidate::parse_cli_label(value)
 }
 
 fn positive_usize(value: &str) -> Result<usize, String> {

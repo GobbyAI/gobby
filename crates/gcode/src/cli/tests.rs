@@ -2,10 +2,10 @@ use super::*;
 use clap::{CommandFactory, Parser};
 use std::collections::BTreeSet;
 
-mod codewiki;
 mod grep;
 mod projection;
 mod search;
+mod setup;
 mod top_level;
 
 #[test]

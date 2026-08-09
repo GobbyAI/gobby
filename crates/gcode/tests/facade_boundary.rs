@@ -65,7 +65,6 @@ fn public_surface_is_pinned() {
     let mut expected = vec![
         "fn run_cli",
         "mod codewiki_facts",
-        "mod commands",
         "mod contract",
         "mod test_env",
         "use CodeFactWriteRequest",

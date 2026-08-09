@@ -410,11 +410,10 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 2
+    assert contract["contract_version"] == 3
     assert {
         "index",
         "search",
-        "codewiki",
         "graph sync-file",
         "vector sync-file",
         "graph overview",
@@ -425,10 +424,9 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "graph clear",
         "graph rebuild",
     } <= commands
+    assert "codewiki" not in commands
     assert "--project" in _flag_names(contract["global_flags"])
     assert {"project_id", "results"} <= _json_keys(contract, "search")
-    assert {"project_id", "project_root", "changed_paths"} <= _json_keys(contract, "codewiki")
-    assert "--ai" in _allowed_flags(contract, "codewiki")
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph overview")
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph file")
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph neighbors")

@@ -65,9 +65,17 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_two() {
+fn contract_is_version_three_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(2));
+    assert_eq!(contract["contract_version"], serde_json::json!(3));
+    assert!(
+        contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .all(|command| command["name"] != "codewiki"),
+        "retired codewiki command must be absent"
+    );
 }
 
 #[test]
@@ -134,61 +142,6 @@ fn daemon_query_surface_is_consumed_with_keys() {
                 "{name} paged envelope missing {expected}"
             );
         }
-    }
-}
-
-#[test]
-fn codewiki_declares_repair_citations_flag() {
-    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    let codewiki = command(&contract, "codewiki");
-
-    let has_flag = codewiki["flags"]
-        .as_array()
-        .expect("flags array")
-        .iter()
-        .any(|flag| flag["name"] == Value::String("--repair-citations".to_string()));
-    assert!(
-        has_flag,
-        "codewiki must declare the --repair-citations flag"
-    );
-
-    // The no-LLM repair summary keys are frozen into codewiki's output surface.
-    let keys = output_keys(&contract, "codewiki");
-    for expected in [
-        "pages_scanned",
-        "pages_repaired",
-        "citations_repaired",
-        "citations_unresolved",
-    ] {
-        assert!(
-            keys.contains(&expected.to_string()),
-            "codewiki output surface missing {expected}"
-        );
-    }
-}
-
-#[test]
-fn codewiki_declares_compare_to_flag_and_output_keys() {
-    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    let codewiki = command(&contract, "codewiki");
-
-    let compare_to = codewiki["flags"]
-        .as_array()
-        .expect("flags array")
-        .iter()
-        .find(|flag| flag["name"] == Value::String("--compare-to".to_string()))
-        .expect("codewiki must declare the --compare-to flag");
-    assert_eq!(
-        compare_to["value_name"],
-        Value::String("GIT_REF[:META_PATH]".to_string())
-    );
-
-    let keys = output_keys(&contract, "codewiki");
-    for expected in ["base", "current", "added", "removed", "changed"] {
-        assert!(
-            keys.contains(&expected.to_string()),
-            "codewiki output surface missing {expected}"
-        );
     }
 }
 

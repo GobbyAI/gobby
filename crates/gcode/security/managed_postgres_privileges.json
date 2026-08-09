@@ -46,7 +46,6 @@
 {"path": "crates/gcode/src/bm25_health.rs", "calls": {"query": 1, "query_one": 1}, "classification": "project-read"},
 {"path": "crates/gcode/src/codewiki_facts/graph.rs", "calls": {"query": 1}, "classification": "external-non-postgresql"},
 {"path": "crates/gcode/src/codewiki_facts/text.rs", "calls": {"query": 1}, "classification": "project-read"},
-{"path": "crates/gcode/src/commands/codewiki/graph.rs", "calls": {"query": 2}, "classification": "external-non-postgresql"},
     {"path": "crates/gcode/src/commands/scope.rs", "calls": {"query": 1, "query_opt": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/content_gc.rs", "calls": {"execute": 2, "query": 1, "query_one": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/current.rs", "calls": {"query_opt": 1}, "classification": "project-read"},

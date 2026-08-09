@@ -48,7 +48,8 @@ impl GraphSyncContractError {
         output::print_json(&self.payload)
     }
 
-    pub fn payload(&self) -> &Value {
+    #[cfg(test)]
+    pub(crate) fn payload(&self) -> &Value {
         &self.payload
     }
 }
