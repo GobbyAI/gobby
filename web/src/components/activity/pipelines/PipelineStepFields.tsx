@@ -1,18 +1,10 @@
 import { useId, useState } from 'react'
-import {
-  CHECKBOX_LABEL_CLS,
-  COMMON_CLS,
-  FIELD_CLS,
-  FIELD_INPUT_CLS,
-  FIELD_LABEL_CLS,
-  FIELD_TEXTAREA_CLS,
-  FIELD_TEXTAREA_MONO_CLS,
-  KV_ADD_CLS,
-  KV_CLS,
-  KV_INPUT_CLS,
-  KV_REMOVE_CLS,
-  KV_ROW_CLS,
-} from './PipelineEditor.styles'
+import { cn } from '../../../lib/utils'
+import { Button } from '../../ui/Button'
+import { FormField } from '../../ui/FormField'
+import { Input } from '../../ui/Input'
+import { Textarea } from '../../ui/Textarea'
+import { coarseHitAreaCls } from '../../ui/controlStyles'
 import type {
   KVPair,
   PipelineStep,
@@ -28,36 +20,43 @@ type StepFieldsProps = {
 
 export function ExecFields({ step, onChange }: StepFieldsProps) {
   return (
-    <label className={FIELD_CLS}>
-      <span className={FIELD_LABEL_CLS}>Command</span>
-      <textarea
-        className={FIELD_TEXTAREA_MONO_CLS}
-        value={(step.exec as string) ?? ''}
-        onChange={(e) => onChange({ exec: e.target.value })}
-        placeholder="shell command"
-        rows={3}
-      />
-    </label>
+    <FormField label="Command" className="mb-2.5 [&>label:first-child]:text-xs">
+      {({ id, describedBy, invalid }) => (
+        <Textarea
+          id={id}
+          aria-describedby={describedBy}
+          error={invalid}
+          className="min-h-[50px] resize-y font-mono text-sm"
+          value={(step.exec as string) ?? ''}
+          onChange={(e) => onChange({ exec: e.target.value })}
+          placeholder="shell command"
+          rows={3}
+        />
+      )}
+    </FormField>
   )
 }
 
 export function PromptFields({ step, onChange }: StepFieldsProps) {
   return (
-    <label className={FIELD_CLS}>
-      <span className={FIELD_LABEL_CLS}>Prompt</span>
-      <textarea
-        className={FIELD_TEXTAREA_CLS}
-        value={(step.prompt as string) ?? ''}
-        onChange={(e) => onChange({ prompt: e.target.value })}
-        placeholder="LLM prompt text"
-        rows={4}
-      />
-    </label>
+    <FormField label="Prompt" className="mb-2.5 [&>label:first-child]:text-xs">
+      {({ id, describedBy, invalid }) => (
+        <Textarea
+          id={id}
+          aria-describedby={describedBy}
+          error={invalid}
+          className="min-h-[50px] resize-y font-[inherit] text-md"
+          value={(step.prompt as string) ?? ''}
+          onChange={(e) => onChange({ prompt: e.target.value })}
+          placeholder="LLM prompt text"
+          rows={4}
+        />
+      )}
+    </FormField>
   )
 }
 
 export function McpFields({ step, onChange }: StepFieldsProps) {
-  const argumentsLabelId = useId()
   const mcp = (step.mcp as Record<string, unknown>) ?? {}
   const args = (mcp.arguments as Record<string, string>) ?? {}
 
@@ -78,36 +77,38 @@ export function McpFields({ step, onChange }: StepFieldsProps) {
 
   return (
     <>
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Server</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={(mcp.server as string) ?? ''}
-          onChange={(e) => setMcpField('server', e.target.value)}
-        />
-      </label>
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Tool</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={(mcp.tool as string) ?? ''}
-          onChange={(e) => setMcpField('tool', e.target.value)}
-        />
-      </label>
-      <div className={FIELD_CLS} role="group" aria-labelledby={argumentsLabelId}>
-        <span id={argumentsLabelId} className={FIELD_LABEL_CLS}>
-          Arguments
-        </span>
-        <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
-      </div>
+      <FormField label="Server" className="mb-2.5 [&>label:first-child]:text-xs">
+        {({ id, describedBy, invalid }) => (
+          <Input
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            type="text"
+            value={(mcp.server as string) ?? ''}
+            onChange={(e) => setMcpField('server', e.target.value)}
+          />
+        )}
+      </FormField>
+      <FormField label="Tool" className="mb-2.5 [&>label:first-child]:text-xs">
+        {({ id, describedBy, invalid }) => (
+          <Input
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            type="text"
+            value={(mcp.tool as string) ?? ''}
+            onChange={(e) => setMcpField('tool', e.target.value)}
+          />
+        )}
+      </FormField>
+      <FormField label="Arguments" group className="mb-2.5 [&>span:first-child]:text-xs">
+        {() => <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />}
+      </FormField>
     </>
   )
 }
 
 export function InvokePipelineFields({ step, onChange }: StepFieldsProps) {
-  const argumentsLabelId = useId()
   const raw = step.invoke_pipeline
   const isObject = typeof raw === 'object' && raw !== null
   const rawObject = isObject ? (raw as Record<string, unknown>) : {}
@@ -135,22 +136,22 @@ export function InvokePipelineFields({ step, onChange }: StepFieldsProps) {
 
   return (
     <>
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Pipeline Name</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="pipeline-name"
-        />
-      </label>
-      <div className={FIELD_CLS} role="group" aria-labelledby={argumentsLabelId}>
-        <span id={argumentsLabelId} className={FIELD_LABEL_CLS}>
-          Arguments
-        </span>
-        <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />
-      </div>
+      <FormField label="Pipeline Name" className="mb-2.5 [&>label:first-child]:text-xs">
+        {({ id, describedBy, invalid }) => (
+          <Input
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="pipeline-name"
+          />
+        )}
+      </FormField>
+      <FormField label="Arguments" group className="mb-2.5 [&>span:first-child]:text-xs">
+        {() => <KeyValueEditor sectionName="Arguments" pairs={argPairs} onChange={setArgs} />}
+      </FormField>
     </>
   )
 }
@@ -165,102 +166,119 @@ export function CommonFields({
   onChange: StepChangeHandler
 }) {
   const approval = step.approval as Record<string, unknown> | undefined
-  const conditionId = useId()
-  const toolsId = useId()
+  const approvalId = useId()
   const conditionValue = stripTemplateWrapper((step.condition as string) ?? '')
   const toolsValue = Array.isArray(step.tools) ? (step.tools as string[]).join(', ') : ''
 
   return (
-    <div className={COMMON_CLS}>
-      <label className={FIELD_CLS} htmlFor={conditionId}>
-        <span className={FIELD_LABEL_CLS}>Condition</span>
-        <DraftTextInput
-          key={conditionValue}
-          id={conditionId}
-          value={conditionValue}
-          onCommit={(draft) => {
-            const value = draft.trim()
-            onChange({ condition: value ? wrapTemplateExpr(value) : undefined })
-            return value
-          }}
-          placeholder="e.g. inputs.mode == 'deploy'"
-        />
-      </label>
+    <div className="mt-2 border-t border-border pt-2">
+      <FormField label="Condition" className="mb-2.5 [&>label:first-child]:text-xs">
+        {({ id, describedBy, invalid }) => (
+          <DraftTextInput
+            key={conditionValue}
+            id={id}
+            describedBy={describedBy}
+            invalid={invalid}
+            value={conditionValue}
+            onCommit={(draft) => {
+              const value = draft.trim()
+              onChange({ condition: value ? wrapTemplateExpr(value) : undefined })
+              return value
+            }}
+            placeholder="e.g. inputs.mode == 'deploy'"
+          />
+        )}
+      </FormField>
 
-      <label className={FIELD_CLS}>
-        <span className={FIELD_LABEL_CLS}>Input</span>
-        <input
-          type="text"
-          className={FIELD_INPUT_CLS}
-          value={(step.input as string) ?? ''}
-          onChange={(e) => onChange({ input: e.target.value || undefined })}
-          placeholder="e.g. $prev_step.output"
-        />
-      </label>
+      <FormField label="Input" className="mb-2.5 [&>label:first-child]:text-xs">
+        {({ id, describedBy, invalid }) => (
+          <Input
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            type="text"
+            value={(step.input as string) ?? ''}
+            onChange={(e) => onChange({ input: e.target.value || undefined })}
+            placeholder="e.g. $prev_step.output"
+          />
+        )}
+      </FormField>
 
       {type === 'prompt' && (
-        <label className={FIELD_CLS} htmlFor={toolsId}>
-          <span className={FIELD_LABEL_CLS}>Tools</span>
-          <DraftTextInput
-            key={toolsValue}
-            id={toolsId}
-            value={toolsValue}
-            onCommit={(draft) => {
-              const tools = draft
-                .split(',')
-                .map((item) => item.trim())
-                .filter(Boolean)
-              onChange({ tools: tools.length > 0 ? tools : undefined })
-              return tools.join(', ')
-            }}
-            placeholder="Comma-separated tool list"
-          />
-        </label>
+        <FormField label="Tools" className="mb-2.5 [&>label:first-child]:text-xs">
+          {({ id, describedBy, invalid }) => (
+            <DraftTextInput
+              key={toolsValue}
+              id={id}
+              describedBy={describedBy}
+              invalid={invalid}
+              value={toolsValue}
+              onCommit={(draft) => {
+                const tools = draft
+                  .split(',')
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+                onChange({ tools: tools.length > 0 ? tools : undefined })
+                return tools.join(', ')
+              }}
+              placeholder="Comma-separated tool list"
+            />
+          )}
+        </FormField>
       )}
 
-      <div className={FIELD_CLS}>
-        <label className={CHECKBOX_LABEL_CLS}>
-          <input
-            type="checkbox"
-            checked={!!approval?.required}
-            onChange={(e) => {
-              if (e.target.checked) {
-                onChange({ approval: { required: true, message: '', timeout: 0 } })
-              } else {
-                onChange({ approval: undefined })
-              }
-            }}
-          />
+      <div className="mb-2.5 flex items-center gap-1.5 text-sm">
+        <Input
+          id={approvalId}
+          type="checkbox"
+          wrapperClassName="w-auto"
+          className="size-4 h-4 rounded p-0"
+          checked={!!approval?.required}
+          onChange={(e) => {
+            if (e.target.checked) {
+              onChange({ approval: { required: true, message: '', timeout: 0 } })
+            } else {
+              onChange({ approval: undefined })
+            }
+          }}
+        />
+        <label htmlFor={approvalId} className="cursor-pointer">
           Requires approval
         </label>
       </div>
 
       {!!approval?.required && (
         <>
-          <label className={FIELD_CLS}>
-            <span className={FIELD_LABEL_CLS}>Approval Message</span>
-            <input
-              type="text"
-              className={FIELD_INPUT_CLS}
-              value={(approval.message as string) ?? ''}
-              onChange={(e) =>
-                onChange({ approval: { ...approval, message: e.target.value } })
-              }
-              placeholder="Approval prompt message"
-            />
-          </label>
-          <label className={FIELD_CLS}>
-            <span className={FIELD_LABEL_CLS}>Timeout (seconds)</span>
-            <input
-              type="number"
-              className={FIELD_INPUT_CLS}
-              value={(approval.timeout as number) ?? 0}
-              onChange={(e) =>
-                onChange({ approval: { ...approval, timeout: Number(e.target.value) || 0 } })
-              }
-              min={0}
-            />
-          </label>
+          <FormField label="Approval Message" className="mb-2.5 [&>label:first-child]:text-xs">
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                error={invalid}
+                type="text"
+                value={(approval.message as string) ?? ''}
+                onChange={(e) =>
+                  onChange({ approval: { ...approval, message: e.target.value } })
+                }
+                placeholder="Approval prompt message"
+              />
+            )}
+          </FormField>
+          <FormField label="Timeout (seconds)" className="mb-2.5 [&>label:first-child]:text-xs">
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                error={invalid}
+                type="number"
+                value={(approval.timeout as number) ?? 0}
+                onChange={(e) =>
+                  onChange({ approval: { ...approval, timeout: Number(e.target.value) || 0 } })
+                }
+                min={0}
+              />
+            )}
+          </FormField>
         </>
       )}
     </div>
@@ -269,11 +287,15 @@ export function CommonFields({
 
 function DraftTextInput({
   id,
+  describedBy,
+  invalid,
   value,
   onCommit,
   placeholder,
 }: {
   id: string
+  describedBy?: string
+  invalid: boolean
   value: string
   onCommit: (draft: string) => string
   placeholder: string
@@ -281,10 +303,11 @@ function DraftTextInput({
   const [draft, setDraft] = useState(value)
 
   return (
-    <input
+    <Input
       id={id}
+      aria-describedby={describedBy}
+      error={invalid}
       type="text"
-      className={FIELD_INPUT_CLS}
       value={draft}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={() => setDraft(onCommit(draft))}
@@ -313,12 +336,13 @@ function KeyValueDraftEditor({
   const [draftPairs, setDraftPairs] = useState(pairs)
 
   return (
-    <div className={KV_CLS}>
+    <div className="flex flex-col gap-1">
       {draftPairs.map((pair, index) => (
-        <div key={index} className={KV_ROW_CLS}>
-          <input
+        <div key={index} className="flex items-center gap-1">
+          <Input
             type="text"
-            className={KV_INPUT_CLS}
+            wrapperClassName="min-w-0 flex-1"
+            className="h-8 rounded px-2 py-1 text-sm"
             value={pair.key}
             aria-label={`${sectionName} key ${index + 1}`}
             onChange={(e) => {
@@ -329,9 +353,10 @@ function KeyValueDraftEditor({
             onBlur={() => onChange(draftPairs)}
             placeholder="key"
           />
-          <input
+          <Input
             type="text"
-            className={KV_INPUT_CLS}
+            wrapperClassName="min-w-0 flex-1"
+            className="h-8 rounded px-2 py-1 text-sm"
             value={pair.value}
             aria-label={`${sectionName} value ${index + 1}`}
             onChange={(e) => {
@@ -342,9 +367,11 @@ function KeyValueDraftEditor({
             onBlur={() => onChange(draftPairs)}
             placeholder="value"
           />
-          <button
+          <Button
             type="button"
-            className={KV_REMOVE_CLS}
+            variant="destructive"
+            size="icon"
+            className={cn(coarseHitAreaCls, 'size-7 min-h-7 shrink-0 border-border')}
             onClick={() => {
               const next = draftPairs.filter((_, pairIndex) => pairIndex !== index)
               setDraftPairs(next)
@@ -353,17 +380,19 @@ function KeyValueDraftEditor({
             aria-label={`Remove ${sectionName} row ${index + 1}`}
           >
             &times;
-          </button>
+          </Button>
         </div>
       ))}
-      <button
+      <Button
         type="button"
-        className={KV_ADD_CLS}
+        variant="ghost"
+        size="sm"
+        className={cn(coarseHitAreaCls, 'justify-start border-dashed border-border')}
         onClick={() => setDraftPairs([...draftPairs, { key: '', value: '' }])}
         aria-label={`Add ${sectionName} row`}
       >
         + Add
-      </button>
+      </Button>
     </div>
   )
 }

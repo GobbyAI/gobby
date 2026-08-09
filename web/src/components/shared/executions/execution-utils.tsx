@@ -2,32 +2,11 @@ import { useState } from "react";
 import { ActivityRowStatusDot } from "../../activity/ActivityRowStatusDot";
 import { formatDuration, formatJson } from "./executionFormatters";
 import { getExecStatusKind } from "../../../lib/pipelineColors";
-
-// ── Shared pipeline class constants ──
-//
-// Used across Activity pipeline details and ReportingTab; defined here so
-// consumers can import the same string. Light-theme-specific overrides
-// for these classes that involve color-mix() math (rather than swapping a
-// theme-aware token) stay as Tailwind arbitrary variants here; everything
-// theme-aware via tokens (badges, soft tints) needs no per-theme variant.
-
-export const PIPELINE_BTN_CLS =
-  "px-3 py-1.5 rounded-md text-md font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed pointer-coarse:min-h-11";
-export const PIPELINE_BTN_APPROVE_CLS =
-  "bg-[var(--color-success-soft)] border border-[var(--color-success-foreground)] text-[var(--color-success-foreground)] hover:not-disabled:bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)]";
-export const PIPELINE_BTN_REJECT_CLS =
-  "bg-[var(--color-error-soft)] border border-[var(--color-error)] text-[var(--color-error)] hover:not-disabled:bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)]";
-
-export const PIPELINE_APPROVAL_CLS =
-  "bg-[var(--color-warning-soft)] border border-[var(--color-warning-soft)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-warning-foreground)_8%,transparent)] [[data-theme=light]_&]:border-[var(--color-warning-foreground)] rounded-md p-3 mb-3";
-export const PIPELINE_APPROVAL_MESSAGE_CLS =
-  "flex items-center gap-2 mb-3 text-[var(--color-warning-foreground)] [&>svg]:shrink-0";
-export const PIPELINE_APPROVAL_ACTIONS_CLS = "flex gap-2";
-
-export const PIPELINE_ERROR_CLS =
-  "bg-[var(--color-error-soft)] border border-[var(--color-error)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] rounded-md p-3 mt-3 text-[var(--color-error)] text-base";
-
-export const PIPELINE_STEPS_CLS = "flex flex-col gap-1";
+import { cn } from "../../../lib/utils";
+import { Badge, type BadgeProps } from "../../ui/Badge";
+import { Button } from "../../ui/Button";
+import { Card } from "../../ui/Card";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 // ── Status Badge ──
 
@@ -45,37 +24,26 @@ const STATUS_LABELS: Record<string, string> = {
   timeout: "Timeout",
 };
 
-const BADGE_BASE_CLS =
-  "text-xs px-2 py-0.5 rounded-full font-medium uppercase tracking-wider";
-
-const BADGE_STATUS_CLS: Record<string, string> = {
-  pending: "bg-[var(--bg-tertiary)] text-[var(--text-muted)]",
-  running: "bg-[var(--color-info-soft)] text-[var(--color-info)]",
-  completed:
-    "bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]",
-  failed: "bg-[var(--color-error-soft)] text-[var(--color-error)]",
-  waiting_approval:
-    "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
-  skipped: "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
-  success:
-    "bg-[var(--color-success-soft)] text-[var(--color-success-foreground)]",
-  error: "bg-[var(--color-error-soft)] text-[var(--color-error)]",
-  timeout:
-    "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
-  interrupted:
-    "bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]",
-  cancelled: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]",
-  provider: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]",
-  model: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]",
-  mode: "bg-[var(--bg-tertiary)] text-[var(--text-secondary)]",
-};
+function getBadgeVariant(status: string): BadgeProps["variant"] {
+  if (status === "completed" || status === "success") return "success";
+  if (status === "failed" || status === "error") return "error";
+  if (status === "running") return "info";
+  if (
+    status === "waiting_approval" ||
+    status === "skipped" ||
+    status === "timeout" ||
+    status === "interrupted"
+  ) {
+    return "warning";
+  }
+  return "default";
+}
 
 export function StatusBadge({ status }: { status: string }) {
-  const variant = BADGE_STATUS_CLS[status] ?? BADGE_STATUS_CLS.pending;
   return (
-    <span className={`${BADGE_BASE_CLS} ${variant}`}>
+    <Badge variant={getBadgeVariant(status)} className="uppercase tracking-wider">
       {STATUS_LABELS[status] || status}
-    </span>
+    </Badge>
   );
 }
 
@@ -101,37 +69,19 @@ export interface StepData {
 // pseudo-element). PipelinesTab activity-panel detail uses "timeline";
 // ReportingTab drilldowns use "card".
 
-const STEP_CARD_WRAPPER_CLS =
-  "bg-[var(--bg-tertiary)] rounded-md overflow-hidden";
-const STEP_HEADER_CLS =
-  "flex items-center justify-between px-3 py-2 cursor-pointer hover:bg-[var(--bg-secondary)] pointer-coarse:min-h-11";
-const STEP_INFO_CLS = "flex items-center gap-2";
-const STEP_INDEX_CLS =
-  "text-sm text-[var(--text-muted)] font-[inherit]";
-const STEP_NAME_CLS = "text-base";
-const STEP_META_CLS = "flex items-center gap-2";
-const STEP_TIMING_CLS =
-  "text-xs text-[var(--text-muted)] tabular-nums font-[inherit]";
-const STEP_OUTPUT_CLS =
-  "px-3 py-2 border-t border-border bg-[var(--bg-secondary)]";
-const STEP_OUTPUT_PRE_CLS =
-  "font-mono text-sm whitespace-pre-wrap break-words text-[var(--text-secondary)] m-0 max-h-[200px] overflow-y-auto leading-[1.5]";
-const STEP_ERROR_CLS =
-  "px-3 py-2 border-t border-border bg-[var(--color-error-soft)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] text-[var(--color-error)] text-md";
-
-const STEP_TIMELINE_STATUS_CLS =
-  "absolute left-[-8px] top-2.5 inline-flex h-4 w-4 items-center justify-center bg-[var(--bg-primary)]";
-
-const STEP_STATUS_CLS: Record<string, string> = {
-  completed: "text-[var(--color-success-foreground)]",
-  success: "text-[var(--color-success-foreground)]",
-  failed: "text-[var(--color-error)]",
-  error: "text-[var(--color-error)]",
-  running: "text-[var(--color-info)]",
-  waiting_approval: "text-[var(--color-warning-foreground)]",
-  skipped: "text-[var(--color-warning-foreground)]",
-  timeout: "text-[var(--color-error)]",
-};
+function getStepStatusClass(status: string): string {
+  if (status === "completed" || status === "success") {
+    return "text-[var(--color-success-foreground)]";
+  }
+  if (status === "failed" || status === "error" || status === "timeout") {
+    return "text-[var(--color-error)]";
+  }
+  if (status === "running") return "text-[var(--color-info)]";
+  if (status === "waiting_approval" || status === "skipped") {
+    return "text-[var(--color-warning-foreground)]";
+  }
+  return "text-[var(--text-muted)]";
+}
 
 export type StepLayout = "card" | "timeline";
 
@@ -148,43 +98,41 @@ export function StepDisplay({
 
   const inner = (
     <>
-      <div
-        className={STEP_HEADER_CLS}
-        role="button"
-        tabIndex={0}
+      <Button
+        type="button"
+        variant="ghost"
+        className={cn(
+          coarseHitAreaCls,
+          "h-auto w-full justify-between rounded-none border-0 px-3 py-2 text-left hover:bg-[var(--bg-secondary)]",
+        )}
+        aria-expanded={showOutput}
         onClick={() => setShowOutput(!showOutput)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setShowOutput(!showOutput);
-          }
-        }}
       >
-        <div className={STEP_INFO_CLS}>
-          <span className={STEP_INDEX_CLS}>{index + 1}.</span>
-          <span className={STEP_NAME_CLS}>{step.step_id}</span>
+        <div className="flex items-center gap-2">
+          <span className="font-[inherit] text-sm text-[var(--text-muted)]">{index + 1}.</span>
+          <span className="text-base">{step.step_id}</span>
         </div>
-        <div className={STEP_META_CLS}>
+        <div className="flex items-center gap-2">
           {step.started_at && step.completed_at && (
-            <span className={STEP_TIMING_CLS}>
+            <span className="font-[inherit] text-xs text-[var(--text-muted)] tabular-nums">
               {formatDuration(step.started_at, step.completed_at)}
             </span>
           )}
           {layout === "card" && <StepStatusIcon status={step.status} />}
           {step.output_json && <ChevronIcon expanded={showOutput} />}
         </div>
-      </div>
+      </Button>
 
       {showOutput && step.output_json && (
-        <div className={STEP_OUTPUT_CLS}>
-          <pre className={STEP_OUTPUT_PRE_CLS}>
+        <div className="border-t border-border bg-[var(--bg-secondary)] px-3 py-2">
+          <pre className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-[1.5] text-[var(--text-secondary)]">
             {formatJson(step.output_json)}
           </pre>
         </div>
       )}
 
       {step.error && (
-        <div className={STEP_ERROR_CLS}>
+        <div className="border-t border-border bg-[var(--color-error-soft)] px-3 py-2 text-md text-[var(--color-error)] [[data-theme=light]_&]:bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)]">
           <span>{step.error}</span>
         </div>
       )}
@@ -194,7 +142,7 @@ export function StepDisplay({
   if (layout === "timeline") {
     return (
       <div className="relative ml-3 pl-3 border-l border-border last:border-l-transparent">
-        <span className={STEP_TIMELINE_STATUS_CLS}>
+        <span className="absolute left-[-8px] top-2.5 inline-flex size-4 items-center justify-center bg-[var(--bg-primary)]">
           <StepStatusIcon status={step.status} />
         </span>
         {inner}
@@ -202,7 +150,11 @@ export function StepDisplay({
     );
   }
 
-  return <div className={STEP_CARD_WRAPPER_CLS}>{inner}</div>;
+  return (
+    <Card className="overflow-hidden rounded-md border-0 bg-[var(--bg-tertiary)]">
+      {inner}
+    </Card>
+  );
 }
 
 export function StepStatusIcon({ status }: { status: string }) {
@@ -234,11 +186,10 @@ export function StepStatusIcon({ status }: { status: string }) {
   }
 
   const label = `Step status: ${status.replace(/_/g, " ")}`;
-  const statusClass = STEP_STATUS_CLS[status] ?? "text-[var(--text-muted)]";
 
   return (
     <span
-      className={`inline-flex items-center justify-center ${statusClass}`}
+      className={cn("inline-flex items-center justify-center", getStepStatusClass(status))}
       role="img"
       aria-label={label}
       title={label}

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -35,6 +35,15 @@ const AGENT_EDITOR_FILES = [
 const AGENT_SURFACE_FILES = [
   'src/components/activity/agents/AgentsTabList.tsx',
   'src/components/agents/AgentPortfolioPage.tsx',
+] as const
+const PIPELINE_SURFACE_FILES = [
+  'src/components/activity/PipelinesTab.tsx',
+  'src/components/activity/pipelines/PipelineEditor.tsx',
+  'src/components/activity/pipelines/PipelineStepFields.tsx',
+  'src/components/activity/pipelines/PipelineStepList.tsx',
+  'src/components/activity/pipelines/PipelinesDefsDetail.tsx',
+  'src/components/activity/pipelines/PipelinesDefsList.tsx',
+  'src/components/shared/executions/execution-utils.tsx',
 ] as const
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
@@ -347,6 +356,19 @@ describe('style ratchet', () => {
       }
     }
     expect(scan.cssFiles).not.toContain('src/components/shared/SidebarPanel.css')
+  })
+
+  it('keeps swept pipeline surfaces at zero raw-control and shared-style debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of PIPELINE_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+    expect(
+      existsSync('src/components/activity/pipelines/PipelineEditor.styles.ts'),
+      'PipelineEditor.styles.ts must stay retired',
+    ).toBe(false)
+    expect(scan.clsConstant.get('src/components/shared/executions/execution-utils.tsx') ?? 0).toBe(0)
   })
 
   it('keeps *_CLS style constants at or below the recorded per-file counts', () => {

@@ -4,6 +4,7 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { Button } from '../ui/Button'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
 import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
@@ -414,7 +415,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
             type="button"
             variant="accent"
             size="sm"
-            className="activity-panel-action-btn activity-filter-button ml-auto"
+            className={`activity-panel-action-btn activity-filter-button ml-auto ${coarseHitAreaCls}`}
             onClick={() => setShowFilterDropdown((v) => !v)}
             title="Filter pipelines"
             aria-label="Filter pipelines"
@@ -453,14 +454,16 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {segment === 'defs' ? (
         <>
           {definitionError && (
-            <button
+            <Button
               type="button"
-              className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+              variant="destructive"
+              size="sm"
+              className={`w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm ${coarseHitAreaCls}`}
               onClick={() => setDefinitionError(null)}
               aria-label={`Dismiss error: ${definitionError}`}
             >
               {definitionError}
-            </button>
+            </Button>
           )}
           <div className="flex min-h-0 flex-1 flex-col">
             <div
@@ -538,10 +541,11 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         ) : (
           <>
             {executions.map((exec) => (
-              <button
+              <Button
                 type="button"
                 key={exec.id}
-                className={`pipeline-exec-row${selectedId === exec.id ? ' pipeline-exec-row--active' : ''}`}
+                variant="ghost"
+                className={`pipeline-exec-row${selectedId === exec.id ? ' pipeline-exec-row--active' : ''} ${coarseHitAreaCls}`}
                 onClick={() => handleSelect(exec.id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -553,16 +557,19 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                     {formatDateTime(exec.created_at)}
                   </span>
                 </div>
-              </button>
+              </Button>
             ))}
             {hasMore && (
-              <button
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground ${coarseHitAreaCls}`}
                 onClick={handleLoadMore}
                 disabled={loadingMore}
               >
                 {loadingMore ? 'Loading...' : 'Load more'}
-              </button>
+              </Button>
             )}
           </>
         )}

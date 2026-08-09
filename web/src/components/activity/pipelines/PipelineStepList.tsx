@@ -1,31 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '../../../lib/utils'
-import {
-  ADD_BTN_CLS,
-  ADD_CLS,
-  ADD_DOT_CLS,
-  ADD_DROPDOWN_CLS,
-  ADD_OPTION_CLS,
-  EMPTY_CLS,
-  FIELD_CLS,
-  FIELD_INPUT_CLS,
-  FIELD_LABEL_CLS,
-  FIELD_SELECT_CLS,
-  SECTION_HEADER_CLS,
-  STEP_ACTION_CLS,
-  STEP_ACTION_DANGER_CLS,
-  STEP_ACTIONS_CLS,
-  STEP_BODY_CLS,
-  STEP_CHEVRON_CLS,
-  STEP_CLS,
-  STEP_COUNT_CLS,
-  STEP_HEADER_CLS,
-  STEP_ID_CLS,
-  STEP_PREVIEW_CLS,
-  STEPS_CLS,
-  STEPS_SIDEBAR_CLS,
-  TYPE_BADGE_CLS,
-} from './PipelineEditor.styles'
+import { Button } from '../../ui/Button'
+import { Card } from '../../ui/Card'
+import { Chip } from '../../ui/Chip'
+import { FormField } from '../../ui/FormField'
+import { Input } from '../../ui/Input'
+import { NativeSelect } from '../../ui/NativeSelect'
+import { coarseHitAreaCls } from '../../ui/controlStyles'
 import type {
   PipelineStep,
   StepChangeHandler,
@@ -69,14 +50,19 @@ export function PipelineStepList({
   onAddStep,
 }: PipelineStepListProps) {
   return (
-    <div className={cn(STEPS_CLS, inSidebar && STEPS_SIDEBAR_CLS)}>
-      <div className={SECTION_HEADER_CLS}>
+    <div
+      className={cn(
+        'flex-1 overflow-y-auto px-4 pt-3 pb-5',
+        inSidebar && '!overflow-visible !pb-0',
+      )}
+    >
+      <div className="mb-2.5 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.5px] text-secondary">
         Steps
-        <span className={STEP_COUNT_CLS}>{steps.length}</span>
+        <Chip>{steps.length}</Chip>
       </div>
 
       {steps.length === 0 && (
-        <div className={EMPTY_CLS}>No steps yet. Add one below.</div>
+        <div className="p-6 text-center text-md text-secondary">No steps yet. Add one below.</div>
       )}
 
       {steps.map((step, index) => (
@@ -124,82 +110,97 @@ function PipelineStepCard({
   const typeColor = getTypeColor(type)
 
   return (
-    <div className={STEP_CLS}>
-      <button
+    <Card className="mb-2 overflow-hidden bg-[var(--bg-secondary)]">
+      <Button
         type="button"
-        className={STEP_HEADER_CLS}
+        variant="ghost"
+        className={cn(
+          coarseHitAreaCls,
+          'h-auto w-full justify-start rounded-none border-0 px-3 py-2.5 text-left hover:bg-[var(--bg-tertiary)]',
+        )}
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        <span
-          className={TYPE_BADGE_CLS}
+        <Chip
           style={{
             background: `color-mix(in srgb, ${typeColor} 12%, transparent)`,
             color: typeColor,
           }}
         >
           {type}
+        </Chip>
+        <span className="shrink-0 text-md font-medium text-primary">{step.id}</span>
+        <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-secondary">
+          {getStepPreview(step)}
         </span>
-        <span className={STEP_ID_CLS}>{step.id}</span>
-        <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
-        <span className={STEP_CHEVRON_CLS}>{expanded ? '▾' : '▸'}</span>
-      </button>
+        <span className="ml-auto shrink-0 text-sm text-secondary">{expanded ? '▾' : '▸'}</span>
+      </Button>
 
       {expanded && (
-        <div className={STEP_BODY_CLS}>
-          <div className={STEP_ACTIONS_CLS}>
-            <button
+        <div className="border-t border-border px-3 pb-3">
+          <div className="flex gap-1.5 py-2">
+            <Button
               type="button"
-              className={STEP_ACTION_CLS}
+              size="sm"
+              className={coarseHitAreaCls}
               onClick={() => onMove(-1)}
               disabled={index === 0}
               title="Move up"
             >
               &uarr;
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={STEP_ACTION_CLS}
+              size="sm"
+              className={coarseHitAreaCls}
               onClick={() => onMove(1)}
               disabled={index === totalSteps - 1}
               title="Move down"
             >
               &darr;
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className={cn(STEP_ACTION_CLS, STEP_ACTION_DANGER_CLS)}
+              variant="destructive"
+              size="sm"
+              className={coarseHitAreaCls}
               onClick={onDelete}
               title="Delete step"
             >
               Delete
-            </button>
+            </Button>
           </div>
 
-          <label className={FIELD_CLS}>
-            <span className={FIELD_LABEL_CLS}>Step ID</span>
-            <input
-              type="text"
-              className={FIELD_INPUT_CLS}
-              value={step.id}
-              onChange={(e) => onUpdate({ id: e.target.value })}
-            />
-          </label>
+          <FormField label="Step ID" className="mb-2.5 [&>label:first-child]:text-xs">
+            {({ id, describedBy, invalid }) => (
+              <Input
+                id={id}
+                aria-describedby={describedBy}
+                error={invalid}
+                type="text"
+                value={step.id}
+                onChange={(e) => onUpdate({ id: e.target.value })}
+              />
+            )}
+          </FormField>
 
-          <label className={FIELD_CLS}>
-            <span className={FIELD_LABEL_CLS}>Type</span>
-            <select
-              className={FIELD_SELECT_CLS}
-              value={type}
-              onChange={(e) => onChangeType(e.target.value as StepType)}
-            >
-              {STEP_TYPES.map((stepType) => (
-                <option key={stepType.value} value={stepType.value}>
-                  {stepType.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FormField label="Type" className="mb-2.5 [&>label:first-child]:text-xs">
+            {({ id, describedBy, invalid }) => (
+              <NativeSelect
+                id={id}
+                aria-describedby={describedBy}
+                error={invalid}
+                value={type}
+                onChange={(e) => onChangeType(e.target.value as StepType)}
+              >
+                {STEP_TYPES.map((stepType) => (
+                  <option key={stepType.value} value={stepType.value}>
+                    {stepType.label}
+                  </option>
+                ))}
+              </NativeSelect>
+            )}
+          </FormField>
 
           {type === 'exec' && <ExecFields step={step} onChange={onUpdate} />}
           {type === 'prompt' && <PromptFields step={step} onChange={onUpdate} />}
@@ -210,7 +211,7 @@ function PipelineStepCard({
           <CommonFields step={step} type={type} onChange={onUpdate} />
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -237,33 +238,35 @@ function AddStepButton({ onAdd }: { onAdd: (type: StepType) => void }) {
   }, [open])
 
   return (
-    <div className={ADD_CLS} ref={containerRef}>
-      <button
+    <div className="relative mt-2" ref={containerRef}>
+      <Button
         type="button"
-        className={ADD_BTN_CLS}
+        variant="outline"
+        className={cn(coarseHitAreaCls, 'h-auto w-full border-dashed p-2.5')}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
         + Add Step
-      </button>
+      </Button>
       {open && (
-        <div className={ADD_DROPDOWN_CLS}>
+        <Card className="absolute bottom-full left-0 z-10 mb-1 min-w-40 bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]">
           {STEP_TYPES.map((stepType) => (
-            <button
+            <Button
               key={stepType.value}
               type="button"
-              className={ADD_OPTION_CLS}
+              variant="ghost"
+              className={cn(coarseHitAreaCls, 'h-auto w-full justify-start px-2.5 py-2 text-md')}
               onClick={() => {
                 onAdd(stepType.value)
                 setOpen(false)
               }}
             >
-              <span className={ADD_DOT_CLS} style={{ background: stepType.color }} />
+              <span className="size-2 shrink-0 rounded-full" style={{ background: stepType.color }} />
               {stepType.label}
-            </button>
+            </Button>
           ))}
-        </div>
+        </Card>
       )}
     </div>
   )

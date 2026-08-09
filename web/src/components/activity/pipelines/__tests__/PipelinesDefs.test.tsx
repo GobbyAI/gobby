@@ -91,6 +91,9 @@ describe('Pipelines defs segment', () => {
         'Deploy production services with staged approvals.',
       ),
     ).not.toBeInTheDocument()
+    const pipelineChips = screen.getAllByText('PIPELINE')
+    expect(pipelineChips).toHaveLength(2)
+    expect(pipelineChips.every((chip) => chip.classList.contains('h-5'))).toBe(true)
     expect(screen.getByRole('radio', { name: 'Defs' })).toHaveAttribute('aria-checked', 'true')
     expect(window.localStorage.getItem('gobby-pipelines-segment-v1')).toBe('defs')
 
