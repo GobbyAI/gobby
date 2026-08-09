@@ -1,12 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AgentEditForm, type AgentFormData } from '../AgentEditForm'
-
-vi.mock('../../shared/SidebarPanel', () => ({
-  SidebarPanel: ({ headerContent }: { headerContent?: ReactNode }) => <>{headerContent}</>,
-}))
 
 const form: AgentFormData = {
   name: 'reviewer',

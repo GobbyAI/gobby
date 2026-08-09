@@ -32,6 +32,10 @@ const AGENT_EDITOR_FILES = [
   'src/components/agents/AgentVariablesEditor.tsx',
   'src/components/agents/IsolationTargetSelector.tsx',
 ] as const
+const AGENT_SURFACE_FILES = [
+  'src/components/activity/agents/AgentsTabList.tsx',
+  'src/components/agents/AgentPortfolioPage.tsx',
+] as const
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
@@ -334,6 +338,15 @@ describe('style ratchet', () => {
       }
     }
     expect(scan.clsConstant.get('src/components/agents/agents-styles.ts') ?? 0).toBe(0)
+  })
+
+  it('keeps swept agent surfaces at zero raw-control and SidebarPanel stylesheet debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of AGENT_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+    expect(scan.cssFiles).not.toContain('src/components/shared/SidebarPanel.css')
   })
 
   it('keeps *_CLS style constants at or below the recorded per-file counts', () => {
