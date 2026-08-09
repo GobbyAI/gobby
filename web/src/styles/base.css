@@ -80,14 +80,21 @@ body {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+/* The reduced-motion kill switch lives in the `base` layer deliberately:
+ * for !important declarations, earlier layers outrank later ones and any
+ * layer outranks un-layered styles — so this beats the !important
+ * `animate-*` utilities the Tailwind `important: true` build emits.
+ * Un-layered, it silently loses to them. */
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 

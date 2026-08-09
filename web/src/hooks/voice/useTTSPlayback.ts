@@ -246,6 +246,10 @@ export function useTTSPlayback({
   }, [stopTTS, ttsEnabled])
 
   useEffect(() => {
+    // Re-arm on every effect run: StrictMode (and any dep change) runs the
+    // cleanup and re-runs the effect on the SAME ref, so a cleanup-only
+    // `mountedRef.current = false` would permanently kill TTS playback.
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
       stopLocalPlayback()

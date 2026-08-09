@@ -11,3 +11,5 @@ public/vad.worklet.bundle.min.js
 
 # Ghostty wasm (copied from node_modules by postinstall)
 public/wasm/
+test-results/
+playwright-report/
