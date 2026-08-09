@@ -1162,10 +1162,9 @@ Targets:
 ```
 
 
-**Human handoff** `kind: verification`
+**Cap extension** `kind: verification`
 
 - trigger: `needs_review` at the operator-set review cap of 3 finalized adversary rounds
-- finalized_rounds: 3 (Round 1: 15 findings; Round 2: 11 findings; Round 3: 14 findings — 40 total, all accepted and repaired)
-- state: no further adversary round is launched; the artifact carries every accepted repair and is base-validated at this commit
-- continuation: the plan advances to expansion only through the coordinator-only handoff tools (`derive_plan_handoff_manifest` then `apply_plan_handoff_manifest`) with explicit human approval, followed by `uv run gobby plans validate <plan> --mode expansion`. Human handoff never manufactures an adversary verdict, findings, or `coverage_attestation`; the `## M1 Task Manifest` written by that route is the coordinator-derived manifest, not a review-approved one.
-- residual risk accepted by the operator: the round-3 repairs (14 findings, +104/−40 lines across the target inventories, dependency chains, and acceptance items) have not themselves been adversarially reviewed. Round-3 findings were overwhelmingly inventory and sequencing precision — the classes an expansion-time target audit and the per-leaf ratchet/guard suite re-check mechanically — and every repair was verified against a live census before adoption.
+- finalized_rounds_at_trigger: 3 (Round 1: 15 findings; Round 2: 11 findings; Round 3: 14 findings — 40 total, all accepted and repaired)
+- operator_decision: cap raised from 3 to 4 (user, 2026-08-09) — round 3 still emitted 14 blocking findings, so the finding rate had not converged and human handoff was declined in favor of another adversarial round
+- effect: the human-handoff route (`derive_plan_handoff_manifest` / `apply_plan_handoff_manifest`) was not entered; the artifact carries every accepted repair and is base-validated at this commit, and Round 4 reviews the round-3 repairs that no adversary has yet seen
