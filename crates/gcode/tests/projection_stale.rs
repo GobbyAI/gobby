@@ -15,6 +15,10 @@ mod serial_db {
     // the hub stores project ids as native uuid.
     const PROJECT_ID: &str = "4424ae52-9ce0-52ae-af19-8c3a093c351f";
     const FILE_PATH: &str = "src/lib.rs";
+    const CODE_INDEX_UUID_NAMESPACE: uuid::Uuid = uuid::Uuid::from_bytes([
+        0xc0, 0xde, 0x1d, 0xe0, 0x00, 0x00, 0x40, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00,
+    ]);
 
     /// Parse a fixture id for binding against native-uuid hub columns.
     fn uuid_param(id: &str) -> uuid::Uuid {
@@ -36,7 +40,7 @@ mod serial_db {
     /// Deterministic uuid for a seeded child row of `project_id`.
     fn row_uuid(project_id: &str, label: &str) -> uuid::Uuid {
         uuid::Uuid::new_v5(
-            &gobby_code::models::CODE_INDEX_UUID_NAMESPACE,
+            &CODE_INDEX_UUID_NAMESPACE,
             format!("{project_id}:{label}").as_bytes(),
         )
     }

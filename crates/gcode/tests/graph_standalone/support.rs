@@ -1,10 +1,35 @@
 pub(super) use crate::common::{ProjectCleanup, cleanup_project};
-pub(super) use gobby_code::graph::typed_query::string_params;
 pub(super) use gobby_core::falkor::GraphClient;
 pub(super) use postgres::{Client, NoTls};
 pub(super) use serde_json::Value;
 pub(super) use std::fs;
 pub(super) use std::process::{Command, Output};
+
+pub(super) fn string_params(values: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+    values
+        .iter()
+        .map(|(key, value)| ((*key).to_string(), cypher_string_literal(value)))
+        .collect()
+}
+
+fn cypher_string_literal(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            '\u{0008}' => escaped.push_str("\\b"),
+            '\u{000C}' => escaped.push_str("\\f"),
+            ch if ch.is_control() => escaped.push_str(&format!("\\u{:04X}", ch as u32)),
+            ch => escaped.push(ch),
+        }
+    }
+    format!("'{escaped}'")
+}
 
 // Fixture ids are UUIDv5(CODE_INDEX_UUID_NAMESPACE, <legacy label>) because the
 // hub stores every code_* id column as native uuid. The legacy label is kept in
@@ -17,7 +42,6 @@ pub(super) const NO_PHANTOM_PROJECT_ID: &str = "9865ea81-c9bb-5edc-8de6-89568636
 pub(super) const GO_LOCAL_PROJECT_ID: &str = "acd54de2-7205-5fb0-a6c6-20570f333d26"; // graph-standalone-go-local
 pub(super) const JS_DEFAULT_LOCAL_PROJECT_ID: &str = "3395e8e7-92ca-504f-876c-552a46f195c9"; // graph-standalone-js-default-local
 pub(super) const CPP_LOCAL_PROJECT_ID: &str = "683a03e5-7426-5c46-8e5a-3044389e9e56"; // graph-standalone-cpp-local
-pub(super) const CPP_DB_LOCAL_PROJECT_ID: &str = "636a88e5-5cb1-5f3d-91e0-29c1af3d1a71"; // graph-standalone-cpp-db-local
 pub(super) const JAVA_LOCAL_PROJECT_ID: &str = "75cc2ce2-af55-591b-93ad-376b7f1c1a81"; // graph-standalone-java-local
 pub(super) const RUST_LOCAL_PROJECT_ID: &str = "6f9f3805-07fa-5a2f-ab94-b98cb174ce0e"; // graph-standalone-rust-local
 pub(super) const RUST_TUPLE_LOCAL_PROJECT_ID: &str = "c34315ca-8611-52fb-a4fb-e273ccb73652"; // graph-standalone-rust-tuple-local

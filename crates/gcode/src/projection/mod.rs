@@ -1,6 +1,10 @@
 use crate::config::Context;
 pub mod sync;
 
+#[cfg(test)]
+#[path = "tests/stale.rs"]
+mod stale_tests;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectionReconcileFailure {
     pub target: sync::ProjectionTarget,

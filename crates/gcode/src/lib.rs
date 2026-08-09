@@ -1,35 +1,109 @@
 pub(crate) mod bm25_health;
 pub mod codewiki_facts;
 pub mod commands;
-pub mod config;
+#[allow(
+    unused_imports,
+    reason = "private implementation retains test-only imports"
+)]
+mod config;
 pub mod contract;
-pub mod db;
-pub mod freshness;
-pub mod git;
-pub mod graph;
-pub mod index;
+#[allow(
+    dead_code,
+    reason = "private implementation retains test-only entrypoints"
+)]
+mod db;
+mod freshness;
+mod git;
+#[allow(
+    clippy::enum_variant_names,
+    dead_code,
+    unused_imports,
+    reason = "privatization preserves established graph error and test entrypoints"
+)]
+mod graph;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "private implementation retains test-only entrypoints"
+)]
+mod index;
 pub(crate) mod index_lock;
-pub mod models;
-pub mod output;
+#[allow(dead_code, reason = "private implementation retains test-only types")]
+mod models;
+mod output;
 pub(crate) mod postgres_errors;
-pub mod project;
-pub mod projection;
-pub mod savings;
-pub mod schema;
-pub mod search;
-pub mod secrets;
-pub mod setup;
-pub mod skill;
+mod project;
+mod projection;
+#[allow(dead_code, reason = "private implementation retains test-only helpers")]
+mod savings;
+mod schema;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "private implementation retains test-only query entrypoints"
+)]
+mod search;
+#[allow(
+    unused_imports,
+    reason = "private implementation retains test-only imports"
+)]
+mod secrets;
+#[allow(
+    unused_imports,
+    reason = "private implementation retains test-only imports"
+)]
+mod setup;
+mod skill;
 #[doc(hidden)]
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_env;
-pub mod utils;
-pub mod vector;
+mod utils;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "private implementation retains test-only vector entrypoints"
+)]
+mod vector;
 pub(crate) mod visibility;
 
+extern crate self as gobby_code;
+
+mod cli;
+mod dispatch;
+
+#[cfg(test)]
+#[path = "../tests/common/mod.rs"]
+mod integration_test_support;
+
+pub use graph::code_graph::{GraphLifecycleOutput, GraphLifecycleRequest, GraphReadRequest};
 pub use index::api::{
-    IndexDegradation, IndexDurations, IndexOutcome, IndexRequest, UnsupportedFileType, index_files,
+    CodeFactWriteRequest, CodeFactWriteSummary, IndexDegradation, IndexDurations, IndexOutcome,
+    IndexRequest,
 };
+pub use projection::sync::{ProjectionSyncRequest, ProjectionSyncStatus};
+pub use vector::code_symbols::{
+    CodeSymbolVectorPayload, CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest,
+};
+
+/// Run the `gcode` command-line application.
+pub fn run_cli() -> std::process::ExitCode {
+    reset_sigpipe();
+    dispatch::run_with_exit_code()
+}
+
+/// Restore the default `SIGPIPE` disposition so a closed stdout terminates
+/// quietly instead of panicking inside `println!`.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // SAFETY: called once at startup before any threads are spawned; resetting a
+    // signal to its default disposition is async-signal-safe.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
 
 #[cfg(test)]
 mod tests {
@@ -62,21 +136,20 @@ mod tests {
             );
         }
 
-        assert_cli_independent_contract::<crate::index::api::CodeFactWriteRequest>();
-        assert_cli_independent_contract::<crate::index::api::CodeFactWriteSummary>();
-        assert_cli_independent_contract::<crate::index::api::IndexRequest>();
-        assert_cli_independent_contract::<crate::index::api::IndexOutcome>();
-        assert_cli_independent_contract::<crate::index::api::IndexDurations>();
-        assert_cli_independent_contract::<crate::index::api::IndexDegradation>();
-        assert_cli_independent_contract::<crate::graph::code_graph::GraphLifecycleRequest>();
-        assert_cli_independent_contract::<crate::graph::code_graph::GraphLifecycleOutput>();
-        assert_cli_independent_contract::<crate::graph::code_graph::GraphReadRequest>();
-        assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorSearchRequest>(
-        );
-        assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorSearchHit>();
-        assert_cli_independent_contract::<crate::vector::code_symbols::CodeSymbolVectorPayload>();
-        assert_cli_independent_contract::<crate::projection::sync::ProjectionSyncRequest>();
-        assert_cli_independent_contract::<crate::projection::sync::ProjectionSyncStatus>();
+        assert_cli_independent_contract::<crate::CodeFactWriteRequest>();
+        assert_cli_independent_contract::<crate::CodeFactWriteSummary>();
+        assert_cli_independent_contract::<crate::IndexRequest>();
+        assert_cli_independent_contract::<crate::IndexOutcome>();
+        assert_cli_independent_contract::<crate::IndexDurations>();
+        assert_cli_independent_contract::<crate::IndexDegradation>();
+        assert_cli_independent_contract::<crate::GraphLifecycleRequest>();
+        assert_cli_independent_contract::<crate::GraphLifecycleOutput>();
+        assert_cli_independent_contract::<crate::GraphReadRequest>();
+        assert_cli_independent_contract::<crate::CodeSymbolVectorSearchRequest>();
+        assert_cli_independent_contract::<crate::CodeSymbolVectorSearchHit>();
+        assert_cli_independent_contract::<crate::CodeSymbolVectorPayload>();
+        assert_cli_independent_contract::<crate::ProjectionSyncRequest>();
+        assert_cli_independent_contract::<crate::ProjectionSyncStatus>();
     }
 
     #[test]

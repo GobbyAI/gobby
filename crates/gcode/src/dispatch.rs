@@ -1,5 +1,5 @@
+use crate::{commands, config, freshness, output, setup};
 use clap::Parser as _;
-use gobby_code::{commands, config, freshness, output, setup};
 
 use crate::cli::{self, AiRouteArg, Cli, Command, EmbeddingsCommand, GraphCommand, VectorCommand};
 
@@ -174,7 +174,7 @@ where
         }
         Command::Contract => {
             match format {
-                output::Format::Json => output::print_json(&gobby_code::contract::contract())?,
+                output::Format::Json => output::print_json(&crate::contract::contract())?,
                 output::Format::Text => output::print_text("gcode CLI contract v1")?,
             }
             Ok(true)

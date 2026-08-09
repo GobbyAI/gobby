@@ -1,10 +1,10 @@
+use crate::output;
 use clap::{ArgGroup, Parser, Subcommand, ValueEnum};
-use gobby_code::output;
 use gobby_core::config::{AiRouting, FeatureCandidate};
 
 const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
-    gobby_code::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
+    crate::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
 const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
 const MAX_GREP_MAX_COUNT: usize = 10_000;
 
@@ -72,7 +72,7 @@ pub(crate) enum AiDepthArg {
     Symbols,
 }
 
-impl From<AiDepthArg> for gobby_code::commands::codewiki::AiDepth {
+impl From<AiDepthArg> for crate::commands::codewiki::AiDepth {
     fn from(value: AiDepthArg) -> Self {
         match value {
             AiDepthArg::Sections => Self::Sections,
@@ -90,7 +90,7 @@ pub(crate) enum AiProseDepthArg {
     Deep,
 }
 
-impl From<AiProseDepthArg> for gobby_code::commands::codewiki::ProseDepth {
+impl From<AiProseDepthArg> for crate::commands::codewiki::ProseDepth {
     fn from(value: AiProseDepthArg) -> Self {
         match value {
             AiProseDepthArg::Brief => Self::Brief,
@@ -109,7 +109,7 @@ pub(crate) enum AiVerifyScopeArg {
     All,
 }
 
-impl From<AiVerifyScopeArg> for gobby_code::commands::codewiki::VerifyScope {
+impl From<AiVerifyScopeArg> for crate::commands::codewiki::VerifyScope {
     fn from(value: AiVerifyScopeArg) -> Self {
         match value {
             AiVerifyScopeArg::Aggregates => Self::Aggregates,
@@ -125,7 +125,7 @@ pub(crate) enum AiRegisterArg {
     Agent,
 }
 
-impl From<AiRegisterArg> for gobby_code::commands::codewiki::ProseRegister {
+impl From<AiRegisterArg> for crate::commands::codewiki::ProseRegister {
     fn from(value: AiRegisterArg) -> Self {
         match value {
             AiRegisterArg::Newcomer => Self::Newcomer,
