@@ -26,8 +26,9 @@
 //! project-scope freshness path, returns an owned status, and emits no warning.
 //! The generation-path caller owns the quiet-dependent busy diagnostic.
 
+use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use anyhow::Context as _;
 use postgres::Client;
@@ -56,6 +57,27 @@ pub use text::{
 #[derive(Clone)]
 pub struct CodewikiFacts {
     context: Arc<Context>,
+    read_connection: Arc<Mutex<Option<Client>>>,
+}
+
+struct ReadConnection<'a> {
+    guard: MutexGuard<'a, Option<Client>>,
+}
+
+impl Deref for ReadConnection<'_> {
+    type Target = Client;
+
+    fn deref(&self) -> &Self::Target {
+        // `read_connection` initializes the option before constructing this guard.
+        self.guard.as_ref().expect("read connection initialized")
+    }
+}
+
+impl DerefMut for ReadConnection<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // `read_connection` initializes the option before constructing this guard.
+        self.guard.as_mut().expect("read connection initialized")
+    }
 }
 
 impl CodewikiFacts {
@@ -75,6 +97,7 @@ impl CodewikiFacts {
     fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),
+            read_connection: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -82,8 +105,15 @@ impl CodewikiFacts {
         &self.context
     }
 
-    fn read_connection(&self) -> anyhow::Result<Client> {
-        crate::db::connect_readonly(&self.context.database_url)
+    fn read_connection(&self) -> anyhow::Result<ReadConnection<'_>> {
+        let mut guard = self
+            .read_connection
+            .lock()
+            .map_err(|_| anyhow::anyhow!("CodeWiki facts read connection lock poisoned"))?;
+        if guard.as_ref().is_none_or(Client::is_closed) {
+            *guard = Some(crate::db::connect_readonly(&self.context.database_url)?);
+        }
+        Ok(ReadConnection { guard })
     }
 }
 

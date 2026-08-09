@@ -458,6 +458,11 @@ pub fn detect_language(file_path: &str) -> Option<&'static str> {
     None
 }
 
+/// Return whether `file_path` is supported by the shared language registry.
+pub fn is_supported_language(file_path: &str) -> bool {
+    detect_language(file_path).is_some()
+}
+
 fn detect_header_language(path: &Path) -> &'static str {
     if objc_header_has_sibling_implementation(path) {
         return "objc";
@@ -646,6 +651,12 @@ mod tests {
         // Markdown is intentionally handled as content-only text, not AST.
         assert_eq!(detect_language("README.md"), None);
         assert_eq!(detect_language("docs/guide.markdown"), None);
+    }
+
+    #[test]
+    fn supported_language_uses_detection_registry() {
+        assert!(is_supported_language("src/lib.rs"));
+        assert!(!is_supported_language("docs/guide.md"));
     }
 
     #[test]

@@ -11,7 +11,7 @@ mod git;
     reason = "privatization preserves established graph error naming"
 )]
 mod graph;
-mod index;
+pub mod index;
 pub(crate) mod index_lock;
 mod models;
 mod output;

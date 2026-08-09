@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyhow::Result;
 use gobby_core::degradation::ServiceState;
@@ -104,14 +104,18 @@ impl CodewikiFacts {
         let file_paths = files
             .iter()
             .map(|file| file.path.clone())
-            .collect::<HashSet<_>>();
+            .collect::<Vec<_>>();
         let symbol_ids = self
             .symbols_in(&files.iter().map(|file| file.id.clone()).collect::<Vec<_>>())?
             .into_iter()
             .map(|symbol| symbol.id)
-            .collect::<HashSet<_>>();
-        let query = self.query_edge_rows(kind, limit);
-        let rows = match classify_query(query, limit)? {
+            .collect::<Vec<_>>();
+        let scope = match kind {
+            GraphEdgeKind::Call => &symbol_ids,
+            GraphEdgeKind::Import => &file_paths,
+        };
+        let query = self.query_edge_rows(kind, scope, limit);
+        let (rows, truncated) = match classify_query(query, limit)? {
             GraphOutcome::Available(rows) => (rows, false),
             GraphOutcome::Truncated(rows) => (rows, true),
             GraphOutcome::Empty => return Ok(GraphOutcome::Empty),
@@ -120,19 +124,14 @@ impl CodewikiFacts {
             }
         };
         let edges = rows
-            .0
             .into_iter()
-            .filter(|(source, target)| match kind {
-                GraphEdgeKind::Call => symbol_ids.contains(source) && symbol_ids.contains(target),
-                GraphEdgeKind::Import => file_paths.contains(source),
-            })
             .map(|(source, target)| GraphEdge {
                 source,
                 target,
                 kind,
             })
             .collect::<Vec<_>>();
-        if rows.1 {
+        if truncated {
             Ok(GraphOutcome::Truncated(edges))
         } else if edges.is_empty() {
             Ok(GraphOutcome::Empty)
@@ -169,9 +168,6 @@ impl CodewikiFacts {
         if limit == 0 {
             return Ok(GraphOutcome::Empty);
         }
-        if let GraphAvailability::Unavailable { reason } = self.graph_availability() {
-            return Ok(GraphOutcome::Unavailable { reason });
-        }
         Ok(match classify_query(query(), limit)? {
             GraphOutcome::Available(rows) => {
                 GraphOutcome::Available(rows.into_iter().map(GraphNodeFact::from).collect())
@@ -184,13 +180,18 @@ impl CodewikiFacts {
         })
     }
 
-    fn query_edge_rows(&self, kind: GraphEdgeKind, limit: usize) -> Result<Vec<(String, String)>> {
+    fn query_edge_rows(
+        &self,
+        kind: GraphEdgeKind,
+        scope: &[String],
+        limit: usize,
+    ) -> Result<Vec<(String, String)>> {
         let Some(config) = &self.context().falkordb else {
             return Err(anyhow::Error::new(
                 code_graph::GraphReadError::NotConfigured,
             ));
         };
-        let (query, params) = edge_query(&self.context().project_id, kind, limit);
+        let (query, params) = edge_query(&self.context().project_id, kind, scope, limit);
         let connection_config = config.connection_config();
         match gobby_core::falkor::with_graph(
             Some(&connection_config),
@@ -239,18 +240,22 @@ pub(super) fn classify_query<T>(result: Result<Vec<T>>, limit: usize) -> Result<
 fn edge_query(
     project_id: &str,
     kind: GraphEdgeKind,
+    scope: &[String],
     limit: usize,
 ) -> (String, HashMap<String, String>) {
+    let scope = typed_query::id_list_literal(scope);
     let query = match kind {
         GraphEdgeKind::Call => format!(
             "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->\
              (target:CodeSymbol {{project: $project}}) \
+             WHERE source.id IN [{scope}] AND target.id IN [{scope}] \
              RETURN source.id AS source, target.id AS target \
              ORDER BY source, target LIMIT {limit}"
         ),
         GraphEdgeKind::Import => format!(
             "MATCH (source:CodeFile {{project: $project}})-[:IMPORTS]->\
              (target:CodeModule {{project: $project}}) \
+             WHERE source.path IN [{scope}] \
              RETURN source.path AS source, target.name AS target \
              ORDER BY source, target LIMIT {limit}"
         ),
@@ -272,4 +277,23 @@ fn rows_to_pairs(rows: &[Row]) -> Vec<(String, String)> {
             Some((source.to_string(), target.to_string()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edge_queries_apply_scope_before_ordered_limit() {
+        let scope = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+
+        for kind in [GraphEdgeKind::Call, GraphEdgeKind::Import] {
+            let (query, params) = edge_query("project-id", kind, &scope, 7);
+            let where_position = query.find("WHERE").expect("query has scope predicate");
+            let limit_position = query.find("LIMIT 7").expect("query has requested limit");
+            assert!(where_position < limit_position);
+            assert!(query.contains("'src/a.rs', 'src/b.rs'"));
+            assert_eq!(params.len(), 1);
+        }
+    }
 }

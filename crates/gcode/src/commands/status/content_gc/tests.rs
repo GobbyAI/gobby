@@ -204,7 +204,7 @@ mod serial_db {
         ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
-    fn projection_delete_failure_resets_sync_flags_without_stranding() {
+    fn projection_delete_failure_retains_pending_cleanup_state() {
         let (mut conn, database_url) = connect_test_db();
         let project_id = unique_test_project_id("gcode-gc-projection-fail");
         cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
@@ -256,9 +256,9 @@ mod serial_db {
                 "SELECT graph_synced, vectors_synced FROM code_indexed_files WHERE id = $1",
                 &[&db::id_param(&file_id).expect("file uuid")],
             )
-            .expect("read reset flags");
-        assert!(!row.get::<_, bool>("graph_synced"));
-        assert!(!row.get::<_, bool>("vectors_synced"));
+            .expect("read retained flags");
+        assert!(row.get::<_, bool>("graph_synced"));
+        assert!(row.get::<_, bool>("vectors_synced"));
     }
 
     #[test]

@@ -66,10 +66,14 @@ pub struct FileFact {
 impl CodewikiFacts {
     pub fn scoped_files(&self, selector: &ScopeSelector) -> anyhow::Result<Vec<FileFact>> {
         let scopes = selector.normalized(self);
+        let scope_prefixes = scopes
+            .iter()
+            .map(|scope| format!("{}/", scope.trim_end_matches('/')))
+            .collect::<Vec<_>>();
         let mut conn = self.read_connection()?;
         visibility::visible_tree(&mut conn, self.context())?
             .into_iter()
-            .filter(|file| in_scope(&file.file_path, &scopes))
+            .filter(|file| in_scope(&file.file_path, &scopes, &scope_prefixes))
             .map(|file| {
                 let path = file.file_path;
                 Ok(FileFact {
@@ -83,10 +87,9 @@ impl CodewikiFacts {
     }
 }
 
-fn in_scope(file: &str, scopes: &[String]) -> bool {
+fn in_scope(file: &str, scopes: &[String], scope_prefixes: &[String]) -> bool {
     scopes.is_empty()
         || scopes.iter().any(|scope| scope.is_empty())
-        || scopes.iter().any(|scope| {
-            file == scope || file.starts_with(&format!("{}/", scope.trim_end_matches('/')))
-        })
+        || scopes.iter().any(|scope| file == scope)
+        || scope_prefixes.iter().any(|prefix| file.starts_with(prefix))
 }

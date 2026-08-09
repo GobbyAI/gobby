@@ -218,15 +218,15 @@ fn prune_content_versions_with(
         }
 
         if let Err(error) = delete_candidate_projections(ctx, candidate) {
-            // The projections are now partially deleted while the SQL row still
-            // says synced; reset the flags so a re-sync or retry reconverges.
+            // Keep the authoritative pending-cleanup flags until every store
+            // succeeds. Deletes are idempotent, so a later retry can safely
+            // repeat a deletion that already completed in another store.
             log::warn!(
-                "resetting sync flags for {}:{}@{} after projection delete failure: {error:#}",
+                "retaining sync flags for {}:{}@{} after projection delete failure: {error:#}",
                 candidate.project_id,
                 candidate.file_path,
                 candidate.content_hash,
             );
-            reset_candidate_sync_flags(&mut conn, &candidate.id)?;
             totals.failed_versions += 1;
             continue;
         }

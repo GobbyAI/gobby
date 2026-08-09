@@ -51,6 +51,9 @@ impl From<Symbol> for SymbolFact {
 
 impl CodewikiFacts {
     pub fn symbols_in(&self, files: &[FileId]) -> anyhow::Result<Vec<SymbolFact>> {
+        if files.is_empty() {
+            return Ok(Vec::new());
+        }
         let paths = files
             .iter()
             .map(|file| file.as_str().to_string())

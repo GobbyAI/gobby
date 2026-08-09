@@ -5,17 +5,15 @@ const HARNESS_MACHINE_ID: &str = "ff5dd0ce-20a1-5f6c-8a89-ea85c2bbeea9";
 const CPP_DB_LOCAL_PROJECT_ID: &str = "636a88e5-5cb1-5f3d-91e0-29c1af3d1a71";
 
 fn standalone_database_url() -> Option<String> {
-    let database_url = std::env::var("GCODE_GRAPH_STANDALONE_DATABASE_URL").ok()?;
-    std::env::var("GCODE_GRAPH_STANDALONE_FALKOR_HOST").ok()?;
-    std::env::var("GCODE_GRAPH_STANDALONE_FALKOR_PORT").ok()?;
-    Some(database_url)
+    std::env::var("GCODE_GRAPH_STANDALONE_DATABASE_URL").ok()
 }
 
 #[test]
+#[serial_test::serial(serial_db)]
 fn db_resolves_seeded_cpp_candidate_file_to_symbol_id() {
     let Some(database_url) = standalone_database_url() else {
         eprintln!(
-            "skipping seeded C++ local-callee DB resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+            "skipping seeded C++ local-callee DB resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL"
         );
         return;
     };

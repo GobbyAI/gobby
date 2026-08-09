@@ -21,6 +21,9 @@ pub struct GrepQuery {
     pub scope: ScopeSelector,
     pub fixed_strings: bool,
     pub ignore_case: bool,
+    pub context: Option<usize>,
+    pub before_context: Option<usize>,
+    pub after_context: Option<usize>,
     pub limit: usize,
 }
 
@@ -31,6 +34,9 @@ impl GrepQuery {
             scope,
             fixed_strings: false,
             ignore_case: false,
+            context: None,
+            before_context: None,
+            after_context: None,
             limit: 100,
         }
     }
@@ -121,9 +127,9 @@ impl CodewikiFacts {
             fixed_strings: query.fixed_strings,
             ignore_case: query.ignore_case,
             word: false,
-            context: None,
-            before_context: None,
-            after_context: None,
+            context: query.context,
+            before_context: query.before_context,
+            after_context: query.after_context,
             max_count: Some(query.limit),
             format: Format::Text,
         };

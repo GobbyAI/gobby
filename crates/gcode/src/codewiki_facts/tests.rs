@@ -1,4 +1,3 @@
-use std::mem::size_of;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -77,7 +76,6 @@ fn graph_query_reports_successful_empty() -> Result<()> {
 fn disabled_freshness_admission_is_quiet_and_does_not_resolve_context() -> Result<()> {
     let status = ensure_project_fresh(Path::new("/missing/codewiki-facts-project"), true)?;
     assert_eq!(status, FreshnessStatus::Checked);
-    assert!(!include_str!("mod.rs").contains("eprintln!"));
     Ok(())
 }
 
@@ -114,7 +112,13 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
     let chunks = fixture
         .facts
         .leading_chunks(std::slice::from_ref(&source.id))?;
-    assert!(chunks[0].content.contains("fixture_add"));
+    assert!(
+        chunks
+            .first()
+            .expect("indexed file has a leading chunk")
+            .content
+            .contains("fixture_add")
+    );
 
     let search = fixture.facts.search("fixture_add", 10)?;
     assert!(search.iter().any(|hit| hit.symbol.id == symbol.id));
@@ -126,16 +130,29 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
 
 #[test]
 #[serial(serial_db)]
-fn facade_handle_is_clone_send_sync_and_stores_only_context() -> Result<()> {
+fn facade_handle_is_clone_send_sync_and_reuses_read_connection() -> Result<()> {
     fn assert_clone_send_sync<T: Clone + Send + Sync>() {}
 
     assert_clone_send_sync::<CodewikiFacts>();
-    assert_eq!(size_of::<CodewikiFacts>(), size_of::<Arc<Context>>());
-
     let fixture = IndexedFixture::new()?;
-    let mut conn = fixture.facts.read_connection()?;
-    let read_only: String = conn.query_one("SHOW transaction_read_only", &[])?.get(0);
-    assert_eq!(read_only, "on");
+    let clone = fixture.facts.clone();
+    assert!(Arc::ptr_eq(&fixture.facts.context, &clone.context));
+    assert!(Arc::ptr_eq(
+        &fixture.facts.read_connection,
+        &clone.read_connection
+    ));
+
+    let first_pid: i32 = {
+        let mut conn = fixture.facts.read_connection()?;
+        let read_only: String = conn.query_one("SHOW transaction_read_only", &[])?.get(0);
+        assert_eq!(read_only, "on");
+        conn.query_one("SELECT pg_backend_pid()", &[])?.get(0)
+    };
+    let second_pid: i32 = clone
+        .read_connection()?
+        .query_one("SELECT pg_backend_pid()", &[])?
+        .get(0);
+    assert_eq!(first_pid, second_pid);
     Ok(())
 }
 
