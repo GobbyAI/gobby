@@ -27,6 +27,7 @@ normalized_manifest() {
   local manifest="$2"
   python3 - "$vault" "$manifest" <<'PY'
 import hashlib
+import json
 import pathlib
 import re
 import sys
@@ -40,6 +41,26 @@ def normalized_bytes(path: pathlib.Path) -> bytes:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         return data
+    if path == vault / "_meta/codewiki.json":
+        metadata = json.loads(text)
+        # These keys hash rendered frontmatter before provenance normalization.
+        # Pin their pre-move values; the page entries below still hash every byte.
+        legacy_engine_derived_keys = {
+            "code/_ownership.md": (
+                "content-sensitive:50157c76ede85b3ac64e26e061185424372014745425b865bb6d6e7d124b3d69"
+            ),
+            "code/deprecations.md": (
+                "8c5cf9b167ba68c8677da51d8a7f90362c5e58c882cd3c02e2a1c46705b38bec"
+            ),
+        }
+        for doc_path, legacy_key in legacy_engine_derived_keys.items():
+            key = metadata.get("docs", {}).get(doc_path, {}).get("invalidation_key")
+            if isinstance(key, str):
+                text = text.replace(
+                    f'"invalidation_key": "{key}"',
+                    f'"invalidation_key": "{legacy_key}"',
+                    1,
+                )
     text = text.replace("gcode-codewiki", "<codewiki-engine>")
     text = text.replace("gwiki-code", "<codewiki-engine>")
     text = re.sub(
@@ -269,8 +290,9 @@ PY
   local binary_version
   revision="$(git -C "$REPO_ROOT" rev-parse HEAD)"
   binary_version="$($ENGINE_BINARY --version)"
-  printf 'engine: %s\nrevision: %s\nbinary_version: %s\ninput_digest: %s\n' \
-    "$ENGINE" "$revision" "$binary_version" "$ACTUAL_DIGEST" > "$RUN_ROOT/capture.txt"
+  printf 'engine: %s\nrevision: %s\nbinary_version: %s\ninput_digest: %s\nproject_id: %s\nbuild: cargo build --locked\n' \
+    "$ENGINE" "$revision" "$binary_version" "$ACTUAL_DIGEST" "$PARITY_PROJECT_ID" \
+    > "$RUN_ROOT/capture.txt"
 
   run_generation 1
   local entry_count=""

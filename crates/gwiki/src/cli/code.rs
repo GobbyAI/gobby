@@ -45,7 +45,7 @@ pub(super) struct CodeArgs {
     #[arg(long, num_args = 1.., value_name = "PATH")]
     scope: Vec<String>,
     /// Treat --scope paths as the complete publication boundary.
-    #[arg(long, requires = "scope")]
+    #[arg(long)]
     complete_scope: bool,
     /// Override AI routing for generated summaries.
     #[arg(long, value_name = "auto|daemon|direct|off")]
