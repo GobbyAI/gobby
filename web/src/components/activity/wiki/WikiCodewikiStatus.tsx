@@ -53,7 +53,11 @@ export function WikiCodewikiStatus() {
   if (state.status === "loading") return null;
 
   const snapshot = state.status === "ready" ? state.snapshot : null;
-  const badge = snapshot?.state === "disabled" || snapshot?.enabled === false ? "Paused" : "Status";
+  // A live surface needs no dormancy strip: render only while the daemon
+  // reports the surface disabled, or when its status is unreachable.
+  if (snapshot !== null && snapshot.state !== "disabled" && snapshot.enabled !== false) {
+    return null;
+  }
 
   return (
     <p
@@ -62,7 +66,7 @@ export function WikiCodewikiStatus() {
       className="flex shrink-0 items-center gap-1.5 truncate border-b border-border px-2 py-1 text-2xs text-muted-foreground"
     >
       <Badge className="shrink-0 px-1.5 py-0 text-2xs">
-        {snapshot === null ? "Unavailable" : badge}
+        {snapshot === null ? "Unavailable" : "Paused"}
       </Badge>
       <span className="truncate">
         {snapshot === null ? "Codewiki status unavailable" : reasonText(snapshot)}
