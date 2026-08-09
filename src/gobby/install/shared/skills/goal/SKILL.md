@@ -153,8 +153,9 @@ On approval, set `status: active` and ask where it runs:
 2. Set session variables:
    - `auto_task_ref` = the anchor ref (activates the autonomous loop rules)
    - `goal_file` = the goal doc path (re-injected every turn start)
-   - merge `"goal"` into `additional_skills` (reloads this skill after every
-     compaction)
+   - merge `"goal"` into `additional_skills` for advisory child-session guidance.
+     A successful load also records it in `loaded_skills`, making it a required
+     reload after every compaction for the rest of this session.
 3. Append a Progress Log entry recording this session and mode.
 
 ## Solo Loop

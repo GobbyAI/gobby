@@ -8,12 +8,15 @@ Covers:
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.definitions import WorkflowInstance
 
@@ -103,6 +106,63 @@ class TestSetVariableScoped:
         # Should write to session_var_manager
         mocks["session_var_manager"].set_variable.assert_called_once_with(
             "uuid-session-1", "counter", 42
+        )
+
+    @pytest.mark.parametrize("name", sorted(SKILL_LIST_VARIABLE_NAMES))
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param("plan", id="string"),
+            pytest.param(None, id="null"),
+            pytest.param({"name": "plan"}, id="object"),
+            pytest.param([""], id="empty-name"),
+            pytest.param(["   "], id="whitespace-name"),
+            pytest.param(["plan", 7], id="non-string-item"),
+        ],
+    )
+    def test_set_variable_rejects_invalid_skill_lists_atomically(
+        self,
+        name: str,
+        value: Any,
+    ) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name=name,
+            value=value,
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result == {
+            "success": False,
+            "error": f"Variable '{name}' requires a JSON array of non-empty skill names.",
+        }
+        mocks["session_var_manager"].set_variable.assert_not_called()
+        mocks["instance_manager"].merge_instance_variables.assert_not_called()
+
+    @pytest.mark.parametrize("name", sorted(SKILL_LIST_VARIABLE_NAMES))
+    def test_set_variable_accepts_empty_skill_lists(self, name: str) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name=name,
+            value=[],
+            session_id="#1",
+            session_var_manager=mocks["session_var_manager"],
+        )
+
+        assert result["success"] is True
+        mocks["session_var_manager"].set_variable.assert_called_once_with(
+            "uuid-session-1", name, []
         )
 
     @pytest.mark.parametrize(
@@ -268,9 +328,8 @@ def _make_var_row(
     name: str = "my_var",
     value: Any = "hello",
     description: str | None = None,
-    source: str = "user",
     tags: list[str] | None = None,
-    deleted_at: str | None = None,
+    deleted_at: datetime | None = None,
 ) -> WorkflowDefinitionRow:
     """Create a WorkflowDefinitionRow for a variable definition."""
     body = {"variable": name, "value": value}
@@ -283,9 +342,9 @@ def _make_var_row(
         enabled=True,
         priority=100,
         definition_json=json.dumps(body),
-        source=source,
-        created_at="2026-01-01T00:00:00",
-        updated_at="2026-01-01T00:00:00",
+        source="custom",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         description=description,
         tags=tags or ["user"],
         deleted_at=deleted_at,
@@ -293,7 +352,7 @@ def _make_var_row(
 
 
 @contextmanager
-def _patch_auto_export(collision: bool = False):
+def _patch_auto_export(collision: bool = False) -> Iterator[None]:
     """Patch auto-export helpers at their source module (they're lazy-imported)."""
     with (
         patch(
@@ -377,7 +436,10 @@ class TestCreateVariable:
     def test_create_variable_hard_deletes_soft_deleted_blocker(self) -> None:
         from gobby.mcp_proxy.tools.workflows._variables import create_variable
 
-        deleted_row = _make_var_row("recycled", deleted_at="2026-01-01T00:00:00")
+        deleted_row = _make_var_row(
+            "recycled",
+            deleted_at=datetime(2026, 1, 1, tzinfo=UTC),
+        )
         mgr = _mock_def_manager(deleted=deleted_row)
         mgr.create.return_value = _make_var_row("recycled", "new_val")
 

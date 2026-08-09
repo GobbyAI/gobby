@@ -388,7 +388,7 @@ def register_proxy_tools(
     @mcp.tool()
     async def set_variable(
         name: str,
-        value: str | int | float | bool | None,
+        value: str | int | float | bool | list[Any] | dict[str, Any] | None,
         session_id: str,
     ) -> dict[str, Any]:
         """
@@ -396,7 +396,7 @@ def register_proxy_tools(
 
         Args:
             name: Variable name
-            value: Variable value (string, number, boolean, or null)
+            value: JSON-compatible variable value
             session_id: Session ID (accepts #N, N, UUID, or prefix)
 
         Returns:

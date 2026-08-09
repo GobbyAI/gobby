@@ -246,6 +246,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         resolved_session_id,
                         "loaded_skills",
                         [skill.name],
+                        preserve_order=True,
                     )
                 except Exception as e:
                     logger.debug(

@@ -35,18 +35,25 @@ LOADING_SKILLS_NAME = "loading-skills"
 # Written by the workflow engine's load_skill effect: the skills the session's
 # active workflow asked for, whether or not the agent got to them yet.
 WORKFLOW_REQUESTED_SKILLS_VARIABLE = "workflow_requested_skills"
-# Compaction is an in-place handoff on the same session row, so `loaded_skills` —
-# the runtime ledger of successful agent-visible get_skill calls — survives it and
-# describes exactly what this session had in context. The ledger is the advisory
-# tier of the resume set: reload its residual skills only when they are still
-# relevant to the remaining work. Rule-enforced skills stay in the required tier.
+# `loaded_skills` is the current-context ledger of successful agent-visible get_skill
+# calls. Compaction snapshots it into the required resume tier before the reset rule
+# clears the ledger; successful reloads repopulate it for the next compaction.
 COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS = (
     "required_skills",
     "claimed_task_required_skills",
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+    "loaded_skills",
 )
 COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS = (
     "additional_skills",
     "claimed_task_additional_skills",
-    "loaded_skills",
+)
+
+SKILL_LIST_VARIABLE_NAMES = frozenset(
+    (
+        *COMPACT_RESUME_REQUIRED_SKILL_VARIABLE_KEYS,
+        *COMPACT_RESUME_ADVISORY_SKILL_VARIABLE_KEYS,
+        COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE,
+        COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE,
+    )
 )

@@ -489,17 +489,26 @@ class SessionVariableManager:
 
         self._mutate_variables(session_id, mutate)
 
-    def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
-        """Atomically append strings to a string-list variable (deduped, sorted).
+    def append_to_set_variable(
+        self,
+        session_id: str,
+        name: str,
+        values: list[str],
+        *,
+        preserve_order: bool = False,
+    ) -> bool:
+        """Atomically append strings to a deduplicated string-list variable.
 
         A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
         preventing concurrent events from clobbering each other. Stored scalars and
         non-string list entries are discarded to preserve the string-list contract.
+        Values are sorted by default; ordered mode preserves first-seen order.
 
         Args:
             session_id: Session ID to scope the variable to.
             name: Variable name (the list to append to).
             values: New values to add (duplicates are ignored).
+            preserve_order: Keep first-seen order instead of sorting.
 
         Returns:
             True always (creates row if needed).
@@ -508,9 +517,19 @@ class SessionVariableManager:
             return True
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
-            existing = set(_normalize_string_list(variables.get(name)))
-            existing.update(values)
-            variables[name] = sorted(existing)
+            normalized = _normalize_string_list(variables.get(name))
+            if preserve_order:
+                ordered = list(dict.fromkeys(normalized))
+                seen = set(ordered)
+                for value in values:
+                    if value not in seen:
+                        ordered.append(value)
+                        seen.add(value)
+                variables[name] = ordered
+            else:
+                existing = set(normalized)
+                existing.update(values)
+                variables[name] = sorted(existing)
             return True, True
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)

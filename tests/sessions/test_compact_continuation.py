@@ -438,35 +438,65 @@ def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
             "python",
             "tasks",
             "development-discipline",
+            "code-index",
         ],
-        "advisory": ["code-index"],
+        "advisory": [],
     }
     variables = sv_mgr.get_variables(SESSION_ID)
     assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skill_tiers["required"]
     assert variables[COMPACT_RESUME_ADVISORY_SKILLS_VARIABLE] == skill_tiers["advisory"]
 
 
-def test_persist_compact_resume_required_skills_reloads_workflow_requested_skill(
+def test_loaded_skills_remain_required_across_two_compactions(
     session_db: HubDatabase,
 ) -> None:
-    """Workflow-requested skills are required; residual loaded skills are advisory."""
     db = session_db
     sv_mgr = SessionVariableManager(db)
     sv_mgr.merge_variables(
         SESSION_ID,
         {
             "required_skills": ["loading-skills", "python"],
+            "additional_skills": ["pytest"],
             WORKFLOW_REQUESTED_SKILLS_VARIABLE: ["plan", "elicit"],
-            "loaded_skills": ["code-index", "brevity"],
+            "loaded_skills": ["code-index", "brevity", "code-index"],
         },
     )
 
-    skill_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+    first_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skill_tiers == {
-        "required": ["loading-skills", "python", "plan", "elicit"],
-        "advisory": ["code-index", "brevity"],
+    assert first_tiers == {
+        "required": [
+            "loading-skills",
+            "python",
+            "plan",
+            "elicit",
+            "code-index",
+            "brevity",
+        ],
+        "advisory": ["pytest"],
     }
+
+    sv_mgr.set_variable(SESSION_ID, "loaded_skills", [])
+    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == []
+
+    # Successful get_skill calls repopulate the current-context ledger in first-load order.
+    sv_mgr.append_to_set_variable(
+        SESSION_ID,
+        "loaded_skills",
+        ["code-index"],
+        preserve_order=True,
+    )
+    sv_mgr.append_to_set_variable(
+        SESSION_ID,
+        "loaded_skills",
+        ["brevity", "code-index"],
+        preserve_order=True,
+    )
+    assert sv_mgr.get_variables(SESSION_ID)["loaded_skills"] == ["code-index", "brevity"]
+
+    second_tiers = persist_compact_resume_required_skills(db, SESSION_ID)
+
+    assert second_tiers == first_tiers
 
 
 def test_reload_directive_normalized() -> None:
@@ -493,7 +523,7 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
 ) -> None:
     variables: dict[str, object] = {
         "required_skills": ["loading-skills", "python"],
-        "additional_skills": ["pytest", "python"],
+        "additional_skills": ["pytest", "python", "hypothesis"],
         "loaded_skills": ["plan", "brevity", "pytest"],
     }
     context_parts: list[str] = []
@@ -520,8 +550,8 @@ async def test_load_skill_effect_flows_to_persisted_resume_prompt(
     prompt = build_compact_self_continue_prompt()
 
     assert skill_tiers == {
-        "required": ["loading-skills", "python", "plan"],
-        "advisory": ["pytest", "brevity"],
+        "required": ["loading-skills", "python", "plan", "brevity", "pytest"],
+        "advisory": ["hypothesis"],
     }
     # The inject-compact-handoff rule reads both persisted tiers into the
     # SessionStart injected context; the typed trigger stays skill-free.

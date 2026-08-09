@@ -6,7 +6,7 @@ import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -658,7 +658,10 @@ class TestEnsureDaemonRunning:
         """Test does nothing if daemon is already healthy."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
-            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
+            with patch(
+                "gobby.mcp_proxy.stdio.is_daemon_running",
+                return_value=True,
+            ) as mock_running:
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
@@ -668,8 +671,10 @@ class TestEnsureDaemonRunning:
                     # Must import function from module to ensure patches apply
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    result = await ensure_daemon_running()
+                    result = await cast(Callable[[], Awaitable[object]], ensure_daemon_running)()
                     assert result is None
+                    mock_config.assert_called_once_with()
+                    mock_running.assert_called_once_with()
                     assert mock_health.await_count == 1
 
     @pytest.mark.asyncio
@@ -677,13 +682,16 @@ class TestEnsureDaemonRunning:
         """Test waits for an unhealthy daemon instead of restarting it."""
         with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
             mock_config.return_value = MagicMock(daemon_port=60887, websocket=MagicMock(port=60888))
-            with patch("gobby.mcp_proxy.stdio.is_daemon_running", return_value=True):
+            with patch(
+                "gobby.mcp_proxy.stdio.is_daemon_running",
+                return_value=True,
+            ) as mock_running:
                 health_checks = [False, False, True]
                 with patch(
                     "gobby.mcp_proxy.stdio.check_daemon_http_health",
                     new_callable=AsyncMock,
                     side_effect=health_checks,
-                ):
+                ) as mock_health:
                     with patch(
                         "gobby.mcp_proxy.stdio.restart_daemon_process",
                         new_callable=AsyncMock,
@@ -696,8 +704,13 @@ class TestEnsureDaemonRunning:
                             ) as mock_sleep:
                                 from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                                result = await ensure_daemon_running()
+                                result = await cast(
+                                    Callable[[], Awaitable[object]], ensure_daemon_running
+                                )()
                                 assert result is None
+                                mock_config.assert_called_once_with()
+                                mock_running.assert_called_once_with()
+                                assert mock_health.await_count == 3
                                 mock_restart.assert_not_called()
                                 assert mock_sleep.await_count == 2
 
@@ -729,7 +742,9 @@ class TestEnsureDaemonRunning:
                                     ensure_daemon_running,
                                 )
 
-                                result = await ensure_daemon_running()
+                                result = await cast(
+                                    Callable[[], Awaitable[object]], ensure_daemon_running
+                                )()
 
                                 assert result is None
                                 assert mock_health.await_count == DAEMON_HEALTH_ATTEMPTS
@@ -791,10 +806,13 @@ class TestEnsureDaemonRunning:
                         )
 
                         assert DaemonProxy(61999).base_url == "http://127.0.0.1:61999"
-                        result = await ensure_daemon_running()
+                        result = await cast(
+                            Callable[[], Awaitable[object]], ensure_daemon_running
+                        )()
 
         assert result is None
         mock_start.assert_awaited_once_with(61999, 60888)
+        mock_config.assert_called_once_with()
         mock_health.assert_awaited_once_with(
             61999,
             timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
@@ -829,7 +847,7 @@ class TestEnsureDaemonRunning:
                     )
 
                     assert DaemonProxy(60887).base_url == "http://127.0.0.1:60887"
-                    result = await ensure_daemon_running()
+                    result = await cast(Callable[[], Awaitable[object]], ensure_daemon_running)()
 
         assert result is None
         mock_health.assert_awaited_once_with(
@@ -837,6 +855,7 @@ class TestEnsureDaemonRunning:
             timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
             base_url="http://daemon.example.test:61999",
         )
+        mock_config.assert_called_once_with()
         mock_start.assert_not_called()
 
     @pytest.mark.asyncio
@@ -858,7 +877,7 @@ class TestEnsureDaemonRunning:
                 ) as mock_start:
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    result = await ensure_daemon_running()
+                    result = await cast(Callable[[], Awaitable[object]], ensure_daemon_running)()
 
                     assert result is None
                     assert mock_config.call_count == 1
@@ -869,6 +888,40 @@ class TestEnsureDaemonRunning:
 
 class TestDaemonProxy:
     """Tests for DaemonProxy."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "value",
+        [
+            pytest.param(["goal", "plan"], id="array"),
+            pytest.param({"source": "compaction", "round": 2}, id="object"),
+        ],
+    )
+    async def test_set_variable_preserves_structured_value(
+        self,
+        value: list[str] | dict[str, str | int],
+    ) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch.object(
+            proxy,
+            "_request",
+            new=AsyncMock(return_value={"success": True}),
+        ) as mock_request:
+            result = await proxy.set_variable(
+                name="resume_state",
+                value=value,
+                session_id="#1",
+            )
+
+        assert result == {"success": True}
+        mock_request.assert_awaited_once_with(
+            "POST",
+            "/api/workflows/variables/set",
+            json={"name": "resume_state", "value": value, "session_id": "#1"},
+            session_id="#1",
+        )
 
     @pytest.mark.asyncio
     async def test_request_handles_empty_exception_message(self) -> None:
@@ -1676,6 +1729,7 @@ class TestMCPToolsWrapper:
         mock_proxy.add_mcp_server = AsyncMock(return_value={"res": "add"})
         mock_proxy.remove_mcp_server = AsyncMock(return_value={"res": "remove"})
         mock_proxy.import_mcp_server = AsyncMock(return_value={"res": "import"})
+        mock_proxy.set_variable = AsyncMock(return_value={"success": True})
 
         register_proxy_tools(mock_mcp, mock_proxy)
 
@@ -1738,6 +1792,34 @@ class TestMCPToolsWrapper:
         # 10. import_mcp_server
         await run_tool("import_mcp_server", from_project="p")
         mock_proxy.import_mcp_server.assert_called()
+
+        # 11. set_variable preserves structured values
+        skill_names = ["goal", "plan"]
+        await run_tool(
+            "set_variable",
+            name="loaded_skills",
+            value=skill_names,
+            session_id="#1",
+        )
+        mock_proxy.set_variable.assert_awaited_once_with(
+            name="loaded_skills",
+            value=skill_names,
+            session_id="#1",
+        )
+        mock_proxy.set_variable.reset_mock()
+
+        metadata = {"source": "compaction", "round": 2}
+        await run_tool(
+            "set_variable",
+            name="resume_metadata",
+            value=metadata,
+            session_id="#1",
+        )
+        mock_proxy.set_variable.assert_awaited_once_with(
+            name="resume_metadata",
+            value=metadata,
+            session_id="#1",
+        )
 
     @pytest.mark.asyncio
     async def test_call_tool_hoists_wrapper_fields_but_keeps_target_session_id(self) -> None:
@@ -2238,9 +2320,9 @@ class TestEnsureDaemonRunningFailures:
 
                     from gobby.mcp_proxy.stdio import ensure_daemon_running
 
-                    result = await ensure_daemon_running()
-
+                    result = await cast(Callable[[], Awaitable[object]], ensure_daemon_running)()
                     assert result is None
+                    mock_start.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_health_check_timeout_keeps_stdio_alive(self) -> None:
@@ -2269,7 +2351,9 @@ class TestEnsureDaemonRunningFailures:
                                 )
 
                                 with patch("gobby.mcp_proxy.stdio.logger") as mock_logger:
-                                    result = await ensure_daemon_running()
+                                    result = await cast(
+                                        Callable[[], Awaitable[object]], ensure_daemon_running
+                                    )()
 
                                 assert result is None
                                 assert mock_health.await_count == DAEMON_HEALTH_ATTEMPTS

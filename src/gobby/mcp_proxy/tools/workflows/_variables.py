@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.workflows._resolution import (
     resolve_session_id,
     resolve_session_task_value,
 )
+from gobby.sessions.compact_markers import SKILL_LIST_VARIABLE_NAMES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import (
@@ -61,6 +62,13 @@ def _coerce_value(
     return value
 
 
+def _is_valid_skill_list(value: object) -> bool:
+    """Return whether value is a JSON skill-name array."""
+    return isinstance(value, list) and all(
+        isinstance(item, str) and bool(item.strip()) for item in value
+    )
+
+
 def set_variable(
     session_manager: SessionManager,
     db: HubDatabase,
@@ -82,7 +90,7 @@ def set_variable(
         session_manager: SessionManager instance
         db: Hub database adapter
         name: Variable name (e.g., "session_epic", "is_worktree")
-        value: Variable value (string, number, boolean, or null)
+        value: JSON-compatible variable value
         session_id: Session reference (accepts #N, N, UUID, or prefix). Required to prevent cross-session variable bleed.
         workflow: Optional workflow name to scope the variable to
         instance_manager: Optional WorkflowInstanceManager for workflow-scoped writes
@@ -97,6 +105,12 @@ def set_variable(
         resolved_session_id = resolve_session_id(session_manager, session_id)
     except ValueError as e:
         return {"success": False, "error": str(e)}
+
+    if name in SKILL_LIST_VARIABLE_NAMES and not _is_valid_skill_list(value):
+        return {
+            "success": False,
+            "error": (f"Variable '{name}' requires a JSON array of non-empty skill names."),
+        }
 
     # Coerce value types
     value = _coerce_value(value)

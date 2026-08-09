@@ -469,7 +469,7 @@ class DaemonProxy:
     async def set_variable(
         self,
         name: str,
-        value: str | int | float | bool | None,
+        value: str | int | float | bool | list[Any] | dict[str, Any] | None,
         session_id: str,
     ) -> dict[str, Any]:
         """Set a session-scoped variable."""

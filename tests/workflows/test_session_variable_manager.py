@@ -446,6 +446,27 @@ def test_append_to_set_variable_deduplicates(db: Any) -> None:
     assert result["files"] == ["a.py", "b.py", "c.py"]
 
 
+def test_append_to_set_variable_preserves_first_seen_order_when_requested(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+
+    mgr.append_to_set_variable(
+        S1,
+        "loaded_skills",
+        ["plan", "brevity", "plan"],
+        preserve_order=True,
+    )
+    mgr.append_to_set_variable(
+        S1,
+        "loaded_skills",
+        ["tasks", "brevity"],
+        preserve_order=True,
+    )
+
+    assert mgr.get_variables(S1)["loaded_skills"] == ["plan", "brevity", "tasks"]
+
+
 @pytest.mark.parametrize(
     ("stored", "expected"),
     [
