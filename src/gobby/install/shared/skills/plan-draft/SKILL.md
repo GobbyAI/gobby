@@ -114,6 +114,16 @@ deferral:
 The referenced task must be open, and it must carry provenance label
 `deferred-from:<plan-id>:<section-id>`. A closed task fails the gate.
 
+Work gated on anything outside the plan — another epic, plan, or task — MUST be
+a `kind: deferred` section, never a prose blocker or a manifest dependency:
+manifest `depends_on` cannot encode external tasks, so prose-only sequencing is
+unenforceable. The deferral task is parented under the plan's own epic as tail
+work and carries the real edges (`blocked-by` on each external prerequisite plus
+any internal-leaf dependencies). Create it at expansion or finalization, never
+mid-draft or mid-review; a dangling `task_ref` in an unfinalized plan is
+expected and passes base validation. Full rules:
+`docs/contracts/plan-coverage.md` §Deferrals.
+
 Expansion leaves MUST emit structured coverage records in this exact shape:
 
 ```text

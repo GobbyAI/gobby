@@ -164,6 +164,22 @@ deferral:
 The referenced task must be open and carry
 `deferred-from:<plan-id>:<section-id>` provenance. A closed task fails the gate.
 
+External prerequisites — work gated on another epic, plan, or task — are never
+expressed as prose blockers or manifest `depends_on` edges; `depends_on` resolves
+only to sibling manifest entries, so an external wait carried in prose is
+unenforceable. Such work MUST be a `kind: deferred` section instead.
+
+The deferral task is parented under the plan's own epic as tail work; it never
+floats as an orphan follow-up. The task carries the actual ordering edges: a
+`blocked-by` dependency on each external prerequisite, plus dependencies on any
+internal leaves the deferred work needs (for example the audit leaf it follows).
+
+The task is created at expansion or finalization, never while the plan is being
+drafted, enhanced, or adversarially reviewed — plans may change or be abandoned
+before then. A dangling `task_ref` in an unfinalized plan is expected and does
+not fail base validation; the open-task, provenance, and dependency-closure
+gates above apply from expansion validation onward.
+
 ## Coverage Records
 
 Leaves emit structured labels:
