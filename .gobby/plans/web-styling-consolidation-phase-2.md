@@ -33,7 +33,7 @@ requirement-source: docs/guides/frontend-style-guide.md
 
 `kind: framing`
 
-**Goal**: Structural prerequisites and early wins — CSS ownership made explicit, dead CSS deleted, the responsive tier hoisted to one token, the screenshot harness in place.
+**Goal**: Structural prerequisites and early wins — CSS ownership made explicit, dead CSS deleted, the responsive tier hoisted to one token, the screenshot harness in place. After 1.3, the phase runs serialized (1.1 → 1.2 → 1.4): all three rewrite the same mobile-chrome guard pins (and 1.2 the ratchet ledger), and exact-census pin files admit no concurrent writers.
 
 ### 1.1 Split the chat/styles.css barrel along the chat/activity seam [category: refactor] (depends: 1.3)
 
@@ -78,7 +78,7 @@ Targets:
 - 1.1.3 - The stale hatch comment is gone. file: `web/src/components/chat/styles/input-responsive.css`.
 - 1.1.4 - ActivityPanelEmpty, SkillsTab, and IntegrationsFilterPanel each carry their own sheet import and render styled standalone (without ChatPage or the Rules tab mounted), with import-relation pins updated. test: `web/src/__tests__/mobileChromeCss.test.ts`.
 
-### 1.2 Delete dead session CSS [category: refactor] (depends: 1.3)
+### 1.2 Delete dead session CSS [category: refactor] (depends: 1.1, 1.3)
 
 `kind: deliverable`
 
@@ -110,7 +110,9 @@ Targets:
 
 Targets:
 - `web/tests/style-surfaces.spec.ts`
-- `web/playwright.config.ts::*` — scope-reason: capture project/device descriptors and opt-in spec tagging register in the shared config
+- `web/tests/support/captureRunFinalizer.ts`
+- `web/tests/support/captureRunFinalizer.spec.ts`
+- `web/playwright.config.ts::*` — scope-reason: capture project/device descriptors, opt-in spec tagging, and the globalTeardown finalizer registration land in the shared config
 
 A checked-in capture harness producing the fixed screenshot matrix used as before/after evidence for every risky step (especially 6.1). Chrome DevTools stays the ad-hoc debugging tool; this spec is the repeatable gate.
 
@@ -122,6 +124,7 @@ A checked-in capture harness producing the fixed screenshot matrix used as befor
 - **Grayscale subset:** state-bearing rows (task/session/pipeline status, error and success surfaces) captured desaturated in both themes — the repeatable form of the deutan contract check, scoped to a subset rather than doubling the full matrix.
 - **Reduced-motion subset:** the animation families (voice recording, speaking/listening, loading, streaming) captured under `prefers-reduced-motion: reduce` plus a no-preference control, with computed-style assertions that the suppression actually holds — the executable form of the reduced-motion contract exercised at 5.2 and 6.1.
 - **Immutable, pairable, recoverable runs:** each run is named by label (git SHA + `before`/`after`) under a gitignored root. Every matrix cell — and every retry attempt — writes into its own attempt-scoped staging directory and emits an immutable per-cell manifest fragment (scenario, git SHA, plan section under test, SHA-256 per PNG); a single deterministic finalizer assembles the staged cells into the labeled run directory with a merged run-manifest JSON in one atomic rename. Overwrite refusal applies to **finalized** runs only — a failed or partial attempt never occupies the label, so CI retries and Playwright's parallel workers cannot collide on the label or corrupt the manifest, while a finalized baseline can never be silently replaced. Stable file names inside a run (`<surface>--<state>--<theme>--<pointer>--<viewport>.png`) pair across runs by name; no committed baselines and no pixel-diff gate (per decision — human review of pairs).
+- **Exactly-once finalization under `fullyParallel` + retries:** the finalizer is a run-level coordinator module (`web/tests/support/captureRunFinalizer.ts`) registered as Playwright `globalTeardown` in `playwright.config.ts` — never spec- or worker-scoped, so parallel workers cannot each publish, and a teardown with no staged attempts is a no-op. A cell attempt writes its per-cell manifest fragment as its **last** act and only on success, making the fragment's existence the cell's success marker. The finalizer publishes only when every expected cell (the manifest's asserted entry count) has at least one successful fragment: a missing cell aborts publication with a diagnostic naming it; duplicate successful fragments for one cell (CI retries) resolve deterministically to the highest attempt index; then the single atomic rename publishes the labeled run. `captureRunFinalizer.spec.ts` (node-side under the Playwright runner, temp staging trees, no browser) covers the five outcomes: missing cell, duplicate success, failed-then-successful retry, interrupted finalization, and concurrent cell completion.
 - **Per-scenario readiness:** each manifest entry declares a readiness callback (beyond the visible checkpoint) that settles asynchronous descendants — lazy content, streaming placeholders, animation-driven layout — before capture; fresh browser context per matrix cell.
 - Reuse existing `playwright.config.ts` (web server auto-start, `PLAYWRIGHT_BASE_URL` override) and existing fixture patterns from `web/tests/`.
 - Tag the spec so it is excluded from any default CI test run (manual/opt-in execution), matching how existing live specs are handled.
@@ -132,11 +135,12 @@ A checked-in capture harness producing the fixed screenshot matrix used as befor
 - 1.3.2 - A documented two-run before/after workflow (run, flip, run, compare by name) is described in the spec's header comment. behavior: "before/after capture workflow" in `web/tests/style-surfaces.spec.ts`.
 - 1.3.3 - Every manifest entry asserts its visible checkpoint and readiness callback before capturing, the run fails if a checkpoint is absent, and the entry count is asserted against the live tab registry. behavior: "surface checkpoint assertion" in `web/tests/style-surfaces.spec.ts`.
 - 1.3.4 - The grayscale subset covers state-bearing rows in both themes. behavior: "grayscale state subset" in `web/tests/style-surfaces.spec.ts`.
-- 1.3.5 - Runs are immutable, pairable, and recoverable: attempt-scoped staging, per-cell manifest fragments, one atomic finalizer, overwrite refusal against finalized runs only, and a merged run-manifest JSON with git SHA and per-PNG hashes — a failed attempt or parallel cell never blocks a retry or corrupts a manifest. behavior: "immutable capture runs" in `web/tests/style-surfaces.spec.ts`.
+- 1.3.5 - Runs are immutable, pairable, and recoverable: attempt-scoped staging, per-cell manifest fragments, one run-level atomic finalizer registered via Playwright globalTeardown, overwrite refusal against finalized runs only, and a merged run-manifest JSON with git SHA and per-PNG hashes — a failed attempt or parallel cell never blocks a retry or corrupts a manifest. behavior: "immutable capture runs" in `web/tests/style-surfaces.spec.ts`.
 - 1.3.6 - The reduced-motion subset captures the animation families under both preference states with computed-style suppression assertions. behavior: "reduced-motion subset" in `web/tests/style-surfaces.spec.ts`.
 - 1.3.7 - Unphotographable surfaces (Traces, CodeGraphExplorer, AgentPortfolioPage) carry recorded representative mappings with equivalence rationales in the spec. behavior: "representative mappings" in `web/tests/style-surfaces.spec.ts`.
+- 1.3.8 - The finalizer selects exactly one successful fragment per expected cell — missing cells abort publication, retry duplicates resolve to the highest attempt — with unit coverage for missing, duplicate, retry, interruption, and parallel completion. test: `web/tests/support/captureRunFinalizer.spec.ts`.
 
-### 1.4 Hoist the responsive tier into the theme layer [category: code] (depends: 1.3)
+### 1.4 Hoist the responsive tier into the theme layer [category: code] (depends: 1.2, 1.3)
 
 `kind: deliverable`
 
@@ -202,6 +206,7 @@ Targets:
 - `web/src/components/Settings.tsx::*` — scope-reason: the whole file is deleted
 - `web/src/components/__tests__/Settings.test.tsx::*` — scope-reason: the legacy test file is retired with a per-assertion disposition map
 - `web/src/components/app/useAppCommandPalette.ts::useAppCommandPalette`
+- `web/src/components/app/__tests__/useAppCommandPalette.test.tsx::*` — scope-reason: both settings actions gain assertions that they open the overlay exactly once
 - `web/src/components/settings/sections/AppearanceSection.tsx::*` — scope-reason: gains the ported reset-to-defaults action and pressed-group semantics alongside the slider
 - `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx::*` — scope-reason: gains the ported aria-pressed group semantics and reset-to-defaults assertions
 - `web/src/main.tsx::*` — scope-reason: the settings.css side-effect import is removed
@@ -213,10 +218,10 @@ Targets:
 
 The legacy panel is still live: rendered at `App.tsx:684-691` behind `settingsOpen`, opened from two command-palette actions (`web/src/components/app/useAppCommandPalette.ts:117` and `:196`), in parallel with the new `SettingsOverlay` (cog button → `settingsOverlay.open()`, `App.tsx:514`).
 
-- **Control disposition map** (every legacy control gets an explicit destination; the overlay surface itself must not change rendered output): theme options (aria-pressed group) → AppearanceSection theme control; Default Mode group (`Settings.tsx:96-105`, aria-pressed) → ChatVoiceSection default-chat-mode select (deliberate semantics change on an already-shipped surface); font-size slider (drives `--font-size-base`; the live legacy control accepts 12–48 while the overlay slider is 12–24) → AppearanceSection slider, with **12–24 adopted as the canonical domain** (user decision 2026-08-08: single-user install, no out-of-range values worth preserving) — persisted or API-loaded values outside 12–24 clamp to the nearest bound where the stored value enters state (`useSettings.ts`), so no accepted value renders an unrepresentable UI; **reset-to-defaults (`reset-button`, `Settings.tsx:115`) has no overlay equivalent — port it into AppearanceSection** as a reset action with a test.
+- **Control disposition map** (every legacy control gets an explicit destination; the overlay surface itself must not change rendered output): theme options (aria-pressed group) → AppearanceSection theme control; Default Mode group (`Settings.tsx:96-105`, aria-pressed) → ChatVoiceSection default-chat-mode select (deliberate semantics change on an already-shipped surface); font-size slider (drives `--font-size-base`; the live legacy control accepts 12–48 while the overlay slider is 12–24) → AppearanceSection slider, with **12–24 adopted as the canonical domain** (user decision 2026-08-08: single-user install, no out-of-range values worth preserving) — stored values normalize through one `normalizeFontSize(value: unknown)` boundary at both untrusted entries in `useSettings.ts` (the localStorage read and the settings-API merge): finite numbers clamp into 12–24, anything else (null, strings, non-finite numbers) falls back to the default, and a malformed persisted root is discarded whole — so no stored value renders an unrepresentable UI or a `NaNpx` font size; **reset-to-defaults (`reset-button`, `Settings.tsx:115`) has no overlay equivalent — port it into AppearanceSection** as a reset action with a test.
 - **Test disposition map** for `web/src/components/__tests__/Settings.test.tsx` (8 assertions): focus-first/Escape-close, forward/backward focus trap, and focus-restore are already covered by `SettingsOverlay.test.tsx:107/116/138` — retire with this mapping recorded in the commit; "labels setting groups and marks selected options as pressed" **ports** into `AppearanceSection.test.tsx` (theme group) and `ChatVoiceSection.test.tsx` (mode select present); legacy-model-selector-absent and both voice-controls-absent assertions retire (negative assertions about the deleted surface; placement covered by ChatVoiceSection tests).
 - Redirecting the two command-palette actions must produce identical rendered output on the overlay — the redirect changes what opens, never how the overlay renders (1.4 stays the sole parity exemption).
-- Repoint both `useAppCommandPalette.ts` actions to `settingsOverlay.open()`; delete the `settingsOpen` state and the `<Settings>` render block from `App.tsx`.
+- Repoint both `useAppCommandPalette.ts` actions to `settingsOverlay.open()`; delete the `settingsOpen` state and the `<Settings>` render block from `App.tsx`. Every retired opener gets direct transition coverage: `useAppCommandPalette.test.tsx` asserts both settings actions call `settingsOverlay.open()` exactly once, and an App-level assertion proves the legacy Settings branch can no longer render while the overlay opens.
 - Delete `web/src/components/Settings.tsx` and `web/src/styles/settings.css` (276 lines; includes ~75 already-dead lines — `.settings-stack`, `.settings-row*`, `.model-select*`, `.loading-text`, `.no-models-text`); remove the settings.css import from `main.tsx`.
 - Replace `web/src/__tests__/settingsSliderFocus.test.ts` (postcss-parses `settings.css` at module scope — it throws once the file is gone) with an equivalent render-based focus-ring assertion on the SettingsOverlay slider: no bare `outline` on rest state, `:focus-visible` ring using `var(--accent)` per the WCAG focus contract.
 - Ratchet: drop `Settings.tsx` raw-element entries (4 button, 1 input), the `settings.css` `CSS_FILE_ALLOWLIST` entry; this batch deletes >200 CSS lines → lower ceiling in the same commit. Update `mobileChromeCss.test.ts` import expectations for the removed `main.tsx` import.
@@ -228,15 +233,16 @@ The legacy panel is still live: rendered at `App.tsx:684-691` behind `settingsOp
 - 2.1.3 - Slider focus-ring contract is asserted against the overlay implementation. test: `web/src/__tests__/settingsSliderFocus.test.ts`.
 - 2.1.4 - Allowlist entries dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 2.1.5 - Reset-to-defaults exists in AppearanceSection with a test; the aria-pressed group-semantics assertion is ported. test: `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx`.
-- 2.1.6 - Persisted and API font-size values clamp into 12–24 on load: 12 and 24 round-trip unchanged, 48 loads as 24, and the disposition map records the legacy 12–48 domain. test: `web/src/hooks/__tests__/useSettings.test.ts`.
+- 2.1.6 - Persisted and API font-size values normalize on load: 12 and 24 round-trip unchanged, 48 loads as 24, null/string/non-finite/malformed-root inputs fall back to the default, and the disposition map records the legacy 12–48 domain. test: `web/src/hooks/__tests__/useSettings.test.ts`.
+- 2.1.7 - Both command-palette settings actions open the overlay exactly once, asserted at the hook level. test: `web/src/components/app/__tests__/useAppCommandPalette.test.tsx`.
 
 ## P3: New Primitives
 
 `kind: framing`
 
-**Goal**: Six primitive additions land in `web/src/components/ui/` — five new (Chip, Card, FormField, NativeSelect, Textarea) plus TabBar promoted from `shared/` — each replacing every competing implementation it unifies. The app ends with **two sanctioned select paths**: Radix `ui/Select` for toolbar/picker contexts and `ui/NativeSelect` composed by `SelectField` for form contexts (the 3.3 rule). Primitives follow the Button pattern: component + separate `*Variants.ts` cva recipe, tokens only (no raw colors), coarse-pointer flow-through, focus rings per `focusStyles.ts`. Every interactive primitive carries an executable 44×44 coarse-pointer hit-area contract (see 3.3).
+**Goal**: Six primitive additions land in `web/src/components/ui/` — five new (Chip, Card, FormField, NativeSelect, Textarea) plus TabBar promoted from `shared/` — each replacing every competing implementation it unifies. The app ends with **two sanctioned select paths**: Radix `ui/Select` for toolbar/picker contexts and `ui/NativeSelect` composed by `SelectField` for form contexts (the 3.3 rule). Primitives follow the Button pattern: component + separate `*Variants.ts` cva recipe, tokens only (no raw colors), coarse-pointer flow-through, focus rings per `focusStyles.ts`. Every interactive primitive carries an executable 44×44 coarse-pointer hit-area contract (see 3.3). 2.1 → 3.1 → 3.2 → 3.3 → 3.4 run serialized: each rewrites the exact-census ratchet ledger, which admits no concurrent writers.
 
-### 3.1 ui/Chip primitive [category: code] (depends: 1.4)
+### 3.1 ui/Chip primitive [category: code] (depends: 1.4, 2.1)
 
 `kind: deliverable`
 
@@ -265,7 +271,7 @@ Four parallel status-chip implementations exist (plus the agents tag-inputs, exc
 - 3.1.3 - Chip has unit coverage alongside the other `ui/` tests. test: `web/src/components/ui/__tests__/Chip.test.tsx`.
 - 3.1.4 - State-bearing Chip tones carry a non-hue cue (icon or lightness step), asserted rather than left to review. test: `web/src/components/ui/__tests__/Chip.test.tsx`.
 
-### 3.2 ui/Card primitive [category: code] (depends: 1.4)
+### 3.2 ui/Card primitive [category: code] (depends: 1.4, 3.1)
 
 `kind: deliverable`
 
@@ -291,7 +297,7 @@ Targets:
 - 3.2.3 - Card has unit coverage. test: `web/src/components/ui/__tests__/Card.test.tsx`.
 - 3.2.4 - `interactive` Cards render a semantic focusable host and do not nest interactive elements inside it. test: `web/src/components/ui/__tests__/Card.test.tsx`.
 
-### 3.3 ui/FormField primitive and fields consolidation [category: code] (depends: 1.4)
+### 3.3 ui/FormField primitive and fields consolidation [category: code] (depends: 1.4, 3.2)
 
 `kind: deliverable`
 
@@ -324,7 +330,7 @@ Six labeled-form-row implementations exist. Create `FormField.tsx`: label + opti
 - The remaining field variants (`agents-styles.ts` `AGENT_EDIT_FIELD/LABEL/HINT/INPUT`, `PipelineEditor.styles.ts` `FIELD_*`, `ValidationDetectionEditor` `FORM_FIELD_CLS` family) migrate in their P4 surface sweeps onto these primitives.
 - Select consolidation decision encoded here: **form contexts use `SelectField`, which composes the new `ui/NativeSelect`; toolbar/picker contexts use Radix `ui/Select`**. That is the whole-app rule the P4 sweeps apply. `NativeSelect` is the smallest boundary that keeps the native-select behavior form contexts want while satisfying the standing rule that raw `<select>` lives only inside `components/ui` — a native select rendered directly by `FieldPrimitives.tsx` would remain a raw element outside `ui/` and could never reach the ratchet end state.
 - Ratchet: `FieldPrimitives.tsx` raw-element entries (1 button, 4 input, 1 select, 1 textarea) drop to zero, with the select composing inside `ui/`; settings-section input entries shrink.
-- **Executable 44×44 coarse-pointer contract, per primitive.** `Input`, `Textarea`, `NativeSelect`, and Radix `Select` triggers/items currently sit at 36px; under `pointer: coarse` each primitive supplies an invisible hit-area expansion (pseudo-element or padding compensation) reaching 44×44 without changing rendered visuals — parity-safe by construction. `coarsePointerTouchTargets.test.ts` gains computed-box assertions for each primitive and for representative migrated compositions as the P4 sweeps land; dense `Button` compositions are constrained to documented moats that supply an equivalent target. The Button size×dense ladder itself stays untouched. JSDOM computed-box assertions cannot prove pseudo-element hit-test geometry, so a Chromium spec (reusing the 1.3 Playwright substrate) additionally proves **effective activation**: under an emulated coarse pointer, clicks at the expanded perimeter of Input, Textarea, NativeSelect, and Radix Select trigger/items activate or focus the control while visible geometry is unchanged.
+- **Executable 44×44 coarse-pointer contract, per primitive.** `Input`, `Textarea`, `NativeSelect`, and Radix `Select` triggers/items currently sit at 36px; under `pointer: coarse` each primitive supplies an invisible hit-area expansion (pseudo-element or padding compensation) reaching 44×44 without changing rendered visuals — parity-safe by construction. `coarsePointerTouchTargets.test.ts` gains computed-box assertions for each primitive and for representative migrated compositions as the P4 sweeps land; dense `Button` compositions are constrained to documented moats that supply an equivalent target. The Button size×dense ladder itself stays untouched. JSDOM computed-box assertions cannot prove pseudo-element hit-test geometry, so a Chromium spec (reusing the 1.3 Playwright substrate) additionally proves **effective activation**: under an emulated coarse pointer, clicks at the expanded perimeter of Input, Textarea, NativeSelect, and Radix Select trigger/items activate or focus the control while visible geometry is unchanged. The spec runs under the existing chromium project with spec-level `test.use` coarse-pointer emulation (`hasTouch` plus the touch descriptor — the same pointer axis the 1.3 matrix asserts); its named command — `cd web && npx playwright test coarse-pointer-hit-areas.spec.ts` — is part of this leaf's validation and the V2 checklist.
 
 **Acceptance:**
 
@@ -336,9 +342,9 @@ Six labeled-form-row implementations exist. Create `FormField.tsx`: label + opti
 - 3.3.6 - `NativeSelect` exists in `ui/` on the shared focus/token/coarse-pointer contract, and both select paths (native and Radix) are unit-tested. file: `web/src/components/ui/NativeSelect.tsx`.
 - 3.3.7 - Computed-box tests prove 44×44 coarse-pointer hit areas for Input, Textarea, NativeSelect, and Radix Select trigger/items via invisible expansion, with rendered visuals unchanged. test: `web/src/__tests__/coarsePointerTouchTargets.test.ts`.
 - 3.3.8 - `ui/Textarea` exists with ref-forwarding and auto-grow-compatibility tests. file: `web/src/components/ui/Textarea.tsx`.
-- 3.3.9 - A Chromium spec proves click/focus activation at the expanded 44×44 perimeter under `pointer: coarse` for Input, Textarea, NativeSelect, and Radix Select trigger/items, with visible geometry unchanged. test: `web/tests/coarse-pointer-hit-areas.spec.ts`.
+- 3.3.9 - A Chromium spec proves click/focus activation at the expanded 44×44 perimeter under `pointer: coarse` for Input, Textarea, NativeSelect, and Radix Select trigger/items, with visible geometry unchanged, executed via `cd web && npx playwright test coarse-pointer-hit-areas.spec.ts`. test: `web/tests/coarse-pointer-hit-areas.spec.ts`.
 
-### 3.4 Promote TabBar into ui/ [category: refactor] (depends: 1.4)
+### 3.4 Promote TabBar into ui/ [category: refactor] (depends: 1.4, 3.3)
 
 `kind: deliverable`
 
@@ -368,7 +374,7 @@ Targets:
 
 `kind: framing`
 
-**Goal**: Every unsanctioned raw `<button>`/`<input>`/`<select>`/`<textarea>` composes a `ui/` primitive; every `*_CLS` constant folds into cva recipes or call-site utilities; per-file allowlist entries hit zero as each sweep lands. Counts below are the 2026-07-29 snapshot — re-read the live allowlist per leaf. Each sweep: migrate, delete constants, shrink allowlist entries (and `inputFocusAdoption` entries where named), verify visual parity, run full web validation.
+**Goal**: Every unsanctioned raw `<button>`/`<input>`/`<select>`/`<textarea>` composes a `ui/` primitive; every `*_CLS` constant folds into cva recipes or call-site utilities; per-file allowlist entries hit zero as each sweep lands. Counts below are the 2026-07-29 snapshot — re-read the live allowlist per leaf. Each sweep: migrate, delete constants, shrink allowlist entries (and `inputFocusAdoption` entries where named), verify visual parity, run full web validation. Sweeps run serialized 4.1 → 4.2 → … → 4.10: every sweep rewrites the same exact-census ledger and shared guard pins, which admit no concurrent writers; the chain adds no functional coupling beyond the dependencies already noted.
 
 ### 4.1 Agents editors sweep [category: refactor] (depends: P3)
 
@@ -416,8 +422,9 @@ Targets:
 - 4.2.1 - `agents-styles.ts` is deleted and its allowlist entry removed. file: `web/src/components/agents/agents-styles.ts`.
 - 4.2.2 - Portfolio filter selects follow the Select rule; agents/ raw-element entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.2.3 - AgentsTabList and AgentsDetailPanel status chips render through ui/Chip; `SidebarPanel.css` is deleted with its importing component. file: `web/src/components/activity/agents/AgentsDetailPanel.tsx`.
+- 4.2.4 - AgentEditForm-level tests prove focus trapping, Escape close, and focus restoration survive the SidebarPanel retirement. test: `web/src/components/agents/__tests__/AgentEditors.test.tsx`.
 
-### 4.3 Pipelines sweep [category: refactor] (depends: P3)
+### 4.3 Pipelines sweep [category: refactor] (depends: P3, 4.2)
 
 `kind: deliverable`
 
@@ -442,7 +449,7 @@ Targets:
 - 4.3.3 - The pipelines `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
 - 4.3.4 - PipelinesDefsList and PipelinesDefsDetail status chips render through ui/Chip. file: `web/src/components/activity/pipelines/PipelinesDefsDetail.tsx`.
 
-### 4.4 Wiki sweep [category: refactor] (depends: P3)
+### 4.4 Wiki sweep [category: refactor] (depends: P3, 4.3)
 
 `kind: deliverable`
 
@@ -482,7 +489,7 @@ deferral:
     - 4.4.1
 ```
 
-### 4.5 Graph explorers sweep [category: refactor] (depends: P3)
+### 4.5 Graph explorers sweep [category: refactor] (depends: P3, 4.4)
 
 `kind: deliverable`
 
@@ -499,7 +506,7 @@ Targets:
 - 4.5.1 - Both explorers' raw-element and `*_CLS` entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.5.2 - Both `inputFocusAdoption` entries are removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
 
-### 4.6 FilesPage sweep [category: refactor] (depends: P3)
+### 4.6 FilesPage sweep [category: refactor] (depends: P3, 4.5)
 
 `kind: deliverable`
 
@@ -519,7 +526,7 @@ Targets:
 - 4.6.2 - The discard-confirm flow uses ConfirmDialog. file: `web/src/components/FilesPage.tsx`.
 - 4.6.3 - FilesTab composite tree rows keep their div/keyboard-guard semantics while every nested native control composes a ui primitive. file: `web/src/components/activity/FilesTab.tsx`.
 
-### 4.7 Tasks sweep [category: refactor] (depends: P3)
+### 4.7 Tasks sweep [category: refactor] (depends: P3, 4.6)
 
 `kind: deliverable`
 
@@ -540,7 +547,7 @@ Targets:
 - 4.7.1 - tasks/ raw-element and `*_CLS` entries are zero (incl. `taskModalStyles.ts` deleted). file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 4.7.2 - The QuickCaptureTask `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
 
-### 4.8 Activity lists and detail panels sweep [category: refactor] (depends: P3)
+### 4.8 Activity lists and detail panels sweep [category: refactor] (depends: P3, 4.7)
 
 `kind: deliverable`
 
@@ -599,6 +606,8 @@ Targets:
 - `web/src/components/activity/__tests__/SessionsFilterDropdown.test.tsx::*` — scope-reason: apply/reset/Escape/outside-click/focus semantics are pinned before and after the rebuild
 - `web/src/components/activity/__tests__/sessionsFilters.test.ts::*` — scope-reason: live-propagation filter semantics are pinned before and after the rebuild
 - `web/src/components/activity/__tests__/TasksTab.filters.test.tsx::*` — scope-reason: draft/Apply staged-commit semantics are pinned before and after the rebuild
+- `web/src/components/activity/__tests__/ActivityFilterDropdown.test.tsx`
+- `web/src/components/activity/rules/__tests__/RulesTab.test.tsx::*` — scope-reason: gains direct state-transition coverage for the local RulesFilterDropdown controller
 - `web/src/components/activity/ActivityPanelSearch.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
 - `web/src/components/activity/QuickMenu.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
 - `web/src/components/activity/SessionInteractionModal.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
@@ -608,14 +617,14 @@ Targets:
 - `web/src/components/activity/terminal/TerminalKeysBar.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
 - `web/src/components/activity/terminal/TerminalView.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
 
-Panel chrome and popup dropdowns: `ActivityPanel.tsx` (2 btn, local `ActivityDropdown`), `ActivityFilterDropdown.tsx` (1 btn), `SessionsFilterDropdown.tsx` (1 btn / 5 input), `TasksTabFilters.tsx` (`FilterDropdown` mirror), the local `RulesFilterDropdown` (`RulesTab.tsx:44`), `ActivityPanelSearch.tsx` (1 input), `web/src/components/activity/FilterPrimitives.tsx` (1 input — `RAW_ELEMENT_ALLOWLIST` line 119; the shared filter-dropdown consolidation below is its natural owner), `QuickMenu.tsx` (2 btn), `SessionInteractionModal.tsx` (2 btn / 1 textarea), `SessionsTab*.tsx` (3 btn), `terminal/TerminalKeysBar.tsx` (2 btn / 1 input), `terminal/TerminalView.tsx` (2 btn). **Share presentation, keep the controllers.** The four filter dropdowns are visually similar but behaviorally divergent — `ActivityFilterDropdown` is immediate-select-and-close, Sessions propagates live and uses Apply only to close, Tasks stages a draft until Apply, and Rules opens from an inline panel. Extract one shared **presentational** filter-field/shell component (trigger, popup shell, field rows — Button + DropdownCaret + FormField controls, built in `FilterPrimitives.tsx`) and rebuild all four controllers on it **without changing any controller's open/close, draft/apply, live-propagation, reset, Escape, outside-click, or focus semantics**; the existing filter tests pin those semantics before and after. The Rules/Skills/Integrations *inline filter panel* family is exclusively 5.5's shared-panel work, not part of this consolidation.
+Panel chrome and popup dropdowns: `ActivityPanel.tsx` (2 btn, local `ActivityDropdown`), `ActivityFilterDropdown.tsx` (1 btn), `SessionsFilterDropdown.tsx` (1 btn / 5 input), `TasksTabFilters.tsx` (`FilterDropdown` mirror), the local `RulesFilterDropdown` (`RulesTab.tsx:44`), `ActivityPanelSearch.tsx` (1 input), `web/src/components/activity/FilterPrimitives.tsx` (1 input — `RAW_ELEMENT_ALLOWLIST` line 119; the shared filter-dropdown consolidation below is its natural owner), `QuickMenu.tsx` (2 btn), `SessionInteractionModal.tsx` (2 btn / 1 textarea), `SessionsTab*.tsx` (3 btn), `terminal/TerminalKeysBar.tsx` (2 btn / 1 input), `terminal/TerminalView.tsx` (2 btn). **Share presentation, keep the controllers.** The four filter dropdowns are visually similar but behaviorally divergent — `ActivityFilterDropdown` is immediate-select-and-close, Sessions propagates live and uses Apply only to close, Tasks stages a draft until Apply, and Rules opens from an inline panel. Extract one shared **presentational** filter-field/shell component (trigger, popup shell, field rows — Button + DropdownCaret + FormField controls, built in `FilterPrimitives.tsx`) and rebuild all four controllers on it **without changing any controller's open/close, draft/apply, live-propagation, reset, Escape, outside-click, or focus semantics**; the existing filter tests pin those semantics before and after. All four controllers carry direct state-transition tests: Sessions (`SessionsFilterDropdown.test.tsx` plus `sessionsFilters.test.ts`), Tasks (`TasksTab.filters.test.tsx`), Activity (`ActivityFilterDropdown.test.tsx` — new — pinning immediate-select-and-close), and Rules (`RulesTab.test.tsx` gains open/close, reset, Escape, outside-click, and focus-return coverage for the local controller). The Rules/Skills/Integrations *inline filter panel* family is exclusively 5.5's shared-panel work, not part of this consolidation.
 
 **Acceptance:**
 
-- 4.9.1 - One shared presentational filter-field/shell component serves all four filter dropdowns, each keeping its own controller with apply/reset/Escape/outside-click/focus semantics proven by the ported tests. file: `web/src/components/activity/FilterPrimitives.tsx`.
+- 4.9.1 - One shared presentational filter-field/shell component serves all four filter dropdowns, each keeping its own controller with apply/reset/Escape/outside-click/focus semantics proven by the ported tests, and each of the four controllers mapped to a direct test (Sessions, Tasks, Activity immediate-select-and-close, Rules open/reset/Escape/outside-click/focus-return). file: `web/src/components/activity/FilterPrimitives.tsx`.
 - 4.9.2 - Listed chrome files' raw-element entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 
-### 4.10 Chat, command-browser, and app-shell sweep [category: refactor] (depends: P3)
+### 4.10 Chat, command-browser, and app-shell sweep [category: refactor] (depends: P3, 4.9)
 
 `kind: deliverable`
 
@@ -665,7 +674,7 @@ Remaining files: `App.tsx` (1 btn), `ProjectSelector.tsx` (2 btn / 1 input), `we
 
 `kind: framing`
 
-**Goal**: Every legacy BEM sheet empties into utilities/cva and is deleted, with its `CSS_FILE_ALLOWLIST` entry and guard-test pins. Ceiling lowers with each >200-line batch. Order: cheapest and most isolated first.
+**Goal**: Every legacy BEM sheet empties into utilities/cva and is deleted, with its `CSS_FILE_ALLOWLIST` entry and guard-test pins. Ceiling lowers with each >200-line batch. Order: cheapest and most isolated first, serialized 5.1 → 5.2 → 5.3 → 5.4 → 5.5 → 5.6 — every retirement rewrites the ratchet ledger and the shared guard pins (coarse-pointer, typography, mobile-chrome), which admit no concurrent writers.
 
 ### 5.1 Retire message.css and empty-state.css [category: refactor] (depends: P4)
 
@@ -678,19 +687,29 @@ Targets:
 - `web/src/components/chat/styles/empty-state.css`
 - `web/src/components/chat/styles.css`
 - `web/src/components/chat/MessageList.tsx::*` — scope-reason: its empty-state classes move to component utilities as the sheet retires
+- `web/src/components/shared/MarkdownBody.tsx::*` — scope-reason: becomes the canonical owner of the scoped markdown typography utilities as message.css retires
+- `web/src/components/FilesPage.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/FilesTab.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/PlanReviewCard.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/SessionsTabDetail.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/TasksTabDetailPanel.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/skills/SkillContentView.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
+- `web/src/components/activity/wiki/WikiPageReader.tsx::*` — scope-reason: message-content markdown consumer verified with parity as the typography moves to the shared surface
 - `web/src/components/activity/ActivityPanelEmpty.tsx::*` — scope-reason: its empty-state classes move to component utilities and its 1.1 sheet import is removed
 - `web/src/components/activity/__tests__/ActivityPanelEmpty.test.tsx::*` — scope-reason: source-regex assertions on the retired sheet drop; structure/copy/adoption pins stay
 - `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: empty-state typography pins re-point at the component
 
-`message.css` (205 lines) is pure `.message-content <element>` markdown typography — the cleanest whole-file kill: express it as a scoped set of Tailwind descendant utilities (`[&_h1]:…`) in a constant or cva applied by `MessageItem.tsx`, honoring the ~65–75ch prose cap. `empty-state.css` (78 lines): `.activity-tab-empty*` becomes a small `ActivityEmptyState` presentational component (already componentized — move classes to utilities inside it); `.chat-empty-state*` (`MessageList.tsx:281-290`) and the orphan `.command-palette-empty` migrate to utilities. Update `ActivityPanelEmpty.test.tsx` (drops its two source-regex assertions on the sheet, keeps structure/copy/adoption pins) and `typographyLadder.test.ts` (empty-state pins re-point at the component). Both `empty-state.css` owner imports — the chat barrel member and the `ActivityPanelEmpty.tsx` side-effect import added in 1.1 — are removed with the sheet.
+`message.css` (205 lines) is pure `.message-content <element>` markdown typography — the cleanest whole-file kill: express it as a scoped set of Tailwind descendant utilities (`[&_h1]:…`) in a constant or cva applied by the canonical markdown surface, `MarkdownBody.tsx`, honoring the ~65–75ch prose cap. The `.message-content` census (2026-08-08) counts nine production consumers: `MessageItem.tsx` in chat plus eight non-chat wrappers — `FilesPage.tsx`, `FilesTab.tsx`, `PlanReviewCard.tsx`, `SessionsTabDetail.tsx`, `TasksTabDetailPanel.tsx`, `SkillContentView.tsx`, `TaskDetailEditableCore.tsx`, `WikiPageReader.tsx` — all rendering through the shared `MarkdownBody.tsx`, so the typography lands once there and every consumer keeps parity (the Wiki Ask surface's usage is deferral-covered per 4.11). `empty-state.css` (78 lines): `.activity-tab-empty*` becomes a small `ActivityEmptyState` presentational component (already componentized — move classes to utilities inside it); `.chat-empty-state*` (`MessageList.tsx:281-290`) and the orphan `.command-palette-empty` migrate to utilities. Update `ActivityPanelEmpty.test.tsx` (drops its two source-regex assertions on the sheet, keeps structure/copy/adoption pins) and `typographyLadder.test.ts` (empty-state pins re-point at the component). Both `empty-state.css` owner imports — the chat barrel member and the `ActivityPanelEmpty.tsx` side-effect import added in 1.1 — are removed with the sheet.
 
 **Acceptance:**
 
 - 5.1.1 - Both sheets are deleted with allowlist entries dropped. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
 - 5.1.2 - Message markdown typography renders via utilities with parity. file: `web/src/components/chat/MessageItem.tsx`.
 - 5.1.3 - Empty-state guard assertions target the component. test: `web/src/components/activity/__tests__/ActivityPanelEmpty.test.tsx`.
+- 5.1.4 - Non-chat markdown surfaces (FilesPage, FilesTab, PlanReviewCard, SessionsTabDetail, TasksTabDetailPanel, SkillContentView, TaskDetailEditableCore, WikiPageReader) keep scoped markdown typography with parity after the sheet retires. file: `web/src/components/shared/MarkdownBody.tsx`.
 
-### 5.2 Retire the chat input family [category: refactor] (depends: 4.10)
+### 5.2 Retire the chat input family [category: refactor] (depends: 4.10, 5.1)
 
 `kind: deliverable`
 
@@ -704,11 +723,23 @@ Targets:
 - `web/src/components/chat/styles/input.css`
 - `web/src/components/chat/styles.css`
 - `web/src/styles/accessibility.css`
+- `web/src/components/chat/ChatInput.tsx::*` — scope-reason: composer shell and textarea rules land as component utilities with the moat button look preserved as scoped utilities
+- `web/src/components/chat/ChatInputToolbar.tsx::*` — scope-reason: toolbar, meta, and notice rules from the composer sheet land as component utilities
+- `web/src/components/chat/ChatInputModelControls.tsx::*` — scope-reason: the chat-input-select family rules land as component utilities
+- `web/src/components/chat/ChatInputVoiceControls.tsx::*` — scope-reason: voice-mic rules from the voice sheet land as component utilities
+- `web/src/components/chat/ChatInputPrimaryButton.tsx::*` — scope-reason: primary-button styling arrives through the hook-authored class strings as the sheet retires
+- `web/src/components/chat/useChatInputPrimaryAction.ts::*` — scope-reason: authors the chat-input-primary-button class strings that absorb the sheet's rules
+- `web/src/components/chat/useChatInputNarrow.ts::*` — scope-reason: its chat-column container lookup follows the relocated container declaration
+- `web/src/components/chat/ChatMainColumn.tsx::*` — scope-reason: hosts the chat-column container declaration that moves to component-owned styling
+- `web/src/components/chat/AgentStatusBar.tsx::*` — scope-reason: agent-status-bar rules from the status sheet land as component utilities
+- `web/src/components/chat/VoiceStatusBar.tsx::*` — scope-reason: voice-status-bar rules from the voice sheet land as component utilities
+- `web/src/components/chat/ChatCommandPalette.tsx::*` — scope-reason: the input-base command-palette dropdown rules land as component utilities
+- `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: agent/voice status-bar typography pins re-point at components
 - `web/src/__tests__/coarsePointerTouchTargets.test.ts::*` — scope-reason: fixture hooks referencing the retired sheets move to compiled-Tailwind candidates
 - `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 - `web/src/components/chat/__tests__/planApprovalDesign.test.tsx::*` — scope-reason: source assertions on the retired sheets convert to JSX/computed-style assertions
 
-`input-base.css` (398), `input-composer.css` (263), `input-voice.css` (187), `input-responsive.css` (151), `input-status.css` (18), `input.css` barrel (5) — 1,022 lines onto the composer components (`ChatInput`, `ChatInputToolbar`, `ChatInputModelControls`, `ChatInputVoiceControls`, `ChatInputPrimaryButton`, `AgentStatusBar`, `VoiceStatusBar`, `ChatCommandPalette`). Composer icon buttons keep their purpose-built look (moat) as scoped utilities. Container queries move to `@container` utilities / the components' own scoped styles. The `input-voice.css:176` `animation: none !important` relocates to `web/src/styles/accessibility.css` with a justification comment (reduced-motion class). Guard updates: `mobileChromeCss.test.ts` chat container-query pins and `planApprovalDesign.test.tsx` `.agent-status-bar` source assertions re-point or convert to JSX/computed-style assertions; `coarsePointerTouchTargets` fixture hooks that referenced these sheets move to compiled-Tailwind candidates.
+`input-base.css` (398), `input-composer.css` (263), `input-voice.css` (187), `input-responsive.css` (151), `input-status.css` (18), `input.css` barrel (5) — 1,022 lines onto the composer components (`ChatInput`, `ChatInputToolbar`, `ChatInputModelControls`, `ChatInputVoiceControls`, `ChatInputPrimaryButton`, `AgentStatusBar`, `VoiceStatusBar`, `ChatCommandPalette`). All eight are formal Targets, plus the two coupled hooks the census surfaced: `useChatInputPrimaryAction.ts` authors the `chat-input-primary-button` class strings that absorb the sheet's rules, and `useChatInputNarrow.ts` locates the `.chat-column` container declared in `input-composer.css` (line 22), which moves to `ChatMainColumn`-owned styling with the retirement. Composer icon buttons keep their purpose-built look (moat) as scoped utilities. Container queries move to `@container` utilities / the components' own scoped styles. The `input-voice.css:176` `animation: none !important` relocates to `web/src/styles/accessibility.css` with a justification comment (reduced-motion class). Guard updates: `mobileChromeCss.test.ts` chat container-query pins and `planApprovalDesign.test.tsx` `.agent-status-bar` source assertions re-point or convert to JSX/computed-style assertions; `coarsePointerTouchTargets` fixture hooks that referenced these sheets move to compiled-Tailwind candidates.
 
 **Acceptance:**
 
@@ -728,11 +759,16 @@ Targets:
 - `web/src/__tests__/styleRatchet.allowlist.ts::*` — scope-reason: the ratchet census must shrink in the same commit as every migration; entries touched vary per batch
 - `web/src/components/chat/styles/layout.css`
 - `web/src/styles/base.css`
+- `web/src/components/chat/CommandBar.tsx::*` — scope-reason: the command-bar rule family lands as component utilities
+- `web/src/components/chat/CommandPalette.tsx::*` — scope-reason: the full-screen command-palette rule family lands as component utilities
+- `web/src/components/chat/MessageItem.tsx::*` — scope-reason: the layout half of the message-content shell rule lands with the shared markdown typography owner
+- `web/src/components/chat/MessageList.tsx::*` — scope-reason: chat-scaled type-scaling consumer restyles via component utilities
+- `web/src/components/activity/WatchingTranscript.tsx::*` — scope-reason: chat-scaled type-scaling consumer restyles via component utilities
 - `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 - `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: the command-bar typography pin re-points at the component
 - `web/src/components/chat/__tests__/planApprovalDesign.test.tsx::*` — scope-reason: the command-bar source assertion re-points as the sheet retires
 
-`layout.css` (468): `.chat-container/-messages/-page/-main`, `.command-bar*`, `.message*` shells, `.mobile-chat-drawer`, and the full-screen `.command-palette-*` family → utilities on `ChatMainColumn`, `CommandBar`, `MessageList`/`MessageItem`, `CommandPalette`. `variables.css` (12): its four alias custom properties (`--bg-code`, `--bg-muted`, `--border-color`, `--accent-color`) have **zero consumers** anywhere in `web/src` (verified 2026-08-08) — delete the sheet outright with the `mobileChromeCss` alias-only assertion; nothing inlines and nothing graduates. The barrel `styles.css` (32): the `.tool-code-surface` `!important` rule (beats react-syntax-highlighter's inline style — must survive) relocates to `web/src/styles/base.css` with its #14721 comment; barrel deleted. `IMPORTANT_ALLOWLIST` moves the entry accordingly. `mobileChromeCss` `.command-bar` pins re-point; `typographyLadder` `.command-bar-btn` pin re-points; `planApprovalDesign` `.command-bar` assertion re-points. Naming hazard resolved: the chat-input dropdown formerly `.command-palette` (input-base) and the modal `.command-palette-*` (layout) end as component-scoped utilities, killing the collision. **Precondition (why this depends on 5.1 AND 5.2):** at deletion time the barrel must import only `layout.css` and `variables.css` — 5.1 removes its retained empty-state member and 5.2 removes its input-family chain; deleting the barrel earlier leaves `ChatPage.tsx` importing a file whose members still exist.
+`layout.css` (468) splits live-vs-dead on the 2026-08-08 selector census. **Migrates:** the `.command-bar*` family → `CommandBar` utilities; the full-screen `.command-palette-*` family → `CommandPalette` utilities; the `.message-content` shell rule (line 74 — the layout half of the cross-sheet duplicate 5.1 resolves) → the shared markdown typography owner applied by `MessageItem`; the `.chat-scaled` type-scaling rules → their two production consumers, `MessageList` and `WatchingTranscript`. **Deleted as dead** (zero component consumers anywhere in `web/src`): `.chat-container`, `.chat-messages`, `.chat-page`, `.chat-main`, the entire `.mobile-chat-drawer*` family, and the `.message`/`.message-user`/`.message-assistant`/`.message-header`/`.message-role*`/`.message-time`/`.message-model-switch` shells — the classification is re-verified and recorded in the deletion commit. `variables.css` (12): its four alias custom properties (`--bg-code`, `--bg-muted`, `--border-color`, `--accent-color`) have **zero consumers** anywhere in `web/src` (verified 2026-08-08) — delete the sheet outright with the `mobileChromeCss` alias-only assertion; nothing inlines and nothing graduates. The barrel `styles.css` (32): the `.tool-code-surface` `!important` rule (beats react-syntax-highlighter's inline style — must survive) relocates to `web/src/styles/base.css` with its #14721 comment; barrel deleted. `IMPORTANT_ALLOWLIST` moves the entry accordingly. `mobileChromeCss` `.command-bar` pins re-point; `typographyLadder` `.command-bar-btn` pin re-points; `planApprovalDesign` `.command-bar` assertion re-points. Naming hazard resolved: the chat-input dropdown formerly `.command-palette` (input-base) and the modal `.command-palette-*` (layout) end as component-scoped utilities, killing the collision. **Precondition (why this depends on 5.1 AND 5.2):** at deletion time the barrel must import only `layout.css` and `variables.css` — 5.1 removes its retained empty-state member and 5.2 removes its input-family chain; deleting the barrel earlier leaves `ChatPage.tsx` importing a file whose members still exist.
 
 **Acceptance:**
 
@@ -740,7 +776,7 @@ Targets:
 - 5.3.2 - The tool-code-surface override survives in base.css and tool cards render flat code backgrounds. file: `web/src/styles/base.css`.
 - 5.3.3 - Import-order-dependent behavior is gone from chat styling (no cross-sheet duplicate selectors remain). behavior: "no duplicate selectors" in `web/src/components/chat/ChatPage.tsx`.
 
-### 5.4 Retire sessions-tab.css and activity-panel.css [category: refactor] (depends: 4.9)
+### 5.4 Retire sessions-tab.css and activity-panel.css [category: refactor] (depends: 4.2, 4.3, 4.9, 5.3)
 
 `kind: deliverable`
 
@@ -753,12 +789,16 @@ Targets:
 - `web/src/components/activity/SessionsTab.tsx::*` — scope-reason: its sessions-tab.css side-effect import (owner since 1.1) is removed at retirement
 - `web/src/components/activity/SessionsTab.helpers.tsx::*` — scope-reason: remaining session-entry styling lands as utilities on the helpers
 - `web/src/components/activity/TasksTabToolbar.tsx::*` — scope-reason: the single .activity-filter-button authoring site lands here
+- `web/src/components/activity/ActivityActionsContext.tsx::*` — scope-reason: activity-panel action-button and header rules it consumes land as component utilities
+- `web/src/components/activity/ActivityRowStatusDot.tsx::*` — scope-reason: activity-row-status-dot rules and pulse keyframes it consumes land as component utilities
+- `web/src/components/activity/__tests__/ActivityActionButtons.test.tsx::*` — scope-reason: action-button assertions re-point from sheet selectors to component assertions
+- `web/src/components/activity/__tests__/ActivityRowStatusDot.test.tsx::*` — scope-reason: status-dot assertions re-point from sheet selectors to component assertions
 - `web/src/__tests__/coarsePointerTouchTargets.test.ts::*` — scope-reason: fixture hooks referencing the retired sheets move to compiled-Tailwind candidates
 - `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 - `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: activity-row and status-bar typography pins re-point to components
 - `web/src/components/chat/__tests__/planApprovalDesign.test.tsx::*` — scope-reason: the activity-panel-tabs source assertion re-points as the sheet retires
 
-`activity-panel.css` (622): `.activity-panel*` shell/tabs/toolbar/status-bar/mobile chrome → utilities on `ActivityPanel`/`ActivityActionsContext`; `.activity-panel-tab-strip` → TabBar; `.activity-chip` rules die here with their sheet (adopters migrated in 4.2/4.3/4.8); `.activity-filter-button` consolidates to a single authoring site (Button variant + utilities; its `task-execution.css` and `rules-tab.css` fragments die with those sheets). `sessions-tab.css` (561): `.session-entry*` and remaining rules → utilities on `SessionsTabList`/helpers. Guard updates: `mobileChromeCss` activity-toolbar pins, `typographyLadder` `.activity-row-*`/status-bar pins re-point to components, `planApprovalDesign` `.activity-panel-tabs` assertion, `coarsePointerTouchTargets` hooks (`.activity-panel-mobile-menu__item`) move to compiled utilities.
+`activity-panel.css` (622): `.activity-panel*` shell/tabs/toolbar/status-bar/mobile chrome → utilities on `ActivityPanel`/`ActivityActionsContext`; `.activity-panel-tab-strip` → TabBar; `.activity-chip` rules die here with their sheet (adopters migrated in 4.2/4.3/4.8); `.activity-filter-button` consolidates to a single authoring site (Button variant + utilities; its `task-execution.css` and `rules-tab.css` fragments die with those sheets). `sessions-tab.css` (561): `.session-entry*` and remaining rules → utilities on `SessionsTabList`/helpers. Direct-consumer dispositions: `ActivityActionsContext.tsx` (`.activity-panel-actions-slot`, `.activity-panel-action-btn*`, header-segmented) and `ActivityRowStatusDot.tsx` (`.activity-row-status-dot*` incl. the pulse keyframes) keep their components and behavior — only styling authority moves to component utilities — and their direct tests (`ActivityActionButtons.test.tsx`, `ActivityRowStatusDot.test.tsx`) re-point from sheet selectors to component assertions. Dependency rationale: 4.2 and 4.3 own the agent/pipeline `.activity-chip` adopters and 4.9 carries 4.8's thirteen list/detail adopters transitively, so no adopter outlives this sheet. Guard updates: `mobileChromeCss` activity-toolbar pins, `typographyLadder` `.activity-row-*`/status-bar pins re-point to components, `planApprovalDesign` `.activity-panel-tabs` assertion, `coarsePointerTouchTargets` hooks (`.activity-panel-mobile-menu__item`) move to compiled utilities.
 
 **Acceptance:**
 
@@ -766,7 +806,7 @@ Targets:
 - 5.4.2 - `.activity-filter-button` has exactly one authoring site. behavior: "single filter-button authoring site" in `web/src/components/activity/TasksTabToolbar.tsx`.
 - 5.4.3 - Typography-ladder pins assert against components. test: `web/src/components/activity/__tests__/typographyLadder.test.ts`.
 
-### 5.5 Retire the small activity tab sheets [category: refactor] (depends: 4.3, 4.6, 4.8)
+### 5.5 Retire the small activity tab sheets [category: refactor] (depends: 4.3, 4.6, 4.8, 5.4)
 
 `kind: deliverable`
 
@@ -790,17 +830,24 @@ Targets:
 - `web/src/components/FilesPage.tsx::*` — scope-reason: file-viewer selector consumers move to utilities as files-tab.css retires
 - `web/src/components/activity/FileChangesTab.tsx::*` — scope-reason: files-tab selector consumers move to utilities at retirement
 - `web/src/components/activity/mcp/McpDetailPanel.tsx::*` — scope-reason: mcp-tab selector consumers move to utilities at retirement
+- `web/src/components/activity/mcp/McpServerFields.tsx::*` — scope-reason: activity-mcp-detail selector consumer moves to utilities at retirement
+- `web/src/components/activity/mcp/mcpIcons.tsx::*` — scope-reason: activity-mcp-row-chevron selector consumer moves to utilities at retirement
+- `web/src/components/activity/rules/RulesDetailPanel.tsx::*` — scope-reason: rules-detail and rules-readonly selector consumer moves to utilities at retirement
+- `web/src/components/activity/rules/RulesTabList.tsx::*` — scope-reason: rules-tab list selector consumer moves to utilities at retirement
+- `web/src/components/activity/rules/RulesYamlView.tsx::*` — scope-reason: rules-tab yaml selector consumer moves to utilities at retirement
+- `web/src/components/activity/FilterPrimitives.tsx::*` — scope-reason: gains the presentational InlineFilterPanel that replaces the shared activity-filter-panel rules
+- `web/src/components/activity/__tests__/FilterPrimitives.test.tsx`
 - `web/src/__tests__/coarsePointerTouchTargets.test.ts::*` — scope-reason: fixture hooks referencing the retired sheets move to compiled-Tailwind candidates
 - `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: file-tree and cron typography pins re-point to components
 
-`files-tab.css` (300), `mcp-tab.css` (239), `rules-tab.css` (212 incl. `.activity-filter-panel` used by Skills + Integrations — becomes a shared filter-panel component or utilities), `cron-tab.css` (61), `traces-tab.css` (36), `pipelines-tab.css` (35), plus `activity/skills/SkillsTab.css` (3). Import owners updated per sheet (each was relocated to its owning component in 1.1; the owning component's side-effect import is removed as its sheet dies). `rules-tab.css` has **three** owner imports since 1.1 — RulesTab, SkillsTab, and IntegrationsFilterPanel — all removed here as the shared filter panel lands. Selector consumers whose styling moves to utilities: FilesTab/FilesPage/FileChangesTab, McpDetailPanel/ActivityMcpTab, RulesTab, CronTab, TracesTab, PipelinesTab. Guard updates: `typographyLadder` file-tree and cron pins re-point; `coarsePointerTouchTargets` hooks from these sheets move to utilities.
+`files-tab.css` (300), `mcp-tab.css` (239), `rules-tab.css` (212 incl. `.activity-filter-panel` used by Skills + Integrations — becomes the presentational **`InlineFilterPanel`** added to `FilterPrimitives.tsx`: panel shell and field rows only, adopted by RulesTab, SkillsTab, and IntegrationsFilterPanel with direct render coverage in `FilterPrimitives.test.tsx`; the 4.9 rule stands — controllers keep their semantics and stay put), `cron-tab.css` (61), `traces-tab.css` (36), `pipelines-tab.css` (35), plus `activity/skills/SkillsTab.css` (3). Import owners updated per sheet (each was relocated to its owning component in 1.1; the owning component's side-effect import is removed as its sheet dies). `rules-tab.css` has **three** owner imports since 1.1 — RulesTab, SkillsTab, and IntegrationsFilterPanel — all removed here as the shared filter panel lands. Selector consumers whose styling moves to utilities (2026-08-08 census): FilesTab/FilesPage/FileChangesTab, McpDetailPanel/ActivityMcpTab/McpServerFields (`.activity-mcp-detail*`)/mcpIcons (`.activity-mcp-row-chevron`), RulesTab/RulesDetailPanel (`.rules-detail*`, `.rules-readonly*`)/RulesTabList/RulesYamlView, CronTab, TracesTab, PipelinesTab. Guard updates: `typographyLadder` file-tree and cron pins re-point; `coarsePointerTouchTargets` hooks from these sheets move to utilities.
 
 **Acceptance:**
 
 - 5.5.1 - All seven sheets are deleted with allowlist entries dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
-- 5.5.2 - The shared filter panel serves Rules, Skills, and Integrations from one implementation. file: `web/src/components/activity/RulesTab.tsx`.
+- 5.5.2 - The shared inline filter panel serves Rules, Skills, and Integrations from the presentational InlineFilterPanel in one implementation, with direct render coverage. file: `web/src/components/activity/FilterPrimitives.tsx`.
 
-### 5.6 Retire task-execution.css and task-detail.css [category: refactor] (depends: 4.7)
+### 5.6 Retire task-execution.css and task-detail.css [category: refactor] (depends: 4.7, 4.8, 5.5)
 
 `kind: deliverable`
 
@@ -810,12 +857,25 @@ Targets:
 - `web/src/components/activity/taskdetail/task-detail.css`
 - `web/src/components/tasks/TaskBadges.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
 - `web/src/components/activity/TasksTabDetailPanel.tsx::*` — scope-reason: raw controls and styling in this file migrate onto ui primitives/utilities in this deliverable
+- `web/src/components/activity/TasksTab.tsx::*` — scope-reason: activity-tasks pane and toolbar selector consumer restyles via component utilities
+- `web/src/components/activity/TaskCloseDialog.tsx::*` — scope-reason: activity-task-close selector consumer restyles via component utilities
+- `web/src/components/activity/TaskTreeRow.tsx::*` — scope-reason: activity-task-row selector consumer restyles via component utilities
+- `web/src/components/activity/TaskFieldEditors.tsx::*` — scope-reason: task inline-edit selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailHeader.tsx::*` — scope-reason: task-detail header selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx::*` — scope-reason: task-detail editable-core selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailKV.tsx::*` — scope-reason: task-detail KV selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailRelationships.tsx::*` — scope-reason: task-detail relationships selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailStatusLine.tsx::*` — scope-reason: task-detail statusline selector consumer restyles via component utilities
+- `web/src/components/activity/taskdetail/TaskDetailTrace.tsx::*` — scope-reason: task-detail trace selector consumer restyles via component utilities
+- `web/src/components/activity/__tests__/TasksTab.test.tsx::*` — scope-reason: activity-tasks-pane and detail-header class queries re-point to component assertions
+- `web/src/components/activity/__tests__/TasksTab.rowOrder.test.tsx::*` — scope-reason: activity-task-row class queries re-point to component assertions
+- `web/src/components/activity/__tests__/TasksTabDetailPanel.test.tsx::*` — scope-reason: activity-task-detail class queries re-point to component assertions
 - `web/src/__tests__/coarsePointerTouchTargets.test.ts::*` — scope-reason: fixture hooks referencing the retired sheets move to compiled-Tailwind candidates
 - `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 - `web/src/components/activity/__tests__/typographyLadder.test.ts::*` — scope-reason: task typography pins stay component-side as the sheets retire
 - `web/src/components/chat/__tests__/planApprovalDesign.test.tsx::*` — scope-reason: retired-sheet references re-point as the sheets die
 
-`task-execution.css` (738 — largest sheet; import owner `TaskBadges.tsx:4` removed with it; `task-detail.css` import owner `TasksTabDetailPanel.tsx:1` likewise): `.chip` block already dead (3.1); `.activity-task-*` rows/panes/toolbars → utilities on TaskTreeRow/TasksTab components; `.activity-filter-*` fragments consolidated per 5.4. `activity/taskdetail/task-detail.css` (346): detail header/KV/relationships → utilities; `.task-inline-edit--select` already migrated (4.7). Guard updates: `typographyLadder` task pins and `PRIORITY_TEXT_WEIGHTS` stay component-side; `coarsePointerTouchTargets` `.task-more-btn`/`.activity-task-row-toggle`/`.activity-task-detail-edit-error__dismiss` hooks move to compiled utilities; `mobileChromeCss`/`planApprovalDesign` references re-point.
+`task-execution.css` (738 — largest sheet; import owner `TaskBadges.tsx:4` removed with it; `task-detail.css` import owner `TasksTabDetailPanel.tsx:1` likewise): `.chip` block already dead (3.1); `.activity-task-*` rows/panes/toolbars → utilities on TaskTreeRow/TasksTab components; `.activity-filter-*` fragments consolidated per 5.4. `activity/taskdetail/task-detail.css` (346): detail header/KV/relationships → utilities; `.task-inline-edit--select` already migrated (4.7). Full consumer census (2026-08-08): the raw-control migrations for `TaskFieldEditors`, `TaskDetailKV`, `TaskDetailRelationships`, and `TasksTabDetailPanel` are owned earlier by 4.7/4.8 (explicit there; 5.6 depends on both), while their class hooks — plus `TasksTab` panes/toolbars, `TaskCloseDialog` (`.activity-task-close*`), `TaskTreeRow` (`.activity-task-row*`), and the full task-detail family (`TaskDetailHeader`, `TaskDetailEditableCore`, `TaskDetailKV`, `TaskDetailRelationships`, `TaskDetailStatusLine`, `TaskDetailTrace`) — land here as component utilities. Class-sensitive tests re-point with them: `TasksTab.test.tsx` (`.activity-tasks-pane`, detail-header queries), `TasksTab.rowOrder.test.tsx` (`.activity-task-row-*`), `TasksTabDetailPanel.test.tsx` (`.activity-task-detail-*`). Guard updates: `typographyLadder` task pins and `PRIORITY_TEXT_WEIGHTS` stay component-side; `coarsePointerTouchTargets` `.task-more-btn`/`.activity-task-row-toggle`/`.activity-task-detail-edit-error__dismiss` hooks move to compiled utilities; `mobileChromeCss`/`planApprovalDesign` references re-point.
 
 **Acceptance:**
 
@@ -856,7 +916,7 @@ Update `docs/guides/frontend-style-guide.md` anti-patterns wording ("Tailwind ut
 
 `kind: framing`
 
-**Goal**: The last non-infra stylesheets fold into components; `main.tsx` carries no side-effect CSS beyond fonts and `index.css`.
+**Goal**: The last non-infra stylesheets fold into components; `main.tsx` carries no side-effect CSS beyond fonts and `index.css`. The phase runs serialized 7.1 → 7.2 → 7.3 → 7.4: all four rewrite the root import list, the mobile-chrome guard pins, and the ratchet ledger, which admit no concurrent writers.
 
 ### 7.1 Retire segmented-control.css and dropdown-caret.css [category: refactor] (depends: 6.1)
 
@@ -900,7 +960,7 @@ Targets:
 - 7.2.2 - Header pins live as component assertions. test: `web/src/__tests__/mobileChromeCss.test.ts`.
 - 7.2.3 - The `.impeccable.md` app-header/canonical-cluster clause references component-owned styling, updated via teach mode in this deliverable. behavior: "app-header contract matches shipped architecture" in `.impeccable.md`.
 
-### 7.3 Retire settings-overlay.css [category: refactor] (depends: 6.1)
+### 7.3 Retire settings-overlay.css [category: refactor] (depends: 6.1, 7.2)
 
 `kind: deliverable`
 
@@ -926,10 +986,13 @@ Targets:
 - `web/src/components/settings/sections/RuntimeInfrastructureSection.tsx::*` — scope-reason: overlay section rules it consumes land as component utilities
 - `web/src/components/settings/sections/SecretsAuthSection.tsx::*` — scope-reason: overlay section rules it consumes land as component utilities
 - `web/src/components/settings/sections/ToolApprovalsSection.tsx::*` — scope-reason: overlay section rules it consumes land as component utilities
+- `web/src/components/settings/sections/SettingsSection.tsx::*` — scope-reason: the shared renderer that emits the settings-section and settings-subsection shells; its rules land as component utilities
+- `web/src/components/settings/sections/configFields.tsx::*` — scope-reason: the shared field renderer consuming overlay field/row rules; its class hooks land as component utilities
+- `web/src/components/settings/sections/__tests__/SettingsSection.test.tsx`
 - `web/src/main.tsx::*` — scope-reason: the settings-overlay.css side-effect import is removed
 - `web/src/__tests__/mobileChromeCss.test.ts::*` — scope-reason: guard-test pins on named sheets and import order are re-pointed as those sheets and imports change
 
-712 lines across `SettingsOverlay.tsx`, `WorkflowVariablesEditor.tsx`, `settings/fields/*`, and the 13 section components. Much of the field/row styling is already superseded by FormField adoption (3.3) — delete superseded rules first, then migrate the shell (`.settings-overlay-shell*`), sections (`.settings-section*`, `.settings-subsection*`), and specialty editors (`.settings-variables*`, `.settings-endpoint-editor`, `.settings-hubs-field*`, `.settings-prompt-row`, `.appearance-font-size*`) to utilities. Work in 2–3 commits (shell → sections → specialty) to stay bisectable. Drop the `main.tsx` import; lower ceiling (>200 lines).
+712 lines across `SettingsOverlay.tsx`, `WorkflowVariablesEditor.tsx`, `settings/fields/*`, the 13 section components, and the two shared renderers that actually emit the section shells — `SettingsSection.tsx` (`.settings-section*`, `.settings-subsection*`) and `configFields.tsx` (overlay field/row hooks) — whose class hooks land as component utilities with a direct render pin in the new `SettingsSection.test.tsx`. Much of the field/row styling is already superseded by FormField adoption (3.3) — delete superseded rules first, then migrate the shell (`.settings-overlay-shell*`), sections (`.settings-section*`, `.settings-subsection*`), and specialty editors (`.settings-variables*`, `.settings-endpoint-editor`, `.settings-hubs-field*`, `.settings-prompt-row`, `.appearance-font-size*`) to utilities. Work in 2–3 commits (shell → sections → specialty) to stay bisectable. Drop the `main.tsx` import; lower ceiling (>200 lines).
 
 **Acceptance:**
 
@@ -1000,6 +1063,7 @@ Targets:
 
 - `cd web && npm run test && npm run type-check && npm run lint && npm run lint:tokens` — green at every phase boundary; the ratchet proves recorded debt is exact at each step and the ban-state at the end.
 - Playwright matrix (`web/tests/style-surfaces.spec.ts`): before/after parity review at 1.4 (re-baseline, not parity), 5.2, 5.4, 6.1, 7.2, 7.3 minimum; full-matrix final pass across every manifest entry (24 at authoring; count asserted against the live tab registry) × dark/light × fine/coarse × three reference viewports, every entry asserting its visible checkpoint, in immutable labeled runs with per-PNG hashes.
+- Coarse-pointer activation spec: `cd web && npx playwright test coarse-pointer-hit-areas.spec.ts` (`web/tests/coarse-pointer-hit-areas.spec.ts`) — green at the 3.3 boundary and in the final pass.
 - Grayscale subset from the manifest (deutan contract): success/error distinguishable without hue on state-bearing rows in both themes.
 - Responsive tier conformance: `.impeccable.md` tier model holds in the shipped code — 767/768 boundary identical in JS and CSS, height≤500px clause live, no surviving 430px or 480px threshold.
 - CI target-branch ratchet check green on the PR (`STYLE_RATCHET_TARGET_REF` path — local green is insufficient evidence).
