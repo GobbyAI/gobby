@@ -37,6 +37,40 @@ pub fn run(
     format: Format,
     verbose: bool,
 ) -> anyhow::Result<()> {
+    let unscoped = complete_scope || scope_args.is_empty();
+    let summary = run_summary(
+        ctx,
+        out,
+        scope_args,
+        complete_scope,
+        ai,
+        edge_limit,
+        include_docs,
+        since,
+        max_workers,
+        verbose,
+    )?;
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => output::print_text(&run_summary_text(&summary, unscoped)),
+    }
+}
+
+// Summary-producing twin of the flat CLI entry point; each parameter still
+// maps one-to-one to an existing code flag.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn run_summary(
+    ctx: &CodeEngineRuntime,
+    out: Option<String>,
+    scope_args: Vec<String>,
+    complete_scope: bool,
+    ai: CodewikiAiOptions,
+    edge_limit: usize,
+    include_docs: bool,
+    since: Option<String>,
+    max_workers: usize,
+    verbose: bool,
+) -> anyhow::Result<CodewikiRunSummary> {
     validate_edge_limit(edge_limit)?;
     let commit_stamp = capture_commit_stamp(&ctx.project_root);
     if complete_scope && scope_args.is_empty() {
@@ -396,24 +430,21 @@ pub fn run(
         ai_enabled,
         degraded_pages,
     };
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => {
-            if doc_scope.is_unscoped() {
-                output::print_text(&format!(
-                    "wrote {} file docs, {} module docs, and repo.md to {}",
-                    summary.files, summary.modules, summary.out_dir
-                ))
-            } else {
-                output::print_text(&format!(
-                    "wrote {} scoped file docs and {} scoped module docs to {}",
-                    summary.files, summary.modules, summary.out_dir
-                ))
-            }
-        }
-    }?;
+    Ok(summary)
+}
 
-    Ok(())
+pub(crate) fn run_summary_text(summary: &CodewikiRunSummary, unscoped: bool) -> String {
+    if unscoped {
+        format!(
+            "wrote {} file docs, {} module docs, and repo.md to {}",
+            summary.files, summary.modules, summary.out_dir
+        )
+    } else {
+        format!(
+            "wrote {} scoped file docs and {} scoped module docs to {}",
+            summary.files, summary.modules, summary.out_dir
+        )
+    }
 }
 
 fn codewiki_doc_scope(scopes: &[String], complete_scope: bool) -> DocPruneScope {
@@ -537,6 +568,17 @@ pub fn run_repair(
     out: Option<String>,
     format: Format,
 ) -> anyhow::Result<()> {
+    let summary = repair_summary(ctx, out)?;
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => output::print_text(&repair_summary_text(&summary)),
+    }
+}
+
+pub(crate) fn repair_summary(
+    ctx: &CodeEngineRuntime,
+    out: Option<String>,
+) -> anyhow::Result<super::CitationRepairSummary> {
     let files = ctx
         .facts
         .scoped_files(&ScopeSelector::all())?
@@ -551,18 +593,17 @@ pub fn run_repair(
         .map(|symbol| Symbol::from_fact(symbol, &ctx.project_id))
         .collect::<Vec<_>>();
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
-    let summary = super::repair_citations(Path::new(&out_dir), &symbols)?;
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&format!(
-            "scanned {} pages; repaired {} pages, {} citations; {} unresolved",
-            summary.pages_scanned,
-            summary.pages_repaired,
-            summary.citations_repaired,
-            summary.citations_unresolved,
-        )),
-    }?;
-    Ok(())
+    super::repair_citations(Path::new(&out_dir), &symbols)
+}
+
+pub(crate) fn repair_summary_text(summary: &super::CitationRepairSummary) -> String {
+    format!(
+        "scanned {} pages; repaired {} pages, {} citations; {} unresolved",
+        summary.pages_scanned,
+        summary.pages_repaired,
+        summary.citations_repaired,
+        summary.citations_unresolved,
+    )
 }
 
 pub(crate) fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {

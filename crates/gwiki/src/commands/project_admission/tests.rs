@@ -3,13 +3,73 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::*;
+use crate::commands::code::{
+    CODE_WRITER_LOCK_RELATIVE_PATH, CODE_WRITER_LOCK_TIMEOUT, CodeCommandOptions, CodewikiAiOptions,
+};
 use crate::commands::session_sync::run_persistent_write_phases;
+use crate::output::Format;
 use crate::project_lock::{
     ProjectLockBackend, ProjectRowState, acquire_writer_lock_for_test, run_with_project_lock,
 };
 use crate::{IngestFileOptions, SyncSessionsOptions};
 
 const PROJECT_ID: &str = "d45545c5-ded5-4335-b115-0245752edacf";
+
+fn code_options() -> CodeCommandOptions {
+    CodeCommandOptions {
+        project_root: PathBuf::from("/tmp/manual-codewiki-project"),
+        out: None,
+        purge: false,
+        force: false,
+        scope: Vec::new(),
+        complete_scope: false,
+        ai: CodewikiAiOptions::default(),
+        edge_limit: 5_000,
+        include_docs: false,
+        since: None,
+        compare_to: None,
+        max_workers: 1,
+        repair_citations: false,
+        no_freshness: false,
+        format: Format::Json,
+        quiet: false,
+        verbose: false,
+    }
+}
+
+#[test]
+fn code_admission_preserves_the_engine_owned_lock_and_manual_project_semantics() {
+    let command = Command::Code(code_options());
+    assert!(matches!(
+        classify_command(&command),
+        CommandClassification::Code
+    ));
+    assert!(
+        acquire_command_lock(&command)
+            .expect("code admission")
+            .is_none(),
+        "code must bypass the generic project-row lock"
+    );
+    assert_eq!(CODE_WRITER_LOCK_RELATIVE_PATH, "_meta/codewiki.lock");
+    assert_eq!(CODE_WRITER_LOCK_TIMEOUT, std::time::Duration::from_secs(2));
+}
+
+#[test]
+fn code_compare_is_admitted_as_an_engine_owned_read_path() {
+    let mut options = code_options();
+    options.compare_to = Some("HEAD".to_string());
+    let command = Command::Code(options);
+
+    assert!(matches!(
+        classify_command(&command),
+        CommandClassification::Code
+    ));
+    assert!(
+        acquire_command_lock(&command)
+            .expect("compare admission")
+            .is_none()
+    );
+}
 
 #[test]
 fn dispatch_classification_pins_every_persistent_writer_arm() {

@@ -300,6 +300,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--compare-to", "GIT_REF[:META_PATH]"),
                     FlagContract::value("--max-workers", "N"),
                     FlagContract::switch("--repair-citations"),
+                    FlagContract::switch("--no-freshness"),
                 ],
                 json_output_keys: vec![
                     "command",

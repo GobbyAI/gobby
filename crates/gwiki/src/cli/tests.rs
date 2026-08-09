@@ -8,6 +8,8 @@ use crate::cli_runtime::log_level;
 use super::mapping::command_from_cli;
 use super::*;
 
+mod code;
+
 #[test]
 fn cli_subcommands_match_clap_variants() {
     let mut listed = CLI_SUBCOMMANDS

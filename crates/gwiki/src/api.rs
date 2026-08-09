@@ -23,6 +23,7 @@ pub enum Command {
     Collect {
         scope: ScopeSelection,
     },
+    Code(crate::commands::code::CodeCommandOptions),
     IngestFile {
         path: PathBuf,
         scope: ScopeSelection,

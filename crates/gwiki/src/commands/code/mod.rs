@@ -178,6 +178,8 @@ pub(crate) use build::{
     hash_snapshot_file, resolve_file_reuse, resolve_tool_loop_dump_dir,
 };
 pub use command::{CodeCommandOptions, DEFAULT_CODE_GRAPH_EDGE_LIMIT, run_command};
+#[cfg(test)]
+pub(crate) use lock::{CODE_WRITER_LOCK_RELATIVE_PATH, CODE_WRITER_LOCK_TIMEOUT};
 pub(crate) use publication::{CodewikiPublication, PublicationFingerprint, code_wikilinks};
 pub(crate) use reuse_guard::{
     file_module_link_key, module_child_links_key, nav_set_invalidation_key,

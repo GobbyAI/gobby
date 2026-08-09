@@ -33,15 +33,26 @@ pub fn run_purge(
     force: bool,
     format: Format,
 ) -> anyhow::Result<()> {
+    let confirmation_out = out.clone();
+    let Some(summary) = purge_summary(ctx, out, force)? else {
+        eprintln!("{}", purge_confirmation(ctx, confirmation_out.as_deref()));
+        return Ok(());
+    };
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => output::print_text(&purge_summary_text(&summary)),
+    }
+}
+
+pub(crate) fn purge_summary(
+    ctx: &CodeEngineRuntime,
+    out: Option<String>,
+    force: bool,
+) -> anyhow::Result<Option<CodewikiPurgeSummary>> {
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
     if !force {
-        eprintln!(
-            "This will purge generated CodeWiki output under {} for project {}. Re-run with --force to confirm.",
-            out_path.display(),
-            ctx.project_id
-        );
-        return Ok(());
+        return Ok(None);
     }
 
     let counts = purge_generated_output(out_path)?;
@@ -53,14 +64,23 @@ pub fn run_purge(
         markdown_removed: counts.markdown_removed,
         metadata_removed: counts.metadata_removed,
     };
-    match format {
-        Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&format!(
-            "purged {} generated Markdown pages and {} metadata files from {}",
-            summary.markdown_removed, summary.metadata_removed, summary.out_dir
-        )),
-    }?;
-    Ok(())
+    Ok(Some(summary))
+}
+
+pub(crate) fn purge_confirmation(ctx: &CodeEngineRuntime, out: Option<&str>) -> String {
+    let out_dir = out.unwrap_or(DEFAULT_OUT_DIR);
+    format!(
+        "This will purge generated CodeWiki output under {} for project {}. Re-run with --force to confirm.",
+        Path::new(out_dir).display(),
+        ctx.project_id
+    )
+}
+
+pub(crate) fn purge_summary_text(summary: &CodewikiPurgeSummary) -> String {
+    format!(
+        "purged {} generated Markdown pages and {} metadata files from {}",
+        summary.markdown_removed, summary.metadata_removed, summary.out_dir
+    )
 }
 
 pub(crate) fn purge_generated_output(out_dir: &Path) -> anyhow::Result<CodewikiPurgeCounts> {

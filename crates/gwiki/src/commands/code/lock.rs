@@ -2,7 +2,8 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 /// Writer-lock file path relative to the codewiki out_dir.
-const LOCK_FILE: &str = "_meta/codewiki.lock";
+pub(crate) const CODE_WRITER_LOCK_RELATIVE_PATH: &str = "_meta/codewiki.lock";
+pub(crate) const CODE_WRITER_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Exclusive single-writer lock over one codewiki out_dir (#17732).
 ///
@@ -33,7 +34,7 @@ impl CodewikiWriterLock {
     /// needed. Fails fast with the current holder's identity when another
     /// codewiki run is already writing this out_dir.
     pub(crate) fn acquire(out_dir: &Path) -> anyhow::Result<Self> {
-        let lock_path = out_dir.join(LOCK_FILE);
+        let lock_path = out_dir.join(CODE_WRITER_LOCK_RELATIVE_PATH);
         if let Some(parent) = lock_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -55,7 +56,6 @@ impl CodewikiWriterLock {
         use std::io::Write as _;
         use std::os::unix::io::AsRawFd as _;
 
-        const TOTAL_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
         const POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
         let file = File::options()
@@ -79,7 +79,7 @@ impl CodewikiWriterLock {
                 return Err(anyhow::Error::new(err)
                     .context(format!("failed to lock {}", lock_path.display())));
             }
-            if started.elapsed() >= TOTAL_WAIT {
+            if started.elapsed() >= CODE_WRITER_LOCK_TIMEOUT {
                 anyhow::bail!(held_by_message(out_dir, &lock_path));
             }
             std::thread::sleep(POLL);

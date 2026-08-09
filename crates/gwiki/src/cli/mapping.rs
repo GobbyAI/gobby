@@ -8,13 +8,54 @@ use super::{
     ReviewReportArgs, ScopeArgs, SetupArgs,
 };
 
+#[cfg(test)]
 pub(super) fn command_from_cli(
     command: CliCommand,
     scope: ScopeSelection,
 ) -> Result<Command, WikiError> {
+    command_from_cli_with_runtime(
+        command,
+        scope,
+        gobby_wiki::output::Format::Json,
+        false,
+        false,
+    )
+}
+
+pub(super) fn command_from_cli_with_runtime(
+    command: CliCommand,
+    scope: ScopeSelection,
+    format: gobby_wiki::output::Format,
+    quiet: bool,
+    verbose: bool,
+) -> Result<Command, WikiError> {
     match command {
         CliCommand::Contract => unreachable!("contract command is handled before runtime dispatch"),
-        CliCommand::Code(_) => unreachable!("code command is handled before runtime dispatch"),
+        CliCommand::Code(args) => {
+            let project_root = match scope {
+                ScopeSelection::Detect => {
+                    std::env::current_dir().map_err(|source| WikiError::Io {
+                        action: "resolve current project directory",
+                        path: None,
+                        source,
+                    })?
+                }
+                ScopeSelection::ProjectRoot(project_root) => project_root,
+                ScopeSelection::Topic(topic) => {
+                    return Err(WikiError::InvalidScope {
+                        detail: format!(
+                            "gwiki code requires project scope; topic '{topic}' is unsupported"
+                        ),
+                    });
+                }
+            };
+            Ok(Command::Code(args.into_options(
+                project_root,
+                format,
+                quiet,
+                verbose,
+            )))
+        }
         CliCommand::Init => Ok(Command::Init { scope }),
         CliCommand::Setup(args) => Ok(Command::Setup {
             scope,

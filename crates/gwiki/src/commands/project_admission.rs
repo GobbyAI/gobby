@@ -11,6 +11,7 @@ enum CommandClassification<'a> {
     ExplicitPurge {
         target: &'a PurgeTarget,
     },
+    Code,
     TopicOnly,
     ReadOnly,
 }
@@ -67,6 +68,7 @@ fn classify_command(command: &Command) -> CommandClassification<'_> {
         | Command::Status { .. }
         | Command::Trust { .. }
         | Command::CitationQuality { .. } => CommandClassification::ReadOnly,
+        Command::Code(_) => CommandClassification::Code,
     }
 }
 
@@ -90,7 +92,9 @@ pub(super) fn acquire_command_lock(
             };
             acquire_purge_lock(&project_id).map(Some)
         }
-        CommandClassification::TopicOnly | CommandClassification::ReadOnly => Ok(None),
+        CommandClassification::Code
+        | CommandClassification::TopicOnly
+        | CommandClassification::ReadOnly => Ok(None),
     }
 }
 

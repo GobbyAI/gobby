@@ -8,6 +8,8 @@ use gobby_wiki::commands::code::{
 };
 use gobby_wiki::output::Format;
 
+const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
+
 #[derive(Args, Debug)]
 pub(super) struct CodeArgs {
     /// Output directory for generated Markdown docs.
@@ -118,6 +120,9 @@ pub(super) struct CodeArgs {
     /// Re-anchor existing citations without generating content.
     #[arg(long)]
     repair_citations: bool,
+    /// Skip the generation-path code index freshness check.
+    #[arg(long)]
+    no_freshness: bool,
 }
 
 impl CodeArgs {
@@ -153,6 +158,7 @@ impl CodeArgs {
             compare_to: self.compare_to,
             max_workers: self.max_workers,
             repair_citations: self.repair_citations,
+            no_freshness: self.no_freshness,
             format,
             quiet,
             verbose,
@@ -232,9 +238,14 @@ impl From<AiVerifyScopeArg> for VerifyScope {
 fn parse_positive_usize(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| format!("'{value}' is not a positive integer"))?;
+        .map_err(|_| "value must be a positive integer".to_string())?;
     if parsed == 0 {
-        return Err("value must be greater than zero".to_string());
+        Err("value must be a positive integer".to_string())
+    } else if parsed > MAX_POSITIVE_USIZE_ARG {
+        Err(format!(
+            "value must be no more than {MAX_POSITIVE_USIZE_ARG}"
+        ))
+    } else {
+        Ok(parsed)
     }
-    Ok(parsed)
 }

@@ -54,6 +54,11 @@ fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome,
         Command::Setup { scope, options } => setup::execute(scope, options),
         Command::Index { scope, force } => index::execute(scope, run_options, force),
         Command::Collect { scope } => collect::execute(scope),
+        Command::Code(options) => {
+            code::run_command(options).map_err(|error| WikiError::Generation {
+                detail: format!("{error:#}"),
+            })
+        }
         Command::IngestFile {
             path,
             scope,

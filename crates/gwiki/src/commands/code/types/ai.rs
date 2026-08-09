@@ -285,7 +285,7 @@ impl VerifyScope {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CodewikiAiOptions {
     pub routing: Option<AiRouting>,
     pub depth: AiDepth,

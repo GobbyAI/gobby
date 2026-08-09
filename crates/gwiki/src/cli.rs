@@ -114,31 +114,14 @@ impl Invocation {
         matches!(self.command, CliCommand::Contract)
     }
 
-    pub(super) fn is_code(&self) -> bool {
-        matches!(self.command, CliCommand::Code(_))
-    }
-
-    pub(super) fn run_code(self) -> anyhow::Result<()> {
-        let CliCommand::Code(args) = self.command else {
-            unreachable!("code dispatch requires the code command")
-        };
-        if let Some(topic) = self.scope.topic {
-            anyhow::bail!("gwiki code requires project scope; topic '{topic}' is unsupported");
-        }
-        let project_root = match self.scope.project {
-            Some(root) => root,
-            None => std::env::current_dir()?,
-        };
-        gobby_wiki::commands::code::run_command(args.into_options(
-            project_root,
+    pub(super) fn into_command(self) -> Result<Command, WikiError> {
+        mapping::command_from_cli_with_runtime(
+            self.command,
+            self.scope.into(),
             self.format,
             self.quiet,
             self.verbose,
-        ))
-    }
-
-    pub(super) fn into_command(self) -> Result<Command, WikiError> {
-        mapping::command_from_cli(self.command, self.scope.into())
+        )
     }
 }
 
