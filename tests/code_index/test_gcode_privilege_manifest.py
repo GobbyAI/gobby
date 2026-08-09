@@ -57,6 +57,8 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     assert set(relations) == {
         "projects",
         "code_indexed_projects",
+        "code_indexed_project_states",
+        "code_indexed_file_states",
         "code_indexed_files",
         "code_symbols",
         "code_imports",

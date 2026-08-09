@@ -1,4 +1,5 @@
 pub(crate) mod bm25_health;
+pub mod codewiki_facts;
 pub mod commands;
 pub mod config;
 pub mod contract;
