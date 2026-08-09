@@ -184,8 +184,22 @@ def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 def _quarantine_corrupt_hooks_file(hooks_file: Path, reason: str) -> None:
     """Move an unreadable hooks file aside so foreign hooks are never silently lost."""
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    corrupt_path = hooks_file.with_name(f"{hooks_file.name}.{timestamp}.corrupt")
-    hooks_file.rename(corrupt_path)
+    reservation_fd, reservation_name = tempfile.mkstemp(
+        dir=str(hooks_file.parent),
+        prefix=f"{hooks_file.name}.{timestamp}.",
+        suffix=".corrupt",
+    )
+    os.close(reservation_fd)
+    corrupt_path = Path(reservation_name)
+    try:
+        os.replace(hooks_file, corrupt_path)
+    except OSError:
+        try:
+            if corrupt_path.stat().st_size == 0:
+                corrupt_path.unlink()
+        except OSError:
+            logger.warning("Failed to clean unused quarantine reservation %s", corrupt_path)
+        raise
     logger.warning(
         "Existing %s is unusable (%s); preserved it at %s and installing fresh. "
         "Recover any non-Gobby hooks from the preserved file manually.",

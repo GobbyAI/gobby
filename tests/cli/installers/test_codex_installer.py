@@ -191,7 +191,7 @@ trusted_hash = "sha256:user-tool"
         ],
     )
 
-    state = config["hooks"]["state"]
+    state = cast(Any, config["hooks"])["state"]
     assert f"{hooks_prefix}:pre_tool_use:1:0" in trusted_keys
     assert f"{hooks_prefix}:pre_tool_use:0:0" not in state
     assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
@@ -369,7 +369,7 @@ class TestInstallCodex:
             yield install_dir
 
     @pytest.fixture
-    def mock_shared_content(self):
+    def mock_shared_content(self) -> Iterator[tuple[Any, Any, Any]]:
         """Mock the shared content installation functions."""
         with (
             patch("gobby.cli.installers.codex.install_shared_content") as mock_shared,
@@ -388,7 +388,7 @@ class TestInstallCodex:
             yield mock_shared, mock_cli, mock_global
 
     @pytest.fixture
-    def mock_mcp_configure(self):
+    def mock_mcp_configure(self) -> Iterator[Any]:
         """Mock the MCP server configuration."""
         with patch("gobby.cli.installers.codex.configure_mcp_server_toml") as mock:
             mock.return_value = {"success": True, "added": True, "already_configured": False}
@@ -398,8 +398,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test successful installation with a new config file."""
         from gobby.cli.installers.codex import install_codex
@@ -435,8 +435,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that hooks_installed lists all 8 event types."""
         from gobby.cli.installers.codex import install_codex
@@ -450,8 +450,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test installation when feature flag already exists."""
         from gobby.cli.installers.codex import install_codex
@@ -471,8 +471,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that feature flag is placed before [table] headers, not inside them."""
         from gobby.cli.installers.codex import install_codex
@@ -502,8 +502,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that feature flag is placed inside existing [features] section."""
         from gobby.cli.installers.codex import install_codex
@@ -539,8 +539,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that existing codex_hooks in [features] section is removed."""
         from gobby.cli.installers.codex import install_codex
@@ -562,8 +562,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that existing hooks.json entries are preserved during merge."""
         from gobby.cli.installers.codex import install_codex
@@ -635,7 +635,7 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
+        mock_shared_content: Any,
     ) -> None:
         """Test that MCP config failure is non-fatal."""
         from gobby.cli.installers.codex import install_codex
@@ -652,7 +652,7 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
+        mock_shared_content: Any,
     ) -> None:
         """Test detection of already configured MCP server."""
         from gobby.cli.installers.codex import install_codex
@@ -674,7 +674,7 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_mcp_configure,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that workflows are DB-managed (not merged from file installs)."""
         from gobby.cli.installers.codex import install_codex
@@ -700,8 +700,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test handling of config write exception."""
         from gobby.cli.installers.codex import install_codex
@@ -734,8 +734,8 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
-        mock_mcp_configure,
+        mock_shared_content: Any,
+        mock_mcp_configure: Any,
     ) -> None:
         """Test that install strips per-tool approval overrides from config.toml."""
         from gobby.cli.installers.codex import install_codex
@@ -775,7 +775,7 @@ class TestInstallCodex:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_shared_content,
+        mock_shared_content: Any,
     ) -> None:
         """Install repairs old Codex MCP entries that pin Gobby's repo as the CWD."""
         from gobby.cli.installers.codex import install_codex
@@ -1020,13 +1020,13 @@ class TestUninstallCodex:
             yield temp_dir
 
     @pytest.fixture
-    def mock_mcp_remove(self):
+    def mock_mcp_remove(self) -> Iterator[Any]:
         """Mock the MCP server removal function."""
         with patch("gobby.cli.installers.codex.remove_mcp_server_toml") as mock:
             mock.return_value = {"success": True, "removed": True}
             yield mock
 
-    def test_uninstall_success_full(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_success_full(self, mock_home: Path, mock_mcp_remove: Any) -> None:
         """Test successful uninstallation with all components present."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1104,7 +1104,9 @@ trusted_hash = "sha256:user-tool"
         assert state[f"{hooks_prefix}:pre_tool_use:9:0"]["trusted_hash"] == "sha256:user-tool"
         assert config_data["model"] == "gpt-4"
 
-    def test_uninstall_preserves_non_gobby_hooks(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_preserves_non_gobby_hooks(
+        self, mock_home: Path, mock_mcp_remove: Any
+    ) -> None:
         """Test that non-gobby hooks are preserved in hooks.json."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1142,7 +1144,7 @@ trusted_hash = "sha256:user-tool"
             {"type": "command", "command": "echo user session hook"}
         ]
 
-    def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_no_hooks_json(self, mock_home: Path, mock_mcp_remove: Any) -> None:
         """Test uninstallation when hooks.json doesn't exist."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1151,7 +1153,7 @@ trusted_hash = "sha256:user-tool"
         assert result["success"] is True
         assert len(result["hooks_removed"]) == 0
 
-    def test_uninstall_no_config_file(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_no_config_file(self, mock_home: Path, mock_mcp_remove: Any) -> None:
         """Test uninstallation when config file doesn't exist."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1160,7 +1162,7 @@ trusted_hash = "sha256:user-tool"
         assert result["success"] is True
         assert result["config_updated"] is False
 
-    def test_uninstall_creates_backup(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_creates_backup(self, mock_home: Path, mock_mcp_remove: Any) -> None:
         """Test that config backup is created before modification."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1177,7 +1179,7 @@ trusted_hash = "sha256:user-tool"
         assert backup_path.exists()
         assert backup_path.read_text() == original
 
-    def test_uninstall_nothing_installed(self, mock_home: Path, mock_mcp_remove) -> None:
+    def test_uninstall_nothing_installed(self, mock_home: Path, mock_mcp_remove: Any) -> None:
         """Test uninstallation when nothing is installed."""
         from gobby.cli.installers.codex import uninstall_codex
 
@@ -1228,7 +1230,7 @@ class TestHooksTemplateFormat:
             yield install_dir
 
     @pytest.fixture
-    def mock_deps(self):
+    def mock_deps(self) -> Iterator[None]:
         """Mock shared content and MCP configuration."""
         with (
             patch("gobby.cli.installers.codex.install_shared_content") as mock_shared,
@@ -1247,7 +1249,7 @@ class TestHooksTemplateFormat:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_deps,
+        mock_deps: None,
     ) -> None:
         """Test that PreToolUse/PostToolUse use regex matchers (not glob)."""
         from gobby.cli.installers.codex import install_codex
@@ -1284,7 +1286,7 @@ class TestHooksTemplateFormat:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_deps,
+        mock_deps: None,
     ) -> None:
         """Test that $HOOKS_DIR is replaced with absolute path."""
         from gobby.cli.installers.codex import install_codex
@@ -1303,7 +1305,7 @@ class TestHooksTemplateFormat:
         self,
         mock_home: Path,
         mock_install_dir: Path,
-        mock_deps,
+        mock_deps: None,
     ) -> None:
         """Test that all hooks use --cli=codex flag."""
         from gobby.cli.installers.codex import install_codex
@@ -1475,6 +1477,67 @@ debug = true
         quarantined = list(codex_dir.glob("hooks.json.*.corrupt"))
         assert len(quarantined) == 1
         assert quarantined[0].read_text() == corrupt_content
+
+    def test_corrupt_hook_quarantines_are_unique_within_same_second(self, tmp_path: Path) -> None:
+        from gobby.cli.installers.codex import _quarantine_corrupt_hooks_file
+
+        hooks_path = tmp_path / "hooks.json"
+        first_bytes = b'{"first": invalid}'
+        second_bytes = b'{"second": invalid}'
+
+        with patch("gobby.cli.installers.codex.datetime") as mock_datetime:
+            mock_datetime.now.return_value.strftime.return_value = "20260808123456"
+            hooks_path.write_bytes(first_bytes)
+            _quarantine_corrupt_hooks_file(hooks_path, "first")
+            hooks_path.write_bytes(second_bytes)
+            _quarantine_corrupt_hooks_file(hooks_path, "second")
+
+        quarantined = list(tmp_path.glob("hooks.json.20260808123456.*.corrupt"))
+        assert len(quarantined) == 2
+        assert {path.read_bytes() for path in quarantined} == {first_bytes, second_bytes}
+
+    def test_corrupt_hook_quarantine_replace_failure_preserves_source(self, tmp_path: Path) -> None:
+        from gobby.cli.installers.codex import _quarantine_corrupt_hooks_file
+
+        hooks_path = tmp_path / "hooks.json"
+        original_bytes = b'{"foreign": invalid}'
+        hooks_path.write_bytes(original_bytes)
+
+        with (
+            patch("gobby.cli.installers.codex.os.replace", side_effect=OSError("denied")),
+            pytest.raises(OSError, match="denied"),
+        ):
+            _quarantine_corrupt_hooks_file(hooks_path, "invalid JSON")
+
+        assert hooks_path.read_bytes() == original_bytes
+        assert list(tmp_path.glob("hooks.json.*.corrupt")) == []
+
+    def test_corrupt_hook_replacement_write_failure_leaves_recoverable_quarantine(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.cli.installers.codex import _install_hooks_file
+
+        install_dir = self._make_install_dir(tmp_path)
+        hooks_dir = tmp_path / "installed-hooks"
+        hooks_dir.mkdir()
+        hooks_path = tmp_path / "hooks.json"
+        original_bytes = b'{"foreign": invalid}'
+        hooks_path.write_bytes(original_bytes)
+
+        with (
+            patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir),
+            patch(
+                "gobby.cli.installers.codex._atomic_write_json",
+                side_effect=OSError("write failed"),
+            ),
+            pytest.raises(OSError, match="write failed"),
+        ):
+            _install_hooks_file(hooks_path, hooks_dir)
+
+        quarantined = list(tmp_path.glob("hooks.json.*.corrupt"))
+        assert len(quarantined) == 1
+        assert quarantined[0].read_bytes() == original_bytes
+        assert not hooks_path.exists()
 
     def test_install_non_object_hooks_json_is_quarantined(
         self, mock_home: Path, temp_dir: Path
