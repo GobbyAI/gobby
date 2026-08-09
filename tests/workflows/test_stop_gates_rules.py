@@ -1,7 +1,7 @@
 """Tests for stop-gates rules and hardcoded engine plumbing.
 
 Tier 1 behaviors (hardcoded in RuleEngine.evaluate):
-- stop_attempts auto-increment on STOP
+- stop_attempts auto-increment on STOP except during legitimate waits
 - BEFORE_AGENT full reset (tool_block_pending, stop_attempts, etc.)
 - tool_block_pending stop gate, force_allow_stop bypass, consecutive tool block counter
 
@@ -13,12 +13,17 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.tasks import Task
+from gobby.storage.workflow_definitions import (
+    LocalWorkflowDefinitionManager,
+    WorkflowDefinitionRow,
+)
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -43,16 +48,21 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
     return sync_bundled_rules(db, get_bundled_rules_path())
 
 
-def _get_rule(manager, name):
+def _get_rule(
+    manager: LocalWorkflowDefinitionManager,
+    name: str,
+) -> WorkflowDefinitionRow:
     """Get a bundled rule by name."""
-    return manager.get_by_name(name)
+    row = manager.get_by_name(name)
+    assert row is not None
+    return row
 
 
 def _insert_rule(
@@ -85,6 +95,7 @@ COMPACT_TURN_END_BYPASS_PENDING = "_compact_turn_end_bypass_pending"
 
 
 STOP_GATES_RULES = {
+    "require-epic-tree-close",
     "require-task-close",
     "require-step-completion",
 }
@@ -93,7 +104,9 @@ STOP_GATES_RULES = {
 class TestStopGatesSync:
     """Test that stop-gates rules sync correctly."""
 
-    def test_bundled_file_syncs_all_rules(self, db, manager) -> None:
+    def test_bundled_file_syncs_all_rules(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """All stop-gates rules should sync to workflow_definitions."""
         _sync_bundled(db)
 
@@ -102,7 +115,9 @@ class TestStopGatesSync:
 
         assert STOP_GATES_RULES.issubset(rule_names), f"Missing: {STOP_GATES_RULES - rule_names}"
 
-    def test_all_rules_have_group(self, db, manager) -> None:
+    def test_all_rules_have_group(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """All rules should have group='stop-gates'."""
         _sync_bundled(db)
 
@@ -112,7 +127,9 @@ class TestStopGatesSync:
                 body = json.loads(row.definition_json)
                 assert body.get("group") == "stop-gates", f"{row.name} missing group"
 
-    def test_all_rules_are_valid_pydantic(self, db, manager) -> None:
+    def test_all_rules_are_valid_pydantic(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """All synced rules should be valid RuleDefinitionBody instances."""
         _sync_bundled(db)
 
@@ -127,12 +144,12 @@ class TestStopGatesSync:
 class TestStopAttemptsPlumbing:
     """Test hardcoded stop_attempts increment in RuleEngine.
 
-    stop_attempts increments on every STOP event before any gate checks.
+    stop_attempts increments on ordinary STOP events before gate checks.
     It resets on BEFORE_AGENT (new user turn).
     """
 
     @pytest.mark.asyncio
-    async def test_stop_increments_stop_attempts(self, db) -> None:
+    async def test_stop_increments_stop_attempts(self, db: HubDatabase) -> None:
         """STOP event should auto-increment stop_attempts."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -143,7 +160,7 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 1
 
     @pytest.mark.asyncio
-    async def test_stop_increments_from_existing_value(self, db) -> None:
+    async def test_stop_increments_from_existing_value(self, db: HubDatabase) -> None:
         """stop_attempts should increment from current value."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"stop_attempts": 3}
@@ -154,7 +171,7 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 4
 
     @pytest.mark.asyncio
-    async def test_turn_start_boundary_resets_stop_attempts(self, db) -> None:
+    async def test_turn_start_boundary_resets_stop_attempts(self, db: HubDatabase) -> None:
         """The semantic turn_start boundary should reset stop_attempts to 0."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"stop_attempts": 5}
@@ -165,7 +182,7 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 0
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_increments_even_when_force_allowed(self, db) -> None:
+    async def test_stop_attempts_increments_even_when_force_allowed(self, db: HubDatabase) -> None:
         """stop_attempts should increment even when stop is force-allowed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -180,7 +197,7 @@ class TestStopAttemptsPlumbing:
         assert variables.get("stop_attempts") == 3
 
     @pytest.mark.asyncio
-    async def test_stop_attempts_increments_even_when_blocked(self, db) -> None:
+    async def test_stop_attempts_increments_even_when_blocked(self, db: HubDatabase) -> None:
         """stop_attempts should increment even when stop is blocked by tool_block_pending."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -209,7 +226,7 @@ class TestManualCompactionTurnEndBypass:
     @pytest.mark.asyncio
     async def test_manual_pre_compact_stop_allows_without_stop_attempt(
         self,
-        db,
+        db: HubDatabase,
         precompact_data: dict[str, object],
     ) -> None:
         _sync_bundled(db)
@@ -232,7 +249,7 @@ class TestManualCompactionTurnEndBypass:
     @pytest.mark.asyncio
     async def test_consumed_manual_compact_bypass_does_not_skip_later_stop(
         self,
-        db,
+        db: HubDatabase,
     ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
@@ -260,8 +277,8 @@ class TestManualCompactionTurnEndBypass:
     @pytest.mark.asyncio
     async def test_manual_pre_compact_after_agent_allows_but_keeps_raw_event(
         self,
-        db,
-        manager,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
     ) -> None:
         _sync_bundled(db)
         _insert_rule(
@@ -305,7 +322,7 @@ class TestManualCompactionTurnEndBypass:
     @pytest.mark.asyncio
     async def test_auto_pre_compact_does_not_bypass_require_task_close(
         self,
-        db,
+        db: HubDatabase,
         precompact_data: dict[str, object],
     ) -> None:
         _sync_bundled(db)
@@ -325,7 +342,9 @@ class TestManualCompactionTurnEndBypass:
         assert variables.get("stop_attempts") == 1
 
     @pytest.mark.asyncio
-    async def test_stale_manual_pre_compact_bypass_clears_on_turn_start(self, db) -> None:
+    async def test_stale_manual_pre_compact_bypass_clears_on_turn_start(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = _claimed_task_variables()
@@ -350,7 +369,7 @@ class TestManualCompactionTurnEndBypass:
 class TestRequireTaskClose:
     """Verify require-task-close blocks stop if task in_progress."""
 
-    def test_blocks_on_stop(self, db, manager) -> None:
+    def test_blocks_on_stop(self, db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 
@@ -359,9 +378,12 @@ class TestRequireTaskClose:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_end"
+        assert body.effects is not None
         assert body.effects[0].type == "block"
 
-    def test_when_checks_mode_level_and_task(self, db, manager) -> None:
+    def test_when_checks_mode_level_and_task(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Should check mode_level and task_claimed."""
         _sync_bundled(db)
 
@@ -372,7 +394,9 @@ class TestRequireTaskClose:
         assert "mode_level" in body.when
         assert "task_claimed" in body.when
 
-    def test_does_not_block_when_task_claimed_unset(self, db, manager) -> None:
+    def test_does_not_block_when_task_claimed_unset(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Should NOT block when task_claimed was never set (no false positive)."""
         _sync_bundled(db)
 
@@ -389,11 +413,15 @@ class TestRequireTaskClose:
                 "bool": bool,
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
+                "has_active_agent_wait": lambda: False,
             },
         )
+        assert body.when is not None
         assert not evaluator.evaluate(body.when), "Rule should not fire when task_claimed is unset"
 
-    def test_blocks_when_task_claimed_is_set(self, db, manager) -> None:
+    def test_blocks_when_task_claimed_is_set(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Should block when task_claimed is set and conditions met."""
         _sync_bundled(db)
 
@@ -415,12 +443,16 @@ class TestRequireTaskClose:
                 "bool": bool,
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
+                "has_active_agent_wait": lambda: False,
             },
         )
+        assert body.when is not None
         assert evaluator.evaluate(body.when), "Rule should fire when task_claimed is set"
 
     @pytest.mark.asyncio
-    async def test_blocks_on_after_agent_turn_end(self, db, manager) -> None:
+    async def test_blocks_on_after_agent_turn_end(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Bundled turn_end gate should also fire for Qwen/Codex after-agent hooks."""
         _sync_bundled(db)
 
@@ -442,10 +474,75 @@ class TestRequireTaskClose:
         assert "require-task-close" in (response.reason or "")
 
 
+class TestLegitimateWaitConditions:
+    @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
+    @pytest.mark.parametrize(
+        ("waiting_on_user_input", "active_agent_wait"),
+        [(True, False), (False, True)],
+    )
+    def test_wait_state_yields_stop_gate(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        rule_name: str,
+        waiting_on_user_input: bool,
+        active_agent_wait: bool,
+    ) -> None:
+        _sync_bundled(db)
+        row = _get_rule(manager, rule_name)
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        variables = {
+            **_claimed_task_variables(),
+            "waiting_on_user_input": waiting_on_user_input,
+        }
+        evaluator = SafeExpressionEvaluator(
+            context={"variables": variables},
+            allowed_funcs={
+                "list": list,
+                "all_tasks_have_label": lambda _task_ids, _label: False,
+                "task_tree_complete": lambda _task_ids: False,
+                "has_active_agent_wait": lambda: active_agent_wait,
+            },
+        )
+
+        assert body.when is not None
+        assert evaluator.evaluate(body.when) is False
+
+    @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
+    def test_plain_claimed_work_still_blocks(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        rule_name: str,
+    ) -> None:
+        _sync_bundled(db)
+        row = _get_rule(manager, rule_name)
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        evaluator = SafeExpressionEvaluator(
+            context={
+                "variables": {
+                    **_claimed_task_variables(),
+                    "waiting_on_user_input": False,
+                }
+            },
+            allowed_funcs={
+                "list": list,
+                "all_tasks_have_label": lambda _task_ids, _label: False,
+                "task_tree_complete": lambda _task_ids: False,
+                "has_active_agent_wait": lambda: False,
+            },
+        )
+
+        assert body.when is not None
+        assert evaluator.evaluate(body.when) is True
+
+
 class TestRequireStepCompletion:
     """Verify spawned-agent step completion gates only apply to active step workflows."""
 
-    def test_blocks_on_turn_end(self, db, manager) -> None:
+    def test_blocks_on_turn_end(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Should be a block effect on semantic turn_end."""
         _sync_bundled(db)
 
@@ -454,9 +551,12 @@ class TestRequireStepCompletion:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_end"
+        assert body.effects is not None
         assert body.effects[0].type == "block"
 
-    def test_when_requires_current_step(self, db, manager) -> None:
+    def test_when_requires_current_step(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """Default/no-step spawned agents should not be trapped at stop."""
         _sync_bundled(db)
 
@@ -466,7 +566,9 @@ class TestRequireStepCompletion:
         assert body.when is not None
         assert "current_step" in body.when
 
-    def test_does_not_block_spawned_agent_without_current_step(self, db, manager) -> None:
+    def test_does_not_block_spawned_agent_without_current_step(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """A spawned agent without a step instance may terminate normally."""
         _sync_bundled(db)
 
@@ -482,9 +584,12 @@ class TestRequireStepCompletion:
             context={"variables": variables},
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
+        assert body.when is not None
         assert not evaluator.evaluate(body.when)
 
-    def test_blocks_spawned_agent_with_incomplete_current_step(self, db, manager) -> None:
+    def test_blocks_spawned_agent_with_incomplete_current_step(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         """A real active step workflow still blocks termination until complete."""
         _sync_bundled(db)
 
@@ -501,10 +606,13 @@ class TestRequireStepCompletion:
             context={"variables": variables},
             allowed_funcs={"len": len, "str": str, "int": int, "bool": bool},
         )
+        assert body.when is not None
         assert evaluator.evaluate(body.when)
 
     @pytest.mark.asyncio
-    async def test_turn_end_allows_spawned_agent_without_current_step(self, db) -> None:
+    async def test_turn_end_allows_spawned_agent_without_current_step(
+        self, db: HubDatabase
+    ) -> None:
         """Regression: no-step spawned agents must not hit an unknown-step stop loop."""
         _sync_bundled(db)
 
@@ -522,7 +630,9 @@ class TestRequireStepCompletion:
         assert variables["stop_attempts"] == 1
 
     @pytest.mark.asyncio
-    async def test_turn_end_block_includes_current_step_status_message(self, db) -> None:
+    async def test_turn_end_block_includes_current_step_status_message(
+        self, db: HubDatabase
+    ) -> None:
         _sync_bundled(db)
 
         engine = RuleEngine(db)
@@ -549,7 +659,7 @@ class TestBeforeAgentResetsPlumbing:
     """
 
     @pytest.mark.asyncio
-    async def test_clears_tool_block_pending(self, db) -> None:
+    async def test_clears_tool_block_pending(self, db: HubDatabase) -> None:
         """The semantic turn_start boundary should clear tool_block_pending."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"tool_block_pending": True}
@@ -560,7 +670,7 @@ class TestBeforeAgentResetsPlumbing:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_full_reset_on_new_turn(self, db) -> None:
+    async def test_full_reset_on_new_turn(self, db: HubDatabase) -> None:
         """The semantic turn_start boundary should reset stop-cycle variables."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -585,8 +695,8 @@ class TestBeforeAgentResetsPlumbing:
 
 def _make_event(
     event_type: HookEventType,
-    data: dict | None = None,
-    metadata: dict | None = None,
+    data: dict[str, object] | None = None,
+    metadata: dict[str, object] | None = None,
     source: SessionSource = SessionSource.CLAUDE,
 ) -> HookEvent:
     """Helper to create HookEvent for rule engine tests."""
@@ -607,7 +717,7 @@ class TestToolBlockPendingPlumbing:
     """
 
     @pytest.mark.asyncio
-    async def test_after_tool_failure_sets_tool_block_pending(self, db) -> None:
+    async def test_after_tool_failure_sets_tool_block_pending(self, db: HubDatabase) -> None:
         """Failed after_tool should auto-set tool_block_pending=True."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -621,7 +731,7 @@ class TestToolBlockPendingPlumbing:
         assert variables.get("tool_block_pending") is True
 
     @pytest.mark.asyncio
-    async def test_after_tool_failure_via_metadata(self, db) -> None:
+    async def test_after_tool_failure_via_metadata(self, db: HubDatabase) -> None:
         """Failed after_tool via metadata.is_failure should also set flag."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -636,7 +746,7 @@ class TestToolBlockPendingPlumbing:
         assert variables.get("tool_block_pending") is True
 
     @pytest.mark.asyncio
-    async def test_successful_after_tool_clears_tool_block_pending(self, db) -> None:
+    async def test_successful_after_tool_clears_tool_block_pending(self, db: HubDatabase) -> None:
         """Successful after_tool should clear tool_block_pending."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"tool_block_pending": True}
@@ -650,7 +760,7 @@ class TestToolBlockPendingPlumbing:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_stop_blocked_when_tool_block_pending(self, db) -> None:
+    async def test_stop_blocked_when_tool_block_pending(self, db: HubDatabase) -> None:
         """Stop should be blocked when tool_block_pending is true."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"tool_block_pending": True}
@@ -659,10 +769,10 @@ class TestToolBlockPendingPlumbing:
         response = await engine.evaluate(event, SESSION_ID, variables)
 
         assert response.decision == "block"
-        assert "tool just failed" in response.reason.lower()
+        assert "tool just failed" in (response.reason or "").lower()
 
     @pytest.mark.asyncio
-    async def test_stop_block_is_self_clearing(self, db) -> None:
+    async def test_stop_block_is_self_clearing(self, db: HubDatabase) -> None:
         """After blocking stop, tool_block_pending should be cleared."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"tool_block_pending": True}
@@ -673,7 +783,7 @@ class TestToolBlockPendingPlumbing:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_stop_allowed_without_tool_block_pending(self, db) -> None:
+    async def test_stop_allowed_without_tool_block_pending(self, db: HubDatabase) -> None:
         """Stop should be allowed when tool_block_pending is not set."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -684,7 +794,7 @@ class TestToolBlockPendingPlumbing:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_full_cycle_failure_then_stop_then_recovery(self, db) -> None:
+    async def test_full_cycle_failure_then_stop_then_recovery(self, db: HubDatabase) -> None:
         """End-to-end: tool fails → stop blocked → tool succeeds → stop allowed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -724,7 +834,7 @@ class TestBashErrorStopGate:
     """
 
     @pytest.mark.asyncio
-    async def test_bash_error_via_is_error_blocks_stop(self, db) -> None:
+    async def test_bash_error_via_is_error_blocks_stop(self, db: HubDatabase) -> None:
         """AFTER_TOOL with Bash is_error=True → tool_block_pending → STOP blocked."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -741,10 +851,10 @@ class TestBashErrorStopGate:
         stop_event = _make_event(HookEventType.STOP)
         response = await engine.evaluate(stop_event, SESSION_ID, variables)
         assert response.decision == "block"
-        assert "tool just failed" in response.reason.lower()
+        assert "tool just failed" in (response.reason or "").lower()
 
     @pytest.mark.asyncio
-    async def test_bash_success_does_not_block_stop(self, db) -> None:
+    async def test_bash_success_does_not_block_stop(self, db: HubDatabase) -> None:
         """AFTER_TOOL with Bash success → no tool_block_pending → stop allowed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -760,7 +870,7 @@ class TestBashErrorStopGate:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_full_bash_failure_recovery_cycle(self, db) -> None:
+    async def test_full_bash_failure_recovery_cycle(self, db: HubDatabase) -> None:
         """End-to-end: Bash fails → stop blocked → Bash succeeds → stop allowed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -798,7 +908,7 @@ class TestForceAllowStop:
     """
 
     @pytest.mark.asyncio
-    async def test_force_allow_stop_bypasses_stop_gates(self, db) -> None:
+    async def test_force_allow_stop_bypasses_stop_gates(self, db: HubDatabase) -> None:
         """force_allow_stop should allow stop even with tool_block_pending."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -812,7 +922,7 @@ class TestForceAllowStop:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_force_allow_stop_is_self_clearing(self, db) -> None:
+    async def test_force_allow_stop_is_self_clearing(self, db: HubDatabase) -> None:
         """force_allow_stop should be cleared after use."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {"force_allow_stop": True}
@@ -823,7 +933,7 @@ class TestForceAllowStop:
         assert variables.get("force_allow_stop") is False
 
     @pytest.mark.asyncio
-    async def test_force_allow_stop_only_works_once(self, db) -> None:
+    async def test_force_allow_stop_only_works_once(self, db: HubDatabase) -> None:
         """Second stop after force_allow_stop should use normal logic."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -845,7 +955,7 @@ class TestForceAllowStop:
         assert response.decision == "block"
 
     @pytest.mark.asyncio
-    async def test_catastrophic_failure_sets_force_allow_stop(self, db) -> None:
+    async def test_catastrophic_failure_sets_force_allow_stop(self, db: HubDatabase) -> None:
         """Tool failure with catastrophic pattern should set force_allow_stop."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -863,7 +973,7 @@ class TestForceAllowStop:
         assert variables.get("force_allow_stop") is True
 
     @pytest.mark.asyncio
-    async def test_catastrophic_rate_limit_detected(self, db) -> None:
+    async def test_catastrophic_rate_limit_detected(self, db: HubDatabase) -> None:
         """Rate limit errors should trigger catastrophic bypass."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -881,7 +991,7 @@ class TestForceAllowStop:
         assert variables.get("force_allow_stop") is True
 
     @pytest.mark.asyncio
-    async def test_normal_failure_does_not_set_force_allow_stop(self, db) -> None:
+    async def test_normal_failure_does_not_set_force_allow_stop(self, db: HubDatabase) -> None:
         """Normal tool failure should NOT set force_allow_stop."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -899,7 +1009,7 @@ class TestForceAllowStop:
         assert variables.get("force_allow_stop") is not True
 
     @pytest.mark.asyncio
-    async def test_catastrophic_then_stop_allowed(self, db) -> None:
+    async def test_catastrophic_then_stop_allowed(self, db: HubDatabase) -> None:
         """End-to-end: catastrophic failure → stop is force-allowed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {}
@@ -932,7 +1042,7 @@ class TestConsecutiveBlockScoping:
     """
 
     @pytest.mark.asyncio
-    async def test_same_tool_retried_5x_escalates(self, db) -> None:
+    async def test_same_tool_retried_5x_escalates(self, db: HubDatabase) -> None:
         """Same tool retried 5 times should hit the configured escalation block."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -998,7 +1108,7 @@ class TestConsecutiveBlockScoping:
         assert "Recovery required:" in response4.reason
 
     @pytest.mark.asyncio
-    async def test_different_tool_resets_counter(self, db) -> None:
+    async def test_different_tool_resets_counter(self, db: HubDatabase) -> None:
         """Different tool after a block should reset counter and proceed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1027,7 +1137,7 @@ class TestConsecutiveBlockScoping:
         assert response.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_pipeline_direct_mcp_retry_clears_stale_counter(self, db) -> None:
+    async def test_pipeline_direct_mcp_retry_clears_stale_counter(self, db: HubDatabase) -> None:
         """Pipeline-scoped direct MCP calls should not inherit interactive retry state."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1057,7 +1167,7 @@ class TestConsecutiveBlockScoping:
         assert variables.get("_last_blocked_reason") == ""
 
     @pytest.mark.asyncio
-    async def test_different_tool_blocked_starts_own_counter(self, db) -> None:
+    async def test_different_tool_blocked_starts_own_counter(self, db: HubDatabase) -> None:
         """If a different tool is also rule-blocked, it starts its own counter."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1089,7 +1199,7 @@ class TestConsecutiveBlockScoping:
         assert variables.get("consecutive_tool_blocks") == 1
 
     @pytest.mark.asyncio
-    async def test_turn_start_boundary_resets_last_blocked_tool(self, db) -> None:
+    async def test_turn_start_boundary_resets_last_blocked_tool(self, db: HubDatabase) -> None:
         """The semantic turn_start boundary should reset _last_blocked_tool."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1110,7 +1220,7 @@ class TestConsecutiveBlockScoping:
         assert variables.get("consecutive_tool_blocks") == 0
 
     @pytest.mark.asyncio
-    async def test_successful_after_tool_clears_last_blocked(self, db) -> None:
+    async def test_successful_after_tool_clears_last_blocked(self, db: HubDatabase) -> None:
         """Successful AFTER_TOOL should clear _last_blocked_tool."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1134,7 +1244,7 @@ class TestConsecutiveBlockScoping:
         assert variables.get("tool_block_pending") is False
 
     @pytest.mark.asyncio
-    async def test_rule_block_records_tool_name(self, db) -> None:
+    async def test_rule_block_records_tool_name(self, db: HubDatabase) -> None:
         """When a rule blocks a BEFORE_TOOL, _last_blocked_tool should be set."""
         # Install a rule that blocks TodoWrite
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -1177,7 +1287,9 @@ class TestConsecutiveBlockScoping:
         )
 
     @pytest.mark.asyncio
-    async def test_rule_block_does_not_trigger_tool_failure_recovery_on_stop(self, db) -> None:
+    async def test_rule_block_does_not_trigger_tool_failure_recovery_on_stop(
+        self, db: HubDatabase
+    ) -> None:
         """A BEFORE_TOOL gate block should not make the next STOP look like a tool failure."""
         from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 
@@ -1224,7 +1336,7 @@ class TestConsecutiveBlockScoping:
         assert "tool-failure-recovery" not in (stop.reason or "")
 
     @pytest.mark.asyncio
-    async def test_death_spiral_scenario_recoverable(self, db) -> None:
+    async def test_death_spiral_scenario_recoverable(self, db: HubDatabase) -> None:
         """End-to-end: the exact death spiral scenario is now recoverable.
 
         1. TodoWrite blocked by rule → pending
@@ -1301,10 +1413,8 @@ def _make_task(
     task_id: str,
     status: str = "in_progress",
     claimed_by_session_id: str | None = SESSION_ID,
-):
+) -> Task:
     """Create a minimal Task dataclass for reconciliation tests."""
-    from gobby.storage.tasks import Task
-
     stage_state = {
         "open": "ready",
         "closed": "done",
@@ -1316,11 +1426,11 @@ def _make_task(
         title="Test task",
         priority=1,
         task_type="task",
-        created_at="2026-01-01T00:00:00Z",
-        updated_at="2026-01-01T00:00:00Z",
-        closed_at="2026-01-02T00:00:00Z" if status == "closed" else None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        closed_at=datetime(2026, 1, 2, tzinfo=UTC) if status == "closed" else None,
         claimed_by_session_id=claimed_by_session_id,
-        escalated_at="2026-01-02T00:00:00Z" if status == "escalated" else None,
+        escalated_at=datetime(2026, 1, 2, tzinfo=UTC) if status == "escalated" else None,
         is_escalated=status == "escalated",
         stages=(
             {
@@ -1563,7 +1673,7 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
 
-        def get_task_side_effect(task_id):
+        def get_task_side_effect(task_id: str) -> Task:
             if task_id == "uuid-valid":
                 return _make_task(
                     "uuid-valid", status="in_progress", claimed_by_session_id=SESSION_ID
@@ -1695,7 +1805,7 @@ class TestForceAllowStopWithTaskClaimed:
     """Test that force_allow_stop does NOT bypass require-task-close when task_claimed=True."""
 
     @pytest.mark.asyncio
-    async def test_force_allow_suppressed_when_task_claimed(self, db) -> None:
+    async def test_force_allow_suppressed_when_task_claimed(self, db: HubDatabase) -> None:
         """force_allow_stop with task_claimed=True should NOT override to allow."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1716,7 +1826,7 @@ class TestForceAllowStopWithTaskClaimed:
         assert response.decision == "allow"  # No rules loaded = allow
 
     @pytest.mark.asyncio
-    async def test_force_allow_works_without_task_claimed(self, db) -> None:
+    async def test_force_allow_works_without_task_claimed(self, db: HubDatabase) -> None:
         """force_allow_stop without task_claimed should still override to allow."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {
@@ -1732,7 +1842,7 @@ class TestForceAllowStopWithTaskClaimed:
         assert variables.get("force_allow_stop") is False
 
     @pytest.mark.asyncio
-    async def test_force_allow_stop_is_still_cleared_when_suppressed(self, db) -> None:
+    async def test_force_allow_stop_is_still_cleared_when_suppressed(self, db: HubDatabase) -> None:
         """force_allow_stop should be self-clearing even when suppressed by task_claimed."""
         engine = RuleEngine(db)
         variables: dict[str, object] = {

@@ -10,6 +10,8 @@ rules:
     when: >-
       not variables.get('plan_mode')
       and variables.get('task_claimed')
+      and not variables.get('waiting_on_user_input')
+      and not has_active_agent_wait()
       and not all_tasks_have_label(
         list((variables.get('claimed_tasks') or {}).keys()),
         'live-session'

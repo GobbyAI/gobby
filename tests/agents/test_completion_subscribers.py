@@ -14,10 +14,41 @@ from gobby.agents.completion_subscribers import (
     subscribe_agent_completion,
 )
 from gobby.events.completion_registry import CompletionEventRegistry
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+
+
+def _create_agent_run(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+    *,
+    external_id: str,
+    status: str = "pending",
+) -> tuple[str, str, LocalAgentRunManager]:
+    run_manager = LocalAgentRunManager(db)
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        session = session_manager.register(
+            external_id=external_id,
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=str(sample_project["id"]),
+        )
+        run = run_manager.create(
+            parent_session_id=session.id,
+            provider="claude",
+            prompt="test active agent wait",
+        )
+    if status == "running":
+        started = run_manager.start(run.id)
+        assert started is not None
+    return session.id, run.id, run_manager
 
 
 def test_subscribe_agent_completion_has_no_session_manager_parameter() -> None:
@@ -182,3 +213,74 @@ def test_remove_agent_completion_subscribers_removes_only_selected_sessions(
     )
 
     assert manager.get_completion_subscribers(run_id) == [retained_session_id]
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+def test_has_active_agent_wait_matches_durable_subscription_and_owned_run(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+    status: str,
+) -> None:
+    session_id, run_id, _run_manager = _create_agent_run(
+        temp_db,
+        session_manager,
+        sample_project,
+        external_id=f"active-agent-wait-{status}",
+        status=status,
+    )
+    subscriber_manager = CompletionSubscriberManager(temp_db)
+    subscriber_manager.add_completion_subscriber(run_id, session_id)
+
+    assert subscriber_manager.has_active_agent_wait(session_id) is True
+
+
+def test_has_active_agent_wait_rejects_missing_foreign_and_orphan_subscriptions(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    owner_session_id, run_id, _run_manager = _create_agent_run(
+        temp_db,
+        session_manager,
+        sample_project,
+        external_id="active-agent-wait-owner",
+    )
+    with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
+        foreign_session = session_manager.register(
+            external_id="active-agent-wait-foreign",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=str(sample_project["id"]),
+        )
+    subscriber_manager = CompletionSubscriberManager(temp_db)
+
+    assert subscriber_manager.has_active_agent_wait(owner_session_id) is False
+
+    subscriber_manager.add_completion_subscriber(run_id, foreign_session.id)
+    assert subscriber_manager.has_active_agent_wait(foreign_session.id) is False
+
+    orphan_run_id = "55361235-ff5f-5de3-88f4-c98c82f7f0c3"
+    subscriber_manager.add_completion_subscriber(orphan_run_id, owner_session_id)
+    assert subscriber_manager.has_active_agent_wait(owner_session_id) is False
+
+
+def test_terminal_agent_run_automatically_rearms_wait_state(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, object],
+) -> None:
+    session_id, run_id, run_manager = _create_agent_run(
+        temp_db,
+        session_manager,
+        sample_project,
+        external_id="terminal-agent-wait",
+    )
+    subscriber_manager = CompletionSubscriberManager(temp_db)
+    subscriber_manager.add_completion_subscriber(run_id, session_id)
+    assert subscriber_manager.has_active_agent_wait(session_id) is True
+
+    completed = run_manager.complete(run_id, result="done")
+    assert completed is not None
+    assert subscriber_manager.get_completion_subscribers(run_id) == [session_id]
+    assert subscriber_manager.has_active_agent_wait(session_id) is False

@@ -224,6 +224,12 @@ canonical M1 manifest.
 
 ## Interactive Review Evidence Protocol
 
+The plan coordinator is the sole writer of the human-wait marker. Immediately
+before every interactive vote or review prompt sent through `request_user_input`,
+call top-level `set_variable(name="waiting_on_user_input", value=true,
+session_id=<current>)`. The rule engine clears the marker at the next `turn_start`,
+so repeat the write immediately before each prompt in every multi-turn review round.
+
 Use the adversary's canonical result as the sole round payload. Every conclusive
 result carries trusted three-lane `coverage_attestation`. Rejection results
 carry typed findings and shadow-manifest status; approval results carry

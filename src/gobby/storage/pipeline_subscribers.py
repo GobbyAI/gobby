@@ -79,6 +79,25 @@ class PipelineCompletionSubscriberMixin:
         )
         return [str(row["completion_id"]) for row in rows]
 
+    def has_active_agent_wait(self, session_id: str) -> bool:
+        """Return whether a session is durably waiting on one of its active agent runs."""
+        from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
+
+        row = self.db.fetchone(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM completion_subscribers AS subscribers
+                JOIN agent_runs AS runs ON runs.id = subscribers.completion_id
+                WHERE subscribers.session_id = %s
+                  AND runs.parent_session_id = %s
+                  AND runs.status = ANY(%s)
+            ) AS has_active_agent_wait
+            """,
+            (session_id, session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
+        )
+        return bool(row and row["has_active_agent_wait"])
+
     def remove_completion_subscribers(
         self,
         completion_id: str,

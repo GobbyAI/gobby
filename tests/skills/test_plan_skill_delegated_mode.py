@@ -250,6 +250,22 @@ def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None
     assert "/schedule" not in section
 
 
+def test_human_review_wait_marker_is_coordinator_owned_and_repeated(body: str) -> None:
+    section = body[
+        body.index("## Interactive Review Evidence Protocol") : body.index(
+            "## Waiting on Spawned Runs"
+        )
+    ]
+    normalized = " ".join(section.split()).lower()
+
+    assert "plan coordinator is the sole writer" in normalized
+    assert '`set_variable(name="waiting_on_user_input", value=true' in normalized
+    assert "immediately before every interactive vote or review prompt" in normalized
+    assert "`request_user_input`" in normalized
+    assert "clears the marker at the next `turn_start`" in normalized
+    assert "repeat the write immediately before each prompt" in normalized
+
+
 def test_waiting_steps_redirect_to_shared_policy(body: str) -> None:
     assert _normalize_prose(body).count("then use **Waiting on Spawned Runs**") == 2
 

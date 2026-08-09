@@ -187,6 +187,7 @@ class TemplatingMixin:
         funcs["skill_fetch_directive"] = skill_fetch_directive
         funcs["has_pending_messages"] = self._has_pending_messages
         funcs["pending_message_count"] = self._pending_message_count
+        funcs["has_active_agent_wait"] = lambda: bool(ctx.get("_has_active_agent_wait", False))
         return funcs
 
     def _render_template(

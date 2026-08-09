@@ -9,6 +9,8 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
 
@@ -19,6 +21,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -176,6 +179,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
                 is_turn_end = RuleTriggerEvent.TURN_END in resolved_rule_events
 
+                if is_turn_start:
+                    variables["waiting_on_user_input"] = False
+
                 # Check global enforcement toggle
                 config_store = ConfigStore(self.db)
                 if await offload(config_store.get, "rules.enforcement_enabled") is False:
@@ -187,6 +193,21 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if eval_context is None:
                     eval_context = {}
                 eval_context.setdefault("foreign_staged_commit_conflict", "")
+
+                active_agent_wait = False
+                if is_turn_end:
+                    try:
+                        active_agent_wait = await offload(
+                            CompletionSubscriberManager(self.db).has_active_agent_wait,
+                            session_id,
+                        )
+                    except psycopg.DatabaseError as exc:
+                        logger.warning(
+                            "Failed to determine active agent wait for session %s: %s",
+                            session_id,
+                            exc,
+                        )
+                eval_context["_has_active_agent_wait"] = active_agent_wait
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
@@ -268,9 +289,13 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         )
                         variables["servers_listed"] = True
 
-                # Auto-increment stop attempts (universal — not configurable)
+                # Auto-increment ordinary turn-end attempts; legitimate waits consume none.
                 if is_turn_end:
-                    variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
+                    legitimate_wait = active_agent_wait or bool(
+                        variables.get("waiting_on_user_input")
+                    )
+                    if not legitimate_wait:
+                        variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
                         "TURN_END gate diagnostics",
                         extra={
@@ -282,6 +307,8 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                             "claimed_tasks": variables.get("claimed_tasks"),
                             "edit_write_pending": variables.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
+                            "waiting_on_user_input": variables.get("waiting_on_user_input"),
+                            "active_agent_wait": active_agent_wait,
                         },
                     )
 
