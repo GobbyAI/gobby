@@ -3,7 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { PriorityBadge, StatusBadge, TypeBadge } from '../TaskBadges'
 
 describe('TaskBadges Phase 1 chip contract', () => {
-  it('renders status, priority, and type badges as shared chips', () => {
+  it('renders status, priority, and type badges through the shared Chip pill', () => {
     render(
       <>
         <StatusBadge status="open" />
@@ -12,8 +12,16 @@ describe('TaskBadges Phase 1 chip contract', () => {
       </>,
     )
 
-    expect(screen.getByText('open')).toHaveClass('chip', 'chip--state-open')
-    expect(screen.getByText('Medium')).toHaveClass('chip', 'chip--priority-2')
-    expect(screen.getByText('refactor')).toHaveClass('chip', 'chip--type-refactor')
+    const open = screen.getByText('open')
+    const medium = screen.getByText('Medium')
+    const refactor = screen.getByText('refactor')
+
+    for (const chip of [open, medium, refactor]) {
+      expect(chip).toHaveClass('rounded-full', 'h-5')
+      expect(chip).not.toHaveClass('uppercase')
+    }
+    expect(open.className).toContain('var(--color-info)')
+    expect(medium.className).toContain('var(--color-warning-foreground)')
+    expect(refactor.className).toContain('var(--text-muted)')
   })
 })

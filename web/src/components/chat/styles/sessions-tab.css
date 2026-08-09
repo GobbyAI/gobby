@@ -285,53 +285,7 @@
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
-/* --- Session kind badges --- */
-.chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 1.25rem;
-  padding: 0 0.375rem;
-  border-radius: 9999px;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  line-height: 1;
-  text-transform: uppercase;
-  white-space: nowrap;
-  letter-spacing: 0;
-}
-
-/* Filled-accent pill — same shared active-state treatment used by
-   SegmentedControl's active option and .activity-filter-button when its
-   dropdown is open. Chip pills mark a session as having a given mode
-   active (tmux/web/acp/auto/sandbox/local), so they always read as "on". */
-.chip--tmux,
-.chip--web,
-.chip--acp,
-.chip--auto,
-.chip--sandbox,
-.chip--local {
-  background: color-mix(in srgb, var(--accent) 15%, transparent);
-  color: var(--accent);
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-}
-
-/* Light: session-kind chips are identity metadata, not interactive state,
-   so they read as neutral mono pills — accent is reserved for applied
-   filters/constraints. Border + mono inherit from the base rule. Dark
-   keeps the shipped accent pill (byte-frozen to IMG_3754). */
-[data-theme="light"] :is(
-  .chip--tmux,
-  .chip--web,
-  .chip--acp,
-  .chip--auto,
-  .chip--sandbox,
-  .chip--local
-) {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-}
+/* Session kind badges migrated onto ui/Chip (components/ui/chipVariants.ts). */
 
 /* --- Session context menu --- */
 .session-ctx-backdrop {

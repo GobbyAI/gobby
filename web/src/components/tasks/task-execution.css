@@ -1,117 +1,14 @@
 /* ==========================================================================
    Cross-folder utilities preserved after Phase A-E Tailwind migration.
 
-   This file retains only:
-   - chip-* — used by skills/, agents/, workflows/, source-control/, chat/
-   - activity-task-* / activity-filter-* — used by web/src/components/activity/
+   This file retains only activity-task-* / activity-filter-* rules used by
+   web/src/components/activity/. Status chips migrated onto the ui/Chip
+   primitive (components/ui/chipVariants.ts).
 
    All component-local rules (task-detail, task-views, task-advanced,
    task-execution local components) have been migrated to module-level
    Tailwind constants in their respective .tsx files.
    ========================================================================== */
-
-.chip {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 1.25rem;
-  padding: 0 0.375rem;
-  border-radius: 9999px;
-  font-size: var(--text-2xs);
-  font-weight: 600;
-  line-height: 1;
-  white-space: nowrap;
-  letter-spacing: 0;
-}
-
-.chip--state-open,
-.chip--state-ready {
-  background: color-mix(in srgb, var(--color-info) 15%, transparent);
-  color: var(--color-info);
-}
-
-.chip--state-in_progress,
-.chip--state-in-progress {
-  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
-  color: var(--color-warning-foreground);
-}
-
-.chip--state-closed,
-.chip--state-done {
-  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
-  color: var(--color-success-foreground);
-}
-
-.chip--state-review,
-.chip--state-needs_review,
-.chip--state-needs-review,
-.chip--state-claimed {
-  background: color-mix(in srgb, var(--color-info) 15%, transparent);
-  color: var(--color-info);
-}
-
-.chip--state-blocked,
-.chip--state-escalated {
-  background: color-mix(in srgb, var(--color-error) 15%, transparent);
-  color: var(--color-error);
-}
-
-.chip--state-merge_ready,
-.chip--state-merge-ready {
-  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
-  color: var(--color-success-foreground);
-}
-
-.chip--priority-0 {
-  background: color-mix(in srgb, var(--color-error) 15%, transparent);
-  color: var(--color-error);
-}
-
-.chip--priority-1 {
-  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
-  color: var(--color-warning-foreground);
-}
-
-.chip--priority-2 {
-  background: color-mix(in srgb, var(--color-warning-foreground) 15%, transparent);
-  color: var(--color-warning-foreground);
-}
-
-.chip--priority-3 {
-  background: color-mix(in srgb, var(--color-success-foreground) 15%, transparent);
-  color: var(--color-success-foreground);
-}
-
-.chip--priority-4 {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-muted);
-}
-
-.chip--type-task {
-  background: color-mix(in srgb, var(--color-info) 14%, transparent);
-  color: var(--color-info);
-}
-
-.chip--type-bug {
-  background: color-mix(in srgb, var(--color-error) 14%, transparent);
-  color: var(--color-error);
-}
-
-.chip--type-feature {
-  background: color-mix(in srgb, var(--color-success-foreground) 14%, transparent);
-  color: var(--color-success-foreground);
-}
-
-.chip--type-epic {
-  background: color-mix(in srgb, var(--color-review) 14%, transparent);
-  color: var(--color-review);
-}
-
-.chip--type-chore,
-.chip--type-refactor {
-  background: color-mix(in srgb, var(--text-muted) 15%, transparent);
-  color: var(--text-muted);
-}
 
 /* ==========================================================================
    Activity panel task tree + detail pane

@@ -199,7 +199,6 @@ export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
   'src/components/code-graph/CodeGraphExplorer.tsx': 32,
   'src/components/shared/executions/execution-utils.tsx': 20,
   'src/components/tasks/QuickCaptureTask.tsx': 12,
-  'src/components/tasks/TaskBadges.tsx': 3,
   'src/components/tasks/TaskCreateForm.tsx': 14,
   'src/components/tasks/taskModalStyles.ts': 3,
 }
@@ -250,5 +249,5 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Total lines across all recorded stylesheets. The ceiling only moves down;
 // once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 6749
+export const CSS_TOTAL_LINE_CEILING = 6600
 export const CSS_LINE_TIGHTEN_SLACK = 200

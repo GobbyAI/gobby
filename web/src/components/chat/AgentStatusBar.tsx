@@ -7,6 +7,8 @@ import type {
 } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
+import { Chip } from '../ui/Chip'
+import { chipIdentityClasses } from '../ui/chipVariants'
 import { ContextUsageIndicator } from './ContextUsageIndicator'
 import { LinkIcon, PlayIcon, UnlinkIcon } from '../icons'
 import { PlusIcon } from './icons/PlusIcon'
@@ -59,15 +61,14 @@ function subscribeToClock(onStoreChange: () => void): () => void {
   return () => window.clearInterval(interval)
 }
 
-function getSessionKindBadge(sessionType: SessionObservationMeta['sessionType']): {
-  label: string
-  className: string
-} | null {
+function getSessionKindBadge(
+  sessionType: SessionObservationMeta['sessionType'],
+): string | null {
   if (sessionType === 'web_chat') {
-    return { label: 'WEB', className: 'chip--web' }
+    return 'WEB'
   }
   if (sessionType === 'terminal') {
-    return { label: 'TMUX', className: 'chip--tmux' }
+    return 'TMUX'
   }
 
   return null
@@ -129,9 +130,9 @@ export function AgentStatusBar({
           <div className="chat-session-status">
             <span className="chat-session-status__state">{stateText}</span>
             {sessionBadge ? (
-              <span className={`chip ${sessionBadge.className}`}>
-                {sessionBadge.label}
-              </span>
+              <Chip tone="accent" uppercase className={chipIdentityClasses}>
+                {sessionBadge}
+              </Chip>
             ) : null}
           </div>
         ) : null}
