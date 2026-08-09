@@ -32,12 +32,13 @@ pub const GENERATED_BY_GWIKI_CODE: &str = "gwiki-code";
 pub const TRUST_GENERATED: &str = "generated";
 pub const FRESHNESS_INDEXED: &str = "indexed";
 
-/// Golden codewiki page. The frontmatter block is byte-for-byte what gcode's
-/// `frontmatter_with_degradation` emits for a degraded file page (sorted
-/// provenance files, collapsed `start-end` ranges, single-line ranges as bare
-/// numbers); the body shows the `[[target|label]]` wikilink convention. gcode
-/// pins its emitter against this fixture and gwiki pins its parser against it,
-/// so a change on either side fails that side's tests instead of drifting.
+/// Golden codewiki page. The frontmatter block is byte-for-byte what the
+/// `gwiki code` engine's `frontmatter_with_degradation` emits for a degraded
+/// file page (sorted provenance files, collapsed `start-end` ranges,
+/// single-line ranges as bare numbers); the body shows the `[[target|label]]`
+/// wikilink convention. gwiki pins both its frontmatter emitter and its audit
+/// parsers against this fixture, so a change on either side fails the
+/// corresponding tests instead of drifting.
 pub const GOLDEN_PAGE: &str = "---
 title: src/lib.rs
 type: file

@@ -152,4 +152,4 @@ frames, transcription, and text calls share one limiter. Use `ai.keep_alive`
 only with providers that understand it; do not send local-provider-only fields
 to cloud OpenAI-compatible endpoints unless that endpoint documents support.
 
-_Last verified: 2026-07-01_
+_Last verified: 2026-08-09_

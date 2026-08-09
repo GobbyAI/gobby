@@ -23,7 +23,9 @@ ACTIVE_CODEWIKI_DOCS = (
     ROOT / "crates/gcore/src/vault.rs",
     ROOT / "crates/gcore/src/vault/mermaid.rs",
     ROOT / "crates/gwiki/src/commands/code/repair.rs",
+    ROOT / "crates/gwiki/src/commands/code/run.rs",
     ROOT / "crates/gwiki/src/commands/code/tool_executor.rs",
+    ROOT / "crates/gwiki/src/catalog.rs",
 )
 
 STALE_CODEWIKI_OWNERSHIP_PHRASES = (
@@ -33,6 +35,14 @@ STALE_CODEWIKI_OWNERSHIP_PHRASES = (
     "gcode's codewiki generator",
     "gcode contract freezes for `codewiki",
     "gcode `ToolExecutor` for the CodeWiki",
+    # The persisted marker flipped to gwiki-code; active guidance may name the
+    # legacy value only as history, which these docs phrase without the literal.
+    "gcode-codewiki",
+    # Command examples must carry the gwiki prefix.
+    "`codewiki --repair-citations`",
+    # The golden-fixture emitter moved to gwiki.
+    "gcode pins its emitter",
+    "pinned by gcode's emitter tests",
 )
 
 

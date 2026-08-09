@@ -20,7 +20,7 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `bootstrap` | always | Read `~/.gobby/bootstrap.yaml` to get the daemon's listen endpoint (`bind_host`, `daemon_port`). Falls back to `127.0.0.1:60887` when the file is missing or malformed. |
 | `daemon_url` | always | One daemon-URL resolver for all binaries: `GOBBY_DAEMON_URL` → `GOBBY_PORT` → bootstrap endpoint, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1` and bracketing bare IPv6 literals. |
 | `runtime_mode` | always | Select and cache `Daemon` or `Standalone` from `GOBBY_RUNTIME_MODE`, an explicit daemon URL, and installed OS service artifacts. |
-| `codewiki_contract` | always | Frontmatter contract for codewiki-generated vault pages: shared key/value constants plus a golden page fixture pinned by gcode's emitter tests and gwiki's parser tests. |
+| `codewiki_contract` | always | Frontmatter contract for codewiki-generated vault pages: shared key/value constants plus a golden page fixture pinned by gwiki's emitter and parser tests. |
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
 | `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
 | `degradation` | always | Shared vocabulary for configured-service unavailability, explicit degraded paths, partial search, stale indexes, skipped artifacts, and fatal core errors. |

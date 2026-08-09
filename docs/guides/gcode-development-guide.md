@@ -700,4 +700,4 @@ command remains available for isolated/manual validation; production-vault
 execution is operationally paused pending the wiki redesign. See the
 [CodeWiki guide](./codewiki.md) for the active CLI and dormant daemon contracts.
 
-_Last verified: 2026-06-23_
+_Last verified: 2026-08-09_

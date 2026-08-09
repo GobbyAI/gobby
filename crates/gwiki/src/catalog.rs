@@ -812,8 +812,8 @@ mod tests {
 
         // A later incremental heal re-clusters and removes the page. Regenerating
         // the catalog must drop the now-stale link, or `code/INDEX.md` dangles and
-        // grows `curated_broken_link_count` (the codewiki-nightly convergence bug:
-        // the nightly flow `gcode codewiki` -> `gwiki index` now regenerates here).
+        // grows `curated_broken_link_count` (the historical convergence bug where
+        // a `gwiki code` run followed by `gwiki index` regenerates here).
         fs::remove_file(root.join("code/modules/src/foo/cluster.md")).expect("remove page");
         regenerate(root, &ScopeIdentity::project("/repo")).expect("second regenerate");
         let after = fs::read_to_string(root.join("code/INDEX.md")).expect("code/INDEX.md");

@@ -11,11 +11,13 @@ names may appear:
 | `.gobby/plans/**` | Plan records and work logs quote the pre-rename identifiers they changed |
 | `.gobby/memories.jsonl` | Review-lesson evidence records reference pre-rename test names |
 | `wiki/knowledge/**` | Session evidence, recaps, and source records are point-in-time history |
-| `crates/gcode/src/commands/codewiki/tests/graph.rs` | Fixture path string `tmp/codewiki-laneb-claude-mid/...` exercises tmp-dir exclusion; the substring is inert |
+| `crates/gwiki/src/commands/code/tests/graph.rs` | Fixture path string `tmp/codewiki-laneb-claude-mid/...` exercises tmp-dir exclusion; the substring is inert |
 | `docs/contracts/lane-rename-allowlist.md` | This contract names the banned identifiers |
 
 `wiki/code/**` is NOT allowlisted: those pages are generated from current
-source, so lane-era text there means the wiki is stale — regenerate it.
+source, so lane-era text there means the wiki is stale. Regeneration is
+paused while the CodeWiki daemon surface is dormant (pending the wiki
+redesign); refresh the vault with a manual `gwiki code` run.
 
 Kept names (already semantic, never part of the rename): the frontmatter
 field `lane: tool_loop`, the `LANE_TOOL_LOOP` constant, and
