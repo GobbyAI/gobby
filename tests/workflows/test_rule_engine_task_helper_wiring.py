@@ -4,7 +4,6 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import patch
 
-import psycopg
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -247,9 +246,7 @@ async def test_agent_wait_lookup_failure_warns_and_keeps_stop_gates_armed(
         patch("gobby.workflows.engine.core.CompletionSubscriberManager") as manager_type,
         caplog.at_level("WARNING"),
     ):
-        manager_type.return_value.has_active_agent_wait.side_effect = psycopg.DatabaseError(
-            "lookup failed"
-        )
+        manager_type.return_value.has_active_agent_wait.side_effect = RuntimeError("lookup failed")
         response = await RuleEngine(db).evaluate(
             _make_event(),
             session_id="11111111-1111-4111-8111-111111111111",

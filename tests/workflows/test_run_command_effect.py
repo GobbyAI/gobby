@@ -1,5 +1,6 @@
 """Tests for the run_command rule effect."""
 
+import asyncio
 import json
 import os
 import sys
@@ -23,7 +24,10 @@ from gobby.workflows.engine.run_command import (
     _parse_command_output,
     build_run_command_payload,
     execute_run_command,
+    resolve_run_command,
 )
+
+pytestmark = pytest.mark.unit
 
 _ROW = cast(WorkflowDefinitionRow, SimpleNamespace(id="rule-id", name="test-rule"))
 
@@ -65,6 +69,7 @@ async def _apply(effect: RuleEffect, event: HookEvent) -> list[str]:
     return context_parts
 
 
+@pytest.mark.asyncio
 class TestRunCommandInline:
     async def test_success_injects_context_from_stdin_payload(self) -> None:
         context_parts = await _apply(_effect(), _event())
@@ -99,6 +104,7 @@ class TestRunCommandInline:
         assert context_parts == []
 
 
+@pytest.mark.asyncio
 class TestRunCommandBackground:
     async def test_background_schedules_task_and_injects_nothing_inline(self) -> None:
         effect = _effect(background=True)
@@ -168,7 +174,46 @@ class TestRunCommandBackground:
             )
         assert constructions == []
 
+    async def test_single_flight_registry_cleans_up_after_completion(self) -> None:
+        mixin = EffectsMixin()
+        started = asyncio.Event()
+        release = asyncio.Event()
 
+        async def gated_run(*args: object, **kwargs: object) -> None:
+            started.set()
+            await release.wait()
+
+        run = AsyncMock(side_effect=gated_run)
+        event = _event()
+        with patch.object(mixin, "_run_command_then_deliver", run):
+            await mixin._apply_effect(
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+            )
+            await started.wait()
+            registry = mixin._background_run_command_registry()
+            first_task = next(iter(registry.values()))
+            cleanup_observed = asyncio.Event()
+            first_task.add_done_callback(lambda _task: cleanup_observed.set())
+
+            await mixin._apply_effect(
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+            )
+            assert run.await_count == 1
+
+            release.set()
+            await first_task
+            await cleanup_observed.wait()
+            assert registry == {}
+
+            await mixin._apply_effect(
+                _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
+            )
+            second_task = next(iter(registry.values()))
+            await second_task
+            assert run.await_count == 2
+
+
+@pytest.mark.asyncio
 class TestRunCommandDeadlines:
     async def test_inline_timeout_uses_remaining_aggregate_deadline(self) -> None:
         result = RunCommandResult(
@@ -207,7 +252,7 @@ class TestRunCommandDeadlines:
             patch(
                 "gobby.workflows.engine.effects.execute_run_command", new_callable=AsyncMock
             ) as run,
-            patch.object(mixin, "_audit_run_command") as audit,
+            patch.object(mixin, "_audit_run_command", new_callable=AsyncMock) as audit,
         ):
             await mixin._apply_effect(
                 _effect(),
@@ -220,9 +265,12 @@ class TestRunCommandDeadlines:
             )
 
         run.assert_not_awaited()
-        assert audit.call_args.args[0].status == "deadline_exhausted"
+        audit_call = audit.await_args
+        assert audit_call is not None
+        assert audit_call.args[0].status == "deadline_exhausted"
 
 
+@pytest.mark.asyncio
 class TestRunCommandBounds:
     async def test_stdout_overflow_kills_and_reaps_child(self, tmp_path: Path) -> None:
         pid_path = tmp_path / "pid"
@@ -328,6 +376,55 @@ def test_run_command_payload_synthesizes_stop_only_when_missing() -> None:
     assert synthesized["hook_event_name"] == "Stop"
 
 
+def test_resolve_run_command_uses_installed_skill_tree(tmp_path: Path) -> None:
+    install_dir = tmp_path / "install"
+    expected = install_dir / "shared" / "skills" / "impeccable" / "scripts" / "hook.mjs"
+
+    with patch(
+        "gobby.workflows.engine.run_command.get_install_dir",
+        return_value=install_dir,
+    ):
+        resolved = resolve_run_command(
+            ["node", "gobby-skill://impeccable/scripts/hook.mjs", "--check"]
+        )
+
+    assert resolved == ["node", str(expected), "--check"]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "gobby-skill://impeccable",
+        "gobby-skill://impeccable/%2e%2e/other/hook.mjs",
+        "gobby-skill://impeccable/scripts/hook.mjs?mode=unsafe",
+    ],
+)
+def test_resolve_run_command_rejects_invalid_skill_uri(uri: str, tmp_path: Path) -> None:
+    with (
+        patch(
+            "gobby.workflows.engine.run_command.get_install_dir",
+            return_value=tmp_path,
+        ),
+        pytest.raises(ValueError, match="installed-skill URI|Installed-skill URI"),
+    ):
+        resolve_run_command([uri])
+
+
+@pytest.mark.parametrize(
+    ("command", "timeout", "message"),
+    [
+        ([], None, "non-empty command"),
+        (["true"], 0.0, "must be > 0"),
+        (["true"], -1.0, "must be > 0"),
+    ],
+)
+def test_run_command_effect_rejects_invalid_bounds(
+    command: list[str], timeout: float | None, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        RuleEffect(type="run_command", command=command, timeout_seconds=timeout)
+
+
 @pytest.mark.parametrize(
     "status",
     [
@@ -340,7 +437,8 @@ def test_run_command_payload_synthesizes_stop_only_when_missing() -> None:
         "deadline_exhausted",
     ],
 )
-def test_run_command_audit_contains_metadata_only(status: str) -> None:
+@pytest.mark.asyncio
+async def test_run_command_audit_contains_metadata_only(status: str) -> None:
     mixin = EffectsMixin()
     mixin.db = MagicMock()
     manager = MagicMock()
@@ -356,7 +454,7 @@ def test_run_command_audit_contains_metadata_only(status: str) -> None:
         background=False,
     )
     with patch("gobby.storage.workflow_audit.WorkflowAuditManager", return_value=manager):
-        mixin._audit_run_command(
+        await mixin._audit_run_command(
             result,
             rule_name="test-rule",
             rule_id="rule-id",

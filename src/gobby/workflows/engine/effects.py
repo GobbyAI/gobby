@@ -4,6 +4,7 @@ Handles applying rule effects: set_variable, inject_context, observe,
 mcp_call, rewrite_input, load_skill, run_command, and block matching.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -29,6 +30,7 @@ from gobby.workflows.engine.run_command import (
     RunCommandResult,
     build_run_command_payload,
     execute_run_command,
+    resolve_run_command,
 )
 from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -381,8 +383,13 @@ class EffectsMixin(DeliveryFormattingMixin):
     ) -> None:
         """Execute a bounded detector command and fail open on every failure."""
         event = ctx.get("event")
-        command = [str(part) for part in (effect.command or [])]
-        if not command or not isinstance(event, HookEvent):
+        if not isinstance(event, HookEvent):
+            return
+
+        try:
+            command = resolve_run_command([str(part) for part in (effect.command or [])])
+        except Exception as exc:
+            logger.warning("run_command[%s]: command resolution failed: %s", row.name, exc)
             return
 
         try:
@@ -398,7 +405,12 @@ class EffectsMixin(DeliveryFormattingMixin):
 
         if effect.background:
             timeout = effect.timeout_seconds or _RUN_COMMAND_BACKGROUND_DEFAULT_TIMEOUT_SECONDS
-            create_background_task(
+            registry = self._background_run_command_registry()
+            key = (event.session_id, str(row.id))
+            existing = registry.get(key)
+            if existing is not None and not existing.done():
+                return
+            task = create_background_task(
                 self._run_command_then_deliver(
                     command,
                     cwd,
@@ -409,6 +421,13 @@ class EffectsMixin(DeliveryFormattingMixin):
                     platform_session_id=platform_session_id,
                 )
             )
+            registry[key] = task
+
+            def cleanup(completed: asyncio.Task[None]) -> None:
+                if registry.get(key) is completed:
+                    registry.pop(key, None)
+
+            task.add_done_callback(cleanup)
             return
 
         maximum = min(
@@ -421,7 +440,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         timeout = remaining_blocking_effect_seconds(deadline, maximum=maximum)
         if timeout <= 0:
             result = RunCommandResult.deadline_exhausted(timeout_seconds=timeout)
-            self._audit_run_command(
+            await self._audit_run_command(
                 result,
                 rule_name=row.name,
                 rule_id=str(row.id),
@@ -460,7 +479,7 @@ class EffectsMixin(DeliveryFormattingMixin):
             timeout_seconds=timeout,
             background=background,
         )
-        self._audit_run_command(
+        await self._audit_run_command(
             result,
             rule_name=rule_name,
             rule_id=rule_id,
@@ -497,7 +516,9 @@ class EffectsMixin(DeliveryFormattingMixin):
         try:
             from gobby.storage.inter_session_messages import InterSessionMessageManager
 
-            InterSessionMessageManager(self.db).create_message(
+            manager = InterSessionMessageManager(self.db)
+            await offload(
+                manager.create_message,
                 from_session=platform_session_id,
                 to_session=platform_session_id,
                 content=result.context,
@@ -506,7 +527,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         except Exception:
             logger.warning("run_command[%s]: background delivery failed", rule_name, exc_info=True)
 
-    def _audit_run_command(
+    async def _audit_run_command(
         self,
         result: RunCommandResult,
         *,
@@ -519,7 +540,9 @@ class EffectsMixin(DeliveryFormattingMixin):
         try:
             from gobby.storage.workflow_audit import WorkflowAuditManager
 
-            WorkflowAuditManager(self.db).log(
+            manager = WorkflowAuditManager(self.db)
+            await offload(
+                manager.log,
                 session_id=platform_session_id,
                 step=rule_name,
                 event_type="effect",
@@ -537,6 +560,15 @@ class EffectsMixin(DeliveryFormattingMixin):
             )
         except Exception:
             logger.warning("run_command[%s]: audit write failed", rule_name, exc_info=True)
+
+    def _background_run_command_registry(
+        self,
+    ) -> dict[tuple[str, str], asyncio.Task[None]]:
+        registry = getattr(self, "_background_run_commands", None)
+        if registry is None:
+            registry = {}
+            self._background_run_commands = registry
+        return registry
 
     def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
         """Check whether an effect's tool and command selectors match this event."""

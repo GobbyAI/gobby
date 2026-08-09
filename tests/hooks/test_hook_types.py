@@ -476,9 +476,14 @@ class TestStopInput:
 
     def test_valid_input(self) -> None:
         """Test valid stop input."""
-        input_data = StopInput(external_id="key", reason="User requested stop")
+        input_data = StopInput(
+            external_id="key",
+            reason="User requested stop",
+            transcript_path="/path/to/transcript.jsonl",
+        )
         assert input_data.reason == "User requested stop"
         assert input_data.metadata == {}
+        assert input_data.model_extra == {"transcript_path": "/path/to/transcript.jsonl"}
 
 
 class TestSubagentStartInput:

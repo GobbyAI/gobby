@@ -213,7 +213,8 @@ class TestHandleAllLifecycles:
             handler = WorkflowHookHandler(evaluation_runtime=runtime, timeout=0.001)
 
             # Make the coroutine hang by patching _evaluate_rules
-            async def slow_coroutine(event):
+            async def slow_coroutine(event, *, blocking_deadline: float | None = None):
+                del blocking_deadline
                 await wait_forever()
                 return HookResponse(decision="allow")
 

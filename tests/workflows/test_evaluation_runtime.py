@@ -36,7 +36,12 @@ def test_stalled_to_thread_dependency_respects_evaluation_timeout(tmp_path: Path
         started.set()
         release.wait(timeout=1)
 
-    async def evaluate(_event: HookEvent) -> HookResponse:
+    async def evaluate(
+        _event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
+        del blocking_deadline
         await asyncio.to_thread(block)
         return HookResponse(decision="allow")
 

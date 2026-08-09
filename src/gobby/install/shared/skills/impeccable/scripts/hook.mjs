@@ -20,6 +20,9 @@
  */
 
 import { runHook, runStopHook, writeAuditLog } from './hook-lib.mjs';
+import { resolveHookProjectCwd } from './hook-project-root.mjs';
+
+let auditCwd = process.cwd();
 
 async function readStdin() {
   if (process.stdin.isTTY) return '';
@@ -47,15 +50,16 @@ async function main() {
 
   let stdinJson = '';
   try { stdinJson = await readStdin(); } catch { /* fall through */ }
+  auditCwd = resolveHookProjectCwd(stdinJson, process.cwd());
 
   const run = isStopEvent(stdinJson) ? runStopHook : runHook;
   const result = await run({
     stdinJson,
     env: inheritedEnv,
-    cwd: process.cwd(),
+    cwd: auditCwd,
   });
 
-  writeAuditLog(process.env, result.audit, process.cwd());
+  writeAuditLog(process.env, result.audit, auditCwd);
 
   if (result.stdout) process.stdout.write(result.stdout);
   process.exit(result.exitCode || 0);
@@ -69,7 +73,7 @@ main().catch((err) => {
       ts: new Date().toISOString(),
       event: 'hook-error',
       error: String(err && err.message ? err.message : err),
-    });
+    }, auditCwd);
   } catch { /* swallow */ }
   if (process.env.IMPECCABLE_HOOK_DEBUG) {
     process.stderr.write(`[impeccable-hook] ${err}\n`);

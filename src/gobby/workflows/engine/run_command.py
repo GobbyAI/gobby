@@ -8,10 +8,13 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal, cast
+from urllib.parse import unquote, urlsplit
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.paths import get_install_dir
 
 STDOUT_LIMIT_BYTES = 256 * 1024
 STDERR_LIMIT_BYTES = 64 * 1024
@@ -25,6 +28,8 @@ RunCommandStatus = Literal[
     "invalid_output",
     "deadline_exhausted",
 ]
+
+_INSTALLED_SKILL_SCHEME = "gobby-skill"
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,35 @@ class RunCommandResult:
 class _StreamOverflow(Exception):
     def __init__(self, stream: Literal["stdout", "stderr"]) -> None:
         self.stream = stream
+
+
+def resolve_run_command(command: list[str]) -> list[str]:
+    """Resolve installed-skill URI arguments to their packaged filesystem paths."""
+    return [_resolve_installed_skill_uri(argument) for argument in command]
+
+
+def _resolve_installed_skill_uri(argument: str) -> str:
+    parsed = urlsplit(argument)
+    if parsed.scheme != _INSTALLED_SKILL_SCHEME:
+        return argument
+    if not parsed.netloc or not parsed.path or parsed.query or parsed.fragment:
+        raise ValueError(f"Invalid installed-skill URI: {argument!r}")
+
+    skill_name = unquote(parsed.netloc)
+    relative_path = unquote(parsed.path).lstrip("/")
+    if not skill_name or not relative_path or "/" in skill_name or "\\" in skill_name:
+        raise ValueError(f"Invalid installed-skill URI: {argument!r}")
+
+    skills_root = (Path(get_install_dir()) / "shared" / "skills").resolve()
+    skill_root = (skills_root / skill_name).resolve()
+    target = (skill_root / relative_path).resolve()
+    try:
+        target.relative_to(skill_root)
+    except ValueError as exc:
+        raise ValueError(f"Installed-skill URI escapes its skill root: {argument!r}") from exc
+    if target == skill_root:
+        raise ValueError(f"Installed-skill URI must name a file: {argument!r}")
+    return str(target)
 
 
 def build_run_command_payload(event: HookEvent) -> dict[str, object]:

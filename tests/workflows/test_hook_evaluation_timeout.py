@@ -63,7 +63,12 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
     evaluation_threads: list[int] = []
     daemon_thread = threading.get_ident()
 
-    async def blocking_evaluation(_event: HookEvent) -> HookResponse:
+    async def blocking_evaluation(
+        _event: HookEvent,
+        *,
+        blocking_deadline: float | None = None,
+    ) -> HookResponse:
+        del blocking_deadline
         nonlocal started
         evaluation_threads.append(threading.get_ident())
         with started_lock:
@@ -112,8 +117,9 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
-        del event, session_id, variables, eval_context
+        del event, session_id, variables, eval_context, blocking_deadline
         try:
             await asyncio.Event().wait()
         finally:
@@ -150,8 +156,9 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
             session_id: str,
             variables: dict[str, Any],
             eval_context: dict[str, Any] | None = None,
+            blocking_deadline: float | None = None,
         ) -> HookResponse:
-            del event, session_id, variables, eval_context
+            del event, session_id, variables, eval_context, blocking_deadline
             return HookResponse(decision="allow")
 
         handler.rule_engine.evaluate = fast_evaluate
@@ -175,8 +182,9 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
-        del session_id, variables, eval_context
+        del session_id, variables, eval_context, blocking_deadline
         name = str(event.data["name"])
         entered.append(name)
         if name == "first":
@@ -231,7 +239,13 @@ def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:
     class TimeoutHandler:
         calls = 0
 
-        def handle(self, _event: HookEvent) -> HookResponse:
+        def handle(
+            self,
+            _event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            del blocking_deadline
             self.calls += 1
             raise timeout
 

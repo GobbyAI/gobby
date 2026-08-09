@@ -76,8 +76,9 @@ async def test_same_session_evaluations_are_serialized(tmp_path) -> None:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
-        del session_id, variables, eval_context
+        del session_id, variables, eval_context, blocking_deadline
         name = str(event.data["name"])
         entered.append(name)
         if name == "first":
@@ -127,8 +128,9 @@ async def test_different_sessions_evaluate_concurrently(tmp_path) -> None:
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
-        del event, variables, eval_context
+        del event, variables, eval_context, blocking_deadline
         entered.add(session_id)
         if entered == {"platform-a", "platform-b"}:
             both_entered.set()
@@ -178,8 +180,9 @@ async def test_session_end_cleanup_waits_for_queued_same_session_event(tmp_path)
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
-        del session_id, variables, eval_context
+        del session_id, variables, eval_context, blocking_deadline
         if event.event_type == HookEventType.SESSION_END:
             end_entered.set()
             await release_end.wait()
@@ -257,6 +260,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
         session_id: str,
         variables: dict[str, Any],
         eval_context: dict[str, Any] | None = None,
+        blocking_deadline: float | None = None,
     ) -> HookResponse:
         if event.event_type == HookEventType.AFTER_TOOL:
             assert variables["loaded_skills"] == ["code-index"]
@@ -267,6 +271,7 @@ async def test_loaded_skill_observer_persists_before_next_same_session_event(
             session_id=session_id,
             variables=variables,
             eval_context=eval_context,
+            blocking_deadline=blocking_deadline,
         )
 
     engine.evaluate = delayed_evaluate

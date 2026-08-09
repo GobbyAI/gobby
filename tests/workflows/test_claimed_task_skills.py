@@ -32,6 +32,7 @@ def test_language_skill_extension_map_covers_installed_language_rules() -> None:
     installed_language_skills = {
         path.stem.removeprefix("require-").removesuffix("-skill")
         for path in SKILL_DISCOVERY_RULES.glob("require-*-skill.yaml")
+        if path.stem != "require-plan-skill"
     }
 
     assert set(LANGUAGE_SKILL_EXTENSIONS) == installed_language_skills

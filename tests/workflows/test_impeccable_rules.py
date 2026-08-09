@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -11,6 +13,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.run_command import RunCommandResult
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -59,6 +62,24 @@ def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
 
     assert edit is not None and edit.enabled is True
     assert deep is not None and deep.enabled is True
+    assert "enforcement" in (edit.tags or [])
+    assert "enforcement" in (deep.tags or [])
+
+    edit_definition = RuleDefinitionBody.model_validate_json(edit.definition_json)
+    deep_definition = RuleDefinitionBody.model_validate_json(deep.definition_json)
+    assert [effect.type for effect in edit_definition.resolved_effects] == [
+        "set_variable",
+        "run_command",
+    ]
+    assert [effect.type for effect in deep_definition.resolved_effects] == [
+        "set_variable",
+        "run_command",
+    ]
+    assert edit_definition.resolved_effects[1].command == [
+        "node",
+        "gobby-skill://impeccable/scripts/hook.mjs",
+    ]
+    assert deep_definition.when == "variables.get('impeccable_ui_edited_this_turn', False)"
 
 
 @pytest.mark.parametrize("source", PROVIDERS)
@@ -81,14 +102,16 @@ async def test_edit_detector_evaluates_for_supported_sources(
         )
     )
     with patch.object(engine, "_execute_run_command", execute):
+        variables: dict[str, object] = {}
         response = await engine.evaluate(
             _event(source, HookEventType.AFTER_TOOL),
             session_id=SESSION_ID,
-            variables={},
+            variables=variables,
         )
 
     assert response.decision == "allow"
     assert response.context == f"finding from {source.value}"
+    assert variables["impeccable_ui_edited_this_turn"] is True
     execute.assert_awaited_once()
 
 
@@ -98,13 +121,50 @@ async def test_deep_detector_schedules_for_supported_sources(
     source: SessionSource,
 ) -> None:
     engine = RuleEngine(impeccable_db)
+    variables: dict[str, object] = {}
     with patch("gobby.workflows.engine.effects.create_background_task") as create_task:
+        skipped = await engine.evaluate(
+            _event(source, HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        create_task.assert_not_called()
+
+        variables["impeccable_ui_edited_this_turn"] = True
         response = await engine.evaluate(
             _event(source, HookEventType.STOP),
             session_id=SESSION_ID,
-            variables={},
+            variables=variables,
         )
 
+    assert skipped.decision == "allow"
     assert response.decision == "allow"
+    assert variables["impeccable_ui_edited_this_turn"] is False
     create_task.assert_called_once()
     create_task.call_args.args[0].close()
+
+
+def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    nested = worktree / "packages" / "web" / "src"
+    nested.mkdir(parents=True)
+    (worktree / ".git").write_text("gitdir: ../repo/.git/worktrees/test\n")
+    helper = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/skills/impeccable/scripts/hook-project-root.mjs"
+    )
+    event_json = json.dumps({"cwd": str(nested)})
+    script = (
+        f"import {{ resolveHookProjectCwd }} from {json.dumps(helper.as_uri())}; "
+        f"process.stdout.write(resolveHookProjectCwd({json.dumps(event_json)}, "
+        f"{json.dumps(str(tmp_path))}));"
+    )
+
+    completed = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout == str(worktree)

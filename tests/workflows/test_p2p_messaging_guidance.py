@@ -13,7 +13,7 @@ P2P_PRINCIPLE = (
     "18. **ALWAYS use `gobby-agents:send_message` for direct cross-session agent "
     "communication.** Reserve `gobby-sessions:send_keys` for terminal control."
 )
-RULE_8_ANCHOR = "notify that session or agent via `gobby-agents:send_message`"
+RULE_8_ANCHOR = "command, diagnostics, and affected paths via `gobby-agents:send_message`"
 
 
 def test_universal_instruction_files_require_p2p_messaging() -> None:

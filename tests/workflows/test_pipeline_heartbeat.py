@@ -25,6 +25,7 @@ pytestmark = pytest.mark.unit
 # Project/session/task id columns are native uuid in PostgreSQL; synthetic ids
 # like "test-project" would fail with `invalid input syntax for type uuid`.
 PROJECT_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+MACHINE_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaab"
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 DEAD_AGENT_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 STOPPED_SESSION_ID = "33333333-3333-4333-8333-333333333333"
@@ -40,11 +41,15 @@ def _seed_db(db: HubDatabase) -> None:
         (PROJECT_ID, "test-project", "/tmp/test"),
     )
     db.execute(
+        "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (MACHINE_ID, "test-machine"),
+    )
+    db.execute(
         """INSERT INTO sessions
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
-        (SESSION_ID, "ext-1", None, "claude_code", PROJECT_ID, "active"),
+        (SESSION_ID, "ext-1", MACHINE_ID, "claude_code", PROJECT_ID, "active"),
     )
 
 
@@ -54,7 +59,7 @@ def _seed_session(db: HubDatabase, session_id: str, *, status: str = "stopped") 
            (id, external_id, machine_id, source, project_id, status, created_at, updated_at)
            VALUES (%s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
            ON CONFLICT DO NOTHING""",
-        (session_id, f"{session_id}-ext", None, "claude_code", PROJECT_ID, status),
+        (session_id, f"{session_id}-ext", MACHINE_ID, "claude_code", PROJECT_ID, status),
     )
 
 

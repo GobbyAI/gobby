@@ -1,4 +1,4 @@
-tags: [impeccable, design, gobby, default]
+tags: [impeccable, design, gobby, default, enforcement]
 
 # Gobby rules own Impeccable edit-time enforcement (see the bundled impeccable
 # skill's references/hooks.md). The detector scripts live in the project's
@@ -18,8 +18,11 @@ rules:
       event.data.get('canonical_tool_kind') == 'write'
       and event.data.get('canonical_file_path', '').endswith(('.tsx', '.jsx', '.ts', '.js', '.mjs', '.cjs', '.vue', '.svelte', '.astro', '.css', '.scss', '.html'))
     effects:
+      - type: set_variable
+        variable: impeccable_ui_edited_this_turn
+        value: true
       - type: run_command
-        command: ["node", ".agents/skills/impeccable/scripts/hook.mjs"]
+        command: ["node", "gobby-skill://impeccable/scripts/hook.mjs"]
         timeout_seconds: 5
         inject_result: true
 
@@ -28,8 +31,12 @@ rules:
     event: turn_end
     enabled: true
     priority: 60
+    when: "variables.get('impeccable_ui_edited_this_turn', False)"
     effects:
+      - type: set_variable
+        variable: impeccable_ui_edited_this_turn
+        value: false
       - type: run_command
-        command: ["node", ".agents/skills/impeccable/scripts/hook.mjs"]
+        command: ["node", "gobby-skill://impeccable/scripts/hook.mjs"]
         timeout_seconds: 30
         background: true

@@ -227,6 +227,15 @@ class RuleEffect(BaseModel):
             fields = ", ".join(missing)
             raise ValueError(f"RuleEffect(type='{self.type}') requires: {fields}")
 
+        if self.type == "run_command":
+            if not self.command:
+                raise ValueError("RuleEffect(type='run_command') requires a non-empty command")
+            if self.timeout_seconds is not None and not self.timeout_seconds > 0:
+                raise ValueError(
+                    "RuleEffect(type='run_command') timeout_seconds must be > 0 "
+                    f"(got {self.timeout_seconds!r})"
+                )
+
         if self.success_variable is not None and (not self.inject_result or self.background):
             raise ValueError("mcp_call success_variable requires inline result injection")
 

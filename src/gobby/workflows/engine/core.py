@@ -9,8 +9,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-import psycopg
-
 if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
 
@@ -204,7 +202,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                             CompletionSubscriberManager(self.db).has_active_agent_wait,
                             session_id,
                         )
-                    except psycopg.DatabaseError as exc:
+                    except Exception as exc:
                         logger.warning(
                             "Failed to determine active agent wait for session %s: %s",
                             session_id,
