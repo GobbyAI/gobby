@@ -401,6 +401,7 @@ class TestInitSubsystems:
         )
         runner.database = object()
         runner.db_executor = None
+        runner.worktree_delete_executor = None
         runner.coverage_executor = None
         runner.database_concurrency = None
         runner.database_watchdog = None
@@ -1456,7 +1457,7 @@ class TestShutdownDaemonServices:
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.05,
+            0.0,
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
@@ -1492,7 +1493,6 @@ class TestShutdownDaemonServices:
                 )
             )
             await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
-            await asyncio.sleep(0.06)
             runner.database.close.assert_not_called()
 
             release_worker.set()
@@ -4104,7 +4104,9 @@ class TestAgentRestartRecoveryHelpers:
                 increment,
             ),
         ):
-            resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(runner)
+            resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(
+                cast(GobbyRunner, runner)
+            )
 
         assert resumed == 1
         assert [c.args[0].id for c in resume.await_args_list] == [

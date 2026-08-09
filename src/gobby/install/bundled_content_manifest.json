@@ -466,7 +466,7 @@
     "workflows/rules/context-handoff/nudge-compact-on-context-pressure.yaml": "3c895c124c5448d139a3fbada52858db72d49239f3281ed1679d58732ef77a7c",
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "a0a0aa2ee4a550e37f5d34bf0ce58ed3bf5eb4aa62334e17b1e6c0d99adc9140",
     "workflows/rules/error-recovery/inject-tool-error-recovery.yaml": "440e18522408fcfba63f45a0615b00f8ec9c38e9d6f6cb032ae5904372365156",
-    "workflows/rules/impeccable/design-detector.yaml": "5025a107176b3cdda003ac11e56e0b82e66a2d18fcd2d07c01a9433f6d8a270c",
+    "workflows/rules/impeccable/design-detector.yaml": "7c04801030eff96ac5d51af11f581075d195ea951b31e03c592c31bbdd565030",
     "workflows/rules/memory-lifecycle/digest-on-plan-turn-end.yaml": "c368689c821dd658523a3efc6b302edf8c0a7775b530528a0d8f623b32877d53",
     "workflows/rules/memory-lifecycle/digest-on-response.yaml": "e838b43e643e53a7001108a6cfb200244f0a4ac8b3b0c6eb13cb8d95683a9012",
     "workflows/rules/memory-lifecycle/guard-plan-memory-writes.yaml": "1077d39cc57cc34e8d9d2661248399fff1136d50edba5ac8cdd7e1f5d3ef285d",

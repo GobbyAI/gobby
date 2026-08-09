@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from gobby.mcp_proxy.tools.skills import create_skills_registry
-from gobby.mcp_proxy.tools.skills import materialize_skill_scripts as materializer
+from gobby.skills import materialization as materializer
 from gobby.skills.script_cache import (
     BrowserCacheReadiness,
     async_export_file_lock,
@@ -783,3 +783,63 @@ async def test_name_resolution_matches_get_skill(
     assert (Path(global_result["scripts_dir"]) / "value.js").read_text() == (
         "export default 'global';\n"
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_cached_script_is_republished(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_home(monkeypatch, tmp_path)
+    _, skill = _create_skill(
+        temp_db,
+        name="cache-recovery",
+        files={"scripts/hook.mjs": "export const recovered = true;\n"},
+    )
+    tool = _tool(temp_db)
+    first = await tool(name=skill.name)
+    cached_script = Path(first["scripts_dir"]) / "hook.mjs"
+    cached_script.unlink()
+
+    second = await tool(name=skill.name)
+
+    assert second["scripts_dir"] == first["scripts_dir"]
+    assert cached_script.read_text() == "export const recovered = true;\n"
+
+
+@pytest.mark.asyncio
+async def test_timed_out_waiter_leaves_shared_materialization_running(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_home(monkeypatch, tmp_path)
+    _, skill = _create_skill(
+        temp_db,
+        name="single-flight-timeout",
+        files={"scripts/hook.mjs": "export {};\n"},
+    )
+    service = materializer.SkillScriptMaterializer(temp_db)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def gated_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return func(*args, **kwargs)
+
+    waiter = asyncio.create_task(
+        asyncio.wait_for(
+            service.resolve(skill.name, project_id=None, run_db=gated_run_db),
+            timeout=0.01,
+        )
+    )
+    await started.wait()
+    with pytest.raises(TimeoutError):
+        await waiter
+
+    release.set()
+    result = await service.resolve(skill.name, project_id=None, run_db=gated_run_db)
+
+    assert calls == 1
+    assert (result.scripts_dir / "hook.mjs").is_file()

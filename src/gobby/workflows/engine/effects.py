@@ -8,7 +8,9 @@ import asyncio
 import json
 import logging
 import re
+import time
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +22,7 @@ from gobby.hooks.effect_deadline import (
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
 from gobby.sessions.compact_markers import WORKFLOW_REQUESTED_SKILLS_VARIABLE
+from gobby.skills.materialization import SkillScriptMaterializer
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.delivery_formatting import (
@@ -30,7 +33,7 @@ from gobby.workflows.engine.run_command import (
     RunCommandResult,
     build_run_command_payload,
     execute_run_command,
-    resolve_run_command,
+    resolve_materialized_skill_script,
 )
 from gobby.workflows.reserved_variables import is_internal_rule, is_reserved_workflow_variable
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
@@ -41,12 +44,19 @@ _RUN_COMMAND_DEFAULT_TIMEOUT_SECONDS = 5.0
 _RUN_COMMAND_BACKGROUND_DEFAULT_TIMEOUT_SECONDS = 30.0
 
 
+@dataclass(frozen=True)
+class _PreparedRunCommand:
+    command: list[str]
+    environment: dict[str, str]
+
+
 class EffectsMixin(DeliveryFormattingMixin):
     """Mixin providing effect handling methods for RuleEngine."""
 
     db: Any
     _skill_manager: Any
     _mcp_dispatcher: Any
+    skill_script_materializer: SkillScriptMaterializer
 
     if TYPE_CHECKING:
         # Provided by TemplatingMixin at runtime via RuleEngine MRO
@@ -387,12 +397,6 @@ class EffectsMixin(DeliveryFormattingMixin):
             return
 
         try:
-            command = resolve_run_command([str(part) for part in (effect.command or [])])
-        except Exception as exc:
-            logger.warning("run_command[%s]: command resolution failed: %s", row.name, exc)
-            return
-
-        try:
             payload = build_run_command_payload(event)
             stdin_payload = json.dumps(payload).encode("utf-8")
         except Exception:
@@ -412,10 +416,13 @@ class EffectsMixin(DeliveryFormattingMixin):
                 return
             task = create_background_task(
                 self._run_command_then_deliver(
-                    command,
+                    [str(part) for part in (effect.command or [])],
                     cwd,
                     stdin_payload,
                     timeout,
+                    project_id=event.project_id,
+                    skill=effect.skill,
+                    script=effect.script,
                     rule_name=row.name,
                     rule_id=str(row.id),
                     platform_session_id=platform_session_id,
@@ -439,7 +446,11 @@ class EffectsMixin(DeliveryFormattingMixin):
             deadline = None
         timeout = remaining_blocking_effect_seconds(deadline, maximum=maximum)
         if timeout <= 0:
-            result = RunCommandResult.deadline_exhausted(timeout_seconds=timeout)
+            result = RunCommandResult.deadline_exhausted(
+                timeout_seconds=timeout,
+                skill=effect.skill,
+                script=effect.script,
+            )
             await self._audit_run_command(
                 result,
                 rule_name=row.name,
@@ -447,11 +458,45 @@ class EffectsMixin(DeliveryFormattingMixin):
                 platform_session_id=platform_session_id,
             )
             return
+        started = time.perf_counter()
+        prepared = await self._prepare_run_command(
+            [str(part) for part in (effect.command or [])],
+            project_id=event.project_id,
+            skill=effect.skill,
+            script=effect.script,
+            timeout=timeout,
+            background=False,
+        )
+        if isinstance(prepared, RunCommandResult):
+            await self._record_run_command_failure(
+                prepared,
+                rule_name=row.name,
+                rule_id=str(row.id),
+                platform_session_id=platform_session_id,
+            )
+            return
+        timeout -= time.perf_counter() - started
+        if timeout <= 0:
+            result = RunCommandResult.deadline_exhausted(
+                timeout_seconds=timeout,
+                skill=effect.skill,
+                script=effect.script,
+            )
+            await self._record_run_command_failure(
+                result,
+                rule_name=row.name,
+                rule_id=str(row.id),
+                platform_session_id=platform_session_id,
+            )
+            return
         result = await self._execute_run_command(
-            command,
+            prepared.command,
             cwd,
             stdin_payload,
             timeout,
+            environment=prepared.environment,
+            skill=effect.skill,
+            script=effect.script,
             rule_name=row.name,
             rule_id=str(row.id),
             platform_session_id=platform_session_id,
@@ -460,6 +505,46 @@ class EffectsMixin(DeliveryFormattingMixin):
         if result.context and effect.inject_result:
             context_parts.append(result.context)
 
+    async def _prepare_run_command(
+        self,
+        command: list[str],
+        *,
+        project_id: str | None,
+        skill: str | None,
+        script: str | None,
+        timeout: float,
+        background: bool,
+    ) -> _PreparedRunCommand | RunCommandResult:
+        if skill is None or script is None:
+            return _PreparedRunCommand(command, {})
+
+        started = time.perf_counter()
+        try:
+            materialized = await asyncio.wait_for(
+                self.skill_script_materializer.resolve(skill, project_id=project_id),
+                timeout=timeout,
+            )
+            target = resolve_materialized_skill_script(materialized.scripts_dir, script)
+        except TimeoutError:
+            return RunCommandResult.skill_resolution_failure(
+                "skill_resolution_timeout",
+                started=started,
+                timeout_seconds=timeout,
+                background=background,
+                skill=skill,
+                script=script,
+            )
+        except Exception:
+            return RunCommandResult.skill_resolution_failure(
+                "skill_resolution_error",
+                started=started,
+                timeout_seconds=timeout,
+                background=background,
+                skill=skill,
+                script=script,
+            )
+        return _PreparedRunCommand([*command, str(target)], materialized.environment)
+
     async def _execute_run_command(
         self,
         command: list[str],
@@ -467,26 +552,40 @@ class EffectsMixin(DeliveryFormattingMixin):
         stdin_payload: bytes,
         timeout: float,
         *,
+        environment: dict[str, str],
+        skill: str | None,
+        script: str | None,
         rule_name: str,
         rule_id: str,
         platform_session_id: str | None,
         background: bool,
     ) -> RunCommandResult:
-        result = await execute_run_command(
-            command,
-            cwd=cwd,
-            stdin_payload=stdin_payload,
-            timeout_seconds=timeout,
-            background=background,
+        result = replace(
+            await execute_run_command(
+                command,
+                cwd=cwd,
+                stdin_payload=stdin_payload,
+                timeout_seconds=timeout,
+                background=background,
+                environment=environment,
+            ),
+            skill=skill,
+            script=script,
         )
-        await self._audit_run_command(
-            result,
-            rule_name=rule_name,
-            rule_id=rule_id,
-            platform_session_id=platform_session_id,
-        )
-        if result.status != "success":
-            logger.warning("run_command[%s]: %s (fail-open)", rule_name, result.status)
+        if result.status == "success":
+            await self._audit_run_command(
+                result,
+                rule_name=rule_name,
+                rule_id=rule_id,
+                platform_session_id=platform_session_id,
+            )
+        else:
+            await self._record_run_command_failure(
+                result,
+                rule_name=rule_name,
+                rule_id=rule_id,
+                platform_session_id=platform_session_id,
+            )
         return result
 
     async def _run_command_then_deliver(
@@ -496,16 +595,54 @@ class EffectsMixin(DeliveryFormattingMixin):
         stdin_payload: bytes,
         timeout: float,
         *,
+        project_id: str | None,
+        skill: str | None,
+        script: str | None,
         rule_name: str,
         rule_id: str,
         platform_session_id: str | None,
     ) -> None:
         """Background variant: run the command, deliver output on the next turn."""
-        result = await self._execute_run_command(
+        started = time.perf_counter()
+        prepared = await self._prepare_run_command(
             command,
+            project_id=project_id,
+            skill=skill,
+            script=script,
+            timeout=timeout,
+            background=True,
+        )
+        if isinstance(prepared, RunCommandResult):
+            await self._record_run_command_failure(
+                prepared,
+                rule_name=rule_name,
+                rule_id=rule_id,
+                platform_session_id=platform_session_id,
+            )
+            return
+        timeout -= time.perf_counter() - started
+        if timeout <= 0:
+            result = RunCommandResult.deadline_exhausted(
+                timeout_seconds=timeout,
+                background=True,
+                skill=skill,
+                script=script,
+            )
+            await self._record_run_command_failure(
+                result,
+                rule_name=rule_name,
+                rule_id=rule_id,
+                platform_session_id=platform_session_id,
+            )
+            return
+        result = await self._execute_run_command(
+            prepared.command,
             cwd,
             stdin_payload,
             timeout,
+            environment=prepared.environment,
+            skill=skill,
+            script=script,
             rule_name=rule_name,
             rule_id=rule_id,
             platform_session_id=platform_session_id,
@@ -526,6 +663,29 @@ class EffectsMixin(DeliveryFormattingMixin):
             )
         except Exception:
             logger.warning("run_command[%s]: background delivery failed", rule_name, exc_info=True)
+
+    async def _record_run_command_failure(
+        self,
+        result: RunCommandResult,
+        *,
+        rule_name: str,
+        rule_id: str,
+        platform_session_id: str | None,
+    ) -> None:
+        await self._audit_run_command(
+            result,
+            rule_name=rule_name,
+            rule_id=rule_id,
+            platform_session_id=platform_session_id,
+        )
+        logger.warning(
+            "run_command[%s]: %s phase=%s skill=%s script=%s (fail-open)",
+            rule_name,
+            result.status,
+            result.phase,
+            result.skill,
+            result.script,
+        )
 
     async def _audit_run_command(
         self,
@@ -549,6 +709,9 @@ class EffectsMixin(DeliveryFormattingMixin):
                 result=result.status,
                 rule_id=rule_id,
                 context={
+                    "phase": result.phase,
+                    "skill": result.skill,
+                    "script": result.script,
                     "duration_ms": result.duration_ms,
                     "exit_code": result.exit_code,
                     "stdout_bytes": result.stdout_bytes,

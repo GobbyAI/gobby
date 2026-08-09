@@ -11,6 +11,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.materialization import (
+    NodeRuntimeResult,
+    PreparationResult,
+    SkillMaterializationResult,
+    SkillScriptMaterializer,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -75,19 +81,71 @@ def test_impeccable_templates_sync_enabled(impeccable_db: HubDatabase) -> None:
         "set_variable",
         "run_command",
     ]
-    assert edit_definition.resolved_effects[1].command == [
-        "node",
-        "gobby-skill://impeccable/scripts/hook.mjs",
-    ]
+    edit_command = edit_definition.resolved_effects[1]
+    deep_command = deep_definition.resolved_effects[1]
+    assert edit_command.command == ["node"]
+    assert edit_command.skill == "impeccable"
+    assert edit_command.script == "hook.mjs"
+    assert deep_command.command == ["node"]
+    assert deep_command.skill == "impeccable"
+    assert deep_command.script == "hook.mjs"
     assert deep_definition.when == "variables.get('impeccable_ui_edited_this_turn', False)"
+
+
+@pytest.mark.asyncio
+async def test_prewarm_materializes_each_enabled_rule_skill_once(
+    impeccable_db: HubDatabase,
+) -> None:
+    materializer = AsyncMock(spec=SkillScriptMaterializer)
+    resolved: list[tuple[str, str | None]] = []
+
+    async def resolve(name: str, *, project_id: str | None) -> None:
+        resolved.append((name, project_id))
+
+    materializer.resolve.side_effect = resolve
+    engine = RuleEngine(impeccable_db, skill_script_materializer=materializer)
+
+    await engine.prewarm_skill_scripts(project_id=None)
+
+    assert resolved == [("impeccable", None)]
+
+
+@pytest.mark.asyncio
+async def test_prewarm_failure_is_non_blocking(impeccable_db: HubDatabase) -> None:
+    materializer = AsyncMock(spec=SkillScriptMaterializer)
+    resolved: list[tuple[str, str | None]] = []
+
+    async def fail(name: str, *, project_id: str | None) -> None:
+        resolved.append((name, project_id))
+        raise RuntimeError("sensitive cache path")
+
+    materializer.resolve.side_effect = fail
+    engine = RuleEngine(impeccable_db, skill_script_materializer=materializer)
+
+    await engine.prewarm_skill_scripts(project_id=None)
+
+    assert resolved == [("impeccable", None)]
 
 
 @pytest.mark.parametrize("source", PROVIDERS)
 async def test_edit_detector_evaluates_for_supported_sources(
     impeccable_db: HubDatabase,
     source: SessionSource,
+    tmp_path: Path,
 ) -> None:
-    engine = RuleEngine(impeccable_db)
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    (scripts_dir / "hook.mjs").write_text("export {};\n")
+    materializer = AsyncMock(spec=SkillScriptMaterializer)
+    materializer.resolve.return_value = SkillMaterializationResult(
+        scripts_dir=scripts_dir,
+        files_written=1,
+        environment={},
+        parser_deps=PreparationResult(ready=True, warning=None),
+        browser=PreparationResult(ready=True, warning=None),
+        node=NodeRuntimeResult(version=None, satisfies_floor=None),
+    )
+    engine = RuleEngine(impeccable_db, skill_script_materializer=materializer)
     execute = AsyncMock(
         return_value=RunCommandResult(
             status="success",
@@ -99,6 +157,9 @@ async def test_edit_detector_evaluates_for_supported_sources(
             timeout_seconds=5.0,
             overflow_stream=None,
             background=False,
+            phase="execution",
+            skill="impeccable",
+            script="hook.mjs",
         )
     )
     with patch.object(engine, "_execute_run_command", execute):

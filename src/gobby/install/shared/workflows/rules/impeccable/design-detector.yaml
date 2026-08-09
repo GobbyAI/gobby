@@ -22,7 +22,9 @@ rules:
         variable: impeccable_ui_edited_this_turn
         value: true
       - type: run_command
-        command: ["node", "gobby-skill://impeccable/scripts/hook.mjs"]
+        command: ["node"]
+        skill: impeccable
+        script: hook.mjs
         timeout_seconds: 5
         inject_result: true
 
@@ -37,6 +39,8 @@ rules:
         variable: impeccable_ui_edited_this_turn
         value: false
       - type: run_command
-        command: ["node", "gobby-skill://impeccable/scripts/hook.mjs"]
+        command: ["node"]
+        skill: impeccable
+        script: hook.mjs
         timeout_seconds: 30
         background: true

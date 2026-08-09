@@ -7,14 +7,13 @@ import copy
 import json
 import os
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Literal, cast
-from urllib.parse import unquote, urlsplit
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType
-from gobby.paths import get_install_dir
 
 STDOUT_LIMIT_BYTES = 256 * 1024
 STDERR_LIMIT_BYTES = 64 * 1024
@@ -27,9 +26,10 @@ RunCommandStatus = Literal[
     "output_limit",
     "invalid_output",
     "deadline_exhausted",
+    "skill_resolution_error",
+    "skill_resolution_timeout",
 ]
-
-_INSTALLED_SKILL_SCHEME = "gobby-skill"
+RunCommandPhase = Literal["skill_resolution", "execution"]
 
 
 @dataclass(frozen=True)
@@ -45,9 +45,19 @@ class RunCommandResult:
     timeout_seconds: float
     overflow_stream: Literal["stdout", "stderr"] | None
     background: bool
+    phase: RunCommandPhase
+    skill: str | None
+    script: str | None
 
     @classmethod
-    def deadline_exhausted(cls, *, timeout_seconds: float) -> RunCommandResult:
+    def deadline_exhausted(
+        cls,
+        *,
+        timeout_seconds: float,
+        background: bool = False,
+        skill: str | None = None,
+        script: str | None = None,
+    ) -> RunCommandResult:
         return cls(
             status="deadline_exhausted",
             context=None,
@@ -57,7 +67,36 @@ class RunCommandResult:
             stderr_bytes=0,
             timeout_seconds=timeout_seconds,
             overflow_stream=None,
-            background=False,
+            background=background,
+            phase="execution",
+            skill=skill,
+            script=script,
+        )
+
+    @classmethod
+    def skill_resolution_failure(
+        cls,
+        status: Literal["skill_resolution_error", "skill_resolution_timeout"],
+        *,
+        started: float,
+        timeout_seconds: float,
+        background: bool,
+        skill: str,
+        script: str,
+    ) -> RunCommandResult:
+        return cls(
+            status=status,
+            context=None,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            exit_code=None,
+            stdout_bytes=0,
+            stderr_bytes=0,
+            timeout_seconds=timeout_seconds,
+            overflow_stream=None,
+            background=background,
+            phase="skill_resolution",
+            skill=skill,
+            script=script,
         )
 
 
@@ -66,33 +105,26 @@ class _StreamOverflow(Exception):
         self.stream = stream
 
 
-def resolve_run_command(command: list[str]) -> list[str]:
-    """Resolve installed-skill URI arguments to their packaged filesystem paths."""
-    return [_resolve_installed_skill_uri(argument) for argument in command]
+def resolve_materialized_skill_script(scripts_dir: Path, script: str) -> Path:
+    """Resolve a script while enforcing containment in a materialized scripts directory."""
+    posix = PurePosixPath(script)
+    windows = PureWindowsPath(script)
+    if not script.strip() or posix.is_absolute() or windows.is_absolute() or windows.drive:
+        raise ValueError("Skill script path must be non-empty and relative")
+    if ".." in posix.parts or ".." in windows.parts:
+        raise ValueError("Skill script path cannot traverse its scripts directory")
 
-
-def _resolve_installed_skill_uri(argument: str) -> str:
-    parsed = urlsplit(argument)
-    if parsed.scheme != _INSTALLED_SKILL_SCHEME:
-        return argument
-    if not parsed.netloc or not parsed.path or parsed.query or parsed.fragment:
-        raise ValueError(f"Invalid installed-skill URI: {argument!r}")
-
-    skill_name = unquote(parsed.netloc)
-    relative_path = unquote(parsed.path).lstrip("/")
-    if not skill_name or not relative_path or "/" in skill_name or "\\" in skill_name:
-        raise ValueError(f"Invalid installed-skill URI: {argument!r}")
-
-    skills_root = (Path(get_install_dir()) / "shared" / "skills").resolve()
-    skill_root = (skills_root / skill_name).resolve()
-    target = (skill_root / relative_path).resolve()
+    root = scripts_dir.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("Materialized scripts path is not a directory")
+    target = (root / script).resolve(strict=True)
     try:
-        target.relative_to(skill_root)
+        target.relative_to(root)
     except ValueError as exc:
-        raise ValueError(f"Installed-skill URI escapes its skill root: {argument!r}") from exc
-    if target == skill_root:
-        raise ValueError(f"Installed-skill URI must name a file: {argument!r}")
-    return str(target)
+        raise ValueError("Skill script resolves outside its scripts directory") from exc
+    if not target.is_file():
+        raise ValueError("Skill script path must name a file")
+    return target
 
 
 def build_run_command_payload(event: HookEvent) -> dict[str, object]:
@@ -115,9 +147,13 @@ async def execute_run_command(
     stdin_payload: bytes,
     timeout_seconds: float,
     background: bool,
+    environment: Mapping[str, str] | None = None,
 ) -> RunCommandResult:
     """Run a command with capped concurrent output reads and deterministic cleanup."""
     started = time.perf_counter()
+    subprocess_environment = os.environ.copy()
+    if environment:
+        subprocess_environment.update(environment)
     try:
         process = await asyncio.create_subprocess_exec(
             *command,
@@ -125,6 +161,7 @@ async def execute_run_command(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
+            env=subprocess_environment,
         )
     except (OSError, ValueError):
         return _result(
@@ -305,6 +342,8 @@ def _result(
     stdout_bytes: int = 0,
     stderr_bytes: int = 0,
     overflow_stream: Literal["stdout", "stderr"] | None = None,
+    skill: str | None = None,
+    script: str | None = None,
 ) -> RunCommandResult:
     return RunCommandResult(
         status=status,
@@ -316,4 +355,7 @@ def _result(
         timeout_seconds=timeout_seconds,
         overflow_stream=overflow_stream,
         background=background,
+        phase="execution",
+        skill=skill,
+        script=script,
     )

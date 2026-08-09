@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
+from gobby.hooks.background_tasks import create_background_task
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
     _reclassify_reconciliation_pending_runs,
@@ -679,6 +680,26 @@ def _record_websocket_startup_result(
         tracker.error("WebSocket server", str(error))
 
 
+def _schedule_workflow_skill_prewarm(runner: GobbyRunner) -> None:
+    server = getattr(runner, "http_server", None)
+    services = getattr(server, "services", None)
+    hook_manager = getattr(server, "_hook_manager", None)
+    handler = getattr(hook_manager, "_workflow_handler", None)
+    engine = getattr(handler, "rule_engine", None)
+    if services is None or engine is None:
+        return
+
+    task = create_background_task(engine.prewarm_skill_scripts(project_id=services.project_id))
+
+    def report(completed: asyncio.Task[None]) -> None:
+        if completed.cancelled():
+            return
+        if completed.exception() is not None:
+            logger.warning("Workflow skill prewarm failed")
+
+    task.add_done_callback(report)
+
+
 def _start_websocket_server(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     if runner.websocket_server:
         runner._websocket_task = asyncio.create_task(
@@ -816,6 +837,7 @@ async def init_subsystems(
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
         return
+    _schedule_workflow_skill_prewarm(runner)
     if tracker:
         tracker.finish()
     if services is not None:
