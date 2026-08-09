@@ -27,11 +27,13 @@ path = "src/main.rs"
 
 [dependencies]
 gobby-core = { path = "../gcore", version = "0.9.1", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+gobby-code = { path = "../gcode", version = "1.6.0" }
 clap = { version = "4", features = ["derive"] }
 aho-corasick = "1"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 postgres = { version = "0.19", features = ["with-serde_json-1", "with-uuid-1"] }
+pulldown-cmark = "0.13"
 # ureq handles daemon/research calls; direct embedding requests go through gobby-core's ai feature.
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
@@ -44,6 +46,8 @@ encoding_rs = "0.8"
 dirs = "6"
 flate2 = "1"
 fs4 = "1.1"
+gix = "0.84"
+glob = "0.3"
 uuid = { version = "1", features = ["v4", "v5"] }
 regex = "1"
 scraper = "0.27"
@@ -52,7 +56,9 @@ log = "0.4"
 minijinja = "2"
 percent-encoding = "2"
 url = "2"
+urlencoding = "2"
 tempfile = "3"
+wait-timeout = "0.2"
 calamine = { version = "0.35", optional = true }
 pdf-extract = { version = "0.10", optional = true }
 pdfium-auto = { version = "0.3", default-features = false, features = ["bundled"], optional = true }

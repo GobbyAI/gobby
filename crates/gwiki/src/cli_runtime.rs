@@ -27,6 +27,16 @@ pub(super) fn run() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    if invocation.is_code() {
+        return match invocation.run_code() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("gwiki: {error:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
     let command = match invocation.into_command() {
         Ok(command) => command,
         Err(error) => {

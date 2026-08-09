@@ -14,6 +14,7 @@ pub(super) fn command_from_cli(
 ) -> Result<Command, WikiError> {
     match command {
         CliCommand::Contract => unreachable!("contract command is handled before runtime dispatch"),
+        CliCommand::Code(_) => unreachable!("code command is handled before runtime dispatch"),
         CliCommand::Init => Ok(Command::Init { scope }),
         CliCommand::Setup(args) => Ok(Command::Setup {
             scope,

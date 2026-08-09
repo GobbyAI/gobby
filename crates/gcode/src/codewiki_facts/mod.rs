@@ -73,6 +73,11 @@ impl CodewikiFacts {
         Ok(Self::from_context(Context::resolve(Some(project), true)?))
     }
 
+    /// Stable project identity resolved by the datastore facade.
+    pub fn project_id(&self) -> &str {
+        &self.context.project_id
+    }
+
     fn from_context(context: Context) -> Self {
         Self {
             context: Arc::new(context),

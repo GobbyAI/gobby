@@ -574,7 +574,7 @@ mod tests {
     }
 
     #[test]
-    fn crate_has_no_gcode_dependency() {
+    fn dependency_direction_is_one_way() {
         let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
             .expect("manifest is readable");
         let manifest: toml::Value = toml::from_str(&manifest).expect("manifest is valid TOML");
@@ -584,12 +584,22 @@ mod tests {
             .expect("manifest has dependencies table");
 
         assert!(
-            dependencies.contains_key("gobby-core"),
-            "gobby-wiki must depend on gobby-core"
+            dependencies.contains_key("gobby-code"),
+            "gobby-wiki must depend on gobby-code"
         );
+
+        let gcode_manifest =
+            std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../gcode/Cargo.toml"))
+                .expect("gcode manifest is readable");
+        let gcode_manifest: toml::Value =
+            toml::from_str(&gcode_manifest).expect("gcode manifest is valid TOML");
+        let gcode_dependencies = gcode_manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .expect("gcode manifest has dependencies table");
         assert!(
-            !dependencies.contains_key("gobby-code"),
-            "gobby-wiki must not depend on gobby-code"
+            !gcode_dependencies.contains_key("gobby-wiki"),
+            "gobby-code must not depend on gobby-wiki"
         );
     }
 }

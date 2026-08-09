@@ -3,6 +3,7 @@ pub(crate) mod audit;
 pub(crate) mod backlinks;
 pub(crate) mod benchmark;
 pub(crate) mod citation_quality;
+pub mod code;
 pub(crate) mod collect;
 pub(crate) mod compile;
 pub(crate) mod export;

@@ -1,0 +1,547 @@
+use super::support::*;
+use super::*;
+
+#[test]
+fn clusters_modules_from_graph() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/api/inner/router.rs".to_string(),
+            "src/domain/service.rs".to_string(),
+            "tests/domain/service_test.rs".to_string(),
+            "vendor/generated/client.rs".to_string(),
+        ],
+        graph_edges: vec![
+            // Same subsystem root (src/api): clusters to the common module.
+            CodewikiGraphEdge::call(
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/api/inner/router.rs", "route", "function"),
+            ),
+            // Cross-root (src/api -> src/domain): must not collapse the
+            // decomposition to the shared `src` container.
+            CodewikiGraphEdge::call(
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/domain/service.rs", "Service", "class"),
+            ),
+        ],
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/api/inner/router.rs",
+                "route",
+                "function",
+                1,
+                "pub fn route()",
+            ),
+            test_symbol(
+                "src/domain/service.rs",
+                "Service",
+                "class",
+                1,
+                "pub struct Service;",
+            ),
+            test_symbol_with_qualified(
+                "src/domain/service.rs",
+                "new",
+                "Service::new",
+                "function",
+                3,
+                "pub fn new() -> Self",
+            ),
+            test_symbol(
+                "tests/domain/service_test.rs",
+                "service_test",
+                "function",
+                1,
+                "fn service_test()",
+            ),
+            test_symbol(
+                "vendor/generated/client.rs",
+                "GeneratedClient",
+                "class",
+                1,
+                "pub struct GeneratedClient;",
+            ),
+        ],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+
+    // The container module lists its children; the cross-root call edge did
+    // not pull either file up to `src` directly.
+    let container = docs_by_path
+        .get("code/modules/src.md")
+        .expect("container module is documented");
+    assert!(container.contains("[[code/modules/src/api|src/api]]"));
+    assert!(container.contains("[[code/modules/src/domain|src/domain]]"));
+    assert!(!container.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+
+    // Same-root call-connected files cluster to their common module.
+    let api = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("same-root cluster module is documented");
+    assert!(api.contains("[[code/files/src/api/handler.rs|src/api/handler.rs]]"));
+    assert!(api.contains("[[code/files/src/api/inner/router.rs|src/api/inner/router.rs]]"));
+
+    let domain = docs_by_path
+        .get("code/modules/src/domain.md")
+        .expect("cross-root file keeps its own module");
+    assert!(domain.contains("[[code/files/src/domain/service.rs|src/domain/service.rs]]"));
+
+    assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
+    assert!(!docs_by_path.contains_key("code/files/vendor/generated/client.rs.md"));
+}
+
+#[test]
+fn file_root_detection_breaks_parent_cycles() {
+    let mut parents = HashMap::from([
+        ("c.rs".to_string(), "b.rs".to_string()),
+        ("b.rs".to_string(), "a.rs".to_string()),
+        ("a.rs".to_string(), "b.rs".to_string()),
+    ]);
+
+    let root = find_file_root(&mut parents, "c.rs");
+
+    assert_eq!(root, "a.rs");
+    assert_eq!(parents.get("a.rs").map(String::as_str), Some("a.rs"));
+    assert_eq!(parents.get("b.rs").map(String::as_str), Some("a.rs"));
+    assert_eq!(parents.get("c.rs").map(String::as_str), Some("a.rs"));
+}
+
+#[test]
+fn common_module_for_empty_files_is_root() {
+    assert_eq!(common_module_for_files(&[]), "");
+}
+
+#[test]
+fn module_depth_counts_only_non_empty_segments() {
+    assert_eq!(module_depth(""), 0);
+    assert_eq!(module_depth("/"), 0);
+    assert_eq!(module_depth("src"), 1);
+    assert_eq!(module_depth("src/commands/"), 2);
+}
+
+#[test]
+fn core_file_filter_excludes_specs_mocks_and_test_prefixes() {
+    for file in [
+        "src/test_parser.rs",
+        "src/parser_spec.rs",
+        "src/parser.spec.rs",
+        "src/__mocks__/client.rs",
+        "src/mocks/client.rs",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("src/parser.rs"));
+}
+
+#[test]
+fn core_file_filter_excludes_hidden_metadata_paths() {
+    for file in [
+        "wiki/code/files/crates/gcode/src/cli.rs.md",
+        "gobby-wiki/code/files/crates/gcode/src/cli.rs.md",
+        "gobby-wiki-001/code/files/crates/gcode/src/cli.rs.md",
+        ".gobby/plans/goal.md",
+        ".github/workflows/ci.yml",
+        ".claude/settings.json",
+        ".gitignore",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("crates/gcode/src/main.rs"));
+    assert!(
+        is_core_file("gobby-wikis/loader.rs"),
+        "only the vault dir itself is excluded, not similar prefixes"
+    );
+}
+
+#[test]
+fn core_file_filter_excludes_tmp_directories() {
+    for file in [
+        "tmp/codewiki-laneb-claude-mid/_meta/contract.json",
+        "tmp/cw-leaf/src/main.rs",
+        "tmp/cw-probe1/config.yaml",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("crates/gcode/src/main.rs"));
+}
+
+#[test]
+fn core_file_filter_excludes_docs_directories() {
+    for file in [
+        "docs/evidence/wiki-parity-2026-06/wp3-compile-source.json",
+        "docs/guides/codewiki.md",
+        "docs/README.md",
+    ] {
+        assert!(!is_core_file(file), "{file} should be filtered out");
+    }
+
+    assert!(is_core_file("crates/gcode/src/main.rs"));
+}
+
+#[test]
+fn import_targets_match_exact_path_or_module_components() {
+    let files = vec![
+        "src/domain/service.rs".to_string(),
+        "src/domain/service_extra.rs".to_string(),
+        "src/domain_extra/service.rs".to_string(),
+        "crates/app/src/domain/mod.rs".to_string(),
+        "crates/app/src/application/use_case.rs".to_string(),
+    ];
+
+    assert_eq!(
+        files_for_import_target(&files, "domain.service"),
+        vec!["src/domain/service.rs"]
+    );
+    assert_eq!(
+        files_for_import_target(&files, "domain"),
+        vec![
+            "src/domain/service.rs",
+            "src/domain/service_extra.rs",
+            "crates/app/src/domain/mod.rs"
+        ]
+    );
+    assert!(files_for_import_target(&files, "main.service").is_empty());
+}
+
+#[test]
+fn graph_queries_order_edges_before_requested_limit() {
+    let (call_query, _) = codewiki_call_edges_query("project-1", 17);
+    let (import_query, _) = codewiki_import_edges_query("project-1", 17);
+
+    for query in [call_query, import_query] {
+        let order = query
+            .find("ORDER BY source, target")
+            .expect("graph query orders its edge sample");
+        let limit = query
+            .find("LIMIT 17")
+            .expect("graph query uses the requested edge limit");
+        assert!(order < limit, "edge ordering must precede the limit");
+    }
+}
+
+#[test]
+fn import_edges_drop_non_core_source_files() {
+    let file_symbols = BTreeMap::from([
+        ("src/api.rs".to_string(), vec!["comp-api".to_string()]),
+        ("src/domain.rs".to_string(), vec!["comp-domain".to_string()]),
+        (
+            "tests/api_test.rs".to_string(),
+            vec!["comp-test".to_string()],
+        ),
+    ]);
+    let core_files = vec!["src/api.rs".to_string(), "src/domain.rs".to_string()];
+    let pairs = vec![
+        ("tests/api_test.rs".to_string(), "domain".to_string()),
+        ("src/api.rs".to_string(), "domain".to_string()),
+    ];
+
+    let edges = import_edges_from_pairs(&pairs, &core_files, &file_symbols);
+
+    assert_eq!(
+        edges,
+        vec![CodewikiGraphEdge::import("comp-api", "comp-domain")]
+    );
+}
+
+#[test]
+fn graph_queries_stay_small_and_carry_no_id_lists() {
+    // Embedding the core symbol-id/file lists in the Cypher text produced
+    // ~633KB payloads on this repo, which intermittently failed at the socket
+    // layer; core filtering is client-side now.
+    let (call_query, _) = codewiki_call_edges_query("project-1", 5000);
+    let (import_query, _) = codewiki_import_edges_query("project-1", 5000);
+
+    assert!(!call_query.contains(" IN ["));
+    assert!(!import_query.contains(" IN ["));
+    assert!(call_query.len() < 1024);
+    assert!(import_query.len() < 1024);
+}
+
+#[test]
+fn edge_limit_validation_rejects_zero_and_excessive_limits() {
+    assert!(validate_edge_limit(1).is_ok());
+    assert!(validate_edge_limit(MAX_EDGE_LIMIT).is_ok());
+    assert!(validate_edge_limit(0).is_err());
+
+    let error = validate_edge_limit(MAX_EDGE_LIMIT + 1).expect_err("limit above cap fails");
+    assert!(error.to_string().contains("codewiki --edge-limit"));
+}
+
+#[test]
+fn clusters_without_falkordb() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/domain/service.rs".to_string(),
+            "tests/domain/service_test.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Unavailable,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/domain/service.rs",
+                "Service",
+                "class",
+                1,
+                "pub struct Service;",
+            ),
+            test_symbol_with_qualified(
+                "src/domain/service.rs",
+                "new",
+                "Service::new",
+                "function",
+                3,
+                "pub fn new() -> Self",
+            ),
+            test_symbol(
+                "tests/domain/service_test.rs",
+                "service_test",
+                "function",
+                1,
+                "fn service_test()",
+            ),
+        ],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+
+    assert!(docs_by_path.contains_key("code/modules/src/api.md"));
+    assert!(docs_by_path.contains_key("code/modules/src/domain.md"));
+    assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
+    assert!(
+        docs_by_path
+            .get("code/files/src/api/handler.rs.md")
+            .expect("handler file doc")
+            .contains("- Symbol: `handle`")
+    );
+    assert!(
+        docs_by_path
+            .get("code/files/src/domain/service.rs.md")
+            .expect("service file doc")
+            .contains("- Symbol: `Service`")
+    );
+    assert!(
+        docs_by_path
+            .get("code/files/src/domain/service.rs.md")
+            .expect("service file doc")
+            .contains("- Symbol: `Service::new`")
+    );
+    assert!(
+        !docs_by_path
+            .get("code/files/src/domain/service.rs.md")
+            .expect("service file doc")
+            .contains("src/domain/service.rs::Service::new")
+    );
+}
+
+#[test]
+fn module_pages_emit_deterministic_dependency_diagrams_without_graph_degradation() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/domain/service.rs".to_string(),
+            "src/storage/repo.rs".to_string(),
+            "src/unrelated/tool.rs".to_string(),
+        ],
+        graph_edges: vec![
+            CodewikiGraphEdge::import(
+                test_component_id("src/api/handler.rs", "handle", "function"),
+                test_component_id("src/domain/service.rs", "Service", "class"),
+            ),
+            CodewikiGraphEdge::import(
+                test_component_id("src/domain/service.rs", "Service", "class"),
+                test_component_id("src/storage/repo.rs", "Repo", "class"),
+            ),
+            CodewikiGraphEdge::import(
+                test_component_id("src/unrelated/tool.rs", "Tool", "class"),
+                test_component_id("src/storage/repo.rs", "Repo", "class"),
+            ),
+        ],
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/domain/service.rs",
+                "Service",
+                "class",
+                1,
+                "pub struct Service;",
+            ),
+            test_symbol(
+                "src/storage/repo.rs",
+                "Repo",
+                "class",
+                1,
+                "pub struct Repo;",
+            ),
+            test_symbol(
+                "src/unrelated/tool.rs",
+                "Tool",
+                "class",
+                1,
+                "pub struct Tool;",
+            ),
+        ],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let rendered = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("api module doc");
+
+    // Dependency diagrams are deterministic projections of indexed edges;
+    // graph availability remains informational and does not degrade the page.
+    assert!(rendered.contains("## Dependencies"));
+    assert!(rendered.contains("```mermaid\n"));
+    assert!(rendered.contains("src/api"));
+    assert!(rendered.contains("src/domain"));
+    assert!(!rendered.contains("## Dependency Diagram"));
+    assert!(!rendered.contains("## Call Diagram"));
+    assert!(!rendered.contains("graph-truncated"));
+    assert!(!rendered.contains("graph-unavailable"));
+}
+
+#[test]
+fn module_page_does_not_degrade_without_falkordb() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/api/handler.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Unavailable,
+        symbols: vec![test_symbol(
+            "src/api/handler.rs",
+            "handle",
+            "function",
+            1,
+            "pub fn handle()",
+        )],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let module = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("module doc still renders");
+    let file = docs_by_path
+        .get("code/files/src/api/handler.rs.md")
+        .expect("file doc still renders");
+
+    // Graph unavailability is informational only: it never marks a module page
+    // degraded and never emits a diagram section.
+    assert!(!module.contains("degraded: graph-unavailable"));
+    assert!(!module.contains("graph-unavailable"));
+    assert!(!module.contains("```mermaid"));
+    // File pages render a human Reference table keyed by symbol name, not a
+    // UUID component-id dump (#871).
+    assert!(file.contains("## Reference"));
+    assert!(file.contains("- Symbol: `handle`"));
+    assert!(file.contains("  Kind: function"));
+    assert!(!file.contains(&test_component_id(
+        "src/api/handler.rs",
+        "handle",
+        "function"
+    )));
+}
+
+#[test]
+fn empty_available_graph_does_not_emit_degradation_marker() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/api/handler.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/api/handler.rs",
+            "handle",
+            "function",
+            1,
+            "pub fn handle()",
+        )],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let module = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("module doc still renders");
+
+    assert!(!module.contains("degraded: graph-unavailable"));
+}
+
+#[test]
+fn truncated_graph_keeps_module_healthy_and_labels_simplified_diagram() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/api/handler.rs".to_string(),
+            "src/domain/service.rs".to_string(),
+        ],
+        graph_edges: vec![CodewikiGraphEdge::import(
+            test_component_id("src/api/handler.rs", "handle", "function"),
+            test_component_id("src/domain/service.rs", "Service", "class"),
+        )],
+        graph_availability: CodewikiGraphAvailability::Truncated,
+        symbols: vec![
+            test_symbol(
+                "src/api/handler.rs",
+                "handle",
+                "function",
+                1,
+                "pub fn handle()",
+            ),
+            test_symbol(
+                "src/domain/service.rs",
+                "Service",
+                "class",
+                1,
+                "pub struct Service;",
+            ),
+        ],
+    };
+
+    let docs = collect_doc_pairs(&input, GenerateDocsOptions::default());
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let module = docs_by_path
+        .get("code/modules/src/api.md")
+        .expect("module doc still renders");
+
+    // A truncated graph stays non-degrading while the deterministic diagram
+    // discloses that its source sample was incomplete.
+    assert!(!module.contains("graph-truncated"));
+    assert!(module.contains("## Dependencies"));
+    assert!(module.contains("Simplified diagram"));
+    assert!(module.contains("source graph was truncated"));
+    assert!(module.contains("```mermaid"));
+    assert!(!module.contains("## Dependency Diagram"));
+}

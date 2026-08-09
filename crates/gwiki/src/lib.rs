@@ -13,7 +13,7 @@ pub(crate) mod catalog;
 pub(crate) mod citations;
 pub(crate) mod code_graph;
 pub(crate) mod collect;
-pub(crate) mod commands;
+pub mod commands;
 pub(crate) mod compile;
 pub mod contract;
 pub(crate) mod credibility;
