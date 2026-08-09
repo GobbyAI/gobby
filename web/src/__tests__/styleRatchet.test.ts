@@ -23,6 +23,15 @@ const ALLOWLIST = 'src/__tests__/styleRatchet.allowlist.ts'
 const SKIP_DIRS = new Set(['__tests__', '__visual__', '__fixtures__', '__mocks__', 'test'])
 const UI_PRIMITIVES_DIR = 'src/components/ui/'
 const ALLOWLIST_REPO_PATH = `web/${ALLOWLIST}`
+const AGENT_EDITOR_FILES = [
+  'src/components/agents/AgentEditForm.tsx',
+  'src/components/agents/AgentRulesEditor.tsx',
+  'src/components/agents/AgentSkillsEditor.tsx',
+  'src/components/agents/AgentStepsEditor.tsx',
+  'src/components/agents/AgentToolBlocksEditor.tsx',
+  'src/components/agents/AgentVariablesEditor.tsx',
+  'src/components/agents/IsolationTargetSelector.tsx',
+] as const
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
@@ -316,6 +325,15 @@ describe('style ratchet', () => {
       ),
     )
     expect(failures).toEqual([])
+  })
+
+  it('keeps agent editors at zero raw-control and shared-style debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of AGENT_EDITOR_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+    expect(scan.clsConstant.get('src/components/agents/agents-styles.ts') ?? 0).toBe(0)
   })
 
   it('keeps *_CLS style constants at or below the recorded per-file counts', () => {

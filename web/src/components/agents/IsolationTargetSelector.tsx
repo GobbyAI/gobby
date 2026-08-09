@@ -1,9 +1,6 @@
-import { useState, useEffect } from 'react'
-import {
-  AGENT_EDIT_FIELD_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_EDIT_LABEL_CLS,
-} from './agents-styles'
+import { useEffect, useState } from 'react'
+import { FormField } from '../ui/FormField'
+import { NativeSelect } from '../ui/NativeSelect'
 
 interface WorktreeItem {
   id: string
@@ -27,61 +24,73 @@ interface IsolationTargetSelectorProps {
   onCloneIdChange: (id: string | null) => void
 }
 
-export function IsolationTargetSelector({ isolation, worktreeId, cloneId, onWorktreeIdChange, onCloneIdChange }: IsolationTargetSelectorProps) {
+export function IsolationTargetSelector({
+  isolation,
+  worktreeId,
+  cloneId,
+  onWorktreeIdChange,
+  onCloneIdChange,
+}: IsolationTargetSelectorProps) {
   const [worktrees, setWorktrees] = useState<WorktreeItem[]>([])
   const [clones, setClones] = useState<CloneItem[]>([])
 
   useEffect(() => {
     if (isolation === 'worktree') {
       fetch('/api/source-control/worktrees?status=active')
-        .then(r => r.json())
-        .then(data => setWorktrees(data.worktrees || []))
+        .then((response) => response.json())
+        .then((data) => setWorktrees(data.worktrees || []))
         .catch(() => setWorktrees([]))
     } else if (isolation === 'clone') {
       fetch('/api/source-control/clones')
-        .then(r => r.json())
-        .then(data => setClones(data.clones || []))
+        .then((response) => response.json())
+        .then((data) => setClones(data.clones || []))
         .catch(() => setClones([]))
     }
   }, [isolation])
 
   if (isolation === 'worktree' && worktrees.length > 0) {
     return (
-      <label className={AGENT_EDIT_FIELD_CLS}>
-        <span className={AGENT_EDIT_LABEL_CLS}>Worktree</span>
-        <select
-          className={AGENT_EDIT_INPUT_CLS}
-          value={worktreeId || ''}
-          onChange={e => onWorktreeIdChange(e.target.value || null)}
-        >
-          <option value="">New worktree</option>
-          {worktrees.map(wt => (
-            <option key={wt.id} value={wt.id}>
-              {wt.branch_name} ({wt.id.slice(0, 8)})
-            </option>
-          ))}
-        </select>
-      </label>
+      <FormField label="Worktree">
+        {({ id, describedBy, invalid }) => (
+          <NativeSelect
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            value={worktreeId || ''}
+            onChange={(event) => onWorktreeIdChange(event.target.value || null)}
+          >
+            <option value="">New worktree</option>
+            {worktrees.map((worktree) => (
+              <option key={worktree.id} value={worktree.id}>
+                {worktree.branch_name} ({worktree.id.slice(0, 8)})
+              </option>
+            ))}
+          </NativeSelect>
+        )}
+      </FormField>
     )
   }
 
   if (isolation === 'clone' && clones.length > 0) {
     return (
-      <label className={AGENT_EDIT_FIELD_CLS}>
-        <span className={AGENT_EDIT_LABEL_CLS}>Clone</span>
-        <select
-          className={AGENT_EDIT_INPUT_CLS}
-          value={cloneId || ''}
-          onChange={e => onCloneIdChange(e.target.value || null)}
-        >
-          <option value="">New clone</option>
-          {clones.map(c => (
-            <option key={c.id} value={c.id}>
-              {c.branch_name} ({c.id.slice(0, 8)})
-            </option>
-          ))}
-        </select>
-      </label>
+      <FormField label="Clone">
+        {({ id, describedBy, invalid }) => (
+          <NativeSelect
+            id={id}
+            aria-describedby={describedBy}
+            error={invalid}
+            value={cloneId || ''}
+            onChange={(event) => onCloneIdChange(event.target.value || null)}
+          >
+            <option value="">New clone</option>
+            {clones.map((clone) => (
+              <option key={clone.id} value={clone.id}>
+                {clone.branch_name} ({clone.id.slice(0, 8)})
+              </option>
+            ))}
+          </NativeSelect>
+        )}
+      </FormField>
     )
   }
 

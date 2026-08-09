@@ -94,4 +94,29 @@ describe('agent definition editors', () => {
     expect(await screen.findByText('Variable update rejected')).toBeInTheDocument()
     await waitFor(() => expect(onVariablesChange).not.toHaveBeenCalled())
   })
+
+  it('keeps variable editing behavior on primitive coarse-hit controls', async () => {
+    const onVariablesChange = vi.fn()
+    const user = userEvent.setup()
+
+    render(
+      <AgentVariablesEditor
+        variables={{}}
+        onVariablesChange={onVariablesChange}
+      />,
+    )
+
+    const openButton = screen.getByRole('button', { name: '+ Add Variable' })
+    await user.click(openButton)
+    const keyInput = screen.getByPlaceholderText('Key')
+    const valueInput = screen.getByPlaceholderText('Value')
+    await user.type(keyInput, 'mode')
+    await user.type(valueInput, 'safe')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(onVariablesChange).toHaveBeenCalledWith({ mode: 'safe' })
+    expect(openButton).toHaveClass('relative')
+    expect(keyInput.parentElement).toHaveClass('relative')
+    expect(valueInput.parentElement).toHaveClass('relative')
+  })
 })

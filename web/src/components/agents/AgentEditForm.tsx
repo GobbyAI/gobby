@@ -1,6 +1,16 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { SidebarPanel } from '../shared/SidebarPanel'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
+import { Heading } from '../shared/Heading'
+import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { Chip } from '../ui/Chip'
+import { FormField } from '../ui/FormField'
+import { Input } from '../ui/Input'
+import { NativeSelect } from '../ui/NativeSelect'
+import { TabBar } from '../ui/TabBar'
+import { Textarea } from '../ui/Textarea'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { AgentRulesEditor } from './AgentRulesEditor'
 import { AgentVariablesEditor } from './AgentVariablesEditor'
 import { AgentSkillsEditor } from './AgentSkillsEditor'
@@ -14,43 +24,6 @@ import {
   getReasoningOptionsForModel,
   type ProviderModelEntry,
 } from '../../lib/providerModels'
-import {
-  AGENT_BTN_CLS,
-  AGENT_BTN_PRIMARY_CLS,
-  AGENT_DEF_BADGE_CLS,
-  AGENT_DEF_BADGE_DIM_CLS,
-  AGENT_DEF_DESCRIPTION_FULL_CLS,
-  AGENT_DEF_JSON_CLS,
-  AGENT_DEF_SOURCE_INFO_CLS,
-  AGENT_DEF_WORKFLOW_ITEM_CLS,
-  AGENT_DEF_WORKFLOW_LIST_CLS,
-  AGENT_DEF_WORKFLOW_NAME_CLS,
-  AGENT_DEF_WORKFLOW_DESC_CLS,
-  AGENT_EDIT_CHECKBOX_CLS,
-  AGENT_EDIT_CHECKBOX_GROUP_CLS,
-  AGENT_EDIT_CODEMIRROR_CLS,
-  AGENT_EDIT_FIELD_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_EDIT_LABEL_CLS,
-  AGENT_EDIT_LINK_BTN_CLS,
-  AGENT_EDIT_META_CLS,
-  AGENT_EDIT_META_LABEL_CLS,
-  AGENT_EDIT_META_ROW_CLS,
-  AGENT_EDIT_META_VALUE_CLS,
-  AGENT_EDIT_MODEL_FIELD_CLS,
-  AGENT_EDIT_MODEL_TOGGLE_CLS,
-  AGENT_EDIT_SECTION_CLS,
-  AGENT_EDIT_SECTION_TITLE_CLS,
-  AGENT_EDIT_TEXTAREA_CLS,
-  AGENT_EDIT_YAML_VIEW_CLS,
-  AGENT_RULES_CHIP_CLS,
-  AGENT_RULES_CHIP_EXCLUDE_CLS,
-  AGENT_RULES_CHIP_INCLUDE_CLS,
-  AGENT_RULES_CHIP_SELECTOR_CLS,
-  AGENT_RULES_CHIPS_CLS,
-} from './agents-styles'
-import { Heading } from '../shared/Heading'
-import { TabBar } from '../ui/TabBar'
 
 export interface AgentFormData {
   name: string
@@ -161,15 +134,19 @@ function FormInput({ label, value, onChange, placeholder, required }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; required?: boolean
 }) {
   return (
-    <label className={AGENT_EDIT_FIELD_CLS}>
-      <span className={AGENT_EDIT_LABEL_CLS}>{label}{required ? ' *' : ''}</span>
-      <input
-        className={AGENT_EDIT_INPUT_CLS}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-      />
-    </label>
+    <FormField label={`${label}${required ? ' *' : ''}`}>
+      {({ id, describedBy, invalid }) => (
+        <Input
+          id={id}
+          aria-describedby={describedBy}
+          error={invalid}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          required={required}
+        />
+      )}
+    </FormField>
   )
 }
 
@@ -177,25 +154,30 @@ function FormTextarea({ label, value, onChange, placeholder, rows = 3 }: {
   label: string; value: string; onChange: (v: string) => void; placeholder?: string; rows?: number
 }) {
   return (
-    <label className={AGENT_EDIT_FIELD_CLS}>
-      <span className={AGENT_EDIT_LABEL_CLS}>{label}</span>
-      <textarea
-        className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={rows}
-        style={{ resize: 'vertical' }}
-      />
-    </label>
+    <FormField label={label}>
+      {({ id, describedBy, invalid }) => (
+        <Textarea
+          id={id}
+          className="resize-y font-[inherit] leading-[1.4]"
+          aria-describedby={describedBy}
+          error={invalid}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={placeholder}
+          rows={rows}
+        />
+      )}
+    </FormField>
   )
 }
 
 function MetaRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className={AGENT_EDIT_META_ROW_CLS}>
-      <span className={AGENT_EDIT_META_LABEL_CLS}>{label}</span>
-      <div className={AGENT_EDIT_META_VALUE_CLS}>{children}</div>
+    <div className="flex items-center justify-between py-1 text-sm">
+      <span className="mr-3 shrink-0 text-[var(--text-muted)]">{label}</span>
+      <div className="max-w-55 flex-1 text-right [&_input[type=number]]:w-full [&_select]:w-full">
+        {children}
+      </div>
     </div>
   )
 }
@@ -216,6 +198,7 @@ export function AgentEditForm({
   blockedMcpTools, onBlockedMcpToolsChange,
   agentNames = [],
 }: AgentEditFormProps) {
+  const checkboxIdPrefix = useId()
   const [customModelInput, setCustomModelInput] = useState(false)
   const [customBranchInput, setCustomBranchInput] = useState(false)
 
@@ -285,15 +268,22 @@ export function AgentEditForm({
 
   const footer = !readOnly ? (
     <>
-      <button className={AGENT_BTN_CLS} onClick={onCancel} type="button">Cancel</button>
-      <button
-        className={`${AGENT_BTN_CLS} ${AGENT_BTN_PRIMARY_CLS}`}
+      <Button
+        className={coarseHitAreaCls}
+        onClick={onCancel}
+        type="button"
+      >
+        Cancel
+      </Button>
+      <Button
+        variant="primary"
+        className={coarseHitAreaCls}
         onClick={view === 'yaml' && onYamlSave ? onYamlSave : onSave}
         disabled={saveDisabled}
         type="button"
       >
         {isEditing ? 'Save' : 'Create'}
-      </button>
+      </Button>
     </>
   ) : undefined
 
@@ -306,7 +296,7 @@ export function AgentEditForm({
       footer={footer}
     >
       {view === 'yaml' ? (
-        <div className={AGENT_EDIT_YAML_VIEW_CLS}>
+        <div className="h-full [&_.codemirror-container]:h-full">
           <CodeMirrorEditor
             content={yamlContent || ''}
             language="yaml"
@@ -317,7 +307,7 @@ export function AgentEditForm({
         </div>
       ) : readOnly && rd ? (
         <>
-          <div className={AGENT_EDIT_META_CLS}>
+          <div className="border-b border-border px-5 py-3">
             <MetaRow label="Provider"><span>{rd.provider}</span></MetaRow>
             <MetaRow label="Model"><span>{rd.model || '(default)'}</span></MetaRow>
             <MetaRow label="Reasoning"><span>{rd.reasoning_effort || 'Auto'}</span></MetaRow>
@@ -338,50 +328,50 @@ export function AgentEditForm({
           </div>
 
           {rd.description && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Description</Heading>
-              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.description}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Description</Heading>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">{rd.description}</pre>
             </div>
           )}
           {rd.role && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Role</Heading>
-              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.role}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Role</Heading>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">{rd.role}</pre>
             </div>
           )}
           {rd.goal && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Goal</Heading>
-              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.goal}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Goal</Heading>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">{rd.goal}</pre>
             </div>
           )}
           {rd.personality && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Personality</Heading>
-              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.personality}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Personality</Heading>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">{rd.personality}</pre>
             </div>
           )}
           {rd.instructions && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</Heading>
-              <pre className={AGENT_DEF_DESCRIPTION_FULL_CLS}>{rd.instructions}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Instructions</Heading>
+              <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">{rd.instructions}</pre>
             </div>
           )}
 
           {workflowEntries.length > 0 && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Workflows</Heading>
-              <div className={AGENT_DEF_WORKFLOW_LIST_CLS}>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Workflows</Heading>
+              <div className="flex flex-col gap-1.5">
                 {workflowEntries.map(([wfName, wfRaw]) => {
                   const wf = wfRaw as { type?: string; file?: string; mode?: string; internal?: boolean; step_count?: number; description?: string }
                   return (
-                    <div key={wfName} className={AGENT_DEF_WORKFLOW_ITEM_CLS}>
-                      <span className={AGENT_DEF_WORKFLOW_NAME_CLS}>{wfName}</span>
-                      {wf.type && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.type}</span>}
-                      {wf.file && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.file}</span>}
-                      {wf.internal && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>internal</span>}
-                      {wf.step_count != null && <span className={`${AGENT_DEF_BADGE_CLS} ${AGENT_DEF_BADGE_DIM_CLS}`}>{wf.step_count} steps</span>}
-                      {wf.description && <span className={AGENT_DEF_WORKFLOW_DESC_CLS}>{wf.description}</span>}
+                    <div key={wfName} className="flex flex-wrap items-center gap-1.5 text-sm">
+                      <span className="font-[inherit] font-semibold text-[var(--text-primary)]">{wfName}</span>
+                      {wf.type && <Chip>{wf.type}</Chip>}
+                      {wf.file && <Chip>{wf.file}</Chip>}
+                      {wf.internal && <Chip>internal</Chip>}
+                      {wf.step_count != null && <Chip>{wf.step_count} steps</Chip>}
+                      {wf.description && <span className="basis-full text-xs text-[var(--text-muted)]">{wf.description}</span>}
                     </div>
                   )
                 })}
@@ -390,39 +380,39 @@ export function AgentEditForm({
           )}
 
           {rd.workflows?.rules && rd.workflows.rules.length > 0 && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</Heading>
-              <div className={AGENT_RULES_CHIPS_CLS}>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Rules</Heading>
+              <div className="flex flex-wrap items-center gap-1.5">
                 {(rd.workflows.rules as string[]).map(name => (
-                  <span key={name} className={AGENT_RULES_CHIP_CLS}>{name}</span>
+                  <Chip key={name} className="border border-border text-sm">{name}</Chip>
                 ))}
               </div>
             </div>
           )}
 
           {rd.workflows?.rule_selectors && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rule Selectors</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Rule Selectors</Heading>
               {(() => {
                 const rs = rd.workflows!.rule_selectors as { include?: string[]; exclude?: string[] }
                 return (
                   <>
                     {rs.include && rs.include.length > 0 && (
                       <div>
-                        <span className={AGENT_EDIT_LABEL_CLS}>Include</span>
-                        <div className={AGENT_RULES_CHIPS_CLS} style={{ marginTop: 4 }}>
+                        <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">Include</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           {rs.include.map(s => (
-                            <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_INCLUDE_CLS}`}>{s}</span>
+                            <Chip key={s} tone="info" className="border border-dashed border-[var(--color-info)] text-sm">{s}</Chip>
                           ))}
                         </div>
                       </div>
                     )}
                     {rs.exclude && rs.exclude.length > 0 && (
-                      <div style={{ marginTop: 6 }}>
-                        <span className={AGENT_EDIT_LABEL_CLS}>Exclude</span>
-                        <div className={AGENT_RULES_CHIPS_CLS} style={{ marginTop: 4 }}>
+                      <div className="mt-1.5">
+                        <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">Exclude</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           {rs.exclude.map(s => (
-                            <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_EXCLUDE_CLS}`}>{s}</span>
+                            <Chip key={s} tone="error" className="border border-dashed border-[var(--color-error)] text-sm">{s}</Chip>
                           ))}
                         </div>
                       </div>
@@ -434,8 +424,8 @@ export function AgentEditForm({
           )}
 
           {rd.workflows?.variables && Object.keys(rd.workflows.variables as Record<string, unknown>).length > 0 && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Variables</Heading>
               <div className="flex flex-col gap-1">
                 {Object.entries(rd.workflows!.variables as Record<string, unknown>).map(([key, val]) => (
                   <div key={key} className="flex items-center gap-2 text-sm">
@@ -448,21 +438,21 @@ export function AgentEditForm({
           )}
 
           {((rd.blocked_tools && rd.blocked_tools.length > 0) || (rd.blocked_mcp_tools && rd.blocked_mcp_tools.length > 0)) && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Tool Restrictions</Heading>
               {rd.blocked_tools && rd.blocked_tools.length > 0 && (
-                <div className={AGENT_EDIT_FIELD_CLS}>
-                  <span className={AGENT_EDIT_LABEL_CLS}>Blocked Tools</span>
-                  <div className="step-chips">
-                    {rd.blocked_tools.map(t => <span key={t} className="step-chip">{t}</span>)}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">Blocked Tools</span>
+                  <div className="flex flex-wrap gap-1">
+                    {rd.blocked_tools.map(t => <Chip key={t} className="border border-border text-xs">{t}</Chip>)}
                   </div>
                 </div>
               )}
               {rd.blocked_mcp_tools && rd.blocked_mcp_tools.length > 0 && (
-                <div className={AGENT_EDIT_FIELD_CLS}>
-                  <span className={AGENT_EDIT_LABEL_CLS}>Blocked MCP Tools</span>
-                  <div className="step-chips">
-                    {rd.blocked_mcp_tools.map(t => <span key={t} className="step-chip">{t}</span>)}
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">Blocked MCP Tools</span>
+                  <div className="flex flex-wrap gap-1">
+                    {rd.blocked_mcp_tools.map(t => <Chip key={t} className="border border-border text-xs">{t}</Chip>)}
                   </div>
                 </div>
               )}
@@ -470,31 +460,31 @@ export function AgentEditForm({
           )}
 
           {rd.steps && rd.steps.length > 0 && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps ({rd.steps.length})</Heading>
-              <div className="step-readonly-list">
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Steps ({rd.steps.length})</Heading>
+              <div className="flex flex-col gap-1">
                 {rd.steps.map((s, i) => (
-                  <div key={i} className="step-readonly-item">
-                    <span className="step-name-badge">{s.name}</span>
-                    <span className="step-readonly-summary">
+                  <Card key={i} padding="sm" className="flex items-center gap-2 text-sm">
+                    <Chip tone="accent">{s.name}</Chip>
+                    <span className="text-xs text-[var(--text-muted)]">
                       {s.description || ''}
                       {s.transitions && s.transitions.length > 0 ? ` \u2192 ${s.transitions.map(t => t.to).join(', ')}` : ''}
                     </span>
-                  </div>
+                  </Card>
                 ))}
               </div>
             </div>
           )}
 
           {rd.sandbox && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Sandbox</Heading>
-              <pre className={AGENT_DEF_JSON_CLS}>{JSON.stringify(rd.sandbox, null, 2)}</pre>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Sandbox</Heading>
+              <pre className="m-0 overflow-x-auto rounded border border-border bg-[var(--bg-primary)] p-2 font-[inherit] text-xs text-[var(--text-secondary)]">{JSON.stringify(rd.sandbox, null, 2)}</pre>
             </div>
           )}
-          <div className={AGENT_EDIT_SECTION_CLS}>
-            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Source</Heading>
-            <div className={AGENT_DEF_SOURCE_INFO_CLS}>
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+            <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Source</Heading>
+            <div className="text-sm text-[var(--text-secondary)] [&_code]:break-all [&_code]:font-[inherit] [&_code]:text-xs [&_code]:text-[var(--text-muted)]">
               {agentItem.source_path ? (
                 <code>{agentItem.source_path}</code>
               ) : (
@@ -506,14 +496,14 @@ export function AgentEditForm({
       ) : (
         <>
           {/* Name */}
-          <div className={AGENT_EDIT_SECTION_CLS}>
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
             <FormInput label="Name" value={form.name} onChange={v => set('name', v)} placeholder="my-agent" required />
           </div>
 
           {/* Editable meta */}
-          <div className={AGENT_EDIT_META_CLS}>
+          <div className="border-b border-border px-5 py-3">
             <MetaRow label="Provider">
-              <select className={AGENT_EDIT_INPUT_CLS} value={form.provider} onChange={e => {
+              <NativeSelect aria-label="Provider" value={form.provider} onChange={e => {
                 const v = e.target.value
                 if (v === 'inherit') {
                   setCustomModelInput(false)
@@ -546,25 +536,35 @@ export function AgentEditForm({
                     {provider}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </MetaRow>
 
             <MetaRow label="Model">
               {showCustomModel ? (
-                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
+                <div className="flex items-center gap-1">
+                  <Input
                     value={form.model}
                     onChange={e => set('model', e.target.value)}
                     placeholder="e.g. claude-sonnet-4-5-20250929"
+                    aria-label="Custom model"
                     autoFocus={customModelInput}
                   />
                   {models && (
-                    <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => { setCustomModelInput(false); set('model', '') }}>&times;</button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      dense
+                      className={`${coarseHitAreaCls} shrink-0`}
+                      onClick={() => { setCustomModelInput(false); set('model', '') }}
+                      aria-label="Use discovered models"
+                    >
+                      &times;
+                    </Button>
                   )}
                 </div>
               ) : (
-                <select className={AGENT_EDIT_INPUT_CLS} value={form.model} onChange={e => {
+                <NativeSelect aria-label="Model" value={form.model} onChange={e => {
                   if (e.target.value === '__custom__') { setCustomModelInput(true); set('model', '') }
                   else {
                     const nextModel = e.target.value
@@ -580,14 +580,14 @@ export function AgentEditForm({
                 }}>
                   {models?.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                   {!isInheritProvider && <option value="__custom__">Custom...</option>}
-                </select>
+                </NativeSelect>
               )}
             </MetaRow>
 
             <MetaRow label="Fallback">
               {form.fallback_agent ? (
-                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
-                  <select className={AGENT_EDIT_INPUT_CLS} value={form.fallback_agent} onChange={e => {
+                <div className="flex items-center gap-1">
+                  <NativeSelect aria-label="Fallback agent" value={form.fallback_agent} onChange={e => {
                     onChange({ ...form, fallback_agent: e.target.value || '' })
                   }}>
                     {agentNames.filter(n => n !== form.name).includes(form.fallback_agent) ? null : (
@@ -596,22 +596,40 @@ export function AgentEditForm({
                     {agentNames.filter(n => n !== form.name).map(n => (
                       <option key={n} value={n}>{n}</option>
                     ))}
-                  </select>
-                  <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => onChange({ ...form, fallback_agent: '' })}>&times;</button>
+                  </NativeSelect>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    dense
+                    className={`${coarseHitAreaCls} shrink-0`}
+                    onClick={() => onChange({ ...form, fallback_agent: '' })}
+                    aria-label="Remove fallback agent"
+                  >
+                    &times;
+                  </Button>
                 </div>
               ) : (
-                <button type="button" className={AGENT_EDIT_LINK_BTN_CLS} disabled={!agentNames.some(n => n !== form.name)} onClick={() => {
-                  const first = agentNames.find(n => n !== form.name)
-                  if (first) onChange({ ...form, fallback_agent: first })
-                }}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
+                  className={`${coarseHitAreaCls} h-auto min-h-0 p-0 text-[var(--accent)] underline hover:text-[var(--accent-hover)]`}
+                  disabled={!agentNames.some(n => n !== form.name)}
+                  onClick={() => {
+                    const first = agentNames.find(n => n !== form.name)
+                    if (first) onChange({ ...form, fallback_agent: first })
+                  }}
+                >
                   + Add fallback agent
-                </button>
+                </Button>
               )}
             </MetaRow>
 
             <MetaRow label="Reasoning">
-              <select
-                className={AGENT_EDIT_INPUT_CLS}
+              <NativeSelect
+                aria-label="Reasoning"
                 value={form.reasoning_effort}
                 onChange={e => {
                   const nextReasoning = e.target.value
@@ -629,13 +647,20 @@ export function AgentEditForm({
                     {option.label}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </MetaRow>
 
             <MetaRow label="Require support">
-              <label className={AGENT_EDIT_CHECKBOX_CLS}>
-                <input
+              <label
+                htmlFor={`${checkboxIdPrefix}-reasoning-required`}
+                className="flex select-none items-center justify-end gap-1.5 text-sm text-[var(--text-primary)]"
+              >
+                <Input
+                  id={`${checkboxIdPrefix}-reasoning-required`}
                   type="checkbox"
+                  wrapperClassName="w-auto"
+                  className="size-4 h-4 shrink-0 p-0"
+                  aria-label="Require reasoning support"
                   checked={form.reasoning_required}
                   disabled={form.reasoning_effort === AUTO_REASONING_EFFORT}
                   onChange={e => set('reasoning_required', e.target.checked)}
@@ -645,27 +670,41 @@ export function AgentEditForm({
             </MetaRow>
 
             <MetaRow label="Mode">
-              <select className={AGENT_EDIT_INPUT_CLS} value={form.mode} onChange={e => set('mode', e.target.value)}>
+              <NativeSelect aria-label="Mode" value={form.mode} onChange={e => set('mode', e.target.value)}>
                 <option value="inherit">(default)</option>
                 <option value="interactive">Interactive</option>
                 <option value="embedded">Embedded</option>
                 <option value="headless">Headless</option>
-              </select>
+              </NativeSelect>
             </MetaRow>
 
             <MetaRow label="Surfaces">
-              <div className={AGENT_EDIT_CHECKBOX_GROUP_CLS}>
-                <label className={AGENT_EDIT_CHECKBOX_CLS}>
-                  <input
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor={`${checkboxIdPrefix}-surface-spawn`}
+                  className="flex select-none items-center justify-end gap-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  <Input
+                    id={`${checkboxIdPrefix}-surface-spawn`}
                     type="checkbox"
+                    wrapperClassName="w-auto"
+                    className="size-4 h-4 shrink-0 p-0"
+                    aria-label="Spawn surface"
                     checked={form.surfaces.includes('spawn')}
                     onChange={() => toggleSurface('spawn')}
                   />
                   <span>Spawn</span>
                 </label>
-                <label className={AGENT_EDIT_CHECKBOX_CLS}>
-                  <input
+                <label
+                  htmlFor={`${checkboxIdPrefix}-surface-persona`}
+                  className="flex select-none items-center justify-end gap-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  <Input
+                    id={`${checkboxIdPrefix}-surface-persona`}
                     type="checkbox"
+                    wrapperClassName="w-auto"
+                    className="size-4 h-4 shrink-0 p-0"
+                    aria-label="Persona surface"
                     checked={form.surfaces.includes('persona')}
                     onChange={() => toggleSurface('persona')}
                   />
@@ -675,8 +714,8 @@ export function AgentEditForm({
             </MetaRow>
 
             <MetaRow label="Isolation">
-              <select
-                className={AGENT_EDIT_INPUT_CLS}
+              <NativeSelect
+                aria-label="Isolation"
                 value={isGitProject ? form.isolation : 'inherit'}
                 onChange={e => set('isolation', e.target.value)}
                 disabled={!isGitProject}
@@ -685,51 +724,61 @@ export function AgentEditForm({
                 <option value="none">None</option>
                 <option value="worktree">Worktree</option>
                 <option value="clone">Clone</option>
-              </select>
+              </NativeSelect>
             </MetaRow>
 
             <MetaRow label="Base branch">
               {!isGitProject ? (
-                <select className={AGENT_EDIT_INPUT_CLS} disabled value="inherit">
+                <NativeSelect aria-label="Base branch" disabled value="inherit">
                   <option value="inherit">(default)</option>
-                </select>
+                </NativeSelect>
               ) : showCustomBranch ? (
-                <div className={AGENT_EDIT_MODEL_FIELD_CLS}>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
+                <div className="flex items-center gap-1">
+                  <Input
                     value={form.base_branch}
                     onChange={e => set('base_branch', e.target.value)}
                     placeholder="branch name"
+                    aria-label="Custom base branch"
                     autoFocus={customBranchInput}
                   />
-                  <button type="button" className={AGENT_EDIT_MODEL_TOGGLE_CLS} onClick={() => { setCustomBranchInput(false); set('base_branch', 'inherit') }}>&times;</button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    dense
+                    className={`${coarseHitAreaCls} shrink-0`}
+                    onClick={() => { setCustomBranchInput(false); set('base_branch', 'inherit') }}
+                    aria-label="Use known branches"
+                  >
+                    &times;
+                  </Button>
                 </div>
               ) : (
-                <select className={AGENT_EDIT_INPUT_CLS} value={form.base_branch} onChange={e => {
+                <NativeSelect aria-label="Base branch" value={form.base_branch} onChange={e => {
                   if (e.target.value === '__custom__') { setCustomBranchInput(true); set('base_branch', '') }
                   else set('base_branch', e.target.value)
                 }}>
                   <option value="inherit">(default)</option>
                   {branches.map(b => <option key={b} value={b}>{b}</option>)}
                   <option value="__custom__">Custom...</option>
-                </select>
+                </NativeSelect>
               )}
             </MetaRow>
 
             {pipelines && (
               <MetaRow label="Pipeline">
-                <select className={AGENT_EDIT_INPUT_CLS} value={form.pipeline} onChange={e => set('pipeline', e.target.value)}>
+                <NativeSelect aria-label="Pipeline" value={form.pipeline} onChange={e => set('pipeline', e.target.value)}>
                   <option value="">(none)</option>
                   {pipelines.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                </select>
+                </NativeSelect>
               </MetaRow>
             )}
 
             <MetaRow label="Timeout (s)">
-              <input
-                className={AGENT_EDIT_INPUT_CLS}
+              <Input
                 type="number"
                 min={0}
+                aria-label="Timeout in seconds"
                 value={form.timeout}
                 onChange={e => set('timeout', Number(e.target.value))}
               />
@@ -737,8 +786,8 @@ export function AgentEditForm({
           </div>
 
           {/* Identity */}
-          <div className={AGENT_EDIT_SECTION_CLS}>
-            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Identity</Heading>
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+            <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Identity</Heading>
             <FormTextarea label="Description" value={form.description} onChange={v => set('description', v)} placeholder="What this agent does..." />
             <FormTextarea label="Role" value={form.role} onChange={v => set('role', v)} placeholder="e.g. Senior security engineer" />
             <FormTextarea label="Goal" value={form.goal} onChange={v => set('goal', v)} placeholder="What success looks like..." />
@@ -746,9 +795,9 @@ export function AgentEditForm({
           </div>
 
           {/* Instructions */}
-          <div className={AGENT_EDIT_SECTION_CLS}>
-            <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Instructions</Heading>
-            <div className={AGENT_EDIT_CODEMIRROR_CLS}>
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+            <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Instructions</Heading>
+            <div className="max-h-100 min-h-50 overflow-hidden rounded-md border border-border [&_.codemirror-container]:h-50">
               <CodeMirrorEditor
                 content={form.instructions}
                 language="markdown"
@@ -759,8 +808,8 @@ export function AgentEditForm({
 
           {/* Rules */}
           {onRulesChange && rules !== undefined && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Rules</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Rules</Heading>
               <AgentRulesEditor
                 definitionId={editingId}
                 rules={rules}
@@ -774,8 +823,8 @@ export function AgentEditForm({
 
           {/* Skills */}
           {onSkillsChange && editSkills !== undefined && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Skills</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Skills</Heading>
               <AgentSkillsEditor
                 skills={editSkills}
                 onSkillsChange={onSkillsChange}
@@ -786,8 +835,8 @@ export function AgentEditForm({
 
           {/* Variables */}
           {onVariablesChange && variables !== undefined && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Variables</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Variables</Heading>
               <AgentVariablesEditor
                 definitionId={editingId}
                 variables={variables}
@@ -798,8 +847,8 @@ export function AgentEditForm({
 
           {/* Tool Restrictions */}
           {(onBlockedToolsChange || onBlockedMcpToolsChange) && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Tool Restrictions</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Tool Restrictions</Heading>
               <AgentToolBlocksEditor
                 blockedTools={blockedTools || []}
                 onBlockedToolsChange={onBlockedToolsChange}
@@ -811,8 +860,8 @@ export function AgentEditForm({
 
           {/* Steps */}
           {onStepsChange && steps !== undefined && (
-            <div className={AGENT_EDIT_SECTION_CLS}>
-              <Heading level={4} className={AGENT_EDIT_SECTION_TITLE_CLS}>Steps</Heading>
+            <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+              <Heading level={4} className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">Steps</Heading>
               <AgentStepsEditor
                 steps={steps}
                 onChange={onStepsChange}

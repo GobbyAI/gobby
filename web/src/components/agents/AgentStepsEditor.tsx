@@ -1,45 +1,13 @@
-import { useState, useCallback } from 'react'
-import {
-  AGENT_BTN_CLS,
-  AGENT_BTN_DANGER_CLS,
-  AGENT_EDITOR_ERROR_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_EDIT_TEXTAREA_CLS,
-  AGENT_RULES_ADD_BTN_CLS,
-  AGENT_RULES_EMPTY_CLS,
-  STEP_ACTIONS_CLS,
-  STEP_ADVANCED_FIELDS_CLS,
-  STEP_ADVANCED_TOGGLE_CLS,
-  STEP_CARD_BODY_CLS,
-  STEP_CARD_CLS,
-  STEP_CARD_EXPANDED_CLS,
-  STEP_CARD_HEADER_CLS,
-  STEP_CHEVRON_CLS,
-  STEP_CHIP_ADD_BTN_CLS,
-  STEP_CHIP_ADD_ROW_CLS,
-  STEP_CHIP_CLS,
-  STEP_CHIP_FIELD_CLS,
-  STEP_CHIP_INPUT_CLS,
-  STEP_CHIP_REMOVE_CLS,
-  STEP_CHIPS_CLS,
-  STEP_EDITOR_CLS,
-  STEP_FIELD_CLS,
-  STEP_FIELD_LABEL_CLS,
-  STEP_JSON_EDITOR_CLS,
-  STEP_NAME_BADGE_CLS,
-  STEP_PREVIEW_CLS,
-  STEP_SECTION_CLS,
-  STEP_SECTION_LABEL_CLS,
-  STEP_TOGGLE_SELECT_CLS,
-  STEP_TRANSITION_ROW_CLS,
-  STEP_TRANSITION_TO_CLS,
-  STEP_TRANSITION_WHEN_CLS,
-} from './agents-styles'
+import { useCallback, useState } from 'react'
 import { Heading } from '../shared/Heading'
-
-// ---------------------------------------------------------------------------
-// Types (mirrors WorkflowStep / WorkflowTransition from definitions.py)
-// ---------------------------------------------------------------------------
+import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { Chip } from '../ui/Chip'
+import { FormField } from '../ui/FormField'
+import { Input } from '../ui/Input'
+import { NativeSelect } from '../ui/NativeSelect'
+import { Textarea } from '../ui/Textarea'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 export interface WorkflowTransition {
   to: string
@@ -68,16 +36,12 @@ interface AgentStepsEditorProps {
   onChange: (steps: WorkflowStep[]) => void
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 function createDefaultStep(existing: WorkflowStep[]): WorkflowStep {
-  const names = new Set(existing.map(s => s.name))
-  let n = existing.length + 1
-  while (names.has(`step-${n}`)) n++
+  const names = new Set(existing.map((step) => step.name))
+  let number = existing.length + 1
+  while (names.has(`step-${number}`)) number += 1
   return {
-    name: `step-${n}`,
+    name: `step-${number}`,
     allowed_tools: 'all',
     blocked_tools: [],
     allowed_mcp_tools: 'all',
@@ -89,20 +53,23 @@ function createDefaultStep(existing: WorkflowStep[]): WorkflowStep {
 function getStepPreview(step: WorkflowStep): string {
   const parts: string[] = []
   if (step.description) {
-    const desc = step.description.length > 50 ? step.description.slice(0, 47) + '...' : step.description
-    parts.push(desc)
+    const description =
+      step.description.length > 50 ? `${step.description.slice(0, 47)}...` : step.description
+    parts.push(description)
   }
   if (step.transitions && step.transitions.length > 0) {
-    parts.push(`${step.transitions.length} transition${step.transitions.length > 1 ? 's' : ''}`)
+    parts.push(
+      `${step.transitions.length} transition${step.transitions.length > 1 ? 's' : ''}`,
+    )
   }
   return parts.join(' \u2014 ')
 }
 
-// ---------------------------------------------------------------------------
-// Chip Input — reusable list-of-strings editor
-// ---------------------------------------------------------------------------
-
-function ChipInput({ values, onChange, placeholder }: {
+function ChipInput({
+  values,
+  onChange,
+  placeholder,
+}: {
   values: string[]
   onChange: (values: string[]) => void
   placeholder?: string
@@ -110,173 +77,240 @@ function ChipInput({ values, onChange, placeholder }: {
   const [input, setInput] = useState('')
 
   const handleAdd = () => {
-    const v = input.trim()
-    if (v && !values.includes(v)) {
-      onChange([...values, v])
-    }
+    const value = input.trim()
+    if (value && !values.includes(value)) onChange([...values, value])
     setInput('')
   }
 
   return (
-    <div className={STEP_CHIP_INPUT_CLS}>
-      <div className={STEP_CHIPS_CLS}>
-        {values.map(v => (
-          <span key={v} className={STEP_CHIP_CLS}>
-            {v}
-            <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
-          </span>
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap gap-1">
+        {values.map((value) => (
+          <Chip key={value} className="gap-1 border border-border pl-2 pr-1.5 text-xs">
+            {value}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              dense
+              className={`${coarseHitAreaCls} min-h-0 w-auto px-px text-sm leading-none hover:text-[var(--color-error)]`}
+              onClick={() => onChange(values.filter((item) => item !== value))}
+              aria-label={`Remove ${value}`}
+            >
+              &times;
+            </Button>
+          </Chip>
         ))}
       </div>
-      <div className={STEP_CHIP_ADD_ROW_CLS}>
-        <input
-          className={`${AGENT_EDIT_INPUT_CLS} ${STEP_CHIP_FIELD_CLS}`}
+      <div className="flex items-center gap-1">
+        <Input
+          wrapperClassName="min-w-0 flex-1"
+          className="px-2 text-sm"
           value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              handleAdd()
+            }
+          }}
           placeholder={placeholder}
         />
-        <button type="button" className={`${AGENT_BTN_CLS} ${STEP_CHIP_ADD_BTN_CLS}`} onClick={handleAdd} disabled={!input.trim()}>+</button>
+        <Button
+          type="button"
+          size="sm"
+          dense
+          className={coarseHitAreaCls}
+          onClick={handleAdd}
+          disabled={!input.trim()}
+          aria-label="Add value"
+        >
+          +
+        </Button>
       </div>
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Tool Gating Section
-// ---------------------------------------------------------------------------
-
-function ToolGatingSection({ step, onChange }: { step: WorkflowStep; onChange: (s: Partial<WorkflowStep>) => void }) {
+function ToolGatingSection({
+  step,
+  onChange,
+}: {
+  step: WorkflowStep
+  onChange: (step: Partial<WorkflowStep>) => void
+}) {
   const isAllowedAll = step.allowed_tools === 'all'
   const isMcpAllowedAll = step.allowed_mcp_tools === 'all'
 
   return (
-    <div className={STEP_SECTION_CLS}>
-      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Tool Gating</Heading>
-
-      {/* Allowed Tools */}
-      <div className={STEP_FIELD_CLS}>
-        <label className={STEP_FIELD_LABEL_CLS}>
-          Allowed Tools
-          <select
-            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TOGGLE_SELECT_CLS}`}
-            value={isAllowedAll ? 'all' : 'list'}
-            onChange={e => onChange({ allowed_tools: e.target.value === 'all' ? 'all' : [] })}
-          >
-            <option value="all">All</option>
-            <option value="list">Specific list</option>
-          </select>
-        </label>
-        {!isAllowedAll && (
+    <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
+      <Heading
+        level={5}
+        className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+      >
+        Tool Gating
+      </Heading>
+      <FormField label="Allowed Tools">
+        {({ id, describedBy, invalid }) => (
+          <div className="flex flex-col gap-1">
+            <NativeSelect
+              id={id}
+              wrapperClassName="w-auto max-w-32"
+              className="px-1 text-xs"
+              aria-describedby={describedBy}
+              error={invalid}
+              value={isAllowedAll ? 'all' : 'list'}
+              onChange={(event) =>
+                onChange({ allowed_tools: event.target.value === 'all' ? 'all' : [] })
+              }
+            >
+              <option value="all">All</option>
+              <option value="list">Specific list</option>
+            </NativeSelect>
+            {!isAllowedAll && (
+              <ChipInput
+                values={step.allowed_tools as string[]}
+                onChange={(value) => onChange({ allowed_tools: value })}
+                placeholder="Tool name..."
+              />
+            )}
+          </div>
+        )}
+      </FormField>
+      <FormField label="Blocked Tools" group>
+        {() => (
           <ChipInput
-            values={step.allowed_tools as string[]}
-            onChange={v => onChange({ allowed_tools: v })}
-            placeholder="Tool name..."
+            values={step.blocked_tools || []}
+            onChange={(value) => onChange({ blocked_tools: value })}
+            placeholder="Tool to block..."
           />
         )}
-      </div>
-
-      {/* Blocked Tools */}
-      <div className={STEP_FIELD_CLS} role="group" aria-label="Blocked Tools">
-        <span className={STEP_FIELD_LABEL_CLS}>Blocked Tools</span>
-        <ChipInput
-          values={step.blocked_tools || []}
-          onChange={v => onChange({ blocked_tools: v })}
-          placeholder="Tool to block..."
-        />
-      </div>
-
-      {/* Allowed MCP Tools */}
-      <div className={STEP_FIELD_CLS}>
-        <label className={STEP_FIELD_LABEL_CLS}>
-          Allowed MCP Tools
-          <select
-            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TOGGLE_SELECT_CLS}`}
-            value={isMcpAllowedAll ? 'all' : 'list'}
-            onChange={e => onChange({ allowed_mcp_tools: e.target.value === 'all' ? 'all' : [] })}
-          >
-            <option value="all">All</option>
-            <option value="list">Specific list</option>
-          </select>
-        </label>
-        {!isMcpAllowedAll && (
+      </FormField>
+      <FormField label="Allowed MCP Tools">
+        {({ id, describedBy, invalid }) => (
+          <div className="flex flex-col gap-1">
+            <NativeSelect
+              id={id}
+              wrapperClassName="w-auto max-w-32"
+              className="px-1 text-xs"
+              aria-describedby={describedBy}
+              error={invalid}
+              value={isMcpAllowedAll ? 'all' : 'list'}
+              onChange={(event) =>
+                onChange({ allowed_mcp_tools: event.target.value === 'all' ? 'all' : [] })
+              }
+            >
+              <option value="all">All</option>
+              <option value="list">Specific list</option>
+            </NativeSelect>
+            {!isMcpAllowedAll && (
+              <ChipInput
+                values={step.allowed_mcp_tools as string[]}
+                onChange={(value) => onChange({ allowed_mcp_tools: value })}
+                placeholder="server:tool..."
+              />
+            )}
+          </div>
+        )}
+      </FormField>
+      <FormField label="Blocked MCP Tools" group>
+        {() => (
           <ChipInput
-            values={step.allowed_mcp_tools as string[]}
-            onChange={v => onChange({ allowed_mcp_tools: v })}
+            values={step.blocked_mcp_tools || []}
+            onChange={(value) => onChange({ blocked_mcp_tools: value })}
             placeholder="server:tool..."
           />
         )}
-      </div>
-
-      {/* Blocked MCP Tools */}
-      <div className={STEP_FIELD_CLS} role="group" aria-label="Blocked MCP Tools">
-        <span className={STEP_FIELD_LABEL_CLS}>Blocked MCP Tools</span>
-        <ChipInput
-          values={step.blocked_mcp_tools || []}
-          onChange={v => onChange({ blocked_mcp_tools: v })}
-          placeholder="server:tool..."
-        />
-      </div>
+      </FormField>
     </div>
   )
 }
 
-// ---------------------------------------------------------------------------
-// Transitions Section
-// ---------------------------------------------------------------------------
-
-function TransitionsSection({ step, onChange, allStepNames }: {
+function TransitionsSection({
+  step,
+  onChange,
+  allStepNames,
+}: {
   step: WorkflowStep
-  onChange: (s: Partial<WorkflowStep>) => void
+  onChange: (step: Partial<WorkflowStep>) => void
   allStepNames: string[]
 }) {
   const transitions = step.transitions || []
 
-  const updateTransition = (idx: number, updates: Partial<WorkflowTransition>) => {
-    const next = transitions.map((t, i) => i === idx ? { ...t, ...updates } : t)
-    onChange({ transitions: next })
+  const updateTransition = (index: number, updates: Partial<WorkflowTransition>) => {
+    onChange({
+      transitions: transitions.map((transition, itemIndex) =>
+        itemIndex === index ? { ...transition, ...updates } : transition,
+      ),
+    })
   }
 
   const addTransition = () => {
-    const otherNames = allStepNames.filter(n => n !== step.name)
+    const otherNames = allStepNames.filter((name) => name !== step.name)
     onChange({ transitions: [...transitions, { to: otherNames[0] || '', when: '' }] })
   }
 
-  const removeTransition = (idx: number) => {
-    onChange({ transitions: transitions.filter((_, i) => i !== idx) })
-  }
-
   return (
-    <div className={STEP_SECTION_CLS}>
-      <Heading level={5} className={STEP_SECTION_LABEL_CLS}>Transitions</Heading>
-      {transitions.map((t, idx) => (
-        <div key={idx} className={STEP_TRANSITION_ROW_CLS}>
-          <select
-            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TRANSITION_TO_CLS}`}
-            value={t.to}
-            onChange={e => updateTransition(idx, { to: e.target.value })}
+    <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
+      <Heading
+        level={5}
+        className="m-0 text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+      >
+        Transitions
+      </Heading>
+      {transitions.map((transition, index) => (
+        <div key={index} className="flex items-center gap-1.5">
+          <NativeSelect
+            wrapperClassName="w-30 shrink-0"
+            className="px-1.5 text-sm"
+            aria-label={`Transition ${index + 1} target`}
+            value={transition.to}
+            onChange={(event) => updateTransition(index, { to: event.target.value })}
           >
             <option value="">(select step)</option>
-            {allStepNames.filter(n => n !== step.name).map(n => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-          </select>
-          <input
-            className={`${AGENT_EDIT_INPUT_CLS} ${STEP_TRANSITION_WHEN_CLS}`}
-            value={t.when}
-            onChange={e => updateTransition(idx, { when: e.target.value })}
+            {allStepNames
+              .filter((name) => name !== step.name)
+              .map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+          </NativeSelect>
+          <Input
+            wrapperClassName="min-w-0 flex-1"
+            className="px-1.5 text-sm"
+            aria-label={`Transition ${index + 1} condition`}
+            value={transition.when}
+            onChange={(event) => updateTransition(index, { when: event.target.value })}
             placeholder="when expression..."
           />
-          <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => removeTransition(idx)}>&times;</button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            dense
+            className={`${coarseHitAreaCls} min-h-0 w-auto px-px text-sm leading-none hover:text-[var(--color-error)]`}
+            onClick={() =>
+              onChange({ transitions: transitions.filter((_, itemIndex) => itemIndex !== index) })
+            }
+            aria-label={`Remove transition ${index + 1}`}
+          >
+            &times;
+          </Button>
         </div>
       ))}
-      <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`} onClick={addTransition}>+ Add Transition</button>
+      <Button
+        type="button"
+        size="sm"
+        dense
+        className={`${coarseHitAreaCls} self-start`}
+        onClick={addTransition}
+      >
+        + Add Transition
+      </Button>
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Advanced Section (JSON editors for hooks)
-// ---------------------------------------------------------------------------
 
 type AdvancedFieldKey = 'on_enter' | 'on_exit' | 'on_mcp_success' | 'on_mcp_error'
 
@@ -299,7 +333,6 @@ function AdvancedJsonField({
       onCommit([])
       return
     }
-
     try {
       const parsed: unknown = JSON.parse(text)
       if (!Array.isArray(parsed)) {
@@ -314,27 +347,42 @@ function AdvancedJsonField({
   }
 
   return (
-    <div className={STEP_FIELD_CLS}>
-      <label className={STEP_FIELD_LABEL_CLS}>
-        {label}
-        <textarea
-          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS} ${STEP_JSON_EDITOR_CLS}`}
-          value={draft}
-          onChange={e => setDraft(e.target.value)}
-          onBlur={commitDraft}
-          aria-invalid={error ? true : undefined}
-          rows={3}
-          placeholder="[]"
-        />
-      </label>
-      {error && <span className={AGENT_EDITOR_ERROR_CLS} role="alert">{error}</span>}
+    <div className="flex flex-col gap-1">
+      <FormField label={label}>
+        {({ id, describedBy }) => (
+          <Textarea
+            id={id}
+            className="min-h-15 font-[inherit] text-xs"
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={commitDraft}
+            aria-describedby={describedBy}
+            error={Boolean(error)}
+            rows={3}
+            placeholder="[]"
+          />
+        )}
+      </FormField>
+      {error && (
+        <span
+          className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground"
+          role="alert"
+        >
+          {error}
+        </span>
+      )}
     </div>
   )
 }
 
-function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s: Partial<WorkflowStep>) => void }) {
+function AdvancedSection({
+  step,
+  onChange,
+}: {
+  step: WorkflowStep
+  onChange: (step: Partial<WorkflowStep>) => void
+}) {
   const [expanded, setExpanded] = useState(false)
-
   const fields: { key: AdvancedFieldKey; label: string }[] = [
     { key: 'on_enter', label: 'on_enter' },
     { key: 'on_exit', label: 'on_exit' },
@@ -343,19 +391,29 @@ function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s:
   ]
 
   return (
-    <div className={STEP_SECTION_CLS}>
-      <button type="button" className={STEP_ADVANCED_TOGGLE_CLS} onClick={() => setExpanded(!expanded)}>
-        <span className={STEP_CHEVRON_CLS}>{expanded ? '\u25BE' : '\u25B8'}</span>
+    <div className="flex flex-col gap-1.5 border-t border-border pt-1.5">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        dense
+        className={`${coarseHitAreaCls} self-start p-0 uppercase tracking-wider`}
+        aria-expanded={expanded}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="shrink-0 text-xs text-[var(--text-muted)]">
+          {expanded ? '\u25BE' : '\u25B8'}
+        </span>
         Advanced
-      </button>
+      </Button>
       {expanded && (
-        <div className={STEP_ADVANCED_FIELDS_CLS}>
+        <div className="mt-1.5 flex flex-col gap-2">
           {fields.map(({ key, label }) => (
             <AdvancedJsonField
               key={key}
               label={label}
               value={step[key]}
-              onCommit={value => onChange({ [key]: value })}
+              onCommit={(value) => onChange({ [key]: value })}
             />
           ))}
         </div>
@@ -364,42 +422,52 @@ function AdvancedSection({ step, onChange }: { step: WorkflowStep; onChange: (s:
   )
 }
 
-// ---------------------------------------------------------------------------
-// Main Component
-// ---------------------------------------------------------------------------
-
 export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
   const [expandedName, setExpandedName] = useState<string | null>(null)
+  const allStepNames = steps.map((step) => step.name)
 
-  const allStepNames = steps.map(s => s.name)
+  const updateStep = useCallback(
+    (index: number, updates: Partial<WorkflowStep>) => {
+      onChange(steps.map((step, itemIndex) => (itemIndex === index ? { ...step, ...updates } : step)))
+    },
+    [steps, onChange],
+  )
 
-  const updateStep = useCallback((idx: number, updates: Partial<WorkflowStep>) => {
-    onChange(steps.map((s, i) => i === idx ? { ...s, ...updates } : s))
-  }, [steps, onChange])
+  const renameStep = useCallback(
+    (index: number, newName: string) => {
+      const oldName = steps[index].name
+      onChange(
+        steps.map((step, itemIndex) => ({
+          ...step,
+          ...(itemIndex === index ? { name: newName } : {}),
+          transitions: step.transitions?.map((transition) =>
+            transition.to === oldName ? { ...transition, to: newName } : transition,
+          ),
+        })),
+      )
+    },
+    [steps, onChange],
+  )
 
-  const renameStep = useCallback((idx: number, newName: string) => {
-    const oldName = steps[idx].name
-    onChange(steps.map((step, i) => ({
-      ...step,
-      ...(i === idx ? { name: newName } : {}),
-      transitions: step.transitions?.map(transition =>
-        transition.to === oldName ? { ...transition, to: newName } : transition),
-    })))
-  }, [steps, onChange])
+  const deleteStep = useCallback(
+    (index: number) => {
+      const name = steps[index].name
+      onChange(steps.filter((_, itemIndex) => itemIndex !== index))
+      if (expandedName === name) setExpandedName(null)
+    },
+    [steps, onChange, expandedName],
+  )
 
-  const deleteStep = useCallback((idx: number) => {
-    const name = steps[idx].name
-    onChange(steps.filter((_, i) => i !== idx))
-    if (expandedName === name) setExpandedName(null)
-  }, [steps, onChange, expandedName])
-
-  const moveStep = useCallback((idx: number, dir: -1 | 1) => {
-    const target = idx + dir
-    if (target < 0 || target >= steps.length) return
-    const next = [...steps]
-    ;[next[idx], next[target]] = [next[target], next[idx]]
-    onChange(next)
-  }, [steps, onChange])
+  const moveStep = useCallback(
+    (index: number, direction: -1 | 1) => {
+      const target = index + direction
+      if (target < 0 || target >= steps.length) return
+      const next = [...steps]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      onChange(next)
+    },
+    [steps, onChange],
+  )
 
   const addStep = useCallback(() => {
     const step = createDefaultStep(steps)
@@ -408,102 +476,159 @@ export function AgentStepsEditor({ steps, onChange }: AgentStepsEditorProps) {
   }, [steps, onChange])
 
   return (
-    <div className={STEP_EDITOR_CLS}>
+    <div className="flex flex-col gap-1.5">
       {steps.length === 0 && (
-        <span className={AGENT_RULES_EMPTY_CLS}>No steps defined</span>
+        <span className="text-sm italic text-[var(--text-muted)]">No steps defined</span>
       )}
-
-      {steps.map((step, idx) => {
+      {steps.map((step, index) => {
         const isExpanded = expandedName === step.name
-
         return (
-          <div className={`${STEP_CARD_CLS}${isExpanded ? ' ' + STEP_CARD_EXPANDED_CLS : ''}`} key={`${step.name}-${idx}`}>
-            {/* Header */}
-            <button
+          <Card
+            key={`${step.name}-${index}`}
+            className={`overflow-hidden bg-[var(--bg-primary)] ${
+              isExpanded ? 'border-[var(--accent)]' : ''
+            }`}
+          >
+            <Button
               type="button"
-              className={STEP_CARD_HEADER_CLS}
+              variant="ghost"
+              dense
+              className={`${coarseHitAreaCls} min-h-0 w-full justify-start rounded-none border-0 px-3 py-2 text-left font-[inherit] text-[inherit] hover:bg-[var(--bg-tertiary)]`}
               aria-expanded={isExpanded}
               onClick={() => setExpandedName(isExpanded ? null : step.name)}
             >
-              <span className={STEP_NAME_BADGE_CLS}>{step.name}</span>
-              <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
-              <span className={STEP_CHEVRON_CLS}>{isExpanded ? '\u25BE' : '\u25B8'}</span>
-            </button>
-
-            {/* Expanded body */}
+              <Chip tone="accent" className="text-sm">
+                {step.name}
+              </Chip>
+              <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-[var(--text-muted)]">
+                {getStepPreview(step)}
+              </span>
+              <span className="shrink-0 text-xs text-[var(--text-muted)]">
+                {isExpanded ? '\u25BE' : '\u25B8'}
+              </span>
+            </Button>
             {isExpanded && (
-              <div className={STEP_CARD_BODY_CLS}>
-                {/* Actions */}
-                <div className={STEP_ACTIONS_CLS}>
-                  <button type="button" className={AGENT_BTN_CLS} onClick={() => moveStep(idx, -1)} disabled={idx === 0} title="Move up">&uarr;</button>
-                  <button type="button" className={AGENT_BTN_CLS} onClick={() => moveStep(idx, 1)} disabled={idx === steps.length - 1} title="Move down">&darr;</button>
-                  <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_BTN_DANGER_CLS}`} onClick={() => deleteStep(idx)}>Delete</button>
+              <div className="flex flex-col gap-2.5 border-t border-border px-3 pt-2 pb-3">
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    dense
+                    className={coarseHitAreaCls}
+                    onClick={() => moveStep(index, -1)}
+                    disabled={index === 0}
+                    title="Move up"
+                  >
+                    &uarr;
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    dense
+                    className={coarseHitAreaCls}
+                    onClick={() => moveStep(index, 1)}
+                    disabled={index === steps.length - 1}
+                    title="Move down"
+                  >
+                    &darr;
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    dense
+                    className={coarseHitAreaCls}
+                    onClick={() => deleteStep(index)}
+                  >
+                    Delete
+                  </Button>
                 </div>
-
-                {/* Identity */}
-                <label className={STEP_FIELD_CLS}>
-                  <span className={STEP_FIELD_LABEL_CLS}>Name</span>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
-                    value={step.name}
-                    onChange={e => {
-                      const newName = e.target.value
-                      renameStep(idx, newName)
-                      setExpandedName(newName)
-                    }}
-                  />
-                </label>
-                <label className={STEP_FIELD_CLS}>
-                  <span className={STEP_FIELD_LABEL_CLS}>Description</span>
-                  <textarea
-                    className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
-                    value={step.description || ''}
-                    onChange={e => updateStep(idx, { description: e.target.value || null })}
-                    placeholder="What this step does..."
-                    rows={2}
-                  />
-                </label>
-                <label className={STEP_FIELD_CLS}>
-                  <span className={STEP_FIELD_LABEL_CLS}>Status Message</span>
-                  <textarea
-                    className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_EDIT_TEXTAREA_CLS}`}
-                    value={step.status_message || ''}
-                    onChange={e => updateStep(idx, { status_message: e.target.value || null })}
-                    placeholder="Shown while step is active..."
-                    rows={2}
-                  />
-                </label>
-
-                {/* Tool Gating */}
-                <ToolGatingSection step={step} onChange={updates => updateStep(idx, updates)} />
-
-                {/* Transitions */}
+                <FormField label="Name">
+                  {({ id, describedBy, invalid }) => (
+                    <Input
+                      id={id}
+                      aria-describedby={describedBy}
+                      error={invalid}
+                      value={step.name}
+                      onChange={(event) => {
+                        const newName = event.target.value
+                        renameStep(index, newName)
+                        setExpandedName(newName)
+                      }}
+                    />
+                  )}
+                </FormField>
+                <FormField label="Description">
+                  {({ id, describedBy, invalid }) => (
+                    <Textarea
+                      id={id}
+                      aria-describedby={describedBy}
+                      error={invalid}
+                      value={step.description || ''}
+                      onChange={(event) =>
+                        updateStep(index, { description: event.target.value || null })
+                      }
+                      placeholder="What this step does..."
+                      rows={2}
+                    />
+                  )}
+                </FormField>
+                <FormField label="Status Message">
+                  {({ id, describedBy, invalid }) => (
+                    <Textarea
+                      id={id}
+                      aria-describedby={describedBy}
+                      error={invalid}
+                      value={step.status_message || ''}
+                      onChange={(event) =>
+                        updateStep(index, { status_message: event.target.value || null })
+                      }
+                      placeholder="Shown while step is active..."
+                      rows={2}
+                    />
+                  )}
+                </FormField>
+                <ToolGatingSection
+                  step={step}
+                  onChange={(updates) => updateStep(index, updates)}
+                />
                 <TransitionsSection
                   step={step}
-                  onChange={updates => updateStep(idx, updates)}
+                  onChange={(updates) => updateStep(index, updates)}
                   allStepNames={allStepNames}
                 />
-
-                {/* Exit When */}
-                <label className={STEP_FIELD_CLS}>
-                  <span className={STEP_FIELD_LABEL_CLS}>Exit When</span>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
-                    value={step.exit_when || ''}
-                    onChange={e => updateStep(idx, { exit_when: e.target.value || null })}
-                    placeholder="Expression to auto-exit this step..."
-                  />
-                </label>
-
-                {/* Advanced */}
-                <AdvancedSection step={step} onChange={updates => updateStep(idx, updates)} />
+                <FormField label="Exit When">
+                  {({ id, describedBy, invalid }) => (
+                    <Input
+                      id={id}
+                      aria-describedby={describedBy}
+                      error={invalid}
+                      value={step.exit_when || ''}
+                      onChange={(event) =>
+                        updateStep(index, { exit_when: event.target.value || null })
+                      }
+                      placeholder="Expression to auto-exit this step..."
+                    />
+                  )}
+                </FormField>
+                <AdvancedSection
+                  step={step}
+                  onChange={(updates) => updateStep(index, updates)}
+                />
               </div>
             )}
-          </div>
+          </Card>
         )
       })}
-
-      <button type="button" className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`} onClick={addStep}>+ Add Step</button>
+      <Button
+        type="button"
+        size="sm"
+        dense
+        className={`${coarseHitAreaCls} self-start`}
+        onClick={addStep}
+      >
+        + Add Step
+      </Button>
     </div>
   )
 }
