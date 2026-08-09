@@ -111,6 +111,17 @@ class SessionStartSource(str, Enum):
     COMPACT = "compact"
     """Session compacted and restarted"""
 
+    @classmethod
+    def _missing_(cls, value: object) -> SessionStartSource | None:
+        """Map provider aliases to canonical members.
+
+        Grok emits SessionStart with ``source: "new"`` for a cold start. Accept
+        that alias as ``startup`` so Pydantic broadcast validation succeeds.
+        """
+        if isinstance(value, str) and value.strip().lower() == "new":
+            return cls.STARTUP
+        return None
+
 
 class SessionEndReason(str, Enum):
     """Reason for session end events."""

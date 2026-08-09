@@ -121,6 +121,12 @@ class TestSessionStartSourceEnum:
         assert SessionStartSource.CLEAR.value == "clear"
         assert SessionStartSource.COMPACT.value == "compact"
 
+    def test_new_alias_maps_to_startup(self) -> None:
+        """Grok emits source='new'; map to canonical STARTUP without a new member."""
+        assert SessionStartSource("new") is SessionStartSource.STARTUP
+        assert SessionStartSource("NEW") is SessionStartSource.STARTUP
+        assert SessionStartSource(" new ") is SessionStartSource.STARTUP
+
 
 class TestSessionEndReasonEnum:
     """Tests for SessionEndReason enum."""
@@ -228,6 +234,12 @@ class TestSessionStartInput:
         """Test that empty external_id is rejected."""
         with pytest.raises(ValidationError):
             SessionStartInput(external_id="", transcript_path="/path")
+
+    def test_source_new_alias_maps_to_startup(self) -> None:
+        """Grok SessionStart source='new' validates as STARTUP."""
+        input_data = SessionStartInput(external_id="grok-session", source="new")
+        assert input_data.source is SessionStartSource.STARTUP
+        assert input_data.source.value == "startup"
 
 
 class TestSessionStartOutput:

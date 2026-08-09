@@ -232,6 +232,40 @@ async def test_broadcast_event_unified(
 
 
 @pytest.mark.asyncio
+async def test_broadcast_event_session_start_source_new_alias(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Grok source='new' must validate and broadcast as canonical startup."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="grok-new-session",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={
+            "external_id": "grok-new-session",
+            "transcript_path": "/tmp/grok.jsonl",
+            "source": "new",
+        },
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "session-start"
+    assert call_args["data"]["source"] == "startup"
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("event_type", "event_data", "expected_event_type"),
     [
