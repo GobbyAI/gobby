@@ -6,6 +6,7 @@ import asyncio
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
@@ -19,10 +20,13 @@ from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_VARIABLE,
     COMPACT_SELF_INTERRUPT_WARNING,
     WORKFLOW_REQUESTED_SKILLS_VARIABLE,
+    CodexRolloutCursor,
+    CodexRolloutObservationError,
     _continue_after_codex_compaction_ready,
     _merge_session_variable,
     _pop_session_variable,
     build_compact_self_continue_prompt,
+    clear_compact_self_continuation_pending,
     consume_and_schedule_compact_self_continuation,
     consume_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
@@ -42,6 +46,7 @@ pytestmark = pytest.mark.unit
 SESSION_ID = "00000000-0000-4000-8000-000000000001"
 SOURCE_SESSION_ID = "00000000-0000-4000-8000-000000000002"
 PROJECT_ID = "00000000-0000-4000-8000-000000000003"
+TURN_ABORTED_RECORD = b'{"type":"event_msg","payload":{"type":"turn_aborted"}}\n'
 
 
 @pytest.fixture
@@ -62,6 +67,55 @@ def session_db(hub_db: HubDatabase) -> HubDatabase:
         ),
     )
     return hub_db
+
+
+def _append_bytes(path: Path, content: bytes) -> None:
+    with path.open("ab") as stream:
+        stream.write(content)
+
+
+def test_codex_rollout_cursor_detects_only_fresh_abort(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_bytes(TURN_ABORTED_RECORD)
+    cursor = CodexRolloutCursor.at_eof(rollout)
+
+    assert cursor.saw_fresh_turn_aborted() is False
+    _append_bytes(rollout, b'{"type":"event_msg","payload":{"type":"token_count"}}\n')
+    assert cursor.saw_fresh_turn_aborted() is False
+    _append_bytes(rollout, TURN_ABORTED_RECORD)
+    assert cursor.saw_fresh_turn_aborted() is True
+
+
+def test_codex_rollout_cursor_handles_partial_and_malformed_records(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_bytes(TURN_ABORTED_RECORD.rstrip(b"\n"))
+    cursor = CodexRolloutCursor.at_eof(rollout)
+
+    _append_bytes(rollout, b"\nnot-json\n\xff\n" + TURN_ABORTED_RECORD[:24])
+    assert cursor.saw_fresh_turn_aborted() is False
+    _append_bytes(rollout, TURN_ABORTED_RECORD[24:])
+    assert cursor.saw_fresh_turn_aborted() is True
+
+
+def test_codex_rollout_cursor_rejects_replaced_transcript(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_bytes(b'{"type":"session_meta"}\n')
+    cursor = CodexRolloutCursor.at_eof(rollout)
+    rollout.rename(tmp_path / "original-rollout.jsonl")
+    rollout.write_bytes(TURN_ABORTED_RECORD)
+
+    with pytest.raises(CodexRolloutObservationError, match="replaced"):
+        cursor.saw_fresh_turn_aborted()
+
+
+def test_codex_rollout_cursor_rejects_truncated_transcript(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_bytes(b'{"type":"session_meta"}\n')
+    cursor = CodexRolloutCursor.at_eof(rollout)
+    rollout.write_bytes(b"")
+
+    with pytest.raises(CodexRolloutObservationError, match="truncated"):
+        cursor.saw_fresh_turn_aborted()
 
 
 class _FakeTmux:
@@ -340,6 +394,36 @@ def test_pending_marker_stores_summary_session_id(session_db: HubDatabase) -> No
 
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert variables[COMPACT_SELF_CONTINUE_VARIABLE]["summary_session_id"] == SOURCE_SESSION_ID
+
+
+def test_clear_pending_marker_removes_only_matching_compact_attempt(
+    session_db: HubDatabase,
+) -> None:
+    sv_mgr = SessionVariableManager(session_db)
+    assert mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="first-attempt",
+    )
+    assert mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="newer-attempt",
+    )
+
+    assert not clear_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="first-attempt",
+    )
+    marker = sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE]
+    assert marker["attempt_id"] == "newer-attempt"
+    assert clear_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="newer-attempt",
+    )
+    assert COMPACT_SELF_CONTINUE_VARIABLE not in sv_mgr.get_variables(SESSION_ID)
 
 
 def test_pending_marker_expires_from_its_creation_time(session_db: HubDatabase) -> None:

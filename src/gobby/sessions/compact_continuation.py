@@ -5,8 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
+import stat
 import threading
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from gobby.sessions.compact_markers import (
@@ -45,6 +49,8 @@ __all__ = [
     "COMPACT_SELF_CONTINUE_SUBMIT_RETRY_DELAY_SECONDS",
     "COMPACT_SELF_INTERRUPT_WARNING",
     "COMPACT_SELF_CONTINUE_VARIABLE",
+    "CodexRolloutCursor",
+    "CodexRolloutObservationError",
     "LOADING_SKILLS_NAME",
     "WORKFLOW_REQUESTED_SKILLS_VARIABLE",
 ]
@@ -56,6 +62,116 @@ _COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 _CODEX_COMPACT_READY_STATUS_LINE = "• Context compacted"
 _CODEX_COMPACT_READY_POLL_SECONDS = 0.25
 CODEX_COMPACT_READY_CAPTURE_LINES = 100
+
+
+class CodexRolloutObservationError(RuntimeError):
+    """Raised when a rollout can no longer be observed safely."""
+
+
+@dataclass
+class CodexRolloutCursor:
+    """Read only fresh, complete JSONL records from a stable rollout file."""
+
+    path: Path
+    device: int
+    inode: int
+    offset: int
+    _buffer: bytes = field(default=b"", repr=False)
+    _discard_historical_partial: bool = field(default=False, repr=False)
+
+    @classmethod
+    def at_eof(cls, transcript_path: str | Path | None) -> CodexRolloutCursor:
+        """Create a cursor at the current EOF of a readable rollout."""
+        if transcript_path is None or not str(transcript_path).strip():
+            raise CodexRolloutObservationError("Codex session has no rollout transcript path")
+
+        path = Path(transcript_path).expanduser()
+        try:
+            with path.open("rb") as stream:
+                file_stat = os.fstat(stream.fileno())
+                if not stat.S_ISREG(file_stat.st_mode):
+                    raise CodexRolloutObservationError(
+                        f"Codex rollout transcript is not a regular file: {path}"
+                    )
+                discard_historical_partial = False
+                if file_stat.st_size:
+                    stream.seek(-1, os.SEEK_END)
+                    discard_historical_partial = stream.read(1) != b"\n"
+        except CodexRolloutObservationError:
+            raise
+        except OSError as exc:
+            raise CodexRolloutObservationError(
+                f"Codex rollout transcript is unavailable: {path}: {exc}"
+            ) from exc
+
+        return cls(
+            path=path,
+            device=file_stat.st_dev,
+            inode=file_stat.st_ino,
+            offset=file_stat.st_size,
+            _discard_historical_partial=discard_historical_partial,
+        )
+
+    def saw_fresh_turn_aborted(self) -> bool:
+        """Return whether newly appended complete records contain turn_aborted."""
+        chunk = self._read_appended_bytes()
+        if not chunk:
+            return False
+
+        if self._discard_historical_partial:
+            newline = chunk.find(b"\n")
+            if newline < 0:
+                return False
+            chunk = chunk[newline + 1 :]
+            self._discard_historical_partial = False
+
+        records = (self._buffer + chunk).split(b"\n")
+        self._buffer = records.pop()
+        for raw_record in records:
+            try:
+                record = json.loads(raw_record.rstrip(b"\r"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+            if not isinstance(record, dict) or record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            if isinstance(payload, dict) and payload.get("type") == "turn_aborted":
+                return True
+        return False
+
+    def _read_appended_bytes(self) -> bytes:
+        try:
+            path_stat = self.path.stat()
+            self._validate_stat(path_stat)
+            with self.path.open("rb") as stream:
+                opened_stat = os.fstat(stream.fileno())
+                self._validate_stat(opened_stat)
+                stream.seek(self.offset)
+                chunk = stream.read()
+                read_stat = os.fstat(stream.fileno())
+            final_path_stat = self.path.stat()
+            self._validate_stat(read_stat, minimum_size=self.offset + len(chunk))
+            self._validate_stat(final_path_stat, minimum_size=self.offset + len(chunk))
+        except CodexRolloutObservationError:
+            raise
+        except OSError as exc:
+            raise CodexRolloutObservationError(
+                f"Codex rollout transcript became unavailable: {self.path}: {exc}"
+            ) from exc
+
+        self.offset += len(chunk)
+        return chunk
+
+    def _validate_stat(self, file_stat: os.stat_result, *, minimum_size: int | None = None) -> None:
+        if file_stat.st_dev != self.device or file_stat.st_ino != self.inode:
+            raise CodexRolloutObservationError(
+                f"Codex rollout transcript was replaced: {self.path}"
+            )
+        required_size = self.offset if minimum_size is None else minimum_size
+        if file_stat.st_size < required_size:
+            raise CodexRolloutObservationError(
+                f"Codex rollout transcript was truncated: {self.path}"
+            )
 
 
 class CompactResumeSkillTiers(TypedDict):
@@ -71,6 +187,7 @@ def mark_compact_self_continuation_pending(
     *,
     prompt: str = COMPACT_SELF_CONTINUE_PROMPT,
     summary_session_id: str | None = None,
+    attempt_id: str | None = None,
     now: datetime | None = None,
 ) -> bool:
     """Store the pending continuation marker on the compacting session."""
@@ -80,6 +197,8 @@ def mark_compact_self_continuation_pending(
     }
     if summary_session_id:
         payload["summary_session_id"] = summary_session_id
+    if attempt_id:
+        payload["attempt_id"] = attempt_id
     try:
         _merge_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE, payload)
         return True
@@ -139,11 +258,21 @@ def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
     return _pop_session_variable(db, session_id, COMPACT_HANDOFF_MARKER_VARIABLE) is not None
 
 
-def clear_compact_self_continuation_pending(db: HubDatabase, session_id: str) -> bool:
+def clear_compact_self_continuation_pending(
+    db: HubDatabase,
+    session_id: str,
+    *,
+    attempt_id: str | None = None,
+) -> bool:
     """Clear the pending continuation marker if it exists."""
     try:
-        _remove_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE)
-        return True
+        removed = _pop_session_variable(
+            db,
+            session_id,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            expected_attempt_id=attempt_id,
+        )
+        return attempt_id is None or removed is not None
     except Exception:
         logger.warning(
             "Failed to clear compact_self continuation pending for session %s",
@@ -664,7 +793,13 @@ def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any
     return _pop_session_variable(db, session_id, name)
 
 
-def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
+def _pop_session_variable(
+    db: HubDatabase,
+    session_id: str,
+    name: str,
+    *,
+    expected_attempt_id: str | None = None,
+) -> Any:
     now = datetime.now(UTC).isoformat()
     with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
         row = conn.execute(
@@ -674,6 +809,12 @@ def _pop_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
         if not row:
             return None
         variables = _load_variables(_row_variables(row))
+        current_value = variables.get(name)
+        if expected_attempt_id is not None and (
+            not isinstance(current_value, dict)
+            or current_value.get("attempt_id") != expected_attempt_id
+        ):
+            return None
         value = variables.pop(name, None)
         if value is not None:
             conn.execute(

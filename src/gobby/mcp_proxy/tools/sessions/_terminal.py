@@ -11,6 +11,7 @@ import asyncio as asyncio
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.mcp_proxy.tools.sessions._terminal_handoff import (
@@ -57,6 +58,8 @@ from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import _compact_live_web_chat_fallback
 from gobby.sessions.compact_continuation import (
     CODEX_COMPACT_READY_CAPTURE_LINES,
+    CodexRolloutCursor,
+    CodexRolloutObservationError,
     build_compact_self_continue_prompt,
     clear_compact_self_continuation_pending,
     mark_compact_self_continuation_pending,
@@ -105,7 +108,6 @@ __all__ = [
     "_resolve_tmux_target",
     "_run_compact_handoff_background_refresh",
     "_schedule_compact_handoff_background_refresh",
-    "_send_codex_compaction_command",
     "_send_compaction_command",
     "_send_terminal_compaction_command",
     "_send_tmux_keys",
@@ -208,9 +210,10 @@ async def _send_terminal_compaction_command(
     clear_continuation_pending: Callable[[], bool],
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
+    observe_codex_interrupt: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
-) -> tuple[bool, str | None, bool, dict[str, str] | None]:
-    """Interrupt the active prompt, mark continuation pending, then compact."""
+) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
+    """Persist continuation state, confirm interruption, then compact."""
     return await _send_terminal_compaction_command_impl(
         tmux,
         target,
@@ -221,6 +224,7 @@ async def _send_terminal_compaction_command(
         clear_continuation_pending=clear_continuation_pending,
         schedule_continuation_readiness=schedule_continuation_readiness,
         continuation_readiness_capture_lines=continuation_readiness_capture_lines,
+        observe_codex_interrupt=observe_codex_interrupt,
         settle_seconds=settle_seconds,
         interrupt_settle_seconds=(
             _CODEX_INTERRUPT_SETTLE_SECONDS
@@ -229,28 +233,6 @@ async def _send_terminal_compaction_command(
         ),
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
     )
-
-
-async def _send_codex_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
-    command: str,
-    session_id: str,
-    *,
-    settle_seconds: float | None = None,
-) -> tuple[bool, str | None]:
-    """Backward-compatible wrapper for tests around the terminal compaction flow."""
-    ok, reason, _continuation_pending, _failure_detail = await _send_terminal_compaction_command(
-        tmux,
-        target,
-        command,
-        session_id,
-        cli_source="codex",
-        mark_continuation_pending=lambda: False,
-        clear_continuation_pending=lambda: False,
-        settle_seconds=settle_seconds,
-    )
-    return ok, reason
 
 
 def _resolve_session_for_compaction(
@@ -556,6 +538,25 @@ def register_terminal_tools(
             session = activity.session
             assert session is not None
 
+        codex_rollout_cursor: CodexRolloutCursor | None = None
+        if source == "codex":
+            try:
+                codex_rollout_cursor = CodexRolloutCursor.at_eof(
+                    getattr(session, "transcript_path", None)
+                )
+            except CodexRolloutObservationError as exc:
+                logger.warning(
+                    "Cannot observe Codex interruption for compact_self session %s: %s",
+                    resolved_session_id,
+                    exc,
+                )
+                return {
+                    "compacted": False,
+                    "continuation_pending": False,
+                    "reason": str(exc),
+                    "error_code": "codex_interrupt_observation_unavailable",
+                }
+
         refresh_result = await _refresh_compact_handoff_context(
             resolved_session_id,
             session,
@@ -575,6 +576,22 @@ def register_terminal_tools(
         continuation_prompt = build_compact_self_continue_prompt(
             summary_session_id=resolved_session_id,
         )
+        compact_attempt_id = uuid4().hex if source == "codex" else None
+        observe_codex_interrupt: Callable[[], bool | None] | None = None
+        if codex_rollout_cursor is not None:
+
+            def observe_codex_rollout_interrupt() -> bool | None:
+                try:
+                    return codex_rollout_cursor.saw_fresh_turn_aborted()
+                except CodexRolloutObservationError as exc:
+                    logger.warning(
+                        "Lost Codex interrupt observation for compact_self session %s: %s",
+                        resolved_session_id,
+                        exc,
+                    )
+                    return None
+
+            observe_codex_interrupt = observe_codex_rollout_interrupt
         schedule_continuation_readiness: Callable[[str | None], bool] | None = None
         if source == "codex":
 
@@ -598,18 +615,30 @@ def register_terminal_tools(
                 resolved_session_id,
                 prompt=continuation_prompt,
                 summary_session_id=resolved_session_id,
+                attempt_id=compact_attempt_id,
             ),
             clear_continuation_pending=lambda: clear_compact_self_continuation_pending(
                 db,
                 resolved_session_id,
+                attempt_id=compact_attempt_id,
             ),
             schedule_continuation_readiness=schedule_continuation_readiness,
             continuation_readiness_capture_lines=(
                 CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
             ),
+            observe_codex_interrupt=observe_codex_interrupt,
         )
 
         if not ok:
+            if source == "codex":
+                try:
+                    session_manager.update_status(resolved_session_id, "active")
+                except Exception:
+                    logger.warning(
+                        "Failed restoring session %s to active after Codex compaction failure",
+                        resolved_session_id,
+                        exc_info=True,
+                    )
             failure_result = {
                 "compacted": False,
                 "reason": reason,

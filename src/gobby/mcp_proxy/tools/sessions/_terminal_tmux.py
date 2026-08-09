@@ -31,6 +31,8 @@ _CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
 }
 _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 _CODEX_INTERRUPT_SETTLE_SECONDS = 1.0
+_CODEX_INTERRUPT_ATTEMPTS = 3
+_CODEX_INTERRUPT_POLL_SECONDS = 0.05
 _COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
@@ -140,6 +142,27 @@ async def _send_compaction_command(
     )
 
 
+async def _wait_for_codex_interrupt(
+    observe_interrupt: Callable[[], bool | None],
+    *,
+    attempt_seconds: float,
+    poll_seconds: float = _CODEX_INTERRUPT_POLL_SECONDS,
+) -> bool | None:
+    """Poll for a fresh Codex abort event during one interrupt attempt."""
+    if attempt_seconds <= 0:
+        return observe_interrupt()
+
+    elapsed = 0.0
+    while elapsed < attempt_seconds:
+        observed = observe_interrupt()
+        if observed is not False:
+            return observed
+        delay = min(poll_seconds, attempt_seconds - elapsed)
+        await asyncio.sleep(delay)
+        elapsed += delay
+    return observe_interrupt()
+
+
 async def _send_terminal_compaction_command(
     tmux: TmuxSessionManager,
     target: str,
@@ -151,25 +174,91 @@ async def _send_terminal_compaction_command(
     clear_continuation_pending: Callable[[], bool],
     schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
     continuation_readiness_capture_lines: int | None = None,
+    observe_codex_interrupt: Callable[[], bool | None] | None = None,
     settle_seconds: float | None = None,
     interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
-) -> tuple[bool, str | None, bool, dict[str, str] | None]:
-    """Interrupt the active prompt, mark continuation pending, then compact."""
-    ok, reason = await _send_tmux_keys(
-        tmux,
-        target,
-        _compact_interrupt_key(cli_source),
-        session_id,
-        literal=False,
-        action="sending compaction interrupt",
-    )
-    if not ok:
-        return False, reason, False, None
+) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
+    """Confirm interruption, persist continuation state, then compact."""
+    continuation_pending = False
+    if cli_source == "codex":
+        if observe_codex_interrupt is None:
+            return (
+                False,
+                "Codex rollout transcript is unavailable for interrupt confirmation",
+                False,
+                {
+                    "error_code": "codex_interrupt_observation_unavailable",
+                    "continuation_pending": False,
+                },
+            )
+        continuation_pending = bool(mark_continuation_pending())
+        if not continuation_pending:
+            return (
+                False,
+                "failed to persist compact_self continuation before compaction",
+                False,
+                None,
+            )
 
-    delay = interrupt_settle_seconds if settle_seconds is None else settle_seconds
-    if delay > 0:
-        await asyncio.sleep(delay)
+        attempt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
+        interrupted = False
+        for _attempt in range(_CODEX_INTERRUPT_ATTEMPTS):
+            ok, reason = await _send_tmux_keys(
+                tmux,
+                target,
+                _compact_interrupt_key(cli_source),
+                session_id,
+                literal=False,
+                action="sending compaction interrupt",
+            )
+            if not ok:
+                clear_continuation_pending()
+                return False, reason, False, None
+            observed = await _wait_for_codex_interrupt(
+                observe_codex_interrupt,
+                attempt_seconds=attempt_seconds,
+            )
+            if observed is None:
+                clear_continuation_pending()
+                return (
+                    False,
+                    "Codex rollout transcript became unavailable during interrupt confirmation",
+                    False,
+                    {
+                        "error_code": "codex_interrupt_observation_unavailable",
+                        "continuation_pending": False,
+                    },
+                )
+            if observed:
+                interrupted = True
+                break
+        if not interrupted:
+            clear_continuation_pending()
+            return (
+                False,
+                "Codex did not confirm interruption after 3 attempts",
+                False,
+                {
+                    "error_code": "codex_interrupt_unconfirmed",
+                    "continuation_pending": False,
+                },
+            )
+    else:
+        ok, reason = await _send_tmux_keys(
+            tmux,
+            target,
+            _compact_interrupt_key(cli_source),
+            session_id,
+            literal=False,
+            action="sending compaction interrupt",
+        )
+        if not ok:
+            return False, reason, False, None
+
+        delay = interrupt_settle_seconds if settle_seconds is None else settle_seconds
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     before_command = await _capture_pane_snapshot(tmux, target)
     readiness_before_command = before_command
@@ -182,7 +271,8 @@ async def _send_terminal_compaction_command(
             target,
             lines=continuation_readiness_capture_lines,
         )
-    continuation_pending = bool(mark_continuation_pending())
+    if cli_source != "codex":
+        continuation_pending = bool(mark_continuation_pending())
     if schedule_continuation_readiness is not None:
         if not continuation_pending:
             return (
