@@ -31,7 +31,3 @@ pub fn connect_readonly(database_url: &str) -> anyhow::Result<Client> {
     schema::validate_runtime_schema(&mut client)?;
     Ok(client)
 }
-
-pub fn read_config_value(conn: &mut Client, key: &str) -> anyhow::Result<Option<String>> {
-    gobby_core::postgres::read_config_value(conn, key)
-}

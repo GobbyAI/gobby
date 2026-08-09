@@ -10,11 +10,13 @@ use crate::visibility;
 use super::super::connection::with_optional_core_graph;
 use super::super::payload::{row_string_owned, row_usize};
 use super::relationship_queries::{
-    blast_radius_query, find_callee_ids_batch_query, find_callees_batch_query,
-    find_caller_ids_batch_query, find_caller_ids_query, find_callers_batch_query,
-    find_callers_query, find_usage_ids_query, find_usages_query, get_imports_query,
-    resolve_external_call_target_query, symbol_callee_edges_query, symbol_path_steps_query,
+    blast_radius_query, find_callee_ids_batch_query, find_caller_ids_batch_query,
+    find_caller_ids_query, find_callers_query, find_usage_ids_query, find_usages_query,
+    get_imports_query, resolve_external_call_target_query, symbol_callee_edges_query,
+    symbol_path_steps_query,
 };
+#[cfg(test)]
+use super::relationship_queries::{find_callees_batch_query, find_callers_batch_query};
 use super::support::{MAX_GRAPH_LIMIT, row_to_graph_result};
 use gobby_core::falkor::GraphClient;
 
@@ -228,6 +230,7 @@ pub fn find_usage_ids(ctx: &Context, symbol_id: &str, limit: usize) -> anyhow::R
     post_filter_symbol_ids(ctx, ids, limit)
 }
 
+#[cfg(test)]
 pub fn find_callers_batch(
     ctx: &Context,
     symbol_ids: &[String],
@@ -265,6 +268,7 @@ pub fn find_caller_ids_batch(
     post_filter_symbol_ids(ctx, ids, limit)
 }
 
+#[cfg(test)]
 pub fn find_callees_batch(
     ctx: &Context,
     symbol_ids: &[String],

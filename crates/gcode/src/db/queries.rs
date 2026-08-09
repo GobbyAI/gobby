@@ -96,22 +96,6 @@ pub fn read_graph_file_facts(
     })
 }
 
-pub fn indexed_file_exists(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    file_path: &str,
-) -> anyhow::Result<bool> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let project_id = id_param(project_id)?;
-    Ok(conn
-        .query_opt(
-            "SELECT 1 FROM code_indexed_file_states
-             WHERE machine_id = $1 AND project_id = $2 AND file_path = $3",
-            &[&machine_id, &project_id, &file_path],
-        )?
-        .is_some())
-}
-
 pub fn mark_graph_sync_attempted(
     conn: &mut impl GenericClient,
     project_id: &str,
@@ -252,33 +236,6 @@ pub fn mark_project_vectors_synced(
            AND cif.content_hash = cifs.content_hash",
         &[&machine_id, &project_id],
     )?)
-}
-
-/// Return the vector sync state for an indexed file.
-///
-/// `None` means the file is not present in `code_indexed_files`; `Some(value)`
-/// means the file exists and reports that `vectors_synced` state.
-pub fn file_vectors_synced(
-    conn: &mut impl GenericClient,
-    project_id: &str,
-    file_path: &str,
-) -> anyhow::Result<Option<bool>> {
-    let machine_id = id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let project_id = id_param(project_id)?;
-    let synced = conn
-        .query_opt(
-            "SELECT cif.vectors_synced
-             FROM code_indexed_file_states cifs
-             JOIN code_indexed_files cif
-               ON cif.project_id = cifs.project_id
-              AND cif.file_path = cifs.file_path
-              AND cif.content_hash = cifs.content_hash
-             WHERE cifs.machine_id = $1 AND cifs.project_id = $2 AND cifs.file_path = $3",
-            &[&machine_id, &project_id, &file_path],
-        )?
-        .map(|row| row.try_get::<_, bool>("vectors_synced"))
-        .transpose()?;
-    Ok(synced)
 }
 
 /// Reset vector sync flags for every machine's referenced content rows.

@@ -23,10 +23,6 @@ pub fn gobby_home() -> anyhow::Result<PathBuf> {
     gobby_core::gobby_home()
 }
 
-pub fn bootstrap_path() -> anyhow::Result<PathBuf> {
-    Ok(gobby_home()?.join("bootstrap.yaml"))
-}
-
 /// Resolve the standalone database from explicit DSN sources.
 pub fn resolve_database_url() -> anyhow::Result<String> {
     if let Some(database_url) = resolve_managed_database_url(&mut |name| std::env::var(name).ok())?

@@ -22,63 +22,6 @@ fn content_bm25_order_by_sql(tiebreakers: &[&str]) -> String {
     order_by
 }
 
-/// Full-text search across file content chunks.
-pub fn search_content(
-    conn: &mut Client,
-    query: &str,
-    project_id: &str,
-    language: Option<&str>,
-    paths: &[String],
-    limit: usize,
-) -> anyhow::Result<Vec<ContentSearchHit>> {
-    if query.trim().is_empty() || limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let bm25_query = sanitize_pg_search_query(query);
-    if bm25_query.is_empty() {
-        eprintln!(
-            "gcode: content BM25 search skipped because query contains no pg_search terms; use `gcode grep` for exact text"
-        );
-        return Ok(Vec::new());
-    }
-
-    let mut params = Vec::new();
-    let query_placeholder = push_param(&mut params, bm25_query);
-    let project_placeholder = push_id_param(&mut params, project_id);
-    let mut conditions = vec![
-        format!("c.content @@@ {query_placeholder}"),
-        format!("c.project_id = {project_placeholder}"),
-    ];
-    if let Some(lang) = language {
-        let placeholder = push_param(&mut params, lang.to_string());
-        conditions.push(format!("c.language = {placeholder}"));
-    }
-    push_path_filter(&mut conditions, &mut params, "c", paths);
-    let limit_placeholder = push_param(&mut params, limit as i64);
-    let order_by = content_bm25_order_by_sql(&["c.id ASC"]);
-    let refs = param_refs(&params);
-    let sql = format!(
-        "SELECT c.file_path,
-                c.line_start::BIGINT AS line_start,
-                c.line_end::BIGINT AS line_end,
-                c.language,
-                c.content
-         FROM code_content_chunks c
-         JOIN code_indexed_files cf
-           ON cf.project_id = c.project_id AND cf.file_path = c.file_path
-         WHERE {}
-         ORDER BY {order_by}
-         LIMIT {limit_placeholder}",
-        conditions.join(" AND ")
-    );
-
-    let rows = conn
-        .query(&sql, &refs)
-        .map_err(|error| bm25_query_error(CONTENT_INDEX, &error))?;
-    Ok(content_hits_from_rows(&rows, query))
-}
-
 pub fn search_content_visible(
     conn: &mut Client,
     query: &str,

@@ -529,17 +529,6 @@ pub struct ParseResult {
     pub source: Vec<u8>,
 }
 
-/// Aggregate result of indexing a directory.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexResult {
-    pub project_id: String,
-    pub files_indexed: usize,
-    pub files_skipped: usize,
-    pub symbols_found: usize,
-    pub errors: Vec<String>,
-    pub duration_ms: u64,
-}
-
 /// Paginated response envelope for JSON output.
 /// Hoists `project_id` to avoid repeating it on every result.
 #[derive(Debug, Clone, Serialize)]

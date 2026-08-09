@@ -5,6 +5,7 @@ use crate::{db, visibility};
 
 use super::embedding::{embed_query_with_source, embedding_source_from_context};
 use super::qdrant::{collection_name, vector_search};
+#[cfg(test)]
 use super::types::{CodeSymbolVectorSearchHit, CodeSymbolVectorSearchRequest};
 
 type RankedHit = (String, f64);
@@ -38,6 +39,7 @@ impl std::fmt::Display for SearchError {
 
 impl std::error::Error for SearchError {}
 
+#[cfg(test)]
 pub fn search_code_symbols(
     ctx: &Context,
     request: &CodeSymbolVectorSearchRequest,

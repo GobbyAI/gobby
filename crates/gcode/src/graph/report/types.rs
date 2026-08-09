@@ -33,6 +33,7 @@ impl BridgeEdgeHypothesis {
         }
     }
 
+    #[cfg(test)]
     pub fn inferred(
         source_id: impl Into<String>,
         target_symbol_id: impl Into<String>,

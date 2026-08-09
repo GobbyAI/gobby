@@ -9,23 +9,19 @@ mod write;
 pub use connection::require_graph_reads;
 pub use lifecycle::{
     GraphLifecycleAction, GraphLifecycleOutput, GraphLifecycleRequest, GraphReadError,
-    GraphReadRequest, require_daemon_url, run_lifecycle_action,
+    GraphReadRequest,
 };
-pub use payload::{
-    GraphBlastRadiusTarget, GraphLink, GraphNode, GraphPayload, extracted_code_edge_metadata,
-};
+pub use payload::{GraphBlastRadiusTarget, GraphPayload};
 pub use read::{
-    DEFAULT_SYMBOL_PATH_MAX_DEPTH, MAX_SYMBOL_PATH_DEPTH, ResolvedExternalCallTarget, blast_radius,
-    blast_radius_graph, count_callers, count_usages, file_graph, find_callee_ids_batch,
-    find_callees_batch, find_caller_ids, find_caller_ids_batch, find_callers, find_callers_batch,
-    find_usage_ids, find_usages, get_imports, project_overview_graph, resolve_external_call_target,
-    shortest_symbol_path, symbol_neighbors,
+    DEFAULT_SYMBOL_PATH_MAX_DEPTH, MAX_SYMBOL_PATH_DEPTH, blast_radius, blast_radius_graph,
+    count_callers, count_usages, file_graph, find_callee_ids_batch, find_caller_ids,
+    find_caller_ids_batch, find_callers, find_usage_ids, find_usages, get_imports,
+    project_overview_graph, resolve_external_call_target, shortest_symbol_path, symbol_neighbors,
 };
 pub(crate) use write::delete_content_version;
 pub use write::{
-    CodeGraph, GraphOrphanCleanup, call_target_id, cleanup_deleted_files, cleanup_orphans,
-    clear_all_code_index, clear_project, delete_file_graph, delete_file_projection,
-    delete_symbol_ids, list_project_scopes, sync_file_graph, sync_no_fact_file, with_code_graph,
+    CodeGraph, GraphOrphanCleanup, cleanup_deleted_files, cleanup_orphans, clear_all_code_index,
+    clear_project, list_project_scopes, sync_file_graph, sync_no_fact_file, with_code_graph,
 };
 
 pub(crate) use lifecycle::extract_summary_text;
@@ -38,11 +34,18 @@ pub(crate) use read::{
 #[cfg(test)]
 pub(crate) use lifecycle::{
     build_lifecycle_url, compact_detail, format_http_error, parse_success_payload,
+    require_daemon_url, run_lifecycle_action,
 };
 #[cfg(test)]
-use payload::{row_string_owned, row_to_projection_metadata, row_usize};
+use payload::{
+    GraphLink, GraphNode, extracted_code_edge_metadata, row_string_owned,
+    row_to_projection_metadata, row_usize,
+};
 #[cfg(test)]
-use read::{blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls_query};
+use read::{
+    blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls_query,
+    find_callees_batch, find_callers_batch,
+};
 #[cfg(test)]
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,

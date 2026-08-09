@@ -339,14 +339,6 @@ impl GraphCallTarget {
     }
 }
 
-pub fn call_target_id(project_id: &str, call: &CallRelation) -> Option<String> {
-    match GraphCallTarget::from_call(project_id, call)? {
-        GraphCallTarget::Symbol { id }
-        | GraphCallTarget::External { id, .. }
-        | GraphCallTarget::Unresolved { id } => Some(id),
-    }
-}
-
 fn call_rows(calls: &[CallGraphItem]) -> anyhow::Result<TypedValue> {
     Ok(TypedValue::List(
         calls

@@ -82,7 +82,7 @@ fn disabled_freshness_admission_is_quiet_and_does_not_resolve_context() -> Resul
 }
 
 #[test]
-#[serial]
+#[serial(serial_db)]
 fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
     let fixture = IndexedFixture::new()?;
     let all = ScopeSelector::all();
@@ -125,7 +125,7 @@ fn facade_reads_owned_facts_from_a_temp_indexed_project() -> Result<()> {
 }
 
 #[test]
-#[serial]
+#[serial(serial_db)]
 fn facade_handle_is_clone_send_sync_and_stores_only_context() -> Result<()> {
     fn assert_clone_send_sync<T: Clone + Send + Sync>() {}
 

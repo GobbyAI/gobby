@@ -9,9 +9,7 @@ mod tests;
 
 pub use context::{
     CODE_SYMBOL_COLLECTION_PREFIX, CodeVectorConfigError, CodeVectorSettings, Context,
-    EmbeddingConfig, FALKORDB_GRAPH_NAME, FALKORDB_HOST_CONFIG_KEY, FALKORDB_PASSWORD_CONFIG_KEY,
-    FALKORDB_PORT_CONFIG_KEY, FalkorConfig, GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV,
-    GOBBY_FALKORDB_PORT_ENV, MissingIdentity, ProjectIdentity, ProjectIdentitySource,
+    EmbeddingConfig, FALKORDB_GRAPH_NAME, FalkorConfig, MissingIdentity, ProjectIdentitySource,
     ProjectIndexScope, QdrantConfig, ServiceConfigSelection, detect_project_root,
     detect_project_root_from, resolve_project_identity, warn_project_identity,
 };

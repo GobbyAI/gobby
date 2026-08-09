@@ -88,6 +88,7 @@ pub(super) fn find_usage_ids_query(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn find_callers_batch_query(
     project_id: &str,
     symbol_ids: &[String],
@@ -130,6 +131,7 @@ pub(super) fn find_caller_ids_batch_query(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn find_callees_batch_query(
     project_id: &str,
     symbol_ids: &[String],

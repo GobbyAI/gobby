@@ -179,29 +179,6 @@ pub(crate) fn delete_file_node_query(
     )
 }
 
-pub(crate) fn delete_symbol_ids_query(
-    project_id: &str,
-    symbol_ids: &[String],
-) -> anyhow::Result<TypedQuery> {
-    typed_query(
-        "MATCH (s:CodeSymbol {project: $project})
-         WHERE s.id IN $symbol_ids
-         DETACH DELETE s",
-        [
-            ("project", TypedValue::String(project_id.to_string())),
-            (
-                "symbol_ids",
-                TypedValue::List(
-                    symbol_ids
-                        .iter()
-                        .map(|id| TypedValue::String(id.clone()))
-                        .collect(),
-                ),
-            ),
-        ],
-    )
-}
-
 pub(crate) fn project_file_path_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
     Ok(vec![

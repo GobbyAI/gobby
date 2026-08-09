@@ -105,13 +105,6 @@ pub enum CodeSymbolVectorLifecycleAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CodeSymbolVectorLifecycleStatus {
-    pub project_id: String,
-    pub collection: String,
-    pub action: CodeSymbolVectorLifecycleAction,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VectorCollectionSchema {
     pub size: usize,
     pub distance: String,
