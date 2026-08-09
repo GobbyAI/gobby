@@ -1,6 +1,6 @@
 //! Frontmatter contract for codewiki-generated wiki vault pages.
 //!
-//! gcode's `codewiki` command family is the producer: it writes generated
+//! `gwiki code` is the producer: it writes generated
 //! Markdown pages — YAML frontmatter, `[[target|label]]` wikilinks, and
 //! degradation fields — into the gwiki vault. gwiki re-parses those
 //! conventions in its frontmatter/indexer/audit/librarian paths. Producer and
@@ -8,7 +8,7 @@
 //! fixture are pinned here and checked by both crates' tests; the
 //! human-readable contract lives in `docs/contracts/gwiki-cli.md`.
 
-/// Frontmatter keys codewiki emits and gcode/gwiki read back.
+/// Frontmatter keys CodeWiki emits and vault consumers read back.
 pub const TITLE_KEY: &str = "title";
 pub const TYPE_KEY: &str = "type";
 pub const PROVENANCE_KEY: &str = "provenance";

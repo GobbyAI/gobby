@@ -11,6 +11,11 @@ Version 16 adds `gwiki code`, the project-scoped CodeWiki generation surface.
 The contract covers generation, purge, citation repair, and metadata comparison,
 including AI routing, graph degradation, and JSON output keys.
 
+The direct command remains available for isolated/manual use. Production-vault
+execution and daemon-triggered generation are operationally paused pending the
+wiki redesign; `GET /api/wiki/code/status` reports the disabled state and
+`POST /api/wiki/code/refresh` returns HTTP 409 without scheduling work.
+
 Version 15 adds `--time-budget-seconds` to `gwiki upkeep` and exposes
 `budget_exhausted` plus `deferred_clusters` in its JSON output.
 
@@ -210,15 +215,16 @@ The machine-readable side of the generated-page frontmatter contract lives in
 `provenance_truncated` — emitted only when a page rolls up more provenance
 files than the per-page cap, recording the omitted count — `generated_by:
 gcode-codewiki`, `trust: generated`, `freshness: indexed`,
-`degraded`/`degraded_sources`) and a golden page fixture. gcode pins its
-frontmatter emitter against the golden fixture and gwiki pins its
-frontmatter/audit parsers against it, so producer and consumer cannot drift
-silently.
+`degraded`/`degraded_sources`) and a golden page fixture. gwiki pins its
+frontmatter emitter and audit parsers against the golden fixture so producer and
+consumer cannot drift silently. The `generated_by: gcode-codewiki` value is the
+persisted page-format identifier; command ownership lives in `gwiki code`.
 
 ### Command Surfaces
 
 | Command | Hard dependencies | Optional dependencies | Multimodal | Degraded output shape | Degradation metadata |
 | --- | --- | --- | --- | --- | --- |
+| `code` | PostgreSQL code index, Markdown vault | model synthesis, FalkorDB/graph analytics, Git ownership data | none - not used | deterministic structural pages remain available when optional signals fail | payload warnings/degradations; page frontmatter `degraded`/`degraded_sources[]` |
 | `graph` | PostgreSQL, Markdown | FalkorDB, embeddings/Qdrant | none - not used | available nodes/edges; missing edge classes empty and flagged | `degraded`, `degraded_sources[]` in `graph.json`/`GRAPH_REPORT.md` |
 | `graph-context` | PostgreSQL | FalkorDB, shared code graph | none - not used | wiki-link-only neighborhood | `warnings[]`, `degradation{degraded,degraded_sources[]}` |
 | `benchmark` | PostgreSQL, seeded project | FalkorDB, Qdrant+embeddings, model | none - not used | metrics for available dimensions only | per-metric `available`, `degraded_sources[]` |
@@ -232,8 +238,8 @@ silently.
 
 ### Codewiki Generated-Page Surfaces
 
-These are gcode `codewiki` output surfaces, not commands. PostgreSQL code index
-and Markdown vault are hard dependencies for every page.
+These are `gwiki code` output surfaces. PostgreSQL code index and Markdown vault
+are hard dependencies for every page.
 
 | Generated page | Hard dependencies | Optional dependencies | Multimodal | Degraded output shape | Degradation metadata |
 | --- | --- | --- | --- | --- | --- |

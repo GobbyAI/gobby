@@ -693,14 +693,11 @@ rerun guidance.
 
 ### Code Documentation Generation
 
-`gcode codewiki` generates vault-ready hierarchical code documentation
-(architecture/module/per-file Markdown pages with grounded `[file:line]`
-citations) from the same indexed facts. `--scope <PATH>...` limits the doc set,
-`--since <GIT_REF>` drives incremental regeneration of only the pages whose
-sources or cross-file neighbors changed, and `--repair-citations` re-anchors
-existing citations against the current index without any AI calls. AI prose is
-tuned with `--ai`, `--ai-depth`, `--ai-prose-depth`, and `--ai-register`. By
-default it documents code and structured config; `--include-docs` extends it to
-content-only Markdown/text.
+`gwiki code` owns vault-ready hierarchical code documentation. It consumes the
+same indexed facts through gcode's query and graph boundaries, while generation,
+output locking, metadata, and page writes live in the gwiki crate. The direct
+command remains available for isolated/manual validation; production-vault
+execution is operationally paused pending the wiki redesign. See the
+[CodeWiki guide](./codewiki.md) for the active CLI and dormant daemon contracts.
 
 _Last verified: 2026-06-23_

@@ -277,28 +277,19 @@ gcode tree
 Useful for understanding project structure at a glance. Content-only text files
 appear with a zero symbol count once indexed.
 
-## Code Documentation (`gcode codewiki`)
+## Code Documentation
 
-Generate vault-ready, hierarchical Markdown documentation for the indexed
-project — architecture, module, and per-file pages with grounded `[file:line]`
-citations:
+CodeWiki generation is owned by `gwiki code`. The command remains available for
+isolated/manual use, while production-vault execution is operationally paused
+pending the wiki redesign:
 
 ```bash
-gcode codewiki --out docs/codewiki
-gcode codewiki --out docs/codewiki --scope crates/gcode/src
+gwiki --project . code --out /tmp/codewiki-check
+gwiki --project . code --scope crates/gcode/src --out /tmp/codewiki-check
 ```
 
-- `--out <DIR>` — output directory for the generated Markdown
-- `--scope <PATH>...` — limit docs to indexed files under one or more paths
-- `--since <GIT_REF>` — incremental regeneration of only the pages whose sources
-  or cross-file neighbors changed since a git ref
-- `--repair-citations` — re-anchor existing pages' `[file:line]` citations
-  against the current index without regenerating prose (no AI calls)
-
-AI prose depth and routing are tunable via `--ai-depth`, `--ai-prose-depth`,
-`--ai-register`, and `--ai`. By default codewiki documents code and structured
-config; pass `--include-docs` to also cover content-only Markdown/text. See
-[codewiki.md](codewiki.md) for the full reference.
+See the [CodeWiki guide](./codewiki.md) for the paused daemon contract, manual
+CLI modes, and output layout.
 
 ## Dependency Graph
 

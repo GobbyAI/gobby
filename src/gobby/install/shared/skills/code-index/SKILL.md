@@ -100,13 +100,14 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 
 ## CodeWiki Lifecycle
 
-- `gcode codewiki --out <vault>` — generate vault-ready code documentation under the selected output directory
-- `gcode codewiki --scope <PATH...> --out <vault>` — regenerate only docs for indexed files under the scoped paths
-- `gcode codewiki --since <git-ref> --out <vault>` — use `git diff --name-only <ref>` to drive incremental regeneration
-- `gcode codewiki --repair-citations --out <vault>` — re-anchor existing `[file:line]` citations without generation or AI calls
-- `gcode codewiki --purge --out <vault> --force` — remove generated CodeWiki Markdown and metadata, then exit; use before a clean rebuild
+- `gwiki code` owns CodeWiki generation and remains available for isolated/manual use.
+- Production-vault execution and daemon scheduling are operationally paused pending the wiki redesign.
+- `gwiki --project <root> code --out <vault>` generates into an explicit manual output directory.
+- Add `--scope <PATH...>` or `--since <git-ref>` for bounded regeneration.
+- Add `--repair-citations` to re-anchor `[file:line]` citations without generation or AI calls.
+- `--purge --out <vault> --force` removes generated Markdown and metadata only; it leaves PostgreSQL code facts, FalkorDB graph data, and Qdrant vectors intact.
 
-Aggregate CodeWiki pages may use daemon-side agentic/tool-backed generation when configured. Purge is output-only: it does not clear PostgreSQL code facts, FalkorDB graph data, or Qdrant vectors.
+See `docs/guides/codewiki.md` for the dormant daemon status/error contract, canonical vault, and purge safety.
 
 ## When to use which
 

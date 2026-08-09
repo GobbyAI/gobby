@@ -16,7 +16,7 @@ use super::{CitationResolver, CodewikiIndexSnapshot, reanchor_citations};
 use crate::commands::code::Symbol;
 
 /// Result of a citation-repair run. This is the source-of-truth serialized
-/// shape that the gcode contract freezes for `codewiki --repair-citations`
+/// shape that the gwiki contract freezes for `code --repair-citations`
 /// (Leaf 5 / #876): a stable key set with no `dry_run` mode.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct CitationRepairSummary {

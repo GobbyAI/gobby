@@ -100,7 +100,7 @@ pub(crate) fn execute(
     // Keep the deterministic catalog (`code/INDEX.md`, `knowledge/INDEX.md`,
     // `_index.md`) in sync with on-disk vault state after indexing. Previously
     // only `compile`/`recap` regenerated it, so the codewiki nightly flow
-    // (`gcode codewiki` -> `gwiki index`, which rewrites/removes module pages)
+    // (`gwiki code` -> `gwiki index`, which rewrites/removes module pages)
     // left `code/INDEX.md` stale: it kept linking deleted synthetic-cluster
     // module pages, growing `curated_broken_link_count` every heal.
     crate::catalog::regenerate(scope.root(), &output_scope)?;

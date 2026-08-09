@@ -29,18 +29,8 @@ a stable JSON shape under `--format json`; the keys are pinned in
 - `imports`, `blast-radius` — the paged graph envelope (`project_id, total,
   offset, limit, results[]`, each row carrying `id, name, file_path, line,
   confidence, relation, distance, metadata, hint`)
-- `codewiki` — a generation run-summary, or under `--repair-citations` the
-  citation-repair summary
 
 Stored symbol records carry the AI `summary`, never the raw `docstring`.
-
-### Citation repair
-
-`gcode codewiki --repair-citations` re-anchors existing pages' `[file:line]`
-citations against the current index and rewrites only the pages whose citations
-changed. It runs no generation and makes no AI/LLM calls. The JSON summary keys
-are `pages_scanned`, `pages_repaired`, `citations_repaired`, and
-`citations_unresolved`.
 
 ## Scope
 
