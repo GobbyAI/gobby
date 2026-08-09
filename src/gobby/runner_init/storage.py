@@ -117,7 +117,8 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     from gobby.storage.secrets import SecretStore
 
     runner.secret_store = SecretStore(runner.database)
-    runner.config_store = ConfigStore(runner.database)
+    runner.config_store = ConfigStore(runner.database, secret_store=runner.secret_store)
+    runner.config_store.initialize()
     from gobby.providers.capabilities.metadata_aliases import seed_model_metadata_aliases
 
     runner.secret_store.ensure_ready()
