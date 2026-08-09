@@ -33,6 +33,7 @@ from gobby.agents.spawn_executor_support import (
     _session_manager_validation_error,
     _spawn_terminal,
     _unsupported_sandbox_request_error,
+    schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import (
@@ -682,7 +683,11 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         config_overrides.append('sandbox_mode="danger-full-access"')
     cmd, _cmd_env = build_cli_command(
         cli="codex",
-        prompt=request.prompt or "",
+        # Never pass the prompt as a CLI argument: Codex 0.147+ starts the
+        # first turn at launch and cancels in-flight MCP client startup,
+        # which kills gobby MCP registration. The prompt is typed into the
+        # composer after launch instead (schedule_codex_prompt_delivery).
+        prompt="",
         auto_approve=True,
         working_directory=request.cwd,
         model=request.model,
@@ -721,6 +726,14 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
             child_session_id=gobby_session_id,
             status="failed",
             error=terminal_result.error or terminal_result.message,
+        )
+
+    if terminal_result.tmux_session_name:
+        schedule_codex_prompt_delivery(
+            terminal_spawner.session_manager,
+            terminal_result.tmux_session_name,
+            request.prompt or "",
+            spawn_context.agent_run_id,
         )
 
     return SpawnResult(

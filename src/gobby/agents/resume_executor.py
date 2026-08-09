@@ -23,6 +23,7 @@ from gobby.agents.resume_metadata import (
 )
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_resume
+from gobby.agents.spawn_executor_support import schedule_codex_prompt_delivery
 from gobby.agents.spawners.command_builder import build_cli_command
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
@@ -311,7 +312,11 @@ async def resume_agent_run(
     )
     command, _cmd_env = build_cli_command(
         cli=provider,
-        prompt=None if provider == "claude" else prompt,
+        # Claude appends its prompt after the MCP flags below; Codex receives
+        # its prompt as a post-launch composer paste because a CLI-argument
+        # prompt cancels its in-flight MCP client startup
+        # (schedule_codex_prompt_delivery).
+        prompt=None if provider in {"claude", "codex"} else prompt,
         resume_session_id=native_session_id,
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"codex", "droid", "grok"} else None,
@@ -373,9 +378,10 @@ async def resume_agent_run(
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
     pre_approve_directory(provider, cwd)
+    spawner = _tmux_spawner(daemon_config, resume_metadata)
     try:
         terminal_result = await asyncio.to_thread(
-            _tmux_spawner(daemon_config, resume_metadata).spawn,
+            spawner.spawn,
             command=command,
             cwd=cwd,
             env=env,
@@ -404,6 +410,13 @@ async def resume_agent_run(
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     tmux_session_name = getattr(terminal_result, "tmux_session_name", None)
+    if provider == "codex" and tmux_session_name:
+        schedule_codex_prompt_delivery(
+            spawner.session_manager,
+            tmux_session_name,
+            prompt,
+            run_id,
+        )
     runner.run_storage.merge_resume_metadata(
         run_id,
         {

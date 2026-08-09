@@ -33,6 +33,7 @@ from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.tmux import TmuxConfig
 
 if TYPE_CHECKING:
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.tmux.spawner import TmuxSpawner
 
 logger = logging.getLogger(__name__)
@@ -253,6 +254,93 @@ def _record_actual_sandbox_enforcement(
             spawn_context.session_id,
             sandbox_launch.policy_hash,
         )
+
+
+# Codex 0.147+ cancels in-flight MCP client startup when the first turn
+# begins, so a prompt passed as a CLI argument reliably prevents the spawned
+# gobby MCP server from registering (the CLI starts that turn at process
+# launch). A prompt typed into the composer does not interrupt startup, so
+# spawned and resumed Codex terminals receive their prompt as a post-launch
+# paste. Delivery must land well inside the session-init watchdog window.
+_CODEX_COMPOSER_MARKER = "›"
+_CODEX_COMPOSER_CAPTURE_LINES = 40
+_CODEX_COMPOSER_POLL_SECONDS = 1.0
+_CODEX_COMPOSER_READY_TIMEOUT_SECONDS = 60.0
+_CODEX_COMPOSER_SETTLE_SECONDS = 1.0
+_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS = 3.0
+_CODEX_PROMPT_DELIVERY_TASKS: set[asyncio.Task[None]] = set()
+
+
+def schedule_codex_prompt_delivery(
+    tmux: "TmuxSessionManager",
+    session_name: str,
+    prompt: str,
+    run_id: str,
+) -> bool:
+    """Schedule a typed-paste prompt delivery to a spawned Codex terminal.
+
+    Returns True when a delivery task was scheduled.
+    """
+    if not prompt:
+        return False
+    task = asyncio.get_running_loop().create_task(
+        _deliver_codex_prompt(tmux, session_name, prompt, run_id)
+    )
+    _CODEX_PROMPT_DELIVERY_TASKS.add(task)
+    task.add_done_callback(_CODEX_PROMPT_DELIVERY_TASKS.discard)
+    return True
+
+
+async def _deliver_codex_prompt(
+    tmux: "TmuxSessionManager",
+    session_name: str,
+    prompt: str,
+    run_id: str,
+) -> None:
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _CODEX_COMPOSER_READY_TIMEOUT_SECONDS
+        while True:
+            try:
+                pane = await tmux.capture_pane(
+                    session_name,
+                    lines=_CODEX_COMPOSER_CAPTURE_LINES,
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to inspect Codex composer readiness for run %s",
+                    run_id,
+                    exc_info=True,
+                )
+                pane = None
+            if pane and _CODEX_COMPOSER_MARKER in pane:
+                break
+            if loop.time() >= deadline:
+                # Never type into a pane that is not showing the composer: if
+                # the CLI died the pane may be gone or a shell, and the
+                # session-init watchdog already owns that failure path.
+                logger.error(
+                    "Codex composer never rendered for run %s; prompt not delivered",
+                    run_id,
+                )
+                return
+            await asyncio.sleep(_CODEX_COMPOSER_POLL_SECONDS)
+        await asyncio.sleep(_CODEX_COMPOSER_SETTLE_SECONDS)
+        if not await tmux.send_keys(session_name, f"{prompt}\n", literal=True):
+            logger.error(
+                "Failed to paste spawn prompt into Codex terminal for run %s",
+                run_id,
+            )
+            return
+        # A composer still settling the bracketed paste can swallow the
+        # trailing Enter; this follow-up Enter submits in that case and is a
+        # no-op on an already-submitted composer.
+        await asyncio.sleep(_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS)
+        await tmux.send_keys(session_name, "Enter", literal=False)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception("Codex prompt delivery failed for run %s", run_id)
 
 
 def _codex_mcp_config_overrides(

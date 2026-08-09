@@ -20,6 +20,19 @@ pytestmark = pytest.mark.unit
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
 
+@pytest.fixture(autouse=True)
+def mock_codex_prompt_delivery(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Keep the fire-and-forget Codex prompt delivery task out of resume tests.
+
+    Codex resumes schedule a real background coroutine against the spawner's
+    tmux session manager; against MagicMock spawners that coroutine would
+    outlive the test's event loop. Tests that assert delivery use this mock.
+    """
+    mock_delivery = MagicMock(return_value=True)
+    monkeypatch.setattr(resume_executor, "schedule_codex_prompt_delivery", mock_delivery)
+    return mock_delivery
+
+
 def _original_run(*, provider: str = "codex") -> AgentRun:
     return AgentRun(
         id="e87bc595-eb81-4cd2-9745-06fc59dcd13d",
@@ -107,6 +120,64 @@ def _patch_common(
     monkeypatch.setattr(resume_executor, "notify_parent_of_recovery", MagicMock())
     monkeypatch.setattr(resume_executor, "_fire_resume_started", MagicMock())
     return prepare
+
+
+@pytest.mark.asyncio
+async def test_codex_resume_delivers_prompt_via_composer_not_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_codex_prompt_delivery: MagicMock,
+) -> None:
+    """A CLI-argument prompt cancels Codex's in-flight MCP client startup."""
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=_resume_metadata(),
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = spawner.spawn.call_args.kwargs["command"]
+    assert command[0:2] == ["codex", "resume"]
+    assert command[-1] == "native-123"
+    assert "Continue" not in command
+    mock_codex_prompt_delivery.assert_called_once_with(
+        spawner.session_manager,
+        "gobby-resume-successor",
+        "Continue",
+        str(_SUCCESSOR_ID),
+    )
+
+
+@pytest.mark.asyncio
+async def test_claude_resume_keeps_prompt_in_argv(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_codex_prompt_delivery: MagicMock,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = "claude"
+    runner = _runner()
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider="claude"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = spawner.spawn.call_args.kwargs["command"]
+    assert command[-1] == "Continue"
+    mock_codex_prompt_delivery.assert_not_called()
 
 
 @pytest.mark.asyncio
