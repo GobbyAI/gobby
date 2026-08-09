@@ -1,0 +1,35 @@
+tags: [impeccable, design, gobby, default]
+
+# Gobby rules own Impeccable edit-time enforcement (see the bundled impeccable
+# skill's references/hooks.md). The detector scripts live in the project's
+# installed skill root; when that root is absent the run_command effect
+# fail-opens and the rules are inert. The detector reads the raw hook event
+# JSON on stdin and routes on hook_event_name (Claude-style names), so the
+# deep pass activates where the raw stop event carries hook_event_name: Stop
+# and degrades to a silent no-op elsewhere.
+
+rules:
+  impeccable-edit-pass:
+    description: "Run the Impeccable immediate-tier design detector after UI file edits"
+    event: after_tool
+    enabled: true
+    priority: 60
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_file_path', '').endswith(('.tsx', '.jsx', '.ts', '.js', '.mjs', '.cjs', '.vue', '.svelte', '.astro', '.css', '.scss', '.html'))
+    effects:
+      - type: run_command
+        command: ["node", ".agents/skills/impeccable/scripts/hook.mjs"]
+        timeout_seconds: 5
+        inject_result: true
+
+  impeccable-deep-pass:
+    description: "Run the Impeccable full-rule deep pass at turn end; findings arrive next turn"
+    event: turn_end
+    enabled: true
+    priority: 60
+    effects:
+      - type: run_command
+        command: ["node", ".agents/skills/impeccable/scripts/hook.mjs"]
+        timeout_seconds: 30
+        background: true

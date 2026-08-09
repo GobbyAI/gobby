@@ -134,6 +134,7 @@ class RuleEffect(BaseModel):
         "set_worktree_path",
         "set_elicitation",
         "load_skill",
+        "run_command",
     ]
 
     # Per-effect condition (gates this individual effect within a multi-effect rule)
@@ -191,6 +192,12 @@ class RuleEffect(BaseModel):
     # load_skill — emit an on-demand skill fetch directive into agent context
     skill: str | None = None
 
+    # run_command — spawn a local command with the hook event JSON on stdin.
+    # Fail-open by design: missing executable/script, non-zero exit, timeout, or
+    # unparseable output never blocks the event. Reuses background/inject_result.
+    command: list[str] | None = None
+    timeout_seconds: float | None = None
+
     @model_validator(mode="after")
     def _validate_required_fields(self) -> RuleEffect:
         required_fields: dict[str, tuple[str, ...]] = {
@@ -202,6 +209,7 @@ class RuleEffect(BaseModel):
             "set_watch_paths": ("watch_paths",),
             "set_worktree_path": ("worktree_path",),
             "load_skill": ("skill",),
+            "run_command": ("command",),
         }
         missing = [
             field_name
@@ -281,6 +289,13 @@ class RuleEffect(BaseModel):
                 *selector_fields,
             },
             "load_skill": {"skill", *selector_fields},
+            "run_command": {
+                "command",
+                "timeout_seconds",
+                "background",
+                "inject_result",
+                *selector_fields,
+            },
         }
         # Fields with non-None defaults that shouldn't trigger warnings
         _default_skip = {

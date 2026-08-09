@@ -372,21 +372,13 @@ function setEnabled(cwd, value) {
   }
 
   const localTarget = writeHookConfig(cwd, { consent: 'accepted' }, { local: true });
-  const repaired = repairHookManifests(cwd);
+  // Gobby rules own edit-time enforcement (see references/hooks.md); this flow
+  // must never install or repair provider hook manifests.
   const parts = [
     `Design hook enabled for this project (wrote ${path.relative(cwd, target) || target}).`,
     `Recorded local hook consent in ${path.relative(cwd, localTarget) || localTarget}.`,
+    'Gobby rules own edit-time enforcement; no provider hook manifests were written.',
   ];
-  if (repaired.written.length > 0) {
-    parts.push(`Installed or repaired hook manifests for: ${repaired.written.join(', ')}.`);
-  } else if (repaired.already.length > 0) {
-    parts.push(`Hook manifests already installed for: ${repaired.already.join(', ')}.`);
-  } else {
-    parts.push('No installed provider skill folders found to repair.');
-  }
-  if (repaired.backups.length > 0) {
-    parts.push(`Backed up malformed manifest(s): ${repaired.backups.map((filePath) => path.relative(cwd, filePath) || filePath).join(', ')}.`);
-  }
   return parts.join(' ');
 }
 
