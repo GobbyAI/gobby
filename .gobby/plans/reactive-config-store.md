@@ -1093,12 +1093,12 @@ this plan provides.
 
 ```yaml
 deferral:
-  task_ref: "#0"
+  task_ref: "#19982"
   reason: >-
     Final raw-access deletion is gated on #19650 auth consumers adopting the
     restricted typed API; an in-plan manifest entry cannot encode an external
-    task dependency. The task_ref is a placeholder until expansion creates the
-    epic-parented tail task.
+    task dependency. Expansion created the epic-parented tail task #19982,
+    blocked by #19650 and the section 4.1 leaf #19980.
   owner: "backend-developer"
   original_acceptance_items:
     - "4.3.1"
