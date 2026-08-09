@@ -14,9 +14,10 @@ from gobby.utils.machine_id import require_machine_id
 def _validate_relation_path(file_path: str) -> None:
     if not file_path:
         raise ValueError("relation path must not be empty")
-    if PurePath(file_path).is_absolute() or PureWindowsPath(file_path).is_absolute():
+    windows_path = PureWindowsPath(file_path)
+    if PurePath(file_path).is_absolute() or windows_path.is_absolute() or windows_path.drive:
         raise ValueError("relation path must be repository-relative")
-    if ".." in PurePath(file_path).parts or ".." in PureWindowsPath(file_path).parts:
+    if ".." in PurePath(file_path).parts or ".." in windows_path.parts:
         raise ValueError("relation path must not contain '..' segments")
 
 
@@ -47,6 +48,8 @@ class CodeIndexRelationStorageMixin:
         _validate_relation_path(file_path)
         for relation in imports:
             _validate_relation_path(relation.source_file)
+            if relation.source_file != file_path:
+                raise ValueError("import relation source_file must match batch file_path")
         content_hash = self._current_file_content_hash(project_id, file_path)
         with self.db.transaction() as conn:
             cursor = conn.executemany(
@@ -72,6 +75,8 @@ class CodeIndexRelationStorageMixin:
         _validate_relation_path(file_path)
         for relation in calls:
             _validate_relation_path(relation.file_path)
+            if relation.file_path != file_path:
+                raise ValueError("call relation file_path must match batch file_path")
         content_hash = self._current_file_content_hash(project_id, file_path)
         with self.db.transaction() as conn:
             cursor = conn.executemany(

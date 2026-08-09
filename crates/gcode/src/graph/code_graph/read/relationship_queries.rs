@@ -299,7 +299,7 @@ mod tests {
         // (source.id, r.line, r.file) is not unique across edges; without the
         // internal edge id tiebreaker SKIP/LIMIT paging can duplicate or drop
         // tied rows at page boundaries.
-        assert!(query.contains("ORDER BY source.id, r.line, r.file"));
+        assert!(query.contains("ORDER BY source.id, r.line, r.file, id(r)"));
     }
 
     #[test]

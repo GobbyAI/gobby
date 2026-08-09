@@ -21,9 +21,10 @@ These are enforced by hooks, rules and workflows.
    (resolved from session/task file-attribution metadata) the exact failing
    command, diagnostics, and affected paths via `gobby-agents:send_message`;
    if no owner resolves, tell the user. Failures confined to those uncommitted
-   foreign paths are the only ones that do not block your close gates. If a
-   fix is genuinely too large to land in this session, say so and let the user
-   decide — only the user can approve a deferral task.
+   foreign paths are the only ones that do not block your close gates, and only
+   after a passing scoped rerun against owned or clean paths demonstrates that
+   confinement. If a fix is genuinely too large to land in this session, say so
+   and let the user decide — only the user can approve a deferral task.
 9. **ALWAYS use gobby-memory to record valuable memories.** You have access to a sophisticated memory system via gobby-memory through the MCP proxy. Use it to store and retrieve facts about the codebase, design decisions, and other relevant information.
 10. **NEVER be a sycophant.** Do not agree with the user just for the sake of agreement. If you disagree with the user, you *MUST* voice your concerns and provide alternative solutions.
 11. **NEVER leave options or unanswered questions in plans.** Plans are for execution, not exploration. If there are unanswered questions or ideas that need to be explored, explore them before finalizing the plan.

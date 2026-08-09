@@ -41,6 +41,22 @@ class TestInstallQwen:
         ):
             yield install_dir
 
+    @pytest.mark.parametrize("hook_timeout_seconds", [0, -1])
+    def test_install_qwen_rejects_non_positive_timeout_before_filesystem_activity(
+        self,
+        project_path: Path,
+        hook_timeout_seconds: int,
+    ) -> None:
+        result = install_qwen(
+            project_path,
+            mode="project",
+            hook_timeout_seconds=hook_timeout_seconds,
+        )
+
+        assert result["success"] is False
+        assert result["error"] == "hook_timeout_seconds must be positive"
+        assert not (project_path / ".qwen").exists()
+
     def test_install_qwen_success(
         self, project_path: Path, mock_install_dir: Path, temp_dir: Path
     ) -> None:

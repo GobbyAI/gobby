@@ -46,6 +46,18 @@ pub(crate) const MAX_DATA_LANGUAGE_AST_SIZE: u64 = 1024 * 1024;
 #[cfg(test)]
 mod tests {
     #[test]
+    #[cfg(windows)]
+    fn storage_paths_normalize_windows_backslashes() {
+        let path = std::path::Path::new(r"src\nested\lib.rs");
+
+        assert_eq!(super::normalize_storage_path(path), "src/nested/lib.rs");
+        assert_eq!(
+            super::normalize_storage_path_str(r"src\nested\lib.rs"),
+            "src/nested/lib.rs"
+        );
+    }
+
+    #[test]
     #[cfg(not(windows))]
     fn storage_path_preserves_unix_filename_backslashes() {
         let path = std::path::Path::new(r"src/name\with-backslash.rs");

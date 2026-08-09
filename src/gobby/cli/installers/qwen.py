@@ -77,6 +77,10 @@ def install_qwen(
         "error": None,
     }
 
+    if hook_timeout_seconds <= 0:
+        result["error"] = "hook_timeout_seconds must be positive"
+        return result
+
     hooks_dir = Path.home() / ".gobby" / "hooks"
     qwen_path = Path.home() / ".qwen" if mode == "global" else project_path / ".qwen"
     settings_file = qwen_path / "settings.json"

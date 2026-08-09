@@ -161,17 +161,18 @@ fn prune_project_scoped(
 }
 
 fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result<()> {
-    let discovery = discover_global_prune(quiet, retention_days)?;
+    let mut discovery = discover_global_prune(quiet, retention_days)?;
     let pending = discovery.destructive_set();
     if !authorize_prune_with(force, &pending, |_| confirm_global_prune(&discovery))? {
         eprintln!("Aborted.");
         return Ok(());
     }
 
-    let collection_totals = mutate_orphan_collections(&discovery);
-    let graph_totals = mutate_orphan_graph_scopes(&discovery);
     let stale_totals = mutate_stale_projects(&discovery);
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
+    refresh_global_projection_inventories(&mut discovery, &pending)?;
+    let collection_totals = mutate_orphan_collections(&discovery);
+    let graph_totals = mutate_orphan_graph_scopes(&discovery);
     let content_gc_totals =
         prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
     print_content_gc_totals(&content_gc_totals);
@@ -237,6 +238,22 @@ fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<Glo
         quiet,
         config::ServiceConfigSelection::projection_cleanup(),
     )?;
+    let (collections, graph_scopes) =
+        discover_projection_inventories(&services, &project_discovery)?;
+
+    Ok(GlobalPruneDiscovery {
+        services,
+        stale_projects: project_discovery.stale_projects,
+        collections,
+        graph_scopes,
+        content_gc_candidates,
+    })
+}
+
+fn discover_projection_inventories(
+    services: &Context,
+    project_discovery: &GlobalProjectPruneDiscovery,
+) -> anyhow::Result<(Option<CollectionInventory>, Option<ScopeInventory>)> {
     let collections = services
         .qdrant
         .as_ref()
@@ -264,14 +281,36 @@ fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<Glo
             })
         })
         .transpose()?;
+    Ok((collections, graph_scopes))
+}
 
-    Ok(GlobalPruneDiscovery {
-        services,
-        stale_projects: project_discovery.stale_projects,
-        collections,
-        graph_scopes,
-        content_gc_candidates,
-    })
+fn refresh_global_projection_inventories(
+    discovery: &mut GlobalPruneDiscovery,
+    authorized: &DestructiveSet,
+) -> anyhow::Result<()> {
+    let projects = collect_projects()?;
+    let project_discovery = discover_global_project_prune(&projects);
+    let (collections, graph_scopes) =
+        discover_projection_inventories(&discovery.services, &project_discovery)?;
+    discovery.collections = collections.map(|mut inventory| {
+        inventory
+            .existing_orphan_ids
+            .retain(|id| authorized.orphan_collection_ids.contains(id));
+        inventory
+            .would_be_orphan_ids
+            .retain(|id| authorized.orphan_collection_ids.contains(id));
+        inventory
+    });
+    discovery.graph_scopes = graph_scopes.map(|mut inventory| {
+        inventory
+            .existing_orphan_ids
+            .retain(|id| authorized.orphan_graph_scope_ids.contains(id));
+        inventory
+            .would_be_orphan_ids
+            .retain(|id| authorized.orphan_graph_scope_ids.contains(id));
+        inventory
+    });
+    Ok(())
 }
 
 fn discover_global_project_prune(

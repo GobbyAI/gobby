@@ -121,6 +121,50 @@ pub(crate) fn delete_stale_file_graph_queries(
     Ok(queries)
 }
 
+pub(crate) fn delete_content_version_queries(
+    project_id: &str,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<Vec<TypedQuery>> {
+    let base_params = || {
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+            ("content_hash", TypedValue::String(content_hash.to_string())),
+        ]
+    };
+    Ok(vec![
+        typed_query(
+            "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:IMPORTS]->(:CodeModule {project: $project})
+             WHERE r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (f:CodeFile {path: $file_path, project: $project})-[r:DEFINES]->(:CodeSymbol {project: $project})
+             WHERE r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project})-[r:CALLS]->(n {project: $project})
+             WHERE (r.file = $file_path OR r.source_file_path = $file_path)
+               AND r.content_hash = $content_hash
+             DELETE r",
+            base_params(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {
+                project: $project,
+                file_path: $file_path,
+                file_content_hash: $content_hash
+             })
+             DETACH DELETE s",
+            base_params(),
+        )?,
+    ])
+}
+
 pub(crate) fn delete_file_node_query(
     project_id: &str,
     file_path: &str,

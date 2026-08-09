@@ -20,6 +20,7 @@ pub(super) struct ContentGcCandidate {
     pub(super) file_path: String,
     pub(super) content_hash: String,
     pub(super) symbol_ids: Vec<String>,
+    pub(super) has_graph_facts: bool,
     pub(super) graph_synced: bool,
     pub(super) vectors_synced: bool,
 }
@@ -49,6 +50,26 @@ pub(super) fn discover_content_gc(
                 f.content_hash,
                 f.graph_synced,
                 f.vectors_synced,
+                (
+                    EXISTS (
+                        SELECT 1 FROM code_symbols graph_symbol
+                        WHERE graph_symbol.project_id = f.project_id
+                          AND graph_symbol.file_path = f.file_path
+                          AND graph_symbol.file_content_hash = f.content_hash
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM code_imports graph_import
+                        WHERE graph_import.project_id = f.project_id
+                          AND graph_import.source_file = f.file_path
+                          AND graph_import.content_hash = f.content_hash
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM code_calls graph_call
+                        WHERE graph_call.project_id = f.project_id
+                          AND graph_call.file_path = f.file_path
+                          AND graph_call.content_hash = f.content_hash
+                    )
+                ) AS has_graph_facts,
                 ps.root_path,
                 COALESCE(
                     array_agg(s.id::text ORDER BY s.id)
@@ -115,6 +136,7 @@ pub(super) fn discover_content_gc(
             file_path,
             content_hash,
             symbol_ids: row.try_get("symbol_ids")?,
+            has_graph_facts: row.try_get("has_graph_facts")?,
             graph_synced: row.try_get("graph_synced")?,
             vectors_synced: row.try_get("vectors_synced")?,
         });
@@ -178,12 +200,12 @@ fn prune_content_versions_with(
 
         // A store that is not configured on this machine cannot be cleaned
         // here. Deleting the SQL row anyway would strand this version's
-        // per-symbol projections in the shared store forever, so retain the
+        // content-scoped projections in the shared store forever, so retain the
         // row for a machine that has the store configured.
-        let has_projections = !candidate.symbol_ids.is_empty();
-        let graph_unreachable = has_projections && candidate.graph_synced && ctx.falkordb.is_none();
+        let graph_unreachable =
+            candidate.has_graph_facts && candidate.graph_synced && ctx.falkordb.is_none();
         let vectors_unreachable =
-            has_projections && candidate.vectors_synced && ctx.qdrant.is_none();
+            !candidate.symbol_ids.is_empty() && candidate.vectors_synced && ctx.qdrant.is_none();
         if graph_unreachable || vectors_unreachable {
             log::warn!(
                 "retaining content version {}:{}@{}: its projection store(s) are not configured on this machine",
@@ -236,13 +258,14 @@ fn delete_candidate_projections(
     ctx: &Context,
     candidate: &ContentGcCandidate,
 ) -> anyhow::Result<()> {
-    if ctx.falkordb.is_some() {
-        code_graph::delete_symbol_ids(ctx, &candidate.symbol_ids).with_context(|| {
-            format!(
-                "delete graph symbols for {}:{}@{}",
-                candidate.project_id, candidate.file_path, candidate.content_hash
-            )
-        })?;
+    if candidate.has_graph_facts && ctx.falkordb.is_some() {
+        code_graph::delete_content_version(ctx, &candidate.file_path, &candidate.content_hash)
+            .with_context(|| {
+                format!(
+                    "delete graph content version for {}:{}@{}",
+                    candidate.project_id, candidate.file_path, candidate.content_hash
+                )
+            })?;
     }
     if let Some(qdrant) = ctx.qdrant.as_ref() {
         code_symbols::delete_symbol_vectors(qdrant, &candidate.project_id, &candidate.symbol_ids)
@@ -368,6 +391,16 @@ fn recent_content_hashes_in_git_history(
         }
         Ok(hashes)
     })();
+    let hashes = match parsed {
+        Ok(hashes) => hashes,
+        Err(error) => {
+            drop(reader);
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = writer.join();
+            return Err(error);
+        }
+    };
     writer
         .join()
         .map_err(|_| anyhow::anyhow!("git cat-file input writer panicked"))?
@@ -381,7 +414,7 @@ fn recent_content_hashes_in_git_history(
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    parsed
+    Ok(hashes)
 }
 
 #[cfg(test)]

@@ -21,8 +21,9 @@ mod sync_plan;
 
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
-    count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
-    delete_symbol_ids_query, project_file_path_queries, project_scopes_query,
+    count_file_projection_nodes_query, delete_content_version_queries, delete_file_graph_queries,
+    delete_file_node_query, delete_symbol_ids_query, project_file_path_queries,
+    project_scopes_query,
 };
 pub use mutation::call_target_id;
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
@@ -231,6 +232,17 @@ impl<'a> CodeGraph<'a> {
         Ok(())
     }
 
+    pub(crate) fn delete_content_version(
+        &mut self,
+        file_path: &str,
+        content_hash: &str,
+    ) -> anyhow::Result<()> {
+        for query in delete_content_version_queries(self.project_id, file_path, content_hash)? {
+            execute_write_query(self.client, query)?;
+        }
+        self.cleanup_orphans()
+    }
+
     pub fn delete_file_graph(
         &mut self,
         file_path: &str,
@@ -391,6 +403,16 @@ pub fn delete_file_graph(
 ) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).delete_file_graph(file_path, current_symbol_ids)
+    })
+}
+
+pub(crate) fn delete_content_version(
+    ctx: &Context,
+    file_path: &str,
+    content_hash: &str,
+) -> anyhow::Result<()> {
+    with_required_core_graph(ctx, |client| {
+        CodeGraph::new(&ctx.project_id, client).delete_content_version(file_path, content_hash)
     })
 }
 

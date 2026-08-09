@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-import psycopg
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from tests.e2e.conftest import DaemonInstance, daemon_auth_headers
 
 pytestmark = pytest.mark.e2e
@@ -43,17 +43,6 @@ Implement the covered behavior.
 """
 
 
-def _database_url(daemon: DaemonInstance) -> str:
-    from gobby.config.bootstrap import load_bootstrap
-
-    bootstrap = load_bootstrap(
-        str(daemon.config_path.parent / "bootstrap.yaml"),
-        resolve_database_url=True,
-    )
-    assert bootstrap.database_url is not None
-    return bootstrap.database_url
-
-
 def _register_project(client: httpx.Client, repo_path: Path) -> None:
     response = client.post(
         "/api/admin/test/register-project",
@@ -66,7 +55,7 @@ def _register_project(client: httpx.Client, repo_path: Path) -> None:
     assert response.is_success, response.text
 
 
-def _seed_tasks(database_url: str) -> str:
+def _seed_tasks(postgres_db: HubDatabase) -> str:
     """Bulk-insert a flat task tree big enough to wedge the pre-fix loader.
 
     Returns the root task ref covering the plan.
@@ -123,23 +112,21 @@ def _seed_tasks(database_url: str) -> str:
             leaf_created,
         )
     )
-    with psycopg.connect(database_url) as conn:
-        with conn.cursor() as cursor:
-            cursor.executemany(
-                """
-                INSERT INTO tasks (
-                    id, project_id, title, priority, task_type, seq_num,
-                    path_cache, parent_task_id, validation_criteria,
-                    created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                rows,
-            )
-            cursor.execute(
-                "UPDATE tasks SET labels = %s::jsonb WHERE project_id = %s AND seq_num = %s",
-                (f'["covers:{PLAN_ID}:A1:A1.1"]', PROJECT_ID, SEEDED_TASKS + 2),
-            )
-        conn.commit()
+    with postgres_db.transaction() as conn:
+        conn.executemany(
+            """
+            INSERT INTO tasks (
+                id, project_id, title, priority, task_type, seq_num,
+                path_cache, parent_task_id, validation_criteria,
+                created_at, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            rows,
+        )
+        conn.execute(
+            "UPDATE tasks SET labels = %s::jsonb WHERE project_id = %s AND seq_num = %s",
+            (f'["covers:{PLAN_ID}:A1:A1.1"]', PROJECT_ID, SEEDED_TASKS + 2),
+        )
     return f"#{SEEDED_TASKS + 1}"
 
 
@@ -168,16 +155,16 @@ def _call_tool(
 @pytest.mark.timeout(600)
 def test_http_plane_responsive_during_coverage_regeneration(
     daemon_instance: DaemonInstance,
+    postgres_db: HubDatabase,
 ) -> None:
     gobby_home = daemon_instance.gobby_home
-    database_url = _database_url(daemon_instance)
     headers = daemon_auth_headers(gobby_home)
 
     with httpx.Client(
         base_url=daemon_instance.http_url, headers=headers, timeout=300.0
     ) as slow_client:
         _register_project(slow_client, daemon_instance.project_dir)
-        root_ref = _seed_tasks(database_url)
+        root_ref = _seed_tasks(postgres_db)
 
         plan_dir = daemon_instance.project_dir / ".gobby" / "plans"
         plan_dir.mkdir(parents=True, exist_ok=True)
@@ -202,6 +189,7 @@ def test_http_plane_responsive_during_coverage_regeneration(
 
         update_result: dict[str, Any] = {}
         update_error: list[BaseException] = []
+        update_finished = threading.Event()
 
         def _update() -> None:
             try:
@@ -214,6 +202,8 @@ def test_http_plane_responsive_during_coverage_regeneration(
                 )
             except BaseException as exc:  # noqa: BLE001 - surfaced via assertion below
                 update_error.append(exc)
+            finally:
+                update_finished.set()
 
         update_thread = threading.Thread(target=_update, name="update-plan-hash")
 
@@ -226,7 +216,7 @@ def test_http_plane_responsive_during_coverage_regeneration(
         ) as health_client:
             update_thread.start()
             try:
-                while update_thread.is_alive():
+                while not update_finished.is_set():
                     started = time.monotonic()
                     try:
                         response = health_client.get("/api/admin/health")
@@ -238,7 +228,7 @@ def test_http_plane_responsive_during_coverage_regeneration(
                     except httpx.HTTPError as exc:
                         elapsed = time.monotonic() - started
                         health_failures.append(f"{type(exc).__name__} after {elapsed:.2f}s")
-                    time.sleep(0.2)
+                    update_finished.wait(timeout=0.2)
             finally:
                 update_thread.join(timeout=300.0)
             assert not update_thread.is_alive(), "update_plan_hash never returned"

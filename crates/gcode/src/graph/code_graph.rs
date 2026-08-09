@@ -21,6 +21,7 @@ pub use read::{
     find_usage_ids, find_usages, get_imports, project_overview_graph, resolve_external_call_target,
     shortest_symbol_path, symbol_neighbors,
 };
+pub(crate) use write::delete_content_version;
 pub use write::{
     CodeGraph, GraphOrphanCleanup, call_target_id, cleanup_deleted_files, cleanup_orphans,
     clear_all_code_index, clear_project, delete_file_graph, delete_file_projection,
@@ -45,7 +46,7 @@ use read::{blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls
 #[cfg(test)]
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
-    count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
-    import_graph_items, partition_call_graph_items, project_file_path_queries,
-    project_scopes_query,
+    count_file_projection_nodes_query, delete_content_version_queries, delete_file_graph_queries,
+    delete_file_node_query, import_graph_items, partition_call_graph_items,
+    project_file_path_queries, project_scopes_query,
 };

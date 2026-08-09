@@ -524,6 +524,7 @@ def test_task_tree_source_hash_is_order_insensitive() -> None:
 
     assert forward.header.task_tree_source_hash == reversed_order.header.task_tree_source_hash
     assert forward.rows[0].status is CoverageStatus.covered
+    assert reversed_order.rows[0].status is CoverageStatus.covered
 
 
 def test_db_deferral_uses_project_records_without_widening_root_scope(

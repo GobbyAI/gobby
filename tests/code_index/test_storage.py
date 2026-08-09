@@ -323,7 +323,10 @@ def test_get_calls_for_file_round_trips_optional_fields_as_none(
     ]
 
 
-@pytest.mark.parametrize("file_path", ["", "/src/app.py", "../src/app.py", "C:\\src\\app.py"])
+@pytest.mark.parametrize(
+    "file_path",
+    ["", "/src/app.py", "../src/app.py", "C:\\src\\app.py", "C:src\\app.py"],
+)
 def test_upsert_imports_validates_all_paths_before_storage(file_path: str) -> None:
     db = MagicMock()
     storage = CodeIndexStorage(cast(HubDatabase, db))
@@ -367,6 +370,41 @@ def test_upsert_calls_rejects_invalid_relation_path_before_storage() -> None:
     with (
         patch.object(storage, "_current_file_content_hash") as content_hash,
         pytest.raises(ValueError),
+    ):
+        storage.upsert_calls(PROJECT_ID, "src/app.py", [relation])
+
+    content_hash.assert_not_called()
+    db.transaction.assert_not_called()
+
+
+def test_upsert_imports_rejects_mismatched_source_file_before_storage() -> None:
+    db = MagicMock()
+    storage = CodeIndexStorage(cast(HubDatabase, db))
+    relation = ImportRelation(source_file="src/other.py", target_module="app")
+
+    with (
+        patch.object(storage, "_current_file_content_hash") as content_hash,
+        pytest.raises(ValueError, match="source_file must match batch file_path"),
+    ):
+        storage.upsert_imports(PROJECT_ID, "src/app.py", [relation])
+
+    content_hash.assert_not_called()
+    db.transaction.assert_not_called()
+
+
+def test_upsert_calls_rejects_mismatched_file_path_before_storage() -> None:
+    db = MagicMock()
+    storage = CodeIndexStorage(cast(HubDatabase, db))
+    relation = CallRelation(
+        caller_symbol_id=CALLER_SYMBOL_ID,
+        callee_name="target",
+        file_path="src/other.py",
+        line=1,
+    )
+
+    with (
+        patch.object(storage, "_current_file_content_hash") as content_hash,
+        pytest.raises(ValueError, match="file_path must match batch file_path"),
     ):
         storage.upsert_calls(PROJECT_ID, "src/app.py", [relation])
 

@@ -97,6 +97,7 @@ def test_equal_sort_keys_preserve_input_order() -> None:
     assert [task.id for task in result] == [task.id for task in tasks]
 
 
+@pytest.mark.slow
 def test_large_flat_sibling_group_sorts_quickly() -> None:
     """#19878 regression: 10k parentless siblings must sort in near-linear time.
 

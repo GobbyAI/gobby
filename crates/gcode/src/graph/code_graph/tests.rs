@@ -457,6 +457,45 @@ fn delete_preserves_current_symbols() {
 }
 
 #[test]
+fn content_version_delete_is_project_path_and_hash_scoped() {
+    let queries = delete_content_version_queries("project-1", "src/lib.rs", "hash-old")
+        .expect("content-version delete queries");
+    let combined = queries
+        .iter()
+        .map(|query| query.cypher.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    assert_eq!(queries.len(), 4);
+    assert!(combined.contains("[r:IMPORTS]"), "{combined}");
+    assert!(combined.contains("[r:DEFINES]"), "{combined}");
+    assert!(combined.contains("[r:CALLS]"), "{combined}");
+    assert!(
+        combined.contains("file_content_hash: $content_hash"),
+        "{combined}"
+    );
+    assert_eq!(
+        combined.matches("r.content_hash = $content_hash").count(),
+        3
+    );
+    assert!(!combined.contains("sync_token"), "{combined}");
+    for query in &queries {
+        assert_eq!(
+            query.params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+        assert_eq!(
+            query.params.get("file_path").map(String::as_str),
+            Some("'src/lib.rs'")
+        );
+        assert_eq!(
+            query.params.get("content_hash").map(String::as_str),
+            Some("'hash-old'")
+        );
+    }
+}
+
+#[test]
 fn cleanup_orphans_is_project_scoped() {
     let queries = cleanup_orphans_queries("project-1").expect("queries");
     assert_eq!(queries.len(), 3);

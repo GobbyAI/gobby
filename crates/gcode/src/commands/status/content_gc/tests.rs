@@ -174,6 +174,7 @@ mod serial_db {
             file_path: "src/keep.rs".to_string(),
             content_hash: "gc-hash-keep".to_string(),
             symbol_ids: Vec::new(),
+            has_graph_facts: false,
             graph_synced: true,
             vectors_synced: true,
         });
@@ -294,10 +295,36 @@ mod serial_db {
             false,
         );
         seed_symbol(&mut conn, &project_id, "src/other.rs", "gc-hash-unsynced");
+        let import_only_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/imports.rs",
+            "gc-hash-imports",
+            60,
+            true,
+        );
+        seed_import(&mut conn, &project_id, "src/imports.rs", "gc-hash-imports");
+        let call_only_id = seed_content_version(
+            &mut conn,
+            &project_id,
+            "src/calls.rs",
+            "gc-hash-calls",
+            60,
+            true,
+        );
+        seed_call(&mut conn, &project_id, "src/calls.rs", "gc-hash-calls");
 
         let candidates = discover_content_gc(&database_url, 17, Some(&project_id))
             .expect("discover GC candidates");
-        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates.len(), 4);
+        for file_path in ["src/imports.rs", "src/calls.rs"] {
+            let candidate = candidates
+                .iter()
+                .find(|candidate| candidate.file_path == file_path)
+                .expect("relation-only content candidate");
+            assert!(candidate.symbol_ids.is_empty());
+            assert!(candidate.has_graph_facts);
+        }
 
         // test_context configures neither FalkorDB nor Qdrant.
         let services = test_context(&database_url, &project_id);
@@ -306,13 +333,15 @@ mod serial_db {
         })
         .expect("prune content versions");
 
-        assert_eq!(totals.skipped_versions, 1);
+        assert_eq!(totals.skipped_versions, 3);
         assert_eq!(totals.deleted_versions, 1);
         assert_eq!(totals.failed_versions, 0);
         // The synced version keeps its row and flags for a machine that can
         // reach the stores; the never-projected version is deleted.
         assert_eq!(content_row_count(&mut conn, &synced_id), 1);
         assert_eq!(content_row_count(&mut conn, &unsynced_id), 0);
+        assert_eq!(content_row_count(&mut conn, &import_only_id), 1);
+        assert_eq!(content_row_count(&mut conn, &call_only_id), 1);
         let row = conn
             .query_one(
                 "SELECT graph_synced, vectors_synced FROM code_indexed_files WHERE id = $1",
@@ -352,6 +381,7 @@ mod serial_db {
                 file_path: "src/lib.rs".to_string(),
                 content_hash: "gc-hash-old".to_string(),
                 symbol_ids: Vec::new(),
+                has_graph_facts: false,
                 graph_synced: true,
                 vectors_synced: true,
             });
@@ -525,6 +555,38 @@ mod serial_db {
             &[&symbol_id, &project_uuid, &file_path, &content_hash],
         )
         .expect("insert symbol");
+    }
+
+    fn seed_import(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        conn.execute(
+            "INSERT INTO code_imports (project_id, source_file, content_hash, target_module)
+         VALUES ($1, $2, $3, 'std::fmt')",
+            &[&project_uuid, &file_path, &content_hash],
+        )
+        .expect("insert import");
+    }
+
+    fn seed_call(
+        conn: &mut postgres::Client,
+        project_id: &str,
+        file_path: &str,
+        content_hash: &str,
+    ) {
+        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+        conn.execute(
+            "INSERT INTO code_calls
+            (project_id, caller_symbol_id, callee_symbol_id, callee_name,
+             callee_target_kind, callee_external_module, file_path, content_hash, line)
+         VALUES ($1, NULL, NULL, 'missing', 'unresolved', '', $2, $3, 1)",
+            &[&project_uuid, &file_path, &content_hash],
+        )
+        .expect("insert call");
     }
 
     fn candidate_hashes(database_url: &str, project_id: &str) -> Vec<String> {
