@@ -95,11 +95,7 @@
    send-button alignment reserve that, at narrow widths, forces Mode + the
    4 toolbar buttons to wrap to a second row). The 4-row compact layout
    doesn't engage until <=320px — between 320 and 480 we keep the 3-row
-   layout and just compress to fit.
-
-   Placed last in the file so its rules win over earlier base declarations
-   that share the same specificity. !important is needed to beat Tailwind
-   utility classes (px-2.5) on SelectTrigger / BranchIndicator buttons. */
+   layout and just compress to fit. */
 @container chat-column (max-width: 479px) {
   .chat-new-chat-btn__label,
   .chat-action-btn__label,

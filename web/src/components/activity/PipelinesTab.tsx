@@ -1,4 +1,5 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import '../chat/styles/pipelines-tab.css'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { Button } from '../ui/Button'

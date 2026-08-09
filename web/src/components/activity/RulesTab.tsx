@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import "../chat/styles/rules-tab.css";
 import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";

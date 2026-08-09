@@ -1,5 +1,6 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 
+import "../chat/styles/sessions-tab.css";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
 import { useSessionAttention } from "../../hooks/useSessionAttention";
 import type { GobbySession } from "../../types/sessions";

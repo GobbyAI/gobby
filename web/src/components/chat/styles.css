@@ -2,14 +2,6 @@
 @import './styles/layout.css';
 @import './styles/message.css';
 @import './styles/input.css';
-@import './styles/activity-panel.css';
-@import './styles/mcp-tab.css';
-@import './styles/rules-tab.css';
-@import './styles/files-tab.css';
-@import './styles/pipelines-tab.css';
-@import './styles/cron-tab.css';
-@import './styles/traces-tab.css';
-@import './styles/sessions-tab.css';
 @import './styles/empty-state.css';
 
 .tool-result-wrap {

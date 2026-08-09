@@ -4,6 +4,8 @@ import {
   useRef,
   type CSSProperties,
 } from "react";
+
+import "../chat/styles/activity-panel.css";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
 import { DropdownCaret } from "../ui/DropdownCaret";

@@ -1,4 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
+import '../chat/styles/cron-tab.css'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'

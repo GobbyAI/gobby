@@ -7,6 +7,7 @@ import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import "../chat/styles/rules-tab.css";
 import "./skills/SkillsTab.css";
 import {
   deleteSkill,

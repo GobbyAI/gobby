@@ -1,3 +1,4 @@
+import "../../chat/styles/rules-tab.css";
 import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
 import { type IntegrationFilters } from "./IntegrationsTabModel";
 

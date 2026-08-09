@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from 'react'
+import '../chat/styles/empty-state.css'
 
 interface ActivityPanelEmptyProps {
   icon?: ReactNode

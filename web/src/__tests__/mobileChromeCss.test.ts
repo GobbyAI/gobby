@@ -273,6 +273,37 @@ describe('mobile chrome CSS', () => {
     expect(segmentedControlIndex).toBeLessThan(appShellIndex)
   })
 
+  it('loads activity styles from each standalone owner', () => {
+    const ownershipPins = [
+      ['src/components/activity/ActivityPanel.tsx', '../chat/styles/activity-panel.css'],
+      ['src/components/activity/SessionsTab.tsx', '../chat/styles/sessions-tab.css'],
+      ['src/components/activity/ActivityMcpTab.tsx', '../chat/styles/mcp-tab.css'],
+      ['src/components/activity/RulesTab.tsx', '../chat/styles/rules-tab.css'],
+      ['src/components/activity/FilesTab.tsx', '../chat/styles/files-tab.css'],
+      ['src/components/activity/CronTab.tsx', '../chat/styles/cron-tab.css'],
+      ['src/components/activity/TracesTab.tsx', '../chat/styles/traces-tab.css'],
+      ['src/components/activity/PipelinesTab.tsx', '../chat/styles/pipelines-tab.css'],
+      ['src/components/activity/ActivityPanelEmpty.tsx', '../chat/styles/empty-state.css'],
+      ['src/components/activity/SkillsTab.tsx', '../chat/styles/rules-tab.css'],
+      [
+        'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+        '../../chat/styles/rules-tab.css',
+      ],
+    ] as const
+
+    for (const [owner, stylesheet] of ownershipPins) {
+      expect(importSpecifiers(readSource(owner))).toContain(stylesheet)
+    }
+
+    const chatStyles = readSource('src/components/chat/styles.css')
+    expect(chatStyles).toContain("@import './styles/empty-state.css';")
+    for (const stylesheet of ownershipPins
+      .slice(0, 8)
+      .map(([, path]) => path.slice(path.lastIndexOf('/') + 1))) {
+      expect(chatStyles).not.toContain(`@import './styles/${stylesheet}';`)
+    }
+  })
+
   it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', () => {
     const appSource = readSource('src/App.tsx')
     const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')

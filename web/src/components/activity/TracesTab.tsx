@@ -1,4 +1,5 @@
 import { memo, useMemo, useState } from 'react'
+import '../chat/styles/traces-tab.css'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatTime } from '../shared/executions/executionFormatters'

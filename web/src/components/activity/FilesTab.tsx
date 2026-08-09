@@ -1,4 +1,5 @@
 import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
+import '../chat/styles/files-tab.css'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'

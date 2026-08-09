@@ -8,6 +8,7 @@ import {
   type MouseEvent,
 } from "react";
 
+import "../chat/styles/mcp-tab.css";
 import type {
   McpServer,
   McpStatus,
