@@ -195,8 +195,7 @@ PY
   RUN_ROOT="${CODEWIKI_PARITY_RUN_ROOT:-}"
   REMOVE_RUN_ROOT=0
   if [[ -z "$RUN_ROOT" ]]; then
-    mkdir -p "$REPO_ROOT/.gobby/tmp"
-    RUN_ROOT="$(mktemp -d "$REPO_ROOT/.gobby/tmp/codewiki-parity.XXXXXX")"
+    RUN_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/codewiki-parity.XXXXXX")"
     REMOVE_RUN_ROOT=1
   else
     if [[ -e "$RUN_ROOT" && -n "$(find "$RUN_ROOT" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
@@ -228,6 +227,11 @@ PY
   cp -- "$FIXTURE_PROJECT/src/lib.rs" "$PROJECT_COPY/src/lib.rs"
   printf '{\n  "id": "%s",\n  "name": "codewiki-parity-fixture"\n}\n' \
     "$PARITY_PROJECT_ID" > "$PROJECT_COPY/.gobby/gcode.json"
+  git -C "$PROJECT_COPY" init --quiet
+  git -C "$PROJECT_COPY" add -- README.md Cargo.toml src/lib.rs
+  GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+    git -C "$PROJECT_COPY" -c user.name=CodeWiki -c user.email=codewiki@example.invalid \
+      commit --quiet -m "CodeWiki parity fixture"
 
   GCODE_BINARY="$TARGET_DIR/debug/gcode"
   local engine_package=""

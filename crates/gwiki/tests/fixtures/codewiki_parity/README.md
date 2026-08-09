@@ -33,7 +33,9 @@ CODEWIKI_PARITY_PARSE_ONLY=1 scripts/codewiki_parity_baseline.sh --engine gwiki
 Both execution modes build with `cargo build --locked`, run the built target
 path directly, index the copied fixture under the dedicated temporary identity
 `019fe500-0000-7000-8000-000000019814`, generate into a fresh temporary vault,
-and remove that identity from the index on exit. Set
+and remove that identity from the index on exit. The copied project gets a
+deterministic local Git commit so the engine emits its commit stamps; the
+non-hashed capture record separately pins the actual workspace revision. Set
 `CODEWIKI_PARITY_PRODUCTION_VAULT` when the production vault is not the
 repository's `wiki/` directory; the harness refuses to put any run beneath the
 configured path.
@@ -58,9 +60,9 @@ page set and a `src/lib.rs` source hash in `_meta/codewiki.json`.
 ## Captured baseline
 
 <!-- baseline-capture:start -->
-- Engine: pending
-- Workspace revision: pending
-- Binary version: pending
-- Fixture input digest: pending
-- Normalized manifest entries: pending
+- Engine: `gcode codewiki --ai off`
+- Workspace revision: `8a8c0dbf7114b2a4edb1f241dcc5afcb361697e4`
+- Binary version: `gcode 1.6.0`
+- Fixture input digest: `183aff969abb9300d8936911615245d3c9b6fe79e7ad5cbbe5ffbf017292f5a0`
+- Normalized manifest entries: `24`
 <!-- baseline-capture:end -->
