@@ -18,7 +18,6 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
     'src/App.tsx': 1,
-    'src/components/FilesPage.tsx': 3,
     'src/components/ProjectSelector.tsx': 2,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityFilterDropdown.tsx': 1,
@@ -26,7 +25,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/activity/ActivityPanel.tsx': 2,
     'src/components/activity/CronTab.tsx': 2,
     'src/components/activity/FileChangesTab.tsx': 2,
-    'src/components/activity/FilesTab.tsx': 9,
     'src/components/activity/IntegrationsTab.tsx': 1,
     'src/components/activity/MemoryTab.tsx': 1,
     'src/components/activity/PlanReviewCard.tsx': 1,
@@ -87,7 +85,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
     'src/components/ProjectSelector.tsx': 1,
     'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/ActivityPanelSearch.tsx': 1,
-    'src/components/activity/FilesTab.tsx': 3,
     'src/components/activity/FilterPrimitives.tsx': 1,
     'src/components/activity/MemoryTab.tsx': 3,
     'src/components/activity/SessionsFilterDropdown.tsx': 5,
@@ -133,7 +130,6 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
 
 // `const *_CLS =` style-constant declarations per file.
 export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/FilesPage.tsx': 44,
   'src/components/ValidationDetectionEditor.tsx': 9,
   'src/components/chat/AgentPickerDropdown.tsx': 11,
   'src/components/tasks/QuickCaptureTask.tsx': 12,

@@ -1,7 +1,10 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { CodeBlock } from './shared/CodeBlock'
 import { Button } from './ui/Button'
+import { Card } from './ui/Card'
+import { ConfirmDialog } from './ui/ConfirmDialog'
 import { TabBar } from './ui/TabBar'
+import { coarseHitAreaCls } from './ui/controlStyles'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
 import { MarkdownBody } from './shared/MarkdownBody'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
@@ -11,79 +14,15 @@ import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
 import { cn } from '../lib/utils'
 import { activateOnKeyboard } from '../lib/keyboard'
 
-const PAGE_CLS = 'flex flex-1 overflow-hidden'
-
-const SIDEBAR_CLS =
-  'flex w-[var(--sidebar-width)] min-w-[var(--sidebar-width)] flex-col border-r border-[var(--border)] bg-[var(--bg-secondary)] max-md:w-[200px] max-md:min-w-[160px]'
-const SIDEBAR_HEADER_CLS = 'flex items-center justify-between border-b border-[var(--border)] px-3 py-2.5'
-const SIDEBAR_TITLE_CLS =
-  'text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]'
-
-const TREE_CLS = 'flex-1 overflow-x-hidden overflow-y-auto py-1'
-const EMPTY_TREE_CLS = 'px-4 py-6 text-center text-[length:var(--text-md)] text-[var(--text-muted)]'
-
-const PROJECT_NODE_CLS = 'mb-0.5'
-const PROJECT_HEADER_CLS =
-  'flex w-full cursor-pointer select-none appearance-none items-center gap-1.5 border-0 bg-transparent px-2 py-1.5 text-left text-[length:var(--text-md)] font-medium text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
-const PROJECT_NAME_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
-
-const TREE_ARROW_CLS = 'w-2.5 shrink-0 text-center text-[length:var(--text-2xs)] text-[var(--text-muted)]'
-const TREE_ITEM_CLS =
-  'flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
-const TREE_NAME_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap'
-const TREE_GIT_BADGE_CLS = 'ml-auto shrink-0 font-mono text-[length:var(--text-2xs)] font-semibold opacity-85'
-const TREE_LOADING_CLS = 'px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]'
-
-const MAIN_CLS = 'relative flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]'
-
-const TOOLBAR_CLS =
-  'flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] [container-type:inline-size] [container-name:files-viewer]'
-const TOOLBAR_PATH_CLS = 'overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]'
-const TOOLBAR_ACTIONS_CLS = 'flex shrink-0 items-center gap-1.5'
-const TOO_LARGE_NOTICE_CLS = 'text-[var(--color-warning-foreground)]'
-
-const VIEWER_CLS = 'flex flex-1 flex-col overflow-hidden'
-const CODE_VIEWER_CLS = 'min-h-0 flex-1 overflow-auto [&>div]:min-h-full'
-const EDITOR_CLS = 'flex min-h-0 flex-1 flex-col'
-
-const MARKDOWN_VIEWER_CLS =
-  'overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]'
-
-const EMPTY_VIEWER_CLS =
-  'flex flex-1 flex-col items-center justify-center gap-3 text-[length:var(--text-base)] text-[var(--text-muted)]'
-
-const VIEWER_STATUS_CLS =
-  'flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]'
-const VIEWER_ERROR_CLS = 'text-[var(--color-error)]'
-const SAVE_ERROR_CLS =
-  'flex items-center justify-between gap-3 border-b border-[var(--color-error)] bg-[var(--bg-secondary)] px-3 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]'
-const VIEWER_MUTED_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
-
-const IMAGE_VIEWER_CLS = 'flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8'
-const IMAGE_PREVIEW_CLS =
-  'max-h-[calc(100%-3rem)] max-w-full rounded-lg object-contain [background:repeating-conic-gradient(var(--bg-primary)_0%_25%,var(--bg-secondary)_0%_50%)_50%/20px_20px]'
-const IMAGE_INFO_CLS = 'text-[length:var(--text-sm)] text-[var(--text-muted)]'
-
-const BRANCH_BADGE_CLS =
-  'ml-auto rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px text-[length:var(--text-xs)] font-normal text-[var(--text-muted)]'
-
-const CONFIRM_OVERLAY_CLS = 'absolute inset-0 z-[100] flex items-center justify-center bg-[var(--surface-scrim)]'
-const CONFIRM_DIALOG_CLS =
-  'w-[90%] max-w-[340px] rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)] p-5'
-const CONFIRM_TITLE_CLS = 'mb-1.5 mt-0 text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
-const CONFIRM_MESSAGE_CLS = 'mb-4 mt-0 text-[length:var(--text-base)] text-[var(--text-secondary)]'
-const CONFIRM_ACTIONS_CLS = 'flex justify-end gap-2'
-const CONFIRM_KEEP_CLS =
-  'cursor-pointer rounded border border-[var(--border)] bg-transparent px-3 py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
-const CONFIRM_DISCARD_CLS =
-  'cursor-pointer rounded border-0 bg-[var(--color-error)] px-3 py-1 text-[length:var(--text-sm)] font-medium text-[var(--accent-foreground)] transition-colors duration-150 hover:bg-[color-mix(in_srgb,var(--color-error)_85%,var(--text-primary))] pointer-coarse:min-h-11'
-
-const CONFIRM_DIALOG_QUERY_CLS = 'files-confirm-dialog'
-
-const GIT_M_CLS = 'text-[var(--color-warning-foreground)]'
-const GIT_A_CLS = 'text-[var(--color-success-foreground)]'
-const GIT_D_CLS = 'text-[var(--color-error)]'
-const GIT_R_CLS = 'text-[var(--color-info)]'
+const GIT_STATUS_CLASS_BY_CODE: Readonly<Record<string, string>> = {
+  M: 'text-[var(--color-warning-foreground)]',
+  MM: 'text-[var(--color-warning-foreground)]',
+  AM: 'text-[var(--color-warning-foreground)]',
+  '??': 'text-[var(--color-success-foreground)]',
+  A: 'text-[var(--color-success-foreground)]',
+  D: 'text-[var(--color-error)]',
+  R: 'text-[var(--color-info)]',
+}
 
 interface FilesPageProps {
   projects: Project[]
@@ -183,38 +122,6 @@ export function FilesPage({
     }
   }, [hideDiff, onCancelEditing, onCloseFile, pendingDiscard])
 
-  const previousFocusRef = useRef<Element | null>(null)
-  useEffect(() => {
-    if (!showCancelConfirm) return
-    previousFocusRef.current = document.activeElement
-    const dialog = document.querySelector(`.${CONFIRM_DIALOG_QUERY_CLS}`) as HTMLElement | null
-    dialog?.focus()
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setPendingDiscard(null)
-      } else if (e.key === 'Tab' && dialog) {
-        const focusable = dialog.querySelectorAll<HTMLElement>('button, [tabindex]')
-        if (focusable.length === 0) return
-        const first = focusable[0]
-        const last = focusable[focusable.length - 1]
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault()
-          last.focus()
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault()
-          first.focus()
-        }
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      if (previousFocusRef.current instanceof HTMLElement) {
-        previousFocusRef.current.focus()
-      }
-    }
-  }, [showCancelConfirm])
-
   const handleUndo = useCallback(() => {
     if (editorViewRef.current) undo(editorViewRef.current)
   }, [])
@@ -242,14 +149,18 @@ export function FilesPage({
   const activeFileGitStatus = activeFile && activeGitStatus ? activeGitStatus.files[activeFile.path] : undefined
 
   return (
-    <div className={PAGE_CLS}>
-      <div className={SIDEBAR_CLS}>
-        <div className={SIDEBAR_HEADER_CLS}>
-          <span className={SIDEBAR_TITLE_CLS}>Explorer</span>
+    <div className="flex flex-1 overflow-hidden">
+      <Card className="flex w-[var(--sidebar-width)] min-w-[var(--sidebar-width)] flex-col rounded-none border-0 border-r border-[var(--border)] bg-[var(--bg-secondary)] max-md:w-[200px] max-md:min-w-[160px]">
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-3 py-2.5">
+          <span className="text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">
+            Explorer
+          </span>
         </div>
-        <div className={TREE_CLS}>
+        <div className="flex-1 overflow-x-hidden overflow-y-auto py-1">
           {projects.length === 0 ? (
-            <div className={EMPTY_TREE_CLS}>No projects registered</div>
+            <div className="px-4 py-6 text-center text-[length:var(--text-md)] text-[var(--text-muted)]">
+              No projects registered
+            </div>
           ) : (
             projects.map(project => (
               <ProjectNode
@@ -266,9 +177,9 @@ export function FilesPage({
             ))
           )}
         </div>
-      </div>
+      </Card>
 
-      <div className={MAIN_CLS}>
+      <div className="relative flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]">
         {openFiles.length > 0 && (
           <TabBar
             tabs={openFiles.map((file, index) => ({
@@ -296,11 +207,13 @@ export function FilesPage({
         )}
 
         {activeFile && !activeFile.image && !activeFile.binary && !activeFile.loading && !activeFile.error && activeFile.content !== null && (
-          <div className={TOOLBAR_CLS}>
-            <span className={TOOLBAR_PATH_CLS}>{activeFile.path}</span>
-            <div className={TOOLBAR_ACTIONS_CLS}>
+          <div className="flex min-h-8 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1 text-[length:var(--text-sm)] [container-name:files-viewer] [container-type:inline-size]">
+            <span className="overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
+              {activeFile.path}
+            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
               {activeFile.truncated && (
-                <span className={TOO_LARGE_NOTICE_CLS} role="status">
+                <span className="text-[var(--color-warning-foreground)]" role="status">
                   File is too large to edit safely.
                 </span>
               )}
@@ -308,7 +221,8 @@ export function FilesPage({
                 <Button
                   variant="accent"
                   size="sm"
-                  className="file-viewer-btn"
+                  dense
+                  className={cn(coarseHitAreaCls, 'file-viewer-btn')}
                   onClick={handleShowDiff}
                   aria-pressed={showDiff}
                   aria-label="Diff"
@@ -320,16 +234,17 @@ export function FilesPage({
               )}
               {activeFile.editing ? (
                 <>
-                  <Button variant="accent" size="icon" className="file-viewer-btn" onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
+                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'file-viewer-btn')} onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
                     <UndoIcon />
                   </Button>
-                  <Button variant="accent" size="icon" className="file-viewer-btn" onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
+                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'file-viewer-btn')} onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
                     <RedoIcon />
                   </Button>
                   <Button
                     variant="accent"
                     size="sm"
-                    className="file-viewer-btn"
+                    dense
+                    className={cn(coarseHitAreaCls, 'file-viewer-btn')}
                     onClick={handleCancel}
                     aria-label="Cancel"
                     title="Cancel"
@@ -340,7 +255,8 @@ export function FilesPage({
                   <Button
                     variant="accent"
                     size="sm"
-                    className="file-viewer-btn"
+                    dense
+                    className={cn(coarseHitAreaCls, 'file-viewer-btn')}
                     onClick={() => onSaveFile(activeFileIndex)}
                     disabled={activeFile.truncated || activeFile.saving || !activeFile.dirty}
                     aria-label={activeFile.saving ? 'Saving' : 'Save'}
@@ -354,7 +270,8 @@ export function FilesPage({
                 <Button
                   variant="accent"
                   size="sm"
-                  className="file-viewer-btn"
+                  dense
+                  className={cn(coarseHitAreaCls, 'file-viewer-btn')}
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
                     hideDiff()
@@ -371,9 +288,9 @@ export function FilesPage({
           </div>
         )}
 
-        <div className={VIEWER_CLS}>
+        <div className="flex flex-1 flex-col overflow-hidden">
           {showDiff && diffContent !== null ? (
-            <div className={CODE_VIEWER_CLS}>
+            <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
               <CodeBlock
                 language="diff"
                 lineNumberMinWidth="3em"
@@ -396,43 +313,23 @@ export function FilesPage({
               editorViewRef={editorViewRef}
             />
           ) : (
-            <div className={EMPTY_VIEWER_CLS}>
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 text-[length:var(--text-base)] text-[var(--text-muted)]">
               <FilesPlaceholderIcon />
               <p>Select a file to view</p>
             </div>
           )}
         </div>
 
-        {showCancelConfirm && (
-          <div
-            className={CONFIRM_OVERLAY_CLS}
-            role="presentation"
-            onMouseDown={(event) => {
-              if (event.button === 0) setPendingDiscard(null)
-            }}
-          >
-            <div
-              className={cn(CONFIRM_DIALOG_CLS, CONFIRM_DIALOG_QUERY_CLS)}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="cancel-dialog-title"
-              aria-describedby="cancel-dialog-desc"
-              tabIndex={-1}
-              onMouseDown={e => e.stopPropagation()}
-            >
-              <p className={CONFIRM_TITLE_CLS} id="cancel-dialog-title">Discard unsaved changes?</p>
-              <p className={CONFIRM_MESSAGE_CLS} id="cancel-dialog-desc">Your changes to this file will be lost.</p>
-              <div className={CONFIRM_ACTIONS_CLS}>
-                <button className={CONFIRM_KEEP_CLS} onClick={() => setPendingDiscard(null)}>
-                  Keep Editing
-                </button>
-                <button className={CONFIRM_DISCARD_CLS} onClick={confirmCancel}>
-                  Discard
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <ConfirmDialog
+          open={showCancelConfirm}
+          onConfirm={confirmCancel}
+          onCancel={() => setPendingDiscard(null)}
+          title="Discard unsaved changes?"
+          description="Your changes to this file will be lost."
+          confirmLabel="Discard"
+          cancelLabel="Keep Editing"
+          destructive
+        />
       </div>
     </div>
   )
@@ -455,25 +352,37 @@ function ProjectNode({ project, isExpanded, expandedDirs, loadingDirs, gitStatus
   const isLoading = loadingDirs.has(rootKey)
 
   return (
-    <div className={PROJECT_NODE_CLS}>
-      <button
+    <div className="mb-0.5">
+      <Button
         type="button"
-        className={PROJECT_HEADER_CLS}
+        variant="ghost"
+        size="sm"
+        dense
+        className={cn(
+          coarseHitAreaCls,
+          'h-auto w-full justify-start gap-1.5 rounded-none border-0 bg-transparent px-2 py-1.5 text-left text-[length:var(--text-md)] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+        )}
         onClick={onToggle}
         aria-expanded={isExpanded}
         aria-label={`${isExpanded ? 'Collapse' : 'Expand'} ${project.name}`}
       >
-        <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
+        <span className="w-2.5 shrink-0 text-center text-[length:var(--text-2xs)] text-[var(--text-muted)]">
+          {isExpanded ? '▾' : '▸'}
+        </span>
         <ProjectIcon />
-        <span className={PROJECT_NAME_CLS}>{project.name}</span>
+        <span className="overflow-hidden text-ellipsis whitespace-nowrap">{project.name}</span>
         {gitStatus?.branch && (
-          <span className={BRANCH_BADGE_CLS}>{gitStatus.branch}</span>
+          <span className="ml-auto rounded-sm bg-[var(--bg-tertiary)] px-1.5 py-px text-[length:var(--text-xs)] font-normal text-[var(--text-muted)]">
+            {gitStatus.branch}
+          </span>
         )}
-      </button>
+      </Button>
       {isExpanded && (
         <div>
           {isLoading ? (
-            <div className={TREE_LOADING_CLS}>Loading...</div>
+            <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]">
+              Loading...
+            </div>
           ) : (
             rootEntries.map(entry => (
               <TreeEntry
@@ -508,11 +417,7 @@ interface TreeEntryProps {
 
 function getGitStatusClass(status: string | undefined): string | undefined {
   if (!status) return undefined
-  if (status === 'M' || status === 'MM' || status === 'AM') return GIT_M_CLS
-  if (status === '??' || status === 'A') return GIT_A_CLS
-  if (status === 'D') return GIT_D_CLS
-  if (status === 'R') return GIT_R_CLS
-  return GIT_M_CLS
+  return GIT_STATUS_CLASS_BY_CODE[status] ?? GIT_STATUS_CLASS_BY_CODE.M
 }
 
 function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFiles, onExpandDir, onOpenFile }: TreeEntryProps) {
@@ -527,7 +432,7 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
     return (
       <div>
         <div
-          className={TREE_ITEM_CLS}
+          className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11"
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           role="button"
           tabIndex={0}
@@ -537,14 +442,16 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
             activateOnKeyboard(event, () => onExpandDir(projectId, entry.path))
           }
         >
-          <span className={TREE_ARROW_CLS}>{isExpanded ? '▾' : '▸'}</span>
+          <span className="w-2.5 shrink-0 text-center text-[length:var(--text-2xs)] text-[var(--text-muted)]">
+            {isExpanded ? '▾' : '▸'}
+          </span>
           <FolderIcon open={isExpanded} />
-          <span className={TREE_NAME_CLS}>{entry.name}</span>
+          <span className="overflow-hidden text-ellipsis whitespace-nowrap">{entry.name}</span>
         </div>
         {isExpanded && (
           <div>
             {isLoading ? (
-              <div className={TREE_LOADING_CLS} style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
+              <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]" style={{ paddingLeft: `${(depth + 1) * 16 + 4}px` }}>
                 Loading...
               </div>
             ) : (
@@ -570,7 +477,7 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
 
   return (
     <div
-      className={TREE_ITEM_CLS}
+      className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11"
       style={{ paddingLeft: `${depth * 16 + 20}px` }}
       role="button"
       tabIndex={0}
@@ -580,9 +487,11 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
       }
     >
       <FileIcon extension={entry.extension?.replace('.', '') || ''} size={14} />
-      <span className={cn(TREE_NAME_CLS, gitClass)}>{entry.name}</span>
+      <span className={cn('overflow-hidden text-ellipsis whitespace-nowrap', gitClass)}>
+        {entry.name}
+      </span>
       {gitStatus && (
-        <span className={cn(TREE_GIT_BADGE_CLS, gitClass)}>
+        <span className={cn('ml-auto shrink-0 font-mono text-[length:var(--text-2xs)] font-semibold opacity-85', gitClass)}>
           {gitStatus === '??' ? '?' : gitStatus.charAt(0)}
         </span>
       )}
@@ -606,24 +515,32 @@ function FileContent({
   editorViewRef?: React.MutableRefObject<EditorView | null>
 }) {
   if (file.loading) {
-    return <div className={VIEWER_STATUS_CLS}>Loading...</div>
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]">
+        Loading...
+      </div>
+    )
   }
 
   if (file.error) {
-    return <div className={cn(VIEWER_STATUS_CLS, VIEWER_ERROR_CLS)}>Error: {file.error}</div>
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--color-error)]">
+        Error: {file.error}
+      </div>
+    )
   }
 
   if (file.image) {
     return (
-      <div className={IMAGE_VIEWER_CLS}>
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 overflow-auto p-8">
         <img
           src={getImageUrl(file.projectId, file.path)}
           alt={file.name}
           loading="lazy"
           decoding="async"
-          className={IMAGE_PREVIEW_CLS}
+          className="max-h-[calc(100%-3rem)] max-w-full rounded-lg object-contain [background:repeating-conic-gradient(var(--bg-primary)_0%_25%,var(--bg-secondary)_0%_50%)_50%/20px_20px]"
         />
-        <div className={IMAGE_INFO_CLS}>
+        <div className="text-[length:var(--text-sm)] text-[var(--text-muted)]">
           {file.name} &middot; {formatSize(file.size)} &middot; {file.mime_type}
         </div>
       </div>
@@ -632,28 +549,33 @@ function FileContent({
 
   if (file.binary) {
     return (
-      <div className={VIEWER_STATUS_CLS}>
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]">
         <BinaryIcon />
         <p>Binary file &middot; {formatSize(file.size)}</p>
-        <p className={VIEWER_MUTED_CLS}>{file.mime_type}</p>
+        <p className="text-[length:var(--text-sm)] text-[var(--text-muted)]">{file.mime_type}</p>
       </div>
     )
   }
 
   if (file.content === null) {
-    return <div className={VIEWER_STATUS_CLS}>No content</div>
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 text-[length:var(--text-base)] text-[var(--text-muted)]">
+        No content
+      </div>
+    )
   }
 
   if (file.editing) {
     return (
-      <div className={EDITOR_CLS}>
+      <div className="flex min-h-0 flex-1 flex-col">
         {file.saveError && (
-          <div className={SAVE_ERROR_CLS} role="alert">
+          <div className="flex items-center justify-between gap-3 border-b border-[var(--color-error)] bg-[var(--bg-secondary)] px-3 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]" role="alert">
             <span>Save failed: {file.saveError}</span>
             <Button
               variant="accent"
               size="icon"
-              className="file-viewer-btn"
+              dense
+              className={cn(coarseHitAreaCls, 'file-viewer-btn')}
               onClick={onDismissSaveError}
               aria-label="Dismiss save error"
               title="Dismiss"
@@ -662,7 +584,7 @@ function FileContent({
             </Button>
           </div>
         )}
-        <div className={CODE_VIEWER_CLS}>
+        <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
           <CodeMirrorEditor
             content={file.editContent ?? file.content}
             language={file.language}
@@ -678,8 +600,8 @@ function FileContent({
 
   if (file.language === 'markdown') {
     return (
-      <div className={CODE_VIEWER_CLS}>
-        <div className={cn(MARKDOWN_VIEWER_CLS, 'message-content')}>
+      <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
+        <div className="message-content overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]">
           <MarkdownBody
             content={file.content}
             id={`files-page-md-${file.projectId}:${file.path}`}
@@ -690,7 +612,7 @@ function FileContent({
   }
 
   return (
-    <div className={CODE_VIEWER_CLS}>
+    <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
       <CodeBlock
         language={file.language}
         lineNumberMinWidth="3em"

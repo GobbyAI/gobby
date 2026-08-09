@@ -1,4 +1,13 @@
-import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProperties } from 'react'
+import {
+  memo,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type Ref,
+} from 'react'
 import '../chat/styles/files-tab.css'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
@@ -14,7 +23,11 @@ import {
   getGitStatusColorVar,
   getLanguageColorVar,
 } from '../../lib/languageColors'
+import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
 import { Card } from '../ui/Card'
+import { Input } from '../ui/Input'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { ActivityPanelEmpty, FilesEmptyIcon } from './ActivityPanelEmpty'
 
 interface FilesTabProps {
@@ -53,6 +66,38 @@ interface ContextMenuState {
   x: number
   y: number
   entry: FileEntry
+}
+
+interface FileTreeRenameInputProps {
+  name: string
+  inputRef: Ref<HTMLInputElement>
+  onSubmit: () => void
+  onCancel: () => void
+}
+
+function FileTreeRenameInput({
+  name,
+  inputRef,
+  onSubmit,
+  onCancel,
+}: FileTreeRenameInputProps) {
+  return (
+    <span className="min-w-0 flex-1" onClick={(event) => event.stopPropagation()}>
+      <Input
+        ref={inputRef}
+        aria-label={`Rename ${name}`}
+        wrapperClassName="min-w-0 flex-1"
+        className="file-tree-rename-input h-auto rounded border-[var(--accent)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[length:inherit] text-[var(--text-primary)]"
+        defaultValue={name}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') onSubmit()
+          if (event.key === 'Escape') onCancel()
+        }}
+        onBlur={onSubmit}
+        onClick={(event) => event.stopPropagation()}
+      />
+    </span>
+  )
 }
 
 function getBaseUrl(): string {
@@ -436,31 +481,29 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           >
             <FolderIcon open={isExpanded} />
             {isRenaming ? (
-              <input
-                ref={renameInputRef}
-                className="file-tree-rename-input"
-                defaultValue={renaming.name}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') submitRename()
-                  if (e.key === 'Escape') setRenaming(null)
-                }}
-                onBlur={submitRename}
-                onClick={(e) => e.stopPropagation()}
+              <FileTreeRenameInput
+                name={renaming.name}
+                inputRef={renameInputRef}
+                onSubmit={submitRename}
+                onCancel={() => setRenaming(null)}
               />
             ) : (
               <span className={`files-tree-name${getDirStatus(entry.path) ? ' files-tree-name--modified' : ''}`}>{entry.name}</span>
             )}
             {!isRenaming && (
-              <button
+              <Button
                 type="button"
-                className="files-tree-actions"
+                variant="ghost"
+                size="icon"
+                dense
+                className={cn(coarseHitAreaCls, 'files-tree-actions')}
                 aria-label={`Actions for ${entry.name}`}
                 aria-haspopup="menu"
                 aria-expanded={ctxMenu?.entry.path === entry.path}
                 onClick={(e) => handleActionsMenu(e, entry)}
               >
                 <span aria-hidden="true">⋯</span>
-              </button>
+              </Button>
             )}
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
@@ -495,16 +538,11 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
         >
           <FileIconSvg extension={ext} />
           {isRenaming ? (
-            <input
-              ref={renameInputRef}
-              className="file-tree-rename-input"
-              defaultValue={renaming.name}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') submitRename()
-                if (e.key === 'Escape') setRenaming(null)
-              }}
-              onBlur={submitRename}
-              onClick={(e) => e.stopPropagation()}
+            <FileTreeRenameInput
+              name={renaming.name}
+              inputRef={renameInputRef}
+              onSubmit={submitRename}
+              onCancel={() => setRenaming(null)}
             />
           ) : (
             <span className={`files-tree-name${getFileStatus(entry.path) ? ` files-tree-name--${getFileStatus(entry.path)?.replace('?', 'untracked')}` : ''}`}>{entry.name}</span>
@@ -515,16 +553,19 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             return null
           })()}
           {!isRenaming && (
-            <button
+            <Button
               type="button"
-              className="files-tree-actions"
+              variant="ghost"
+              size="icon"
+              dense
+              className={cn(coarseHitAreaCls, 'files-tree-actions')}
               aria-label={`Actions for ${entry.name}`}
               aria-haspopup="menu"
               aria-expanded={ctxMenu?.entry.path === entry.path}
               onClick={(e) => handleActionsMenu(e, entry)}
             >
               <span aria-hidden="true">⋯</span>
-            </button>
+            </Button>
           )}
         </div>
       </div>
@@ -641,22 +682,38 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             }}
           >
             {onAddToChat && !ctxMenu.entry.is_dir && (
-              <button role="menuitem" className="file-ctx-item" onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}>
+              <Button
+                type="button"
+                role="menuitem"
+                variant="ghost"
+                size="sm"
+                dense
+                className={cn(coarseHitAreaCls, 'file-ctx-item')}
+                onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}
+              >
                 Add to chat
-              </button>
+              </Button>
             )}
             {!ctxMenu.entry.is_dir && (
-              <button role="menuitem" className="file-ctx-item" onClick={() => handleDuplicate(ctxMenu.entry)}>Duplicate</button>
+              <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleDuplicate(ctxMenu.entry)}>
+                Duplicate
+              </Button>
             )}
-            <button role="menuitem" className="file-ctx-item" onClick={() => handleRename(ctxMenu.entry)}>Rename</button>
-            <button role="menuitem" className="file-ctx-item" onClick={() => handleMove(ctxMenu.entry)}>Move</button>
-            <button role="menuitem" className="file-ctx-item file-ctx-item--danger" onClick={() => handleDelete(ctxMenu.entry)}>Delete</button>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleRename(ctxMenu.entry)}>
+              Rename
+            </Button>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleMove(ctxMenu.entry)}>
+              Move
+            </Button>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item file-ctx-item--danger')} onClick={() => handleDelete(ctxMenu.entry)}>
+              Delete
+            </Button>
           </div>
         </>
       )}
       {moving && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--surface-scrim)] p-4"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setMoving(null)
           }}
@@ -675,10 +732,11 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
               <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
                 Move {moving.name}
               </h2>
-              <label className="grid gap-1.5 text-sm text-foreground">
-                Move to path
-                <input
+              <div className="grid gap-1.5 text-sm text-foreground">
+                <span id="files-move-path-label">Move to path</span>
+                <Input
                   autoFocus
+                  aria-labelledby="files-move-path-label"
                   value={movePath}
                   onChange={(event) => {
                     setMovePath(event.target.value)
@@ -686,19 +744,22 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                   }}
                   className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 />
-              </label>
+              </div>
               {moveError && <p className="mt-2 text-sm text-destructive-foreground" role="alert">{moveError}</p>}
               <div className="mt-4 flex justify-end gap-2">
-                <button type="button" className="min-h-9 rounded-md border border-border px-3 text-sm" onClick={() => setMoving(null)}>
+                <Button type="button" variant="outline" size="sm" dense className={coarseHitAreaCls} onClick={() => setMoving(null)}>
                   Cancel
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
-                  className="min-h-9 rounded-md bg-accent px-3 text-sm text-accent-foreground disabled:opacity-50"
+                  variant="accent"
+                  size="sm"
+                  dense
+                  className={coarseHitAreaCls}
                   disabled={!movePath.trim() || movePath.trim() === moving.path}
                 >
                   Move file
-                </button>
+                </Button>
               </div>
             </form>
           </Card>
