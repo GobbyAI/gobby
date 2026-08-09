@@ -1199,3 +1199,776 @@ Targets:
 {"evidence_id":"fb2db9c0-8190-4ddb-8c76-ea65bb9dbaec","plan_hash":"66375b62fd8a58099879dd4fd839109224765ca4c0fa07c22dd23d4eef847095","round_number":4,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"c1acad5a01f0520d2a6344724377dbf6cbc4864da8a0b7139be81b8e0dc5557b","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":2,"emitted_findings":8,"total":10},"evidence_id":"fb2db9c0-8190-4ddb-8c76-ea65bb9dbaec","lanes":[{"candidate_count":2,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":4,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":32,"manifest_digest":"b7b82c94f3ad66522cdb0ba0565a62d9f847ec2ad014376818c16080dace77e0","status":"valid"},"source_digest":"8a5e3c212e42c1db5d0df46c3f4a52e44094c8628b5ab8bd32572c40ed1f2f4f","version":1},"evidence_id":"fb2db9c0-8190-4ddb-8c76-ea65bb9dbaec","findings":[{"category":"gobby-format","check_key":"deferral-receiver-provenance","description":"Plan-Coverage Contract rejection: malformed deferral. Live task #19672 is open, but it carries `deferred-from:web-styling-consolidation-phase-2:4.4` instead of the required `...:4.11`; its validation criteria also do not duplicate the `web/src/__tests__/styleRatchet.allowlist.ts` artifact from deferred item 4.4.1.","finding_id":"WS2-R4-F01","fix":"Keep Wiki Ask/Research deferred. Update #19672 with `deferred-from:web-styling-consolidation-phase-2:4.11`, add a validation criterion that owns the deferred WikiAskMode raw-control allowlist/migration artifact from 4.4.1, and retain a valid recovery dependency or cited-parent relation.","location":"P4 / § 4.11","prevention":"Before accepting a deferral, compare its live task state, exact deferred-from label, validation artifact references, and recovery dependency/cited-parent relation.","principle":"A typed deferral is valid only when its live receiver carries the exact section provenance and duplicates the deferred artifact obligation.","root_cause":"The receiver task still records the original 4.4 source section rather than the typed 4.11 deferral section, and its validation criteria omit 4.4.1's artifact.","section_id":"4.11","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"WS2-R3-F01","causal_section_ids":["1.3"],"check_key":"capture-run-authority","description":"The stated `(manifest's asserted entry count)` check can publish after only one variant per scenario while other required variants are missing. A later ordinary Playwright run can also encounter staging because the globally registered teardown has no specified capture activation or invocation namespace.","finding_id":"WS2-R4-F02","fix":"Add a pure shared matrix-expansion function consumed by the spec and finalizer; require exact expected-key equality and reject unknown keys; gate both spec and teardown on an explicit capture run id/activation variable; document the opt-in command; extend 1.3.8 with expansion, inactive-run, stale-staging, and foreign-run tests.","introduced_in_round":3,"location":"P1 / § 1.3","prevention":"Derive one canonical cell-key roster for producer and finalizer, compare exact sets, and test capture-disabled runs plus stale and foreign staging.","principle":"A run finalizer may publish only an explicitly activated run whose exact canonical expanded cell set succeeded.","root_cause":"The finalizer contract uses the 24-entry base scenario count as expected-cell completeness even though themes, pointers, three viewports, grayscale, reduced motion, and states expand that set; globalTeardown also lacks an explicit run namespace/activation boundary.","section_id":"1.3","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"WS2-R3-F01","causal_section_ids":["1.3"],"check_key":"playwright-runner-final-success","description":"The success-fragment-last protocol does not represent Playwright's final result. An `afterEach` or fixture teardown failure after the fragment write lets globalTeardown select and publish an attempt the runner marked failed.","finding_id":"WS2-R4-F03","fix":"Move success attestation to a reporter `onTestEnd` or equivalent runner-final seam keyed to a final passed result, and add integration coverage for body-pass plus hook/fixture-teardown failure as well as retries.","introduced_in_round":3,"location":"P1 / § 1.3","prevention":"Exercise body-pass/hook-fail and body-pass/fixture-teardown-fail paths whenever external success markers drive publication.","principle":"Success evidence must be emitted after the test runner has observed hook and fixture-teardown outcomes.","root_cause":"A fragment written as the test body's last act precedes `afterEach` and fixture teardown, so a runner-failed attempt can retain a success marker.","section_id":"1.3","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"WS2-R3-F04","causal_section_ids":["2.1"],"check_key":"partial-settings-field-presence","description":"Live `get_ui_settings` omits unset keys and `fetchUISettings` returns `Partial<Settings>`. Calling `normalizeFontSize(remote.fontSize)` for an absent key yields the default and overwrites a valid local/previous font size during the API merge; acceptance 2.1.6 has no omitted/undefined cases.","finding_id":"WS2-R4-F04","fix":"Make persisted-root normalization return a partial object: preserve omission when `fontSize` is not an own property, normalize present finite values by clamping, and map present invalid values to the default. Add localStorage/API tests for absent and explicit undefined plus the existing malformed-root cases.","introduced_in_round":3,"location":"P2 / § 2.1","prevention":"For every normalized Partial field, test omitted, explicit undefined, null, malformed, and valid values at each merge entry.","principle":"Normalization of a partial update must distinguish an absent field from a present invalid value.","root_cause":"The new `normalizeFontSize(value: unknown)` contract gives invalid values a default fallback without specifying field-presence behavior at the settings API's partial merge boundary.","section_id":"2.1","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"WS2-R3-F05","causal_section_ids":["2.1"],"check_key":"app-legacy-settings-unreachable","description":"Section 2.1 says an App-level assertion proves the legacy `Settings` branch cannot render while the overlay opens. Existing `web/src/__tests__/App.test.tsx` is absent from Targets, and 2.1.7 asserts only the two hook actions.","finding_id":"WS2-R4-F05","fix":"Add `web/src/__tests__/App.test.tsx::*` as a Target and add acceptance for opening settings through App, rendering SettingsOverlay exactly once, and proving the deleted legacy branch is unreachable.","introduced_in_round":3,"location":"P2 / § 2.1","prevention":"Cross-check every promised test sentence against both Targets and a numbered acceptance item.","principle":"A promised integration regression assertion must have an exact target and acceptance item.","root_cause":"The body added an App-level legacy-branch assertion while the Targets and acceptance stop at hook-level command-palette coverage.","section_id":"2.1","severity":"blocking"},{"category":"traceability","causal_finding_id":"WS2-R3-F09","causal_section_ids":["5.2"],"check_key":"chat-input-agent-button-consumer","description":"Deleting `input-responsive.css` in 5.2 removes `.chat-input-agent-button` styling while `ActiveAgentIndicator.tsx` still emits that class. `mobileChromeCss.test.ts` also pins the component/style relation, yet the component is absent from 5.2.","finding_id":"WS2-R4-F06","fix":"Add `web/src/components/chat/ActiveAgentIndicator.tsx::*` as a 5.2 Target, migrate the button geometry with the sanctioned composer-persona styling intact, repoint the mobileChrome guard, and include it in composer parity.","introduced_in_round":3,"location":"P5 / § 5.2","prevention":"For each retiring selector family, gcode-search every production author and test query, then reconcile the result against Targets.","principle":"Every live selector consumer must migrate in the same deliverable that deletes its stylesheet.","root_cause":"The revised composer census omitted `ActiveAgentIndicator.tsx`, which authors `.chat-input-agent-button` from `input-responsive.css`.","section_id":"5.2","severity":"blocking"},{"category":"bad-sequencing","causal_finding_id":"WS2-R3-F11","causal_section_ids":["5.4","5.5"],"check_key":"activity-panel-mcp-consumer-order","description":"The new 5.4→5.5 serialization creates an intermediate parity break: `McpDetailPanel.tsx` still emits `activity-panel-action-btn` and `__label`, but 5.4 neither targets nor migrates it before deleting their sheet.","finding_id":"WS2-R4-F07","fix":"Add `McpDetailPanel.tsx::*` and its direct test seam to 5.4 for the activity-panel action/status family. Keep the component in 5.5 solely for its `mcp-tab.css` selectors and state that split explicitly.","introduced_in_round":3,"location":"P5 / §§ 5.4–5.5","prevention":"At every stylesheet-deletion edge, subtract all earlier migrated consumers from the live gcode census and require the remainder in the deletion task.","principle":"A stylesheet retirement must follow migration of every live consumer in the serialized chain.","root_cause":"`McpDetailPanel.tsx` consumes the activity-panel action-button family but first appears in 5.5, after 5.4 deletes `activity-panel.css`.","section_id":"5.4","severity":"blocking"},{"category":"traceability","causal_finding_id":"WS2-R3-F08","causal_section_ids":["5.1"],"check_key":"markdown-typography-attachment-contract","description":"`MarkdownBody` currently returns a fragment. `TaskDetailEditableCore.StaticBlock` is one of the nine `.message-content` hosts but renders plain `{value}`, so the claim that all nine render through MarkdownBody is false. Adding a wrapper inside MarkdownBody would also change direct consumers such as `ToolCallCard`, `RichContentBlocks`, and deferred `WikiAskMode` that are outside the nine-host list.","finding_id":"WS2-R4-F08","fix":"Specify a wrapper-neutral API: keep MarkdownBody's fragment output, export the canonical scoped typography utility/cva from `MarkdownBody.tsx`, apply it to the exact nine existing `.message-content` hosts, correct TaskDetailEditableCore's census description, and add direct-consumer tests proving ToolCallCard/RichContentBlocks/WikiAskMode DOM and styling remain unchanged.","introduced_in_round":3,"location":"P5 / § 5.1","prevention":"Resolve component return shape, aliases, direct consumers, and styled host elements before assigning canonical style ownership.","principle":"A shared styling migration must name the DOM attachment point and account for every direct consumer affected by that choice.","root_cause":"The census conflates `.message-content` hosts with `MarkdownBody` consumers and assumes the fragment-returning renderer owns a wrapper.","section_id":"5.1","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"WS2-R3-F14","causal_section_ids":["7.3"],"check_key":"settings-overlay-test-seams","description":"`SettingsOverlay.test.tsx` queries `.settings-overlay-shell__backdrop`, which 7.3 says becomes utilities, but the test is absent from Targets. The body also promises a new direct render pin in `SettingsSection.test.tsx`; neither 7.3.1 nor 7.3.2 requires it.","finding_id":"WS2-R4-F09","fix":"Add `web/src/components/settings/__tests__/SettingsOverlay.test.tsx::*` to Targets and repoint the backdrop assertion to a stable semantic/data seam. Add 7.3.3 requiring `SettingsSection.test.tsx` to cover section/subsection shells and `configFields.tsx` row/field rendering.","introduced_in_round":3,"location":"P7 / § 7.3","prevention":"Search test code for every retired selector and reconcile every new test Target with numbered acceptance.","principle":"A stylesheet retirement must migrate class-sensitive tests and acceptance-bind every new direct render pin.","root_cause":"The revised target list adds `SettingsSection.test.tsx` without acceptance and omits the existing overlay test that queries a retiring BEM hook.","section_id":"7.3","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"WS2-R3-F14","causal_section_ids":["7.3"],"check_key":"settings-section-parity-matrix","description":"7.3 migrates the shell, 13 section components, shared renderers, and specialty editors, but the single settings-overlay capture sees only the active default Appearance section. Acceptance 7.3.2 can pass while the other 12 sections and seeded specialty states regress.","finding_id":"WS2-R4-F10","fix":"Expand 1.3's settings scenario into cells derived from live `SETTINGS_SECTIONS`, with deterministic data for variables, endpoint, hubs, prompt-row, and other specialty editors; require every cell in finalizer completeness and name the full registry-backed set in 7.3.2.","introduced_in_round":3,"location":"P1 / § 1.3 and P7 / § 7.3","prevention":"For registry-backed conditional surfaces, derive parity cells from the live registry and seed specialty states before approving a whole-surface migration.","principle":"Visual-parity evidence must render every materially changed stateful surface, rather than only its default branch.","root_cause":"The capture manifest has one settings-overlay scenario while the live overlay mounts one active section at a time and defaults to Appearance.","section_id":"7.3","severity":"blocking"}],"plan_hash":"66375b62fd8a58099879dd4fd839109224765ca4c0fa07c22dd23d4eef847095","reviewer_session":"7c84aa02-c208-415d-a820-a75c9adbb48a","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"15be8dcd-f9ee-4429-9b40-10cbb6705e6b"}
 ```
 
+**Human handoff** `kind: verification`
+
+- trigger: needs_review verdict at the operator-extended review cap of 4 (evidence fb2db9c0-8190-4ddb-8c76-ea65bb9dbaec, finalized 2026-08-09)
+- operator_decision: explicit handoff to expansion (user, 2026-08-09) — all 10 round-4 findings accepted and repaired, four finalized adversarial rounds complete (55 findings total, rate converged 16→15→14→10 with 9 of 10 final-round findings second-order defects in prior repairs); the operator judged the plan execution-ready without a fifth round
+- route: coordinator-only derive_plan_handoff_manifest + apply_plan_handoff_manifest (manifest_digest bf2b43aee74f61b7759e42050094f6097827f7fd3d30e5e26b2524f10f07c243, 32 entries); no adversary verdict manufactured, no further review rounds
+- effect: `## M1 Task Manifest` written from the drift-checked handoff derivation; expansion proceeds via start_expansion_run on #19148 under the fully interactive execution decision
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Split the chat/styles.css barrel along the chat/activity seam
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.1.1: The 8 activity sheets are imported by their owning
+    activity components and removed from the chat barrel. file: `web/src/components/chat/styles.css`.
+
+    1.1.2: Activity surfaces render styled without `ChatPage` mounted. behavior: "activity
+    sheets load with their owning components" in `web/src/components/activity/ActivityPanel.tsx`.
+
+    1.1.3: The stale hatch comment is gone. file: `web/src/components/chat/styles/input-responsive.css`.
+
+    1.1.4: ActivityPanelEmpty, SkillsTab, and IntegrationsFilterPanel each carry their
+    own sheet import and render styled standalone (without ChatPage or the Rules tab
+    mounted), with import-relation pins updated. test: `web/src/__tests__/mobileChromeCss.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:1.1:1.1.1
+  - covers:web-styling-consolidation-phase-2:1.1:1.1.2
+  - covers:web-styling-consolidation-phase-2:1.1:1.1.3
+  - covers:web-styling-consolidation-phase-2:1.1:1.1.4
+  tdd: false
+  source_section: '1.1'
+  assigned_agent: backend-developer
+- title: Delete dead session CSS
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.3'
+  validation_criteria: '1.2.1: `session-primitives.css` is deleted and its index import
+    removed. file: `web/src/styles/index.css`.
+
+    1.2.2: The workflow trace icon renders via utilities. file: `web/src/components/shared/executions/execution-utils.tsx`.
+
+    1.2.3: Both dead `.session-kill-btn` definitions are gone. file: `web/src/components/chat/styles/sessions-tab.css`.
+
+    1.2.4: Allowlist entry dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:1.2:1.2.1
+  - covers:web-styling-consolidation-phase-2:1.2:1.2.2
+  - covers:web-styling-consolidation-phase-2:1.2:1.2.3
+  - covers:web-styling-consolidation-phase-2:1.2:1.2.4
+  tdd: false
+  source_section: '1.2'
+  assigned_agent: backend-developer
+- title: Add the Playwright surface-capture spec
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: "1.3.1: The capture spec exists and produces the full named\
+    \ matrix in one run. test: `web/tests/style-surfaces.spec.ts`.\n1.3.2: A documented\
+    \ two-run before/after workflow (run, flip, run, compare by name) is described\
+    \ in the spec's header comment. behavior: \"before/after capture workflow\" in\
+    \ `web/tests/style-surfaces.spec.ts`.\n1.3.3: Every manifest entry asserts its\
+    \ visible checkpoint and readiness callback before capturing, the run fails if\
+    \ a checkpoint is absent, and the entry count is asserted against the live tab\
+    \ registry. behavior: \"surface checkpoint assertion\" in `web/tests/style-surfaces.spec.ts`.\n\
+    1.3.4: The grayscale subset covers state-bearing rows in both themes. behavior:\
+    \ \"grayscale state subset\" in `web/tests/style-surfaces.spec.ts`.\n1.3.5: Runs\
+    \ are immutable, pairable, and recoverable: attempt-scoped staging, per-cell manifest\
+    \ fragments, one run-level atomic finalizer registered via Playwright globalTeardown,\
+    \ overwrite refusal against finalized runs only, and a merged run-manifest JSON\
+    \ with git SHA and per-PNG hashes \u2014 a failed attempt or parallel cell never\
+    \ blocks a retry or corrupts a manifest. behavior: \"immutable capture runs\"\
+    \ in `web/tests/style-surfaces.spec.ts`.\n1.3.6: The reduced-motion subset captures\
+    \ the animation families under both preference states with computed-style suppression\
+    \ assertions. behavior: \"reduced-motion subset\" in `web/tests/style-surfaces.spec.ts`.\n\
+    1.3.7: Unphotographable surfaces (Traces, CodeGraphExplorer, AgentPortfolioPage)\
+    \ carry recorded representative mappings with equivalence rationales in the spec.\
+    \ behavior: \"representative mappings\" in `web/tests/style-surfaces.spec.ts`.\n\
+    1.3.8: The finalizer selects exactly one successful fragment per expected cell\
+    \ against the shared matrix-expansion roster with exact key-set equality \u2014\
+    \ missing cells abort publication, unknown keys reject as foreign, retry duplicates\
+    \ resolve to the highest attempt, success attestation comes from the runner-final\
+    \ reporter seam, and an inactive run id makes the teardown a no-op even with stale\
+    \ staging present \u2014 with coverage for missing, duplicate, retry, interruption,\
+    \ parallel completion, matrix expansion, inactive-run, stale-staging, foreign-key,\
+    \ and body-pass/teardown-fail outcomes. test: `web/tests/support/captureRunFinalizer.spec.ts`."
+  labels:
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.1
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.2
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.3
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.4
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.5
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.6
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.7
+  - covers:web-styling-consolidation-phase-2:1.3:1.3.8
+  tdd: false
+  source_section: '1.3'
+  assigned_agent: backend-developer
+- title: Hoist the responsive tier into the theme layer
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  - '1.3'
+  validation_criteria: "1.4.1: The mobile tier is authored once in a `@theme static`\
+    \ block, with the width-OR-height condition in a single custom variant whose compiled\
+    \ media conditions carry literal pixel values and no `var()` reference. file:\
+    \ `web/src/styles/tailwind-theme.css`.\n1.4.2: `useIsMobile` and `platform.ts`\
+    \ derive their threshold from the same token rather than a hardcoded number. file:\
+    \ `web/src/hooks/useIsMobile.ts`.\n1.4.3: No hardcoded 430px or 480px viewport\
+    \ threshold remains in `web/src`. file: `web/src/styles/app-shell.css`.\n1.4.4:\
+    \ A guard parses the compiled variant's literal media conditions and the emitted\
+    \ `:root` custom properties and fails when either side moves alone. test: `web/src/__tests__/cssTokenIntegrity.test.ts`.\n\
+    1.4.5: The height\u2264500px clause is live: a 932\xD7430 viewport renders the\
+    \ mobile tier. behavior: \"landscape phone renders mobile tier\" in `web/src/hooks/useIsMobile.ts`.\n\
+    1.4.6: Boundary tests cover 767/768, 500/501, fine-pointer landscape, live resize,\
+    \ malformed token fallback, `matchMedia`-absent degradation, and listener cleanup;\
+    \ device-capability exports are renamed off the layout path. test: `web/src/hooks/__tests__/useIsMobile.test.ts`."
+  labels:
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.1
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.2
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.3
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.4
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.5
+  - covers:web-styling-consolidation-phase-2:1.4:1.4.6
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: frontend
+- title: Retire legacy Settings.tsx onto SettingsOverlay
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: "2.1.1: Command-palette settings actions open the overlay;\
+    \ the legacy panel is unreachable. file: `web/src/components/app/useAppCommandPalette.ts`.\n\
+    2.1.2: `Settings.tsx` and `settings.css` are deleted; `main.tsx` no longer imports\
+    \ the sheet. file: `web/src/main.tsx`.\n2.1.3: Slider focus-ring contract is asserted\
+    \ against the overlay implementation. test: `web/src/__tests__/settingsSliderFocus.test.ts`.\n\
+    2.1.4: Allowlist entries dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.\n\
+    2.1.5: Reset-to-defaults exists in AppearanceSection with a test; the aria-pressed\
+    \ group-semantics assertion is ported. test: `web/src/components/settings/sections/__tests__/AppearanceSection.test.tsx`.\n\
+    2.1.6: Persisted and API font-size values normalize on load with field presence\
+    \ distinguished from invalidity: 12 and 24 round-trip unchanged, 48 loads as 24,\
+    \ present null/string/non-finite/explicit-undefined values and a malformed root\
+    \ fall back to the default, an absent `fontSize` key (localStorage and API merge)\
+    \ preserves the prior valid value, and the disposition map records the legacy\
+    \ 12\u201348 domain. test: `web/src/hooks/__tests__/useSettings.test.ts`.\n2.1.7:\
+    \ Both command-palette settings actions open the overlay exactly once, asserted\
+    \ at the hook level. test: `web/src/components/app/__tests__/useAppCommandPalette.test.tsx`.\n\
+    2.1.8: Opening settings through App renders SettingsOverlay exactly once and the\
+    \ deleted legacy `Settings` branch is unreachable. test: `web/src/__tests__/App.test.tsx`."
+  labels:
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.1
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.2
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.3
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.4
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.5
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.6
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.7
+  - covers:web-styling-consolidation-phase-2:2.1:2.1.8
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: frontend
+- title: ui/Chip primitive
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.1'
+  validation_criteria: '3.1.1: Chip primitive and variants exist with tone + uppercase
+    API. file: `web/src/components/ui/Chip.tsx`.
+
+    3.1.2: The session and task chip families render through Chip; the duplicate `.chip`
+    selector pair is gone. file: `web/src/components/chat/styles/sessions-tab.css`.
+
+    3.1.3: Chip has unit coverage alongside the other `ui/` tests. test: `web/src/components/ui/__tests__/Chip.test.tsx`.
+
+    3.1.4: State-bearing Chip tones carry a non-hue cue (icon or lightness step),
+    asserted rather than left to review. test: `web/src/components/ui/__tests__/Chip.test.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:3.1:3.1.1
+  - covers:web-styling-consolidation-phase-2:3.1:3.1.2
+  - covers:web-styling-consolidation-phase-2:3.1:3.1.3
+  - covers:web-styling-consolidation-phase-2:3.1:3.1.4
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: frontend
+- title: ui/Card primitive
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.1'
+  validation_criteria: '3.2.1: Card primitive and variants exist. file: `web/src/components/ui/Card.tsx`.
+
+    3.2.2: Initial adoptions render through Card. file: `web/src/components/activity/wiki/WikiQuickOpen.tsx`.
+
+    3.2.3: Card has unit coverage. test: `web/src/components/ui/__tests__/Card.test.tsx`.
+
+    3.2.4: `interactive` Cards render a semantic focusable host and do not nest interactive
+    elements inside it. test: `web/src/components/ui/__tests__/Card.test.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:3.2:3.2.1
+  - covers:web-styling-consolidation-phase-2:3.2:3.2.2
+  - covers:web-styling-consolidation-phase-2:3.2:3.2.3
+  - covers:web-styling-consolidation-phase-2:3.2:3.2.4
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: frontend
+- title: ui/FormField primitive and fields consolidation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.2'
+  validation_criteria: "3.3.1: FormField exists with label/hint/error/control API.\
+    \ file: `web/src/components/ui/FormField.tsx`.\n3.3.2: Activity field primitives\
+    \ and settings fields render through FormField and ui controls. file: `web/src/components/activity/fields/FieldPrimitives.tsx`.\n\
+    3.3.3: `ui/Input` has production consumers. symbol: `Input`.\n3.3.4: FormField\
+    \ has unit coverage. test: `web/src/components/ui/__tests__/FormField.test.tsx`.\n\
+    3.3.5: FormField pins label-to-control association, hint/error `aria-describedby`,\
+    \ and `aria-invalid` wiring. test: `web/src/components/ui/__tests__/FormField.test.tsx`.\n\
+    3.3.6: `NativeSelect` exists in `ui/` on the shared focus/token/coarse-pointer\
+    \ contract, and both select paths (native and Radix) are unit-tested. file: `web/src/components/ui/NativeSelect.tsx`.\n\
+    3.3.7: Computed-box tests prove 44\xD744 coarse-pointer hit areas for Input, Textarea,\
+    \ NativeSelect, and Radix Select trigger/items via invisible expansion, with rendered\
+    \ visuals unchanged. test: `web/src/__tests__/coarsePointerTouchTargets.test.ts`.\n\
+    3.3.8: `ui/Textarea` exists with ref-forwarding and auto-grow-compatibility tests.\
+    \ file: `web/src/components/ui/Textarea.tsx`.\n3.3.9: A Chromium spec proves click/focus\
+    \ activation at the expanded 44\xD744 perimeter under `pointer: coarse` for Input,\
+    \ Textarea, NativeSelect, and Radix Select trigger/items, with visible geometry\
+    \ unchanged, executed via `cd web && npx playwright test coarse-pointer-hit-areas.spec.ts`.\
+    \ test: `web/tests/coarse-pointer-hit-areas.spec.ts`."
+  labels:
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.1
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.2
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.3
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.4
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.5
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.6
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.7
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.8
+  - covers:web-styling-consolidation-phase-2:3.3:3.3.9
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: frontend
+- title: Promote TabBar into ui/
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.3'
+  validation_criteria: '3.4.1: TabBar lives in `components/ui/` with its test moved
+    alongside. file: `web/src/components/ui/TabBar.tsx`.
+
+    3.4.2: FilesPage and AgentEditForm tab strips render through TabBar; the `.sidebar-tab*`
+    rules are orphaned pending the 4.2 sheet retirement. file: `web/src/components/agents/AgentEditForm.tsx`.
+
+    3.4.3: TabBar pins tab/tablist roles, roving Arrow/Home/End focus, and keeps the
+    close action out of the tab''s own activation path. test: `web/src/components/ui/__tests__/TabBar.test.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:3.4:3.4.1
+  - covers:web-styling-consolidation-phase-2:3.4:3.4.2
+  - covers:web-styling-consolidation-phase-2:3.4:3.4.3
+  tdd: false
+  source_section: '3.4'
+  assigned_agent: backend-developer
+- title: Agents editors sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  validation_criteria: '4.1.1: Agent editor components compose ui primitives exclusively;
+    their raw-element and `*_CLS` allowlist entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.1.2: Editor sections of `agents-styles.ts` are deleted. file: `web/src/components/agents/agents-styles.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.1:4.1.1
+  - covers:web-styling-consolidation-phase-2:4.1:4.1.2
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: backend-developer
+- title: Agents cards and portfolio sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: `agents-styles.ts` is deleted and its allowlist entry
+    removed. file: `web/src/components/agents/agents-styles.ts`.
+
+    4.2.2: Portfolio filter selects follow the Select rule; agents/ raw-element entries
+    are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.2.3: AgentsTabList and AgentsDetailPanel status chips render through ui/Chip;
+    `SidebarPanel.css` is deleted with its importing component. file: `web/src/components/activity/agents/AgentsDetailPanel.tsx`.
+
+    4.2.4: AgentEditForm-level tests prove focus trapping, Escape close, and focus
+    restoration survive the SidebarPanel retirement. test: `web/src/components/agents/__tests__/AgentEditors.test.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.2:4.2.1
+  - covers:web-styling-consolidation-phase-2:4.2:4.2.2
+  - covers:web-styling-consolidation-phase-2:4.2:4.2.3
+  - covers:web-styling-consolidation-phase-2:4.2:4.2.4
+  tdd: false
+  source_section: '4.2'
+  assigned_agent: backend-developer
+- title: Pipelines sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.2'
+  validation_criteria: '4.3.1: `PipelineEditor.styles.ts` is deleted; pipelines raw-element
+    and `*_CLS` entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.3.2: `execution-utils.tsx` styles via ui primitives and utilities. file: `web/src/components/shared/executions/execution-utils.tsx`.
+
+    4.3.3: The pipelines `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.
+
+    4.3.4: PipelinesDefsList and PipelinesDefsDetail status chips render through ui/Chip.
+    file: `web/src/components/activity/pipelines/PipelinesDefsDetail.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.3:4.3.1
+  - covers:web-styling-consolidation-phase-2:4.3:4.3.2
+  - covers:web-styling-consolidation-phase-2:4.3:4.3.3
+  - covers:web-styling-consolidation-phase-2:4.3:4.3.4
+  tdd: false
+  source_section: '4.3'
+  assigned_agent: backend-developer
+- title: Wiki sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.3'
+  validation_criteria: '4.4.1: All wiki/ raw-element allowlist entries are zero except
+    the deferral-covered `WikiAskMode.tsx` entries (7 button / 1 textarea), which
+    carry a comment naming the 4.11 deferral. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.4.2: The WikiQuickOpen `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.4:4.4.1
+  - covers:web-styling-consolidation-phase-2:4.4:4.4.2
+  tdd: false
+  source_section: '4.4'
+  assigned_agent: backend-developer
+- title: Graph explorers sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.4'
+  validation_criteria: '4.5.1: Both explorers'' raw-element and `*_CLS` entries are
+    zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.5.2: Both `inputFocusAdoption` entries are removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.5:4.5.1
+  - covers:web-styling-consolidation-phase-2:4.5:4.5.2
+  tdd: false
+  source_section: '4.5'
+  assigned_agent: backend-developer
+- title: FilesPage sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.5'
+  validation_criteria: '4.6.1: FilesPage and FilesTab raw-element and `*_CLS` entries
+    are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.6.2: The discard-confirm flow uses ConfirmDialog. file: `web/src/components/FilesPage.tsx`.
+
+    4.6.3: FilesTab composite tree rows keep their div/keyboard-guard semantics while
+    every nested native control composes a ui primitive. file: `web/src/components/activity/FilesTab.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.6:4.6.1
+  - covers:web-styling-consolidation-phase-2:4.6:4.6.2
+  - covers:web-styling-consolidation-phase-2:4.6:4.6.3
+  tdd: false
+  source_section: '4.6'
+  assigned_agent: backend-developer
+- title: Tasks sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.6'
+  validation_criteria: '4.7.1: tasks/ raw-element and `*_CLS` entries are zero (incl.
+    `taskModalStyles.ts` deleted). file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.7.2: The QuickCaptureTask `inputFocusAdoption` entry is removed. test: `web/src/components/__tests__/inputFocusAdoption.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.7:4.7.1
+  - covers:web-styling-consolidation-phase-2:4.7:4.7.2
+  tdd: false
+  source_section: '4.7'
+  assigned_agent: backend-developer
+- title: Activity lists and detail panels sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.7'
+  validation_criteria: '4.8.1: All listed activity files'' raw-element entries are
+    zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.8.2: Filter-panel selects render through SelectField. file: `web/src/components/activity/RulesTab.tsx`.
+
+    4.8.3: Every `.activity-chip` adopter in this sweep and the `.activity-mcp-chip`
+    renderer compose ui/Chip; the orphaned `.activity-chip` rules die with their sheet
+    in 5.4. file: `web/src/__tests__/styleRatchet.allowlist.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.8:4.8.1
+  - covers:web-styling-consolidation-phase-2:4.8:4.8.2
+  - covers:web-styling-consolidation-phase-2:4.8:4.8.3
+  tdd: false
+  source_section: '4.8'
+  assigned_agent: backend-developer
+- title: Activity chrome sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.8'
+  validation_criteria: '4.9.1: One shared presentational filter-field/shell component
+    serves all four filter dropdowns, each keeping its own controller with apply/reset/Escape/outside-click/focus
+    semantics proven by the ported tests, and each of the four controllers mapped
+    to a direct test (Sessions, Tasks, Activity immediate-select-and-close, Rules
+    open/reset/Escape/outside-click/focus-return). file: `web/src/components/activity/FilterPrimitives.tsx`.
+
+    4.9.2: Listed chrome files'' raw-element entries are zero. file: `web/src/__tests__/styleRatchet.allowlist.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.9:4.9.1
+  - covers:web-styling-consolidation-phase-2:4.9:4.9.2
+  tdd: false
+  source_section: '4.9'
+  assigned_agent: backend-developer
+- title: Chat, command-browser, and app-shell sweep
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '4.9'
+  validation_criteria: '4.10.1: `RAW_ELEMENT_ALLOWLIST` input and select maps are
+    empty; the textarea map holds only the deferral-covered `WikiAskMode.tsx` entry;
+    the button map contains only the composer-moat entries plus the deferral-covered
+    `WikiAskMode.tsx` entry (see 4.11). file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.10.2: `CLS_CONSTANT_ALLOWLIST` is empty. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    4.10.3: The ValidationDetectionEditor `inputFocusAdoption` entry is removed. test:
+    `web/src/components/__tests__/inputFocusAdoption.test.ts`.
+
+    4.10.4: The composer textarea renders through `ui/Textarea` with the composer
+    look preserved. file: `web/src/components/chat/ChatInput.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:4.10:4.10.1
+  - covers:web-styling-consolidation-phase-2:4.10:4.10.2
+  - covers:web-styling-consolidation-phase-2:4.10:4.10.3
+  - covers:web-styling-consolidation-phase-2:4.10:4.10.4
+  tdd: false
+  source_section: '4.10'
+  assigned_agent: backend-developer
+- title: Retire message.css and empty-state.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  - '4.3'
+  - '4.4'
+  - '4.5'
+  - '4.6'
+  - '4.7'
+  - '4.8'
+  - '4.9'
+  - '4.10'
+  validation_criteria: '5.1.1: Both sheets are deleted with allowlist entries dropped.
+    file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.1.2: Message markdown typography renders via utilities with parity. file: `web/src/components/chat/MessageItem.tsx`.
+
+    5.1.3: Empty-state guard assertions target the component. test: `web/src/components/activity/__tests__/ActivityPanelEmpty.test.tsx`.
+
+    5.1.4: Non-chat markdown surfaces (FilesPage, FilesTab, PlanReviewCard, SessionsTabDetail,
+    TasksTabDetailPanel, SkillContentView, TaskDetailEditableCore, WikiPageReader)
+    keep scoped markdown typography with parity after the sheet retires; MarkdownBody
+    keeps its fragment output, and direct-consumer tests prove ToolCallCard, RichContentBlocks,
+    and WikiAskMode DOM and styling unchanged. file: `web/src/components/shared/MarkdownBody.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.1:5.1.1
+  - covers:web-styling-consolidation-phase-2:5.1:5.1.2
+  - covers:web-styling-consolidation-phase-2:5.1:5.1.3
+  - covers:web-styling-consolidation-phase-2:5.1:5.1.4
+  tdd: false
+  source_section: '5.1'
+  assigned_agent: backend-developer
+- title: Retire the chat input family
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.10'
+  - '5.1'
+  validation_criteria: '5.2.1: All six input sheets are deleted with allowlist entries
+    dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.2.2: Composer renders with visual parity across the capture matrix. behavior:
+    "composer parity" in `web/tests/style-surfaces.spec.ts`.
+
+    5.2.3: The single voice `animation: none !important` relocated from `input-voice.css:176`
+    lives in accessibility.css under its own `prefers-reduced-motion` query with rationale,
+    and `IMPORTANT_ALLOWLIST` moves that one count with it. file: `web/src/styles/accessibility.css`.
+
+    5.2.4: Computed-style assertions prove reduced-motion suppression and no-preference
+    animation behavior for the relocated voice families (recording, speaking/listening,
+    loading, streaming), and the 1.3 reduced-motion subset passes before and after
+    the move. behavior: "reduced-motion relocation" in `web/tests/style-surfaces.spec.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.2:5.2.1
+  - covers:web-styling-consolidation-phase-2:5.2:5.2.2
+  - covers:web-styling-consolidation-phase-2:5.2:5.2.3
+  - covers:web-styling-consolidation-phase-2:5.2:5.2.4
+  tdd: false
+  source_section: '5.2'
+  assigned_agent: backend-developer
+- title: Retire layout.css, variables.css, and the chat barrel
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  validation_criteria: '5.3.1: `layout.css`, `variables.css`, and `chat/styles.css`
+    are deleted with allowlist entries dropped. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.3.2: The tool-code-surface override survives in base.css and tool cards render
+    flat code backgrounds. file: `web/src/styles/base.css`.
+
+    5.3.3: Import-order-dependent behavior is gone from chat styling (no cross-sheet
+    duplicate selectors remain). behavior: "no duplicate selectors" in `web/src/components/chat/ChatPage.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.3:5.3.1
+  - covers:web-styling-consolidation-phase-2:5.3:5.3.2
+  - covers:web-styling-consolidation-phase-2:5.3:5.3.3
+  tdd: false
+  source_section: '5.3'
+  assigned_agent: backend-developer
+- title: Retire sessions-tab.css and activity-panel.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.2'
+  - '4.3'
+  - '4.9'
+  - '5.3'
+  validation_criteria: '5.4.1: Both sheets are deleted with allowlist entries dropped
+    and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.4.2: `.activity-filter-button` has exactly one authoring site. behavior: "single
+    filter-button authoring site" in `web/src/components/activity/TasksTabToolbar.tsx`.
+
+    5.4.3: Typography-ladder pins assert against components. test: `web/src/components/activity/__tests__/typographyLadder.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.4:5.4.1
+  - covers:web-styling-consolidation-phase-2:5.4:5.4.2
+  - covers:web-styling-consolidation-phase-2:5.4:5.4.3
+  tdd: false
+  source_section: '5.4'
+  assigned_agent: backend-developer
+- title: Retire the small activity tab sheets
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.3'
+  - '4.6'
+  - '4.8'
+  - '5.4'
+  validation_criteria: '5.5.1: All seven sheets are deleted with allowlist entries
+    dropped and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.5.2: The shared inline filter panel serves Rules, Skills, and Integrations from
+    the presentational InlineFilterPanel in one implementation, with direct render
+    coverage. file: `web/src/components/activity/FilterPrimitives.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.5:5.5.1
+  - covers:web-styling-consolidation-phase-2:5.5:5.5.2
+  tdd: false
+  source_section: '5.5'
+  assigned_agent: backend-developer
+- title: Retire task-execution.css and task-detail.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '4.7'
+  - '4.8'
+  - '5.5'
+  validation_criteria: '5.6.1: Both sheets are deleted with allowlist entries dropped
+    and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    5.6.2: Coarse-pointer 44px promotion for task rows is asserted via compiled utilities.
+    test: `web/src/__tests__/coarsePointerTouchTargets.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:5.6:5.6.1
+  - covers:web-styling-consolidation-phase-2:5.6:5.6.2
+  tdd: false
+  source_section: '5.6'
+  assigned_agent: backend-developer
+- title: Remove important:true behind the screenshot gate
+  category: config
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '5.2'
+  - '5.3'
+  - '5.4'
+  - '5.5'
+  - '5.6'
+  validation_criteria: '6.1.1: `important: true` is gone. file: `web/tailwind.config.ts`.
+
+    6.1.2: Before/after capture pairs across the full matrix show exact parity against
+    the immutable post-1.4 baseline; 1.4 remains the sole rendered-output exemption
+    plan-wide. behavior: "matrix parity review" in `web/tests/style-surfaces.spec.ts`.
+
+    6.1.3: The style guide reflects the new cascade. file: `docs/guides/frontend-style-guide.md`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:6.1:6.1.1
+  - covers:web-styling-consolidation-phase-2:6.1:6.1.2
+  - covers:web-styling-consolidation-phase-2:6.1:6.1.3
+  tdd: true
+  source_section: '6.1'
+  assigned_agent: backend-developer
+- title: Retire segmented-control.css and dropdown-caret.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '7.1.1: Both sheets are deleted; the primitives self-style.
+    file: `web/src/components/ui/SegmentedControl.tsx`.
+
+    7.1.2: Allowlist entries dropped; `main.tsx` imports removed. file: `web/src/main.tsx`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:7.1:7.1.1
+  - covers:web-styling-consolidation-phase-2:7.1:7.1.2
+  tdd: false
+  source_section: '7.1'
+  assigned_agent: backend-developer
+- title: Retire app-shell.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: `app-shell.css` is deleted with its allowlist entry;
+    header renders with parity in both tiers. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    7.2.2: Header pins live as component assertions. test: `web/src/__tests__/mobileChromeCss.test.ts`.
+
+    7.2.3: The `.impeccable.md` app-header/canonical-cluster clause references component-owned
+    styling, updated via teach mode in this deliverable. behavior: "app-header contract
+    matches shipped architecture" in `.impeccable.md`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:7.2:7.2.1
+  - covers:web-styling-consolidation-phase-2:7.2:7.2.2
+  - covers:web-styling-consolidation-phase-2:7.2:7.2.3
+  tdd: false
+  source_section: '7.2'
+  assigned_agent: backend-developer
+- title: Retire settings-overlay.css
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '6.1'
+  - '7.2'
+  validation_criteria: "7.3.1: `settings-overlay.css` is deleted with its allowlist\
+    \ entry and ceiling lowered. file: `web/src/__tests__/styleRatchet.allowlist.ts`.\n\
+    7.3.2: Settings overlay renders with parity across the capture matrix for every\
+    \ registry-derived section cell \u2014 one per live `SETTINGS_SECTIONS` entry\
+    \ with seeded specialty-editor states (variables, endpoint, hubs, prompt-row)\
+    \ \u2014 as defined in 1.3. behavior: \"settings overlay parity\" in `web/tests/style-surfaces.spec.ts`.\n\
+    7.3.3: The shared renderers carry direct render pins: section/subsection shells\
+    \ in `SettingsSection.test.tsx` and `configFields.tsx` row/field rendering, plus\
+    \ the SettingsOverlay backdrop assertion re-pointed to a stable semantic seam.\
+    \ test: `web/src/components/settings/sections/__tests__/SettingsSection.test.tsx`."
+  labels:
+  - covers:web-styling-consolidation-phase-2:7.3:7.3.1
+  - covers:web-styling-consolidation-phase-2:7.3:7.3.2
+  - covers:web-styling-consolidation-phase-2:7.3:7.3.3
+  tdd: false
+  source_section: '7.3'
+  assigned_agent: backend-developer
+- title: Load-order rationalization
+  category: refactor
+  task_type: feature
+  depends_on:
+  - '7.2'
+  - '7.3'
+  validation_criteria: '7.4.1: `main.tsx` has exactly three style-bearing imports
+    (two fonts + index.css). file: `web/src/main.tsx`.
+
+    7.4.2: The import pins assert the final order. test: `web/src/__tests__/mobileChromeCss.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:7.4:7.4.1
+  - covers:web-styling-consolidation-phase-2:7.4:7.4.2
+  tdd: false
+  source_section: '7.4'
+  assigned_agent: backend-developer
+- title: Simplify the ratchet to pure bans
+  category: test
+  task_type: feature
+  depends_on:
+  - '7.1'
+  - '7.2'
+  - '7.3'
+  - '7.4'
+  validation_criteria: '8.1.1: Allowlists are empty or pinned floors with moat-linked
+    comments. file: `web/src/__tests__/styleRatchet.allowlist.ts`.
+
+    8.1.2: The ratchet test enforces the end state and passes. test: `web/src/__tests__/styleRatchet.test.ts`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:8.1:8.1.1
+  - covers:web-styling-consolidation-phase-2:8.1:8.1.2
+  tdd: false
+  source_section: '8.1'
+  assigned_agent: backend-developer
+- title: Update the style guide and design contract
+  category: docs
+  task_type: feature
+  depends_on:
+  - '7.1'
+  - '7.2'
+  - '7.3'
+  - '7.4'
+  validation_criteria: '8.2.1: The style guide documents the end state. file: `docs/guides/frontend-style-guide.md`.
+
+    8.2.2: The design contract''s component references match the shipped architecture.
+    behavior: "Canonical Components reflect component-owned styling" in `.impeccable.md`.'
+  labels:
+  - covers:web-styling-consolidation-phase-2:8.2:8.2.1
+  - covers:web-styling-consolidation-phase-2:8.2:8.2.2
+  tdd: false
+  source_section: '8.2'
+  assigned_agent: tech-writer
+```
