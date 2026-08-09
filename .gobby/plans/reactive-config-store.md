@@ -1438,3 +1438,783 @@ including the section 2.5 browser-authority audit
 against an isolated temporary schema and confirm the fresh apply, the
 predecessor-receipt re-apply, and the corrupt-receipt rejection paths; do not reinstall
 or restart the user's daemon during automated validation.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Compile the typed registry
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Every non-bootstrap daemon leaf resolves to exactly
+    one spec. test: `tests/config/test_config_registry.py::test_every_daemon_leaf_has_one_spec`.
+
+    1.1.2: Every mapping leaf has an explicit non-overlapping pattern adapter. test:
+    `tests/config/test_config_registry.py::test_mapping_patterns_are_complete`.
+
+    1.1.3: Public and machine schemas expose only their declared visibility classes.
+    test: `tests/config/test_config_registry.py::test_visibility_partitions_are_disjoint`.
+
+    1.1.4: The shared codec vector set produces its exact canonical encoded bytes,
+    round-trips losslessly through every dynamic family and dotted storage without
+    collisions, and every malformed or non-canonical input is rejected. test: `tests/config/test_config_registry.py::test_dynamic_segment_codec_round_trip`.'
+  labels:
+  - covers:reactive-config-store:1.1:1.1.1
+  - covers:reactive-config-store:1.1:1.1.2
+  - covers:reactive-config-store:1.1:1.1.3
+  - covers:reactive-config-store:1.1:1.1.4
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Extend baseline 375 with revisioned configuration state
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: A fresh apply creates the revision table, seed row,
+    and config_store column. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_creates_config_revision_state`.
+
+    1.2.2: A hub holding the exact predecessor baseline@375 receipt re-applies, replaces
+    its receipt with the new checksum in one transaction, and loses no data. test:
+    `crates/gcore/src/schema/runner_tests.rs::existing_hub_reapplies_updated_baseline`.
+
+    1.2.3: Re-apply is idempotent and requires no destructive authorization. test:
+    `crates/gcore/src/schema/runner_tests.rs::config_revision_baseline_is_nondestructive`.
+
+    1.2.4: Embedded assets and catalog describe the revision table and row column.
+    file: `crates/gcore/assets/schema/catalog.manifest.json`.
+
+    1.2.5: Regenerated schema identity matches the edited baseline and both identity
+    contract tests pass. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+
+    1.2.6: Arbitrary checksum or filename receipt mismatches still classify CorruptPartial
+    and refuse. test: `crates/gcore/src/schema/runner_tests.rs::unrecognized_receipt_still_rejects`.
+
+    1.2.7: A fresh apply creates the embedding acknowledgement/lease and projection-change
+    tables with runtime-role grants. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_creates_embedding_coordination_state`.'
+  labels:
+  - covers:reactive-config-store:1.2:1.2.1
+  - covers:reactive-config-store:1.2:1.2.2
+  - covers:reactive-config-store:1.2:1.2.3
+  - covers:reactive-config-store:1.2:1.2.4
+  - covers:reactive-config-store:1.2:1.2.5
+  - covers:reactive-config-store:1.2:1.2.6
+  - covers:reactive-config-store:1.2:1.2.7
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Implement atomic revisioned mutations
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  validation_criteria: "1.3.1: Concurrent writers sharing an expected revision yield\
+    \ one commit and one typed conflict. test: `tests/storage/test_revisioned_config_store.py::test_compare_and_swap_serializes_writers`.\n\
+    1.3.2: Values, unsets, secret payloads, row revisions, global revision, and notification\
+    \ commit atomically. test: `tests/storage/test_revisioned_config_store.py::test_mutation_is_one_transaction`.\n\
+    1.3.3: Invalid candidates leave configuration, secrets, revision, and notifications\
+    \ untouched. test: `tests/storage/test_revisioned_config_store.py::test_invalid_candidate_has_no_side_effects`.\n\
+    1.3.4: No-op and secret-rotation behavior follows the effective-change rule. test:\
+    \ `tests/storage/test_revisioned_config_store.py::test_effective_change_controls_revision`.\n\
+    1.3.5: A paused reader with a concurrent committed writer returns a wholly old\
+    \ or wholly new snapshot, never a mix. test: `tests/storage/test_revisioned_config_store.py::test_snapshot_read_is_repeatable_read_coherent`.\n\
+    1.3.6: Startup repairs stale registry-derived `is_secret` metadata without changing\
+    \ any effective value or the revision. test: `tests/storage/test_revisioned_config_store.py::test_startup_secrecy_repair_preserves_values_and_revision`.\n\
+    1.3.7: Startup with an unknown residual ConfigStore row fails closed. test: `tests/storage/test_revisioned_config_store.py::test_unknown_residual_row_fails_closed`.\n\
+    1.3.8: An increment at the 2^53\u22121 ceiling returns typed `revision_exhausted`\
+    \ and commits nothing. test: `tests/storage/test_revisioned_config_store.py::test_revision_ceiling_returns_exhausted`."
+  labels:
+  - covers:reactive-config-store:1.3:1.3.1
+  - covers:reactive-config-store:1.3:1.3.2
+  - covers:reactive-config-store:1.3:1.3.3
+  - covers:reactive-config-store:1.3:1.3.4
+  - covers:reactive-config-store:1.3:1.3.5
+  - covers:reactive-config-store:1.3:1.3.6
+  - covers:reactive-config-store:1.3:1.3.7
+  - covers:reactive-config-store:1.3:1.3.8
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Add ConfigRuntime and remote-daemon notifications
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '1.4.1: Readers observe immutable single-revision snapshots.
+    test: `tests/config/test_config_runtime.py::test_snapshot_swap_is_atomic`.
+
+    1.4.2: Restart writes separate desired and active state and report pending keys.
+    test: `tests/config/test_config_runtime.py::test_restart_policy_tracks_pending_keys`.
+
+    1.4.3: Post-commit preparation failure keeps desired state and revision committed,
+    performs no active swap and no compensating write, and records failed-live metadata.
+    test: `tests/config/test_config_runtime.py::test_apply_failure_preserves_local_last_good_state`.
+
+    1.4.4: A second runtime receives remote revisions over the pool-exempt listener.
+    test: `tests/config/test_config_runtime.py::test_remote_runtime_receives_revision_notification`.
+
+    1.4.5: Listener reconnect performs a full reload before health recovery. test:
+    `tests/config/test_config_runtime.py::test_listener_reconnect_reloads_snapshot`.
+
+    1.4.6: Duplicate, current, and burst notifications reconcile at most once to the
+    latest revision. test: `tests/config/test_config_runtime.py::test_notifications_are_idempotent_and_coalesced`.
+
+    1.4.7: The pool-exempt listener runs under the daemon runtime role in autocommit
+    mode and receives notifications, reconnects, and closes under it. test: `tests/config/test_config_runtime.py::test_listener_assumes_runtime_role`.
+
+    1.4.8: A delayed older reload completing after a newer one is discarded and never
+    published. test: `tests/config/test_config_runtime.py::test_out_of_order_reload_is_discarded`.
+
+    1.4.9: Failed preparation after a same-reference secret rotation preserves the
+    previous active secret binding and consumers never observe the unactivated payload.
+    test: `tests/config/test_config_runtime.py::test_failed_apply_preserves_active_secret_binding`.
+
+    1.4.10: Blocking repository or constructor work runs off-loop in its bounded lane,
+    database work terminates through database-side timeouts and cancellation, and
+    a late result arriving after its deadline is quarantined and disposed without
+    stalling LISTEN or shutdown. test: `tests/config/test_config_runtime.py::test_blocking_work_is_bounded_and_quarantined`.
+
+    1.4.11: A successful preparation superseded by a newer revision is disposed exactly
+    once and records no failed-live metadata. test: `tests/config/test_config_runtime.py::test_superseded_preparation_is_disposed`.
+
+    1.4.12: Snapshot and service references publish as one bundle pointer and no forced
+    interleaving observes a mixed epoch. test: `tests/config/test_config_runtime.py::test_active_bundle_swap_is_atomic`.
+
+    1.4.13: Remote-hub startup verifies the KEK/DEK identity fingerprint and a mismatched
+    daemon fails closed before ready. test: `tests/config/test_config_runtime.py::test_kek_mismatch_fails_closed`.
+
+    1.4.14: Failed-live metadata survives unrelated revisions and duplicate reconciliation,
+    and clears only when a later mutation changes an affected key and its activation
+    succeeds. test: `tests/config/test_config_runtime.py::test_failed_live_record_lifecycle`.
+
+    1.4.15: Constructor-lane saturation by non-returning work leaves LISTEN reconciliation,
+    PATCH completion, and shutdown within their bounds. test: `tests/config/test_config_runtime.py::test_lane_saturation_preserves_bounds`.
+
+    1.4.16: Fresh-startup required-service preparation failure disposes partial replacements
+    and blocks readiness; an optional-capability failure publishes an unavailable
+    slot, and a later successful affected-key activation clears the degraded state.
+    test: `tests/config/test_config_runtime.py::test_first_initialization_failure_semantics`.'
+  labels:
+  - covers:reactive-config-store:1.4:1.4.1
+  - covers:reactive-config-store:1.4:1.4.2
+  - covers:reactive-config-store:1.4:1.4.3
+  - covers:reactive-config-store:1.4:1.4.4
+  - covers:reactive-config-store:1.4:1.4.5
+  - covers:reactive-config-store:1.4:1.4.6
+  - covers:reactive-config-store:1.4:1.4.7
+  - covers:reactive-config-store:1.4:1.4.8
+  - covers:reactive-config-store:1.4:1.4.9
+  - covers:reactive-config-store:1.4:1.4.10
+  - covers:reactive-config-store:1.4:1.4.11
+  - covers:reactive-config-store:1.4:1.4.12
+  - covers:reactive-config-store:1.4:1.4.13
+  - covers:reactive-config-store:1.4:1.4.14
+  - covers:reactive-config-store:1.4:1.4.15
+  - covers:reactive-config-store:1.4:1.4.16
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Replace the public HTTP configuration API
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '2.1.1: Schema and values expose public registry metadata and
+    masked desired/active state. test: `tests/servers/routes/test_config_values_api.py::test_public_schema_and_values_contract`.
+
+    2.1.2: PATCH enforces CAS, path validation, per-key unset, and managed activation.
+    test: `tests/servers/routes/test_config_values_api.py::test_public_patch_contract`.
+
+    2.1.3: Public reads, errors, and events contain no secret plaintext. test: `tests/servers/routes/test_config_values_api.py::test_public_surfaces_redact_secrets`.
+
+    2.1.4: Reset and caller-supplied `is_secret` are absent. test: `tests/servers/routes/test_config_values_api.py::test_legacy_reset_and_secrecy_flags_are_removed`.
+
+    2.1.5: A newly reconciled revision emits exactly one revision-only `config_event`
+    and duplicate revisions emit none. test: `tests/servers/routes/test_config_values_api.py::test_config_revision_event_contract`.
+
+    2.1.6: A committed mutation whose local activation fails returns success with
+    the new revision and failed-live metadata, never a retryable generic error. test:
+    `tests/servers/routes/test_config_values_api.py::test_apply_failure_returns_committed_metadata`.
+
+    2.1.7: Generation-endpoint activation commits one revisioned typed mutation including
+    its secret and performs no raw writes. test: `tests/servers/routes/test_config_values_api.py::test_endpoint_activation_uses_typed_mutation`.
+
+    2.1.8: HTTP paths round-trip the shared codec vector set with exact canonical
+    bytes, without early decoding or structural splitting. test: `tests/servers/routes/test_config_values_api.py::test_http_round_trips_codec_vectors`.
+
+    2.1.9: Revision inputs outside the strict integer domain are rejected and a ceiling-refused
+    mutation returns the typed non-retryable `revision_exhausted` error. test: `tests/servers/routes/test_config_values_api.py::test_revision_domain_and_exhaustion_contract`.'
+  labels:
+  - covers:reactive-config-store:2.1:2.1.1
+  - covers:reactive-config-store:2.1:2.1.2
+  - covers:reactive-config-store:2.1:2.1.3
+  - covers:reactive-config-store:2.1:2.1.4
+  - covers:reactive-config-store:2.1:2.1.5
+  - covers:reactive-config-store:2.1:2.1.6
+  - covers:reactive-config-store:2.1:2.1.7
+  - covers:reactive-config-store:2.1:2.1.8
+  - covers:reactive-config-store:2.1:2.1.9
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Preserve the authenticated Rust machine contract
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '2.2.1: Effective config retains its flat envelope and resolves
+    machine-visible secret references. test: `tests/servers/routes/test_configuration_effective_routes.py::test_effective_config_preserves_resolved_machine_contract`.
+
+    2.2.2: Public-only and restricted-only keys are excluded from machine output.
+    test: `tests/servers/routes/test_configuration_effective_routes.py::test_effective_config_uses_machine_visibility`.
+
+    2.2.3: Effective config requires the runtime token and disables caching. test:
+    `tests/servers/routes/test_configuration_effective_routes.py::test_effective_config_auth_and_cache_contract`.
+
+    2.2.4: Service capabilities retain agent authorization and active-snapshot behavior.
+    test: `tests/servers/routes/test_configuration_effective_routes.py::test_service_capabilities_use_active_snapshot`.
+
+    2.2.5: Machine output serves the activated secret payload and never an unactivated
+    rotated payload. test: `tests/servers/routes/test_configuration_effective_routes.py::test_machine_output_uses_active_secret_binding`.'
+  labels:
+  - covers:reactive-config-store:2.2:2.2.1
+  - covers:reactive-config-store:2.2:2.2.2
+  - covers:reactive-config-store:2.2:2.2.3
+  - covers:reactive-config-store:2.2:2.2.4
+  - covers:reactive-config-store:2.2:2.2.5
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Replace MCP configuration tools
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.1'
+  validation_criteria: '2.3.1: MCP and HTTP return equivalent schema, values, and
+    patch results. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_wraps_universal_config_service`.
+
+    2.3.2: MCP patch requires revision and preserves secret/managed policies. test:
+    `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_requires_revision`.
+
+    2.3.3: Raw get/set/delete/batch/list/default-seeding tools are absent. test: `tests/mcp_proxy/tools/test_config_values.py::test_legacy_config_tools_are_removed`.
+
+    2.3.4: An MCP patch whose local activation fails reports committed success with
+    failed-live metadata. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_reports_apply_status`.
+
+    2.3.5: MCP tools round-trip the shared codec vector set byte-equivalently to HTTP.
+    test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_round_trips_codec_vectors`.
+
+    2.3.6: An MCP patch rejects out-of-domain revisions and maps the ceiling to the
+    typed non-retryable `revision_exhausted` result. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_revision_domain_and_exhaustion`.'
+  labels:
+  - covers:reactive-config-store:2.3:2.3.1
+  - covers:reactive-config-store:2.3:2.3.2
+  - covers:reactive-config-store:2.3:2.3.3
+  - covers:reactive-config-store:2.3:2.3.4
+  - covers:reactive-config-store:2.3:2.3.5
+  - covers:reactive-config-store:2.3:2.3.6
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Make YAML a validate-first daemon-namespace replacement
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.1'
+  validation_criteria: '2.4.1: Invalid documents preserve rows, secrets, and revision.
+    test: `tests/servers/routes/test_config_yaml_replace.py::test_invalid_document_has_no_side_effects`.
+
+    2.4.2: Valid replacement changes only the daemon namespace in one revision. test:
+    `tests/servers/routes/test_config_yaml_replace.py::test_daemon_replacement_is_scoped_and_atomic`.
+
+    2.4.3: Omissions restore daemon defaults without clearing supplemental/domain
+    state. test: `tests/servers/routes/test_config_yaml_replace.py::test_omissions_restore_only_daemon_defaults`.
+
+    2.4.4: Export round-trips without plaintext secret disclosure. test: `tests/servers/routes/test_config_yaml_replace.py::test_masked_export_round_trip`.
+
+    2.4.5: A stale-revision replacement returns 409 and leaves rows, secrets, and
+    the revision untouched. test: `tests/servers/routes/test_config_yaml_replace.py::test_stale_revision_replacement_is_rejected`.
+
+    2.4.6: A replacement that persists but fails local activation reports committed
+    success with failed-live metadata. test: `tests/servers/routes/test_config_yaml_replace.py::test_replacement_reports_apply_status`.
+
+    2.4.7: YAML import and export round-trip the shared codec vector set with exact
+    canonical bytes, without collisions or unintended structure. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_round_trips_codec_vectors`.
+
+    2.4.8: A replacement with an out-of-domain revision is rejected and a ceiling-refused
+    replacement reports typed `revision_exhausted`. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_revision_domain_and_exhaustion`.'
+  labels:
+  - covers:reactive-config-store:2.4:2.4.1
+  - covers:reactive-config-store:2.4:2.4.2
+  - covers:reactive-config-store:2.4:2.4.3
+  - covers:reactive-config-store:2.4:2.4.4
+  - covers:reactive-config-store:2.4:2.4.5
+  - covers:reactive-config-store:2.4:2.4.6
+  - covers:reactive-config-store:2.4:2.4.7
+  - covers:reactive-config-store:2.4:2.4.8
+  tdd: true
+  source_section: '2.4'
+  implementation_domain: backend
+- title: Migrate browser configuration state
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.5.1: Every browser mutation includes the current revision.
+    test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::includes_revision_in_every_patch`.
+
+    2.5.2: Conflict refresh preserves unsaved edits and requires resubmission. test:
+    `web/src/hooks/__tests__/useConfiguration.revision.test.ts::preserves_draft_after_conflict`.
+
+    2.5.3: UI preferences and project selection use universal paths. test: `web/src/hooks/__tests__/useSettings.test.ts::persists_settings_through_config_patch`.
+
+    2.5.4: Higher WebSocket revisions trigger one coalesced refetch. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::coalesces_config_revision_events`.
+
+    2.5.5: Fields render their activation class and show desired-versus-active values
+    for pending-restart keys. test: `web/src/components/settings/sections/__tests__/configFieldActivation.test.tsx::renders_activation_class_and_pending_restart_state`.
+
+    2.5.6: Failed-live keys surface apply status and managed keys route to the managed
+    action. test: `web/src/components/settings/sections/__tests__/configFieldActivation.test.tsx::routes_managed_keys_and_shows_failed_live_status`.
+
+    2.5.7: WebSocket reconnect refetches and converges on a mutation committed while
+    disconnected. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::refetches_on_reconnect`.
+
+    2.5.8: A higher event during an in-flight refetch produces one trailing refetch
+    and older responses never render. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::watermark_triggers_trailing_refetch`.
+
+    2.5.9: The browser-authority audit rejects direct fetches, specialized writers,
+    reset calls, and revisionless mutations. test: `web/src/__tests__/config-authority-audit.test.ts::web_has_one_config_authority`.
+
+    2.5.10: The typed client round-trips the shared codec vector set with exact canonical
+    bytes through browser state without re-encoding drift. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::round_trips_codec_vectors`.
+
+    2.5.11: A `revision_exhausted` result renders as a terminal non-retryable state
+    and triggers no refetch-resubmit loop. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::exhausted_revision_is_terminal`.'
+  labels:
+  - covers:reactive-config-store:2.5:2.5.1
+  - covers:reactive-config-store:2.5:2.5.2
+  - covers:reactive-config-store:2.5:2.5.3
+  - covers:reactive-config-store:2.5:2.5.4
+  - covers:reactive-config-store:2.5:2.5.5
+  - covers:reactive-config-store:2.5:2.5.6
+  - covers:reactive-config-store:2.5:2.5.7
+  - covers:reactive-config-store:2.5:2.5.8
+  - covers:reactive-config-store:2.5:2.5.9
+  - covers:reactive-config-store:2.5:2.5.10
+  - covers:reactive-config-store:2.5:2.5.11
+  tdd: true
+  source_section: '2.5'
+  implementation_domain: frontend
+- title: Generate and consume the Rust runtime-config contract
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '2.2'
+  validation_criteria: '2.6.1: Generated Rust contract is byte-stable and current
+    with the Python registry. test: `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`.
+
+    2.6.2: Rust rejects machine keys absent from the generated contract. test: `crates/gcore/src/config/tests/runtime_contract.rs::rejects_unregistered_machine_key`.
+
+    2.6.3: Gobby runtime mode ignores env/standalone precedence for registered keys.
+    test: `crates/gcode/src/config/tests/runtime_contract.rs::gobby_mode_uses_registry_authority`.
+
+    2.6.4: Direct hub fallback resolves service families and secret bindings from
+    one revision-coherent snapshot, and a paused reader racing a same-reference rotation
+    returns wholly old or wholly new material. test: `crates/gcode/src/config/tests/runtime_contract.rs::hub_fallback_reads_atomic_snapshot`.
+
+    2.6.5: Rust and Python encode, match, and reject the shared codec vector set byte-identically,
+    including its malformed and non-canonical inputs. test: `crates/gcode/src/config/tests/runtime_contract.rs::dynamic_segment_codec_matches_python`.
+
+    2.6.6: Explicit standalone mode with no daemon or hub context honors environment
+    and `gcore.yaml` precedence in their documented order. test: `crates/gcode/src/config/tests/runtime_contract.rs::standalone_mode_preserves_env_yaml_precedence`.'
+  labels:
+  - covers:reactive-config-store:2.6:2.6.1
+  - covers:reactive-config-store:2.6:2.6.2
+  - covers:reactive-config-store:2.6:2.6.3
+  - covers:reactive-config-store:2.6:2.6.4
+  - covers:reactive-config-store:2.6:2.6.5
+  - covers:reactive-config-store:2.6:2.6.6
+  tdd: true
+  source_section: '2.6'
+  implementation_domain: backend
+- title: Wire ConfigRuntime into startup
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.1'
+  validation_criteria: '3.1.1: Startup constructs exactly one ConfigRuntime before
+    post-database services. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_constructs_one_runtime`.
+
+    3.1.2: Runner and ServiceContainer expose the same ConfigRuntime instance. test:
+    `tests/runner_init/test_config_runtime_startup.py::test_context_shares_runner_runtime`.
+
+    3.1.3: Runtime notification lifecycle closes cleanly with daemon shutdown. test:
+    `tests/runner_init/test_config_runtime_startup.py::test_runtime_closes_with_daemon`.
+
+    3.1.4: Startup registers the config event publisher and one reconciled revision
+    emits one event. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_registers_config_event_publisher`.
+
+    3.1.5: With a writer paused at the LISTEN-activation/reload boundary, a revision
+    committed after subscription activation and before the initial reload converges
+    before services construct, without a later notification. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_closes_subscription_window`.
+
+    3.1.6: Fresh startup with a failing required subscriber never reports ready, and
+    a failing optional capability reports degraded then recovers after a successful
+    affected-key activation. test: `tests/runner_init/test_config_runtime_startup.py::test_first_start_failure_and_recovery`.'
+  labels:
+  - covers:reactive-config-store:3.1:3.1.1
+  - covers:reactive-config-store:3.1:3.1.2
+  - covers:reactive-config-store:3.1:3.1.3
+  - covers:reactive-config-store:3.1:3.1.4
+  - covers:reactive-config-store:3.1:3.1.5
+  - covers:reactive-config-store:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Migrate generic policy consumers
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '3.1'
+  validation_criteria: '3.2.1: Rule evaluation observes live global toggles from one
+    snapshot. test: `tests/config/test_live_policy_consumers.py::test_rules_use_runtime_snapshot`.
+
+    3.2.2: Approval policy and launch defaults use typed registered paths. test: `tests/config/test_live_policy_consumers.py::test_approval_and_launch_defaults_are_registered`.
+
+    3.2.3: Specialized setting writers disappear while domain CRUD remains. test:
+    `tests/config/test_live_policy_consumers.py::test_only_specialized_setting_writers_are_removed`.
+
+    3.2.4: Voice vocabulary persists through the typed API and attention/session routes
+    read runtime snapshots. test: `tests/config/test_live_policy_consumers.py::test_voice_and_route_consumers_use_runtime`.
+
+    3.2.5: Validation-detection preview reads the runtime snapshot instead of `ServiceContainer.config`.
+    test: `tests/config/test_live_policy_consumers.py::test_validation_detection_uses_runtime_snapshot`.'
+  labels:
+  - covers:reactive-config-store:3.2:3.2.1
+  - covers:reactive-config-store:3.2:3.2.2
+  - covers:reactive-config-store:3.2:3.2.3
+  - covers:reactive-config-store:3.2:3.2.4
+  - covers:reactive-config-store:3.2:3.2.5
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Separate restart-bound topology consumers
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.3.1: Process topology reads only `BootstrapConfig`. test:
+    `tests/config/test_restart_config_consumers.py::test_topology_uses_bootstrap_only`.
+
+    3.3.2: Restart-class writes do not mutate running servers or middleware. test:
+    `tests/config/test_restart_config_consumers.py::test_restart_changes_remain_pending`.
+
+    3.3.3: Restart activates desired settings on the next startup snapshot. test:
+    `tests/config/test_restart_config_consumers.py::test_restart_promotes_desired_to_active`.
+
+    3.3.4: `auth_mode` resolves only from bootstrap across installer write, hook preflight,
+    and HTTP construction, and is absent from the registry. test: `tests/config/test_restart_config_consumers.py::test_auth_mode_is_bootstrap_owned`.
+
+    3.3.5: Startup sizes the pool and executors from the initial active revision after
+    the fixed minimal bootstrap pool, and later concurrency changes stay pending until
+    restart. test: `tests/config/test_restart_config_consumers.py::test_two_stage_pool_and_executor_sizing`.'
+  labels:
+  - covers:reactive-config-store:3.3:3.3.1
+  - covers:reactive-config-store:3.3:3.3.2
+  - covers:reactive-config-store:3.3:3.3.3
+  - covers:reactive-config-store:3.3:3.3.4
+  - covers:reactive-config-store:3.3:3.3.5
+  tdd: true
+  source_section: '3.3'
+  implementation_domain: backend
+- title: Add live stateful service subscribers
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.3'
+  validation_criteria: '3.4.1: Matching changes prepare all replacements before any
+    swap. test: `tests/config/test_stateful_config_subscribers.py::test_prepare_precedes_every_swap`.
+
+    3.4.2: Preparation failure disposes replacements and preserves all old services.
+    test: `tests/config/test_stateful_config_subscribers.py::test_failed_prepare_keeps_last_good_services`.
+
+    3.4.3: Successful swaps drain old in-flight clients. test: `tests/config/test_stateful_config_subscribers.py::test_successful_swap_drains_old_client`.
+
+    3.4.4: API-key changes invalidate only dependent cached clients. test: `tests/config/test_stateful_config_subscribers.py::test_key_scoped_invalidation`.
+
+    3.4.5: A revision committed during registration leaves the subscriber at the newest
+    revision exactly once. test: `tests/config/test_stateful_config_subscribers.py::test_registration_race_resolves_to_latest_revision`.
+
+    3.4.6: Preparation timeout disposes replacements, preserves last-good services,
+    and records failed-live keys. test: `tests/config/test_stateful_config_subscribers.py::test_preparation_timeout_preserves_last_good`.
+
+    3.4.7: Shutdown cancels in-flight preparation and drain within bounds and a drain
+    failure never rolls back active state. test: `tests/config/test_stateful_config_subscribers.py::test_shutdown_cancels_subscriber_work`.
+
+    3.4.8: Forced thread interleaving across a multi-key revision never observes a
+    mixed service/snapshot epoch. test: `tests/config/test_stateful_config_subscribers.py::test_no_mixed_epoch_under_interleaving`.
+
+    3.4.9: Every live-activation registry key resolves to a subscriber adapter or
+    a declared per-operation read, and the matrix assertion fails on an unmapped key.
+    test: `tests/config/test_stateful_config_subscribers.py::test_live_key_consumer_matrix_is_complete`.
+
+    3.4.10: Adapter first-registration failure follows the declared contract: required
+    blocks readiness with partial disposal, optional publishes an unavailable slot
+    and recovers on later activation. test: `tests/config/test_stateful_config_subscribers.py::test_first_registration_failure_contract`.'
+  labels:
+  - covers:reactive-config-store:3.4:3.4.1
+  - covers:reactive-config-store:3.4:3.4.2
+  - covers:reactive-config-store:3.4:3.4.3
+  - covers:reactive-config-store:3.4:3.4.4
+  - covers:reactive-config-store:3.4:3.4.5
+  - covers:reactive-config-store:3.4:3.4.6
+  - covers:reactive-config-store:3.4:3.4.7
+  - covers:reactive-config-store:3.4:3.4.8
+  - covers:reactive-config-store:3.4:3.4.9
+  - covers:reactive-config-store:3.4:3.4.10
+  tdd: true
+  source_section: '3.4'
+  implementation_domain: backend
+- title: Migrate loops and lifecycle consumers
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.4'
+  validation_criteria: '3.5.1: Periodic work uses one coherent snapshot per iteration.
+    test: `tests/config/test_runtime_loop_consumers.py::test_periodic_iteration_uses_one_snapshot`.
+
+    3.5.2: Live lifecycle consumers observe successful runtime swaps. test: `tests/config/test_runtime_loop_consumers.py::test_lifecycle_consumer_observes_live_change`.
+
+    3.5.3: Restart-class lifecycle consumers retain startup active values. test: `tests/config/test_runtime_loop_consumers.py::test_lifecycle_consumer_retains_restart_value`.
+
+    3.5.4: Runner lifecycle, shutdown, subsystem, and readiness modules read no `runner.config`
+    attribute. test: `tests/config/test_runtime_loop_consumers.py::test_lifecycle_modules_use_runtime_access`.'
+  labels:
+  - covers:reactive-config-store:3.5:3.5.1
+  - covers:reactive-config-store:3.5:3.5.2
+  - covers:reactive-config-store:3.5:3.5.3
+  - covers:reactive-config-store:3.5:3.5.4
+  tdd: true
+  source_section: '3.5'
+  implementation_domain: backend
+- title: Integrate managed embedding activation
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '2.1'
+  - '3.4'
+  validation_criteria: "3.6.1: Generic interfaces reject structural embedding mutations.\
+    \ test: `tests/storage/test_embedding_switch_config_contract.py::test_structural_keys_require_switch`.\n\
+    3.6.2: Switch completion commits canonical values in one revision. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_switch_commit_is_one_revision`.\n\
+    3.6.3: Switch recovery reads ConfigRuntime instead of rebuilding configuration.\
+    \ test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_switch_recovery_uses_runtime_snapshot`.\n\
+    3.6.4: API-key rotation is live and invalidates the embedding client. test: `tests/storage/test_embedding_switch_config_contract.py::test_api_key_rotation_is_live`.\n\
+    3.6.5: A remote runtime observing a managed structural revision verifies the journal,\
+    \ promotes by capturing the generation's physical targets, and rebuilds clients;\
+    \ crash recovery at any journal phase converges without a mixed state. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_managed_revision_converges_across_runtimes`.\n\
+    3.6.6: A remote daemon reloading after journal deletion verifies the persisted\
+    \ completed record and converges, including after reconnect. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_remote_catchup_after_journal_gc`.\n\
+    3.6.7: Generation GC waits for every unexpired lease's acknowledgement and bounded\
+    \ drains, never deletes a generation an unexpired lease still covers, and a daemon\
+    \ that cannot renew self-fences before expiry and reconciles before serving again.\
+    \ test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_generation_gc_waits_for_acknowledgements`.\n\
+    3.6.8: A mutation committed after build enumeration \u2014 in-process or on a\
+    \ second daemon \u2014 is present in the promoted generation, deletions tombstone\
+    \ through replay, and no daemon acknowledges a generation missing its committed\
+    \ writes. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_write_catchup_replays_into_promoted_generation`."
+  labels:
+  - covers:reactive-config-store:3.6:3.6.1
+  - covers:reactive-config-store:3.6:3.6.2
+  - covers:reactive-config-store:3.6:3.6.3
+  - covers:reactive-config-store:3.6:3.6.4
+  - covers:reactive-config-store:3.6:3.6.5
+  - covers:reactive-config-store:3.6:3.6.6
+  - covers:reactive-config-store:3.6:3.6.7
+  - covers:reactive-config-store:3.6:3.6.8
+  tdd: true
+  source_section: '3.6'
+  implementation_domain: backend
+- title: Replace load_full_config_from_db and every caller
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  validation_criteria: '3.7.1: Every known loader caller uses `CliRuntime`''s typed
+    snapshot. test: `tests/cli/test_cli_runtime_config.py::test_full_loader_callers_use_cli_runtime`.
+
+    3.7.2: The loader is no longer importable from its defining module. test: `tests/cli/test_cli_runtime_config.py::test_full_loader_is_not_exported`.
+
+    3.7.3: CLI runtime closes its short-lived configuration resources. test: `tests/cli/test_cli_runtime_config.py::test_cli_runtime_closes_config_resources`.'
+  labels:
+  - covers:reactive-config-store:3.7:3.7.1
+  - covers:reactive-config-store:3.7:3.7.2
+  - covers:reactive-config-store:3.7:3.7.3
+  tdd: true
+  source_section: '3.7'
+  implementation_domain: backend
+- title: Migrate bootstrap-oriented load_config callers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.7'
+  validation_criteria: '3.8.1: Pre-database operations read only bootstrap fields.
+    test: `tests/cli/test_bootstrap_config_consumers.py::test_pre_database_operations_use_bootstrap`.
+
+    3.8.2: Post-database operations read one typed snapshot. test: `tests/cli/test_bootstrap_config_consumers.py::test_post_database_operations_use_runtime_snapshot`.
+
+    3.8.3: Config package and CLI utilities no longer re-export either loader. test:
+    `tests/cli/test_bootstrap_config_consumers.py::test_loader_reexports_are_removed`.'
+  labels:
+  - covers:reactive-config-store:3.8:3.8.1
+  - covers:reactive-config-store:3.8:3.8.2
+  - covers:reactive-config-store:3.8:3.8.3
+  tdd: true
+  source_section: '3.8'
+  implementation_domain: backend
+- title: Migrate operational CLI and hook callers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.7'
+  validation_criteria: '3.9.1: Operational commands contain no fresh `load_config`
+    call. test: `tests/cli/test_operational_config_consumers.py::test_operational_commands_use_runtime_authority`.
+
+    3.9.2: Commands use one coherent revision for each operation. test: `tests/cli/test_operational_config_consumers.py::test_command_reads_one_revision`.
+
+    3.9.3: Hooks use bootstrap-only or typed snapshot inputs according to lifecycle.
+    test: `tests/cli/test_operational_config_consumers.py::test_hook_config_boundary`.'
+  labels:
+  - covers:reactive-config-store:3.9:3.9.1
+  - covers:reactive-config-store:3.9:3.9.2
+  - covers:reactive-config-store:3.9:3.9.3
+  tdd: true
+  source_section: '3.9'
+  implementation_domain: backend
+- title: Migrate stdio and proxy callers
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.4'
+  - '3.7'
+  validation_criteria: '3.10.1: Stdio dependency factories no longer expose `load_config`.
+    test: `tests/mcp_proxy/test_stdio_config_runtime.py::test_stdio_dependencies_use_runtime_access`.
+
+    3.10.2: Daemon startup uses bootstrap topology and runtime snapshots at the correct
+    boundary. test: `tests/mcp_proxy/test_stdio_config_runtime.py::test_stdio_daemon_config_boundary`.
+
+    3.10.3: Proxy/server operations capture one runtime revision. test: `tests/mcp_proxy/test_stdio_config_runtime.py::test_stdio_operation_reads_one_revision`.'
+  labels:
+  - covers:reactive-config-store:3.10:3.10.1
+  - covers:reactive-config-store:3.10:3.10.2
+  - covers:reactive-config-store:3.10:3.10.3
+  tdd: true
+  source_section: '3.10'
+  implementation_domain: backend
+- title: Remove alternate authorities and enforce the boundary
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.3'
+  - '2.4'
+  - '2.5'
+  - '2.6'
+  - '3.2'
+  - '3.3'
+  - '3.4'
+  - '3.5'
+  - '3.6'
+  - '3.7'
+  - '3.8'
+  - '3.9'
+  - '3.10'
+  validation_criteria: '4.1.1: Python runtime code contains no alternate configuration
+    authority or raw dotted access outside the enumerated auth-owned seam. test: `tests/config/test_config_authority_audit.py::test_python_runtime_has_one_config_authority`.
+
+    4.1.2: Every Python and Rust Gobby-runtime key has one registry owner and a current
+    generated contract entry. test: `tests/config/test_config_authority_audit.py::test_cross_language_registry_coverage`.
+
+    4.1.3: Legacy loaders, mutable fields, routes, and MCP tools are absent. test:
+    `tests/config/test_config_authority_audit.py::test_legacy_config_surfaces_are_absent`.
+
+    4.1.4: Final operator behavior is documented. behavior: "Reactive runtime configuration
+    contract" in `docs/guides/configuration.md`.'
+  labels:
+  - covers:reactive-config-store:4.1:4.1.1
+  - covers:reactive-config-store:4.1:4.1.2
+  - covers:reactive-config-store:4.1:4.1.3
+  - covers:reactive-config-store:4.1:4.1.4
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Add the two-daemon PostgreSQL convergence suite
+  category: test
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: A write through runtime A updates runtime B through
+    PostgreSQL notification. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_remote_daemon_converges_after_commit`.
+
+    4.2.2: Forced listener termination reconnects and reloads the latest revision.
+    test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_listener_restart_recovers_latest_snapshot`.
+
+    4.2.3: Apply failure keeps the committed desired revision, only the failing daemon
+    retains its old active state, and the other daemon independently activates the
+    committed revision. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_apply_failure_is_process_local`.
+
+    4.2.4: A local commit reconciles once and its own notification invokes no subscriber
+    again. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_local_commit_reconciles_once`.
+
+    4.2.5: A managed embedding switch on daemon A converges daemon B, and a crash
+    at the flip or commit boundary recovers to a coherent structural state. test:
+    `tests/integration/config/test_reactive_config_multi_daemon.py::test_managed_switch_converges_across_daemons`.
+
+    4.2.6: Two daemons with distinct homes and the shared-passphrase posture converge
+    on a remote API-key rotation. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_remote_secret_rotation_with_shared_kek`.
+
+    4.2.7: A wrong-key daemon fails closed and never reports healthy. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_wrong_kek_daemon_fails_closed`.
+
+    4.2.8: A same-reference rotation with one failing daemon proves per-daemon payload
+    isolation and public redaction. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_same_reference_rotation_failure_isolation`.
+
+    4.2.9: Concurrent cross-process writes sharing a stale expected revision yield
+    exactly one commit and one typed conflict. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_cross_process_cas_conflict`.
+
+    4.2.10: A restart-required change keeps desired and active state separated on
+    both daemons until a worker restart activates it. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_restart_pending_state_across_daemons`.
+
+    4.2.11: A daemon losing PostgreSQL connectivity while HTTP and Qdrant stay live
+    self-fences embedding requests before lease expiry, GC proceeds safely, and the
+    daemon reconciles and resumes serving after reconnect. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_partitioned_daemon_self_fences_before_gc`.
+
+    4.2.12: Create, update, and delete races at the build, flip, config-commit, and
+    promotion boundaries across two daemons converge with every committed mutation
+    present in the promoted generation. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_switch_write_races_converge`.'
+  labels:
+  - covers:reactive-config-store:4.2:4.2.1
+  - covers:reactive-config-store:4.2:4.2.2
+  - covers:reactive-config-store:4.2:4.2.3
+  - covers:reactive-config-store:4.2:4.2.4
+  - covers:reactive-config-store:4.2:4.2.5
+  - covers:reactive-config-store:4.2:4.2.6
+  - covers:reactive-config-store:4.2:4.2.7
+  - covers:reactive-config-store:4.2:4.2.8
+  - covers:reactive-config-store:4.2:4.2.9
+  - covers:reactive-config-store:4.2:4.2.10
+  - covers:reactive-config-store:4.2:4.2.11
+  - covers:reactive-config-store:4.2:4.2.12
+  tdd: false
+  source_section: '4.2'
+  assigned_agent: qa-dev
+```
