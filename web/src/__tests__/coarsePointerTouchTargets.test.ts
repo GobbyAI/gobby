@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { compile } from '@tailwindcss/node'
 import postcss from 'postcss'
 import { buttonVariants } from '../components/ui/buttonVariants'
+import { coarseHitAreaCls } from '../components/ui/controlStyles'
 
 const targets = [
   'primary action',
@@ -134,6 +135,76 @@ async function emulateButtonStyles(candidates: readonly string[]): Promise<HTMLS
   return style
 }
 
+/**
+ * Compile the shared control hit-area recipe and split it into the parts the
+ * primitive contract cares about: base (unconditional) rules, coarse-pointer
+ * rules that target the host element itself, and the declarations of the
+ * coarse-pointer `::before` expansion. The pseudo declarations are re-homed
+ * onto a `.pseudo-probe` class so a real element can measure the box jsdom
+ * cannot compute for pseudo-elements.
+ */
+async function emulateHitAreaStyles(): Promise<{
+  style: HTMLStyleElement
+  coarseHostDeclarations: string[]
+}> {
+  const tailwind = await compile('@import "tailwindcss";', {
+    base: srcRoot,
+    onDependency() {},
+  })
+  const css = tailwind.build([...coarseHitAreaCls.split(/\s+/), 'h-9'])
+  const root = postcss.parse(css)
+  let spacing: string | undefined
+  root.walkDecls('--spacing', declaration => {
+    spacing ??= declaration.value
+  })
+
+  const baseRules: string[] = []
+  root.walkRules(rule => {
+    let conditional = false
+    for (
+      let parent: typeof rule.parent = rule.parent;
+      parent && parent.type !== 'root';
+      parent = parent.parent as typeof rule.parent
+    ) {
+      if (parent.type === 'atrule' && (parent as postcss.AtRule).name !== 'layer') {
+        conditional = true
+        break
+      }
+    }
+    if (conditional || rule.selector.includes('::before')) return
+    const declarations = (rule.nodes ?? [])
+      .filter(node => node.type === 'decl')
+      .map(String)
+      .join('; ')
+    if (declarations) baseRules.push(`${rule.selector} { ${declarations} }`)
+  })
+
+  const pseudoDeclarations: string[] = []
+  const coarseHostDeclarations: string[] = []
+  root.walkAtRules('media', atRule => {
+    if (!/pointer\s*:\s*coarse/.test(atRule.params)) return
+    atRule.walkRules(rule => {
+      const declarations = (rule.nodes ?? [])
+        .filter(node => node.type === 'decl')
+        .map(String)
+      if (rule.selector.includes('::before')) pseudoDeclarations.push(...declarations)
+      else coarseHostDeclarations.push(...declarations)
+    })
+  })
+
+  expect(spacing).toBeDefined()
+  expect(pseudoDeclarations.length).toBeGreaterThan(0)
+  document.documentElement.style.setProperty('--spacing', spacing!)
+  const style = document.createElement('style')
+  style.dataset.testCoarsePointer = 'true'
+  style.textContent = [
+    ...baseRules,
+    `.pseudo-probe { ${pseudoDeclarations.join('; ')} }`,
+  ].join('\n')
+  document.head.append(style)
+  return { style, coarseHostDeclarations }
+}
+
 function cssLengthToPixels(value: string): number {
   if (!value || value === 'auto') return 0
   const number = parseFloat(value)
@@ -184,6 +255,30 @@ describe('coarse-pointer touch targets', () => {
       expect(computedFloor(style, 'width'), `${target} width`).toBeGreaterThanOrEqual(44)
       expect(computedFloor(style, 'height'), `${target} height`).toBeGreaterThanOrEqual(44)
     }
+  })
+
+  it('expands control primitives to an invisible ≥44×44 coarse hit area', async () => {
+    await emulateHitAreaStyles()
+    document.body.innerHTML = '<span class="pseudo-probe"></span>'
+    const probe = getComputedStyle(document.querySelector('.pseudo-probe')!)
+    // The expansion overlays the control (absolute, centered) instead of
+    // growing it, and floors both axes at the 44px touch target.
+    expect(probe.position).toBe('absolute')
+    expect(computedFloor(probe, 'width')).toBeGreaterThanOrEqual(44)
+    expect(computedFloor(probe, 'height')).toBeGreaterThanOrEqual(44)
+  })
+
+  it('keeps the visible control box on the 36px ladder under coarse pointers', async () => {
+    const { coarseHostDeclarations } = await emulateHitAreaStyles()
+    // No coarse-pointer rule may size the host element itself — the whole
+    // point of the pseudo-element expansion is unchanged rendered visuals.
+    for (const declaration of coarseHostDeclarations) {
+      expect(declaration).not.toMatch(/(?:^|\s)(?:min-)?(?:width|height)\s*:/)
+    }
+    document.body.innerHTML = `<input class="${coarseHitAreaCls} h-9">`
+    const host = getComputedStyle(document.querySelector('input')!)
+    expect(computedFloor(host, 'height')).toBe(36)
+    expect(computedFloor(host, 'height')).toBeLessThan(44)
   })
 
   it('promotes every Button size to 44px on coarse pointers unless dense', async () => {

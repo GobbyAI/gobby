@@ -474,6 +474,38 @@ test.fixme("test fixme")
     assert "NO_ASSERTION" not in codes
 
 
+def test_script_config_and_hook_calls_are_not_tests(tmp_path: Path) -> None:
+    tests_dir = tmp_path / "web" / "tests"
+    tests_dir.mkdir(parents=True)
+    path = tests_dir / "sample.spec.ts"
+    path.write_text(
+        """
+import { expect, test } from '@playwright/test'
+
+test.use({ hasTouch: true })
+test.setTimeout(30_000)
+
+test.beforeEach(async ({ page }) => {
+  await page.goto('/')
+})
+
+test.afterAll(() => {
+  cleanup()
+})
+
+test("clicks land", async ({ page }) => {
+  await expect(page.locator('input')).toBeFocused()
+})
+""",
+        encoding="utf-8",
+    )
+
+    report = audit_paths([path], root=tmp_path)
+
+    assert report.tests_scanned == 1
+    assert report.issues == ()
+
+
 def test_script_delimiter_scanner_ignores_apostrophes_in_comments(tmp_path: Path) -> None:
     tests_dir = tmp_path / "web" / "src" / "__tests__"
     tests_dir.mkdir(parents=True)

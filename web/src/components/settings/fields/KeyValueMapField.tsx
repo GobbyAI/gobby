@@ -1,6 +1,7 @@
-import { useId } from 'react'
 import type { ReactNode } from 'react'
 import { Button } from '../../ui/Button'
+import { FormField } from '../../ui/FormField'
+import { Input } from '../../ui/Input'
 
 export interface KeyValueMapFieldProps<V = string> {
   label: string
@@ -30,9 +31,8 @@ function defaultRenderValue(
   key: string,
 ): ReactNode {
   return (
-    <input
+    <Input
       type="text"
-      className="settings-field__input"
       value={typeof value === 'string' ? value : String(value ?? '')}
       aria-label={`Value for ${key || 'new entry'}`}
       onChange={(event) => onValueChange(event.target.value)}
@@ -56,7 +56,6 @@ export function KeyValueMapField<V = string>({
   renderValue,
   createValue,
 }: KeyValueMapFieldProps<V>) {
-  const labelId = useId()
   const entries = Object.entries(value) as Array<[string, V]>
 
   function commit(nextEntries: Array<[string, V]>) {
@@ -89,57 +88,53 @@ export function KeyValueMapField<V = string>({
   }
 
   return (
-    <div className="settings-field settings-map-field" role="group" aria-labelledby={labelId}>
-      <span id={labelId} className="settings-field__label">
-        {label}
-      </span>
-      {entries.length > 0 ? (
-        <ul className="settings-map-field__items">
-          {entries.map(([key, entryValue], index) => (
-            <li key={index} className="settings-map-field__row">
-              <input
-                type="text"
-                className="settings-field__input settings-map-field__key"
-                value={key}
-                disabled={disabled}
-                placeholder={keyPlaceholder}
-                aria-label={`${ariaLabel} key ${index + 1}`}
-                onChange={(event) => updateKey(index, event.target.value)}
-              />
-              <div className="settings-map-field__value">
-                {(renderValue ?? defaultRenderValue)(
-                  entryValue,
-                  (next) => updateValue(index, next as V),
-                  key,
-                )}
-              </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="settings-map-field__remove"
-                disabled={disabled}
-                aria-label={key ? `Remove ${key}` : `Remove ${ariaLabel} entry ${index + 1}`}
-                onClick={() => removeEntry(index)}
-              >
-                Remove
-              </Button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="settings-field__empty">No entries.</p>
+    <FormField label={label} group>
+      {() => (
+        <>
+          {entries.length > 0 ? (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {entries.map(([key, entryValue], index) => (
+                <li key={index} className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="text"
+                    wrapperClassName="flex-[1_1_8rem]"
+                    value={key}
+                    disabled={disabled}
+                    placeholder={keyPlaceholder}
+                    aria-label={`${ariaLabel} key ${index + 1}`}
+                    onChange={(event) => updateKey(index, event.target.value)}
+                  />
+                  <div className="min-w-0 flex-[2_1_12rem]">
+                    {(renderValue ?? defaultRenderValue)(
+                      entryValue,
+                      (next) => updateValue(index, next as V),
+                      key,
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={disabled}
+                    aria-label={key ? `Remove ${key}` : `Remove ${ariaLabel} entry ${index + 1}`}
+                    onClick={() => removeEntry(index)}
+                  >
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No entries.</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" disabled={disabled} onClick={addEntry}>
+              {addLabel}
+            </Button>
+          </div>
+        </>
       )}
-      <div className="settings-field__actions">
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled}
-          onClick={addEntry}
-        >
-          {addLabel}
-        </Button>
-      </div>
-    </div>
+    </FormField>
   )
 }

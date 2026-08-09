@@ -1,20 +1,23 @@
-import { forwardRef, type InputHTMLAttributes } from 'react'
+import { forwardRef, type TextareaHTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
 import { controlSurfaceCls, controlWrapperCls } from './controlStyles'
 
-export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+export interface TextareaProps
+  extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   error?: boolean
   /** Layout overrides for the wrapper label (flex-1, width caps, …). */
   wrapperClassName?: string
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(
+// No height styling beyond the caller's: auto-grow implementations drive
+// height through the forwarded ref, and React must never fight that.
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, error, wrapperClassName, ...props }, ref) => {
     return (
       <label className={cn(controlWrapperCls, wrapperClassName)}>
-        <input
+        <textarea
           className={cn(
-            'flex h-9 py-1',
+            'py-2',
             controlSurfaceCls,
             error ? 'border-destructive' : 'border-border',
             className
@@ -27,4 +30,4 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     )
   }
 )
-Input.displayName = 'Input'
+Textarea.displayName = 'Textarea'

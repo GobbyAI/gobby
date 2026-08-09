@@ -22,6 +22,14 @@ _SCRIPT_TEST_CALL_RE = re.compile(r"(?<![.\w$])(?P<name>it|test)(?P<modifiers>(?
 _SCRIPT_ASSERTION_RE = re.compile(r"\b(?:expect|assert(?:\.\w+)?)\s*\(")
 _SCRIPT_SLEEP_RE = re.compile(r"\b(?:setTimeout|setInterval)\s*\(")
 
+# Members of the `test` object that configure a suite or register lifecycle
+# hooks (Playwright/vitest/jest) — calls, not test declarations. `skip`,
+# `only`, `todo`, and `fixme` stay out of this set: with a title argument they
+# declare (annotated) tests that the modifier checks below must still see.
+_SCRIPT_NON_TEST_MEMBERS = frozenset(
+    {"use", "setTimeout", "beforeEach", "beforeAll", "afterEach", "afterAll"}
+)
+
 
 def _analyze_script_file(source: str, relative_path: str) -> tuple[list[AuditIssue], int]:
     issues: list[AuditIssue] = []
@@ -55,6 +63,11 @@ def _analyze_script_file(source: str, relative_path: str) -> tuple[list[AuditIss
 def _iter_script_tests(source: str) -> Iterable[tuple[str, tuple[str, ...], str, int]]:
     offset = 0
     while match := _SCRIPT_TEST_CALL_RE.search(source, offset):
+        leading_modifiers = tuple(match.group("modifiers").split("."))[1:]
+        if leading_modifiers and leading_modifiers[0] in _SCRIPT_NON_TEST_MEMBERS:
+            offset = match.end()
+            continue
+
         open_paren = source.find("(", match.start())
         close_paren = _find_matching_delimiter(source, open_paren, "(", ")")
         if close_paren is None:

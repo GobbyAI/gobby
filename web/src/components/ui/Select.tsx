@@ -1,6 +1,7 @@
 import { forwardRef, type ComponentPropsWithoutRef, type ElementRef } from 'react'
 import * as SelectPrimitive from '@radix-ui/react-select'
 import { cn } from '../../lib/utils'
+import { coarseHitAreaCls } from './controlStyles'
 export { Select, SelectGroup, SelectValue, SelectLabel } from './selectPrimitives'
 
 export const SelectTrigger = forwardRef<
@@ -10,6 +11,7 @@ export const SelectTrigger = forwardRef<
   <SelectPrimitive.Trigger
     ref={ref}
     className={cn(
+      coarseHitAreaCls,
       'inline-flex h-9 min-w-0 shrink-0 items-center justify-between rounded-md border border-border bg-transparent px-2.5 py-2 text-sm',
       'placeholder:text-muted-foreground',
       'focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 focus:ring-offset-background',
@@ -61,7 +63,8 @@ export const SelectItem = forwardRef<
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      'relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm',
+      coarseHitAreaCls,
+      'flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm',
       'outline-none focus:bg-muted focus:text-foreground',
       'data-[disabled]:pointer-events-none data-[disabled]:opacity-50',
       className

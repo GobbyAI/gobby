@@ -64,7 +64,19 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { browserName: "chromium" },
+      // GOBBY_CAPTURE_BROWSER doubles as the plain-project escape hatch on
+      // machines where the Playwright browser bundle is not installable —
+      // the same override the capture projects document above.
+      use: {
+        browserName: "chromium",
+        ...(process.env.GOBBY_CAPTURE_BROWSER
+          ? {
+              launchOptions: {
+                executablePath: process.env.GOBBY_CAPTURE_BROWSER,
+              },
+            }
+          : {}),
+      },
       grepInvert: STYLE_CAPTURE_TAG,
     },
     {
