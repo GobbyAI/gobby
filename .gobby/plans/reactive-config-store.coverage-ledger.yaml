@@ -1,6 +1,6 @@
 project_id: d45545c5-ded5-4335-b115-0245752edacf
 plan_id: reactive-config-store
-plan_hash: "cef6053565fab08af6d0dec268aed27d5dea4fade1f6da268649d0cd5217a399"
+plan_hash: "b1e37988d9ac540bdd7d2d0a3dc59a880d652dc9c9522a9cdf1dd49a83ac77f0"
 root_task_ref: "19645"
 
 sections:
@@ -18,6 +18,7 @@ sections:
       "1.2.4": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
       "1.2.5": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
       "1.2.6": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
+      "1.2.7": {expected_leaves: [{title: Extend baseline 375 with revisioned configuration state, owner_agent: backend-developer}]}
   "1.3":
     acceptance_items:
       "1.3.1": {expected_leaves: [{title: Implement atomic revisioned mutations, owner_agent: backend-developer}]}
@@ -45,6 +46,7 @@ sections:
       "1.4.13": {expected_leaves: [{title: Add ConfigRuntime and remote-daemon notifications, owner_agent: backend-developer}]}
       "1.4.14": {expected_leaves: [{title: Add ConfigRuntime and remote-daemon notifications, owner_agent: backend-developer}]}
       "1.4.15": {expected_leaves: [{title: Add ConfigRuntime and remote-daemon notifications, owner_agent: backend-developer}]}
+      "1.4.16": {expected_leaves: [{title: Add ConfigRuntime and remote-daemon notifications, owner_agent: backend-developer}]}
   "2.1":
     acceptance_items:
       "2.1.1": {expected_leaves: [{title: Replace the public HTTP configuration API, owner_agent: backend-developer}]}
@@ -55,6 +57,7 @@ sections:
       "2.1.6": {expected_leaves: [{title: Replace the public HTTP configuration API, owner_agent: backend-developer}]}
       "2.1.7": {expected_leaves: [{title: Replace the public HTTP configuration API, owner_agent: backend-developer}]}
       "2.1.8": {expected_leaves: [{title: Replace the public HTTP configuration API, owner_agent: backend-developer}]}
+      "2.1.9": {expected_leaves: [{title: Replace the public HTTP configuration API, owner_agent: backend-developer}]}
   "2.2":
     acceptance_items:
       "2.2.1": {expected_leaves: [{title: Preserve the authenticated Rust machine contract, owner_agent: backend-developer}]}
@@ -69,6 +72,7 @@ sections:
       "2.3.3": {expected_leaves: [{title: Replace MCP configuration tools, owner_agent: backend-developer}]}
       "2.3.4": {expected_leaves: [{title: Replace MCP configuration tools, owner_agent: backend-developer}]}
       "2.3.5": {expected_leaves: [{title: Replace MCP configuration tools, owner_agent: backend-developer}]}
+      "2.3.6": {expected_leaves: [{title: Replace MCP configuration tools, owner_agent: backend-developer}]}
   "2.4":
     acceptance_items:
       "2.4.1": {expected_leaves: [{title: Make YAML a validate-first daemon-namespace replacement, owner_agent: backend-developer}]}
@@ -78,6 +82,7 @@ sections:
       "2.4.5": {expected_leaves: [{title: Make YAML a validate-first daemon-namespace replacement, owner_agent: backend-developer}]}
       "2.4.6": {expected_leaves: [{title: Make YAML a validate-first daemon-namespace replacement, owner_agent: backend-developer}]}
       "2.4.7": {expected_leaves: [{title: Make YAML a validate-first daemon-namespace replacement, owner_agent: backend-developer}]}
+      "2.4.8": {expected_leaves: [{title: Make YAML a validate-first daemon-namespace replacement, owner_agent: backend-developer}]}
   "2.5":
     acceptance_items:
       "2.5.1": {expected_leaves: [{title: Migrate browser configuration state, owner_agent: frontend-developer}]}
@@ -90,6 +95,7 @@ sections:
       "2.5.8": {expected_leaves: [{title: Migrate browser configuration state, owner_agent: frontend-developer}]}
       "2.5.9": {expected_leaves: [{title: Migrate browser configuration state, owner_agent: frontend-developer}]}
       "2.5.10": {expected_leaves: [{title: Migrate browser configuration state, owner_agent: frontend-developer}]}
+      "2.5.11": {expected_leaves: [{title: Migrate browser configuration state, owner_agent: frontend-developer}]}
   "2.6":
     acceptance_items:
       "2.6.1": {expected_leaves: [{title: Generate and consume the Rust runtime-config contract, owner_agent: backend-developer}]}
@@ -105,6 +111,7 @@ sections:
       "3.1.3": {expected_leaves: [{title: Wire ConfigRuntime into startup, owner_agent: backend-developer}]}
       "3.1.4": {expected_leaves: [{title: Wire ConfigRuntime into startup, owner_agent: backend-developer}]}
       "3.1.5": {expected_leaves: [{title: Wire ConfigRuntime into startup, owner_agent: backend-developer}]}
+      "3.1.6": {expected_leaves: [{title: Wire ConfigRuntime into startup, owner_agent: backend-developer}]}
   "3.2":
     acceptance_items:
       "3.2.1": {expected_leaves: [{title: Migrate generic policy consumers, owner_agent: backend-developer}]}
@@ -130,6 +137,7 @@ sections:
       "3.4.7": {expected_leaves: [{title: Add live stateful service subscribers, owner_agent: backend-developer}]}
       "3.4.8": {expected_leaves: [{title: Add live stateful service subscribers, owner_agent: backend-developer}]}
       "3.4.9": {expected_leaves: [{title: Add live stateful service subscribers, owner_agent: backend-developer}]}
+      "3.4.10": {expected_leaves: [{title: Add live stateful service subscribers, owner_agent: backend-developer}]}
   "3.5":
     acceptance_items:
       "3.5.1": {expected_leaves: [{title: Migrate loops and lifecycle consumers, owner_agent: backend-developer}]}
@@ -145,6 +153,7 @@ sections:
       "3.6.5": {expected_leaves: [{title: Integrate managed embedding activation, owner_agent: backend-developer}]}
       "3.6.6": {expected_leaves: [{title: Integrate managed embedding activation, owner_agent: backend-developer}]}
       "3.6.7": {expected_leaves: [{title: Integrate managed embedding activation, owner_agent: backend-developer}]}
+      "3.6.8": {expected_leaves: [{title: Integrate managed embedding activation, owner_agent: backend-developer}]}
   "3.7":
     acceptance_items:
       "3.7.1": {expected_leaves: [{title: Replace load_full_config_from_db and every caller, owner_agent: backend-developer}]}
@@ -183,3 +192,5 @@ sections:
       "4.2.8": {expected_leaves: [{title: Add the two-daemon PostgreSQL convergence suite, owner_agent: qa-dev}]}
       "4.2.9": {expected_leaves: [{title: Add the two-daemon PostgreSQL convergence suite, owner_agent: qa-dev}]}
       "4.2.10": {expected_leaves: [{title: Add the two-daemon PostgreSQL convergence suite, owner_agent: qa-dev}]}
+      "4.2.11": {expected_leaves: [{title: Add the two-daemon PostgreSQL convergence suite, owner_agent: qa-dev}]}
+      "4.2.12": {expected_leaves: [{title: Add the two-daemon PostgreSQL convergence suite, owner_agent: qa-dev}]}

@@ -114,25 +114,32 @@ Registry startup rejects overlaps, unclassified mapping leaves, unknown public k
 bootstrap/runtime ownership conflicts, and restricted-key exposure. Generate JSON Schema
 metadata for namespace, secrecy, visibility, activation, and machine export.
 
-Dynamic path segments use one canonical lossless codec: UTF-8 percent-encoding that
-escapes at least `%` and `.` inside a segment. Registry pattern matching, dotted
-ConfigStore keys, HTTP/MCP/YAML paths, browser state, and the generated Rust contract
-all apply the same codec, so operator-controlled identifiers containing dots, percent
-signs, slashes, spaces, or child-field-like text never change logical paths or collide
-during flatten/unflatten or cross-language matching.
+Dynamic path segments use one canonical lossless codec with pinned bytes: a segment
+encodes as UTF-8, every byte outside the unescaped alphabet `A-Z a-z 0-9 - _ ~` is
+percent-encoded with uppercase hex digits, and `%` and `.` are always escaped. Decoding
+rejects malformed and non-canonical input — truncated or non-hex escapes, lowercase
+escape hex, and escapes of unescaped-alphabet bytes — and applies no Unicode
+normalization, so distinct composed and decomposed sequences remain distinct. Registry
+pattern matching, dotted ConfigStore keys, HTTP/MCP/YAML paths, browser state, and the
+generated Rust contract all apply the same codec, so operator-controlled identifiers
+containing dots, percent signs, slashes, spaces, or child-field-like text never change
+logical paths or collide during flatten/unflatten or cross-language matching.
 
-One shared adversarial codec vector set — segments containing dots, percent signs,
-already-encoded percent sequences, slashes, spaces, and child-field-like text — is
-defined beside the codec and reused verbatim by the surface tests in sections 1.1, 2.1,
-2.3, 2.4, 2.5, and 2.6, so no representation boundary can pass while double-encoding,
-decoding early, or splitting a segment structurally.
+One shared adversarial codec vector set maps each logical segment to its exact
+canonical encoded bytes and covers segments containing dots, percent signs,
+already-encoded percent sequences, slashes, spaces, child-field-like text, accented and
+CJK text, emoji, and distinct composed/decomposed sequences, plus malformed and
+non-canonical encoded inputs with their required rejections. It is defined beside the
+codec and reused verbatim by the surface tests in sections 1.1, 2.1, 2.3, 2.4, 2.5, and
+2.6, so no representation boundary can pass while double-encoding, decoding early,
+choosing a different safe alphabet or hex case, or splitting a segment structurally.
 
 **Acceptance:**
 
 - 1.1.1 - Every non-bootstrap daemon leaf resolves to exactly one spec. test: `tests/config/test_config_registry.py::test_every_daemon_leaf_has_one_spec`.
 - 1.1.2 - Every mapping leaf has an explicit non-overlapping pattern adapter. test: `tests/config/test_config_registry.py::test_mapping_patterns_are_complete`.
 - 1.1.3 - Public and machine schemas expose only their declared visibility classes. test: `tests/config/test_config_registry.py::test_visibility_partitions_are_disjoint`.
-- 1.1.4 - The shared codec vector set round-trips losslessly through every dynamic family and dotted storage without collisions. test: `tests/config/test_config_registry.py::test_dynamic_segment_codec_round_trip`.
+- 1.1.4 - The shared codec vector set produces its exact canonical encoded bytes, round-trips losslessly through every dynamic family and dotted storage without collisions, and every malformed or non-canonical input is rejected. test: `tests/config/test_config_registry.py::test_dynamic_segment_codec_round_trip`.
 
 ### 1.2 Extend baseline 375 with revisioned configuration state [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -152,6 +159,14 @@ Add singleton `config_state(id BOOLEAN PRIMARY KEY CHECK(id), revision BIGINT NO
 with its single revision-zero row, and add `revision BIGINT NOT NULL DEFAULT 0` to
 `config_store`. Grant `gobby_daemon_runtime` access to match the existing `config_store`
 grant. Use the baseline's idempotent guards so an existing hub re-applies cleanly.
+
+Baseline 375 also gains the managed embedding-generation coordination state:
+`embedding_generation_acks` — durable per-daemon acknowledgement and serving-lease rows
+keyed by stable daemon-instance identity, carrying generation, committed revision,
+acknowledgement, and lease expiry — and `embedding_projection_changes`, a
+transactionally durable per-source change sequence with tombstones for the memory,
+tool, and GitHub-issue embedding producers. Both tables receive least-privilege
+`gobby_daemon_runtime` grants matching the existing `config_store` grant.
 
 Keep `BASELINE_VERSION = 375` and leave `MIGRATIONS` empty. Refresh `BASELINE_CHECKSUM`
 to the sha256 of the edited `baseline.sql`. The current runner classifies any
@@ -187,6 +202,7 @@ explicit flag:
 - 1.2.4 - Embedded assets and catalog describe the revision table and row column. file: `crates/gcore/assets/schema/catalog.manifest.json`.
 - 1.2.5 - Regenerated schema identity matches the edited baseline and both identity contract tests pass. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
 - 1.2.6 - Arbitrary checksum or filename receipt mismatches still classify CorruptPartial and refuse. test: `crates/gcore/src/schema/runner_tests.rs::unrecognized_receipt_still_rejects`.
+- 1.2.7 - A fresh apply creates the embedding acknowledgement/lease and projection-change tables with runtime-role grants. test: `crates/gcore/src/schema/runner_tests.rs::fresh_baseline_creates_embedding_coordination_state`.
 
 ### 1.3 Implement atomic revisioned mutations [category: code] (depends: 1.1, 1.2)
 `kind: deliverable`
@@ -218,7 +234,10 @@ to advance past 2^53−1 (`Number.MAX_SAFE_INTEGER`) with a typed `revision_exha
 failure that commits nothing, so every wire surface — HTTP, MCP, WebSocket, YAML
 results, and browser state — exchanges revisions as exact JSON numbers that PostgreSQL,
 Python, Rust, and JavaScript all represent losslessly. The `config_state` column stays
-BIGINT; the ceiling is an application invariant of the single mutation path.
+BIGINT; the ceiling is an application invariant of the single mutation path. Sections
+2.1, 2.3, 2.4, and 2.5 close the domain at every interface: revision inputs validate as
+strict integers in [0, 2^53−1], and the exhaustion failure crosses each wire as a
+typed, non-retryable terminal result distinct from stale-revision conflict.
 
 Complete-snapshot reads are single-snapshot coherent: `ConfigRepository` opens one
 read-only `REPEATABLE READ` transaction before its first query and reads `config_state`,
@@ -325,6 +344,15 @@ replacement state first; any preparation failure disposes prepared replacements 
 preserves all previous active state. Successful preparation permits no-fail reference
 swaps. Failure records remain until a later operator mutation changes the affected key.
 
+First initialization is distinct from replacement: initial subscriber registration at
+startup is a preparation transaction with no last-good state to preserve. A required
+service whose first construction fails disposes every partially prepared replacement
+and blocks readiness — the first runtime-active bundle publishes only after every
+required subscriber prepares successfully. An optional capability whose first
+construction fails publishes an explicitly unavailable slot with recoverable degraded
+state and readiness proceeds. `ConfigRuntime` owns that degraded state and clears it
+when a later mutation changing an affected key activates successfully.
+
 Restart changes update desired state while retaining old active values. Managed changes
 are rejected before persistence.
 
@@ -345,6 +373,7 @@ are rejected before persistence.
 - 1.4.13 - Remote-hub startup verifies the KEK/DEK identity fingerprint and a mismatched daemon fails closed before ready. test: `tests/config/test_config_runtime.py::test_kek_mismatch_fails_closed`.
 - 1.4.14 - Failed-live metadata survives unrelated revisions and duplicate reconciliation, and clears only when a later mutation changes an affected key and its activation succeeds. test: `tests/config/test_config_runtime.py::test_failed_live_record_lifecycle`.
 - 1.4.15 - Constructor-lane saturation by non-returning work leaves LISTEN reconciliation, PATCH completion, and shutdown within their bounds. test: `tests/config/test_config_runtime.py::test_lane_saturation_preserves_bounds`.
+- 1.4.16 - Fresh-startup required-service preparation failure disposes partial replacements and blocks readiness; an optional-capability failure publishes an unavailable slot, and a later successful affected-key activation clears the degraded state. test: `tests/config/test_config_runtime.py::test_first_initialization_failure_semantics`.
 
 ## P2: Public and Machine Interfaces
 `kind: framing`
@@ -374,8 +403,13 @@ pending-restart keys, and failed-live keys. PATCH accepts
 and activation.
 
 Map stale revisions to 409 and validation errors to path-addressed 422 responses.
-Structural embedding keys return `managed_activation_required` with
-`/api/embeddings/switch/start`. Remove reset and caller-controlled secrecy.
+Revision inputs validate as strict integers in [0, 2^53−1]; negative, fractional,
+non-numeric, and above-ceiling values are path-addressed 422 rejections. A mutation
+refused by the checked-increment ceiling returns a distinct non-retryable
+`revision_exhausted` error — a determinate permanent failure separate from the 409
+conflict and the 5xx indeterminate-persistence class. Structural embedding keys return
+`managed_activation_required` with `/api/embeddings/switch/start`. Remove reset and
+caller-controlled secrecy.
 
 Persistence and activation outcomes are distinct: when persistence succeeds but local
 activation fails, PATCH returns committed success carrying the new revision plus
@@ -402,7 +436,8 @@ carries configuration content. Section 3.1 registers the publisher at startup.
 - 2.1.5 - A newly reconciled revision emits exactly one revision-only `config_event` and duplicate revisions emit none. test: `tests/servers/routes/test_config_values_api.py::test_config_revision_event_contract`.
 - 2.1.6 - A committed mutation whose local activation fails returns success with the new revision and failed-live metadata, never a retryable generic error. test: `tests/servers/routes/test_config_values_api.py::test_apply_failure_returns_committed_metadata`.
 - 2.1.7 - Generation-endpoint activation commits one revisioned typed mutation including its secret and performs no raw writes. test: `tests/servers/routes/test_config_values_api.py::test_endpoint_activation_uses_typed_mutation`.
-- 2.1.8 - HTTP paths round-trip the shared codec vector set without early decoding or structural splitting. test: `tests/servers/routes/test_config_values_api.py::test_http_round_trips_codec_vectors`.
+- 2.1.8 - HTTP paths round-trip the shared codec vector set with exact canonical bytes, without early decoding or structural splitting. test: `tests/servers/routes/test_config_values_api.py::test_http_round_trips_codec_vectors`.
+- 2.1.9 - Revision inputs outside the strict integer domain are rejected and a ceiling-refused mutation returns the typed non-retryable `revision_exhausted` error. test: `tests/servers/routes/test_config_values_api.py::test_revision_domain_and_exhaustion_contract`.
 
 ### 2.2 Preserve the authenticated Rust machine contract [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -442,7 +477,8 @@ Retain the module and expose only `get_config_schema`, `get_config_values`, and
 `patch_config_values`. Reuse the same service and errors as HTTP, including the
 committed-with-apply-failure result: a patch that persists but fails local activation
 returns success with the new revision and failed-live metadata. Every mutation requires
-`expected_revision`.
+`expected_revision`. Revision-domain validation and the typed non-retryable
+`revision_exhausted` result mirror the HTTP contract.
 
 **Acceptance:**
 
@@ -450,7 +486,8 @@ returns success with the new revision and failed-live metadata. Every mutation r
 - 2.3.2 - MCP patch requires revision and preserves secret/managed policies. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_requires_revision`.
 - 2.3.3 - Raw get/set/delete/batch/list/default-seeding tools are absent. test: `tests/mcp_proxy/tools/test_config_values.py::test_legacy_config_tools_are_removed`.
 - 2.3.4 - An MCP patch whose local activation fails reports committed success with failed-live metadata. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_patch_reports_apply_status`.
-- 2.3.5 - MCP tools round-trip the shared codec vector set equivalently to HTTP. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_round_trips_codec_vectors`.
+- 2.3.5 - MCP tools round-trip the shared codec vector set byte-equivalently to HTTP. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_round_trips_codec_vectors`.
+- 2.3.6 - An MCP patch rejects out-of-domain revisions and maps the ceiling to the typed non-retryable `revision_exhausted` result. test: `tests/mcp_proxy/tools/test_config_values.py::test_mcp_revision_domain_and_exhaustion`.
 
 ### 2.4 Make YAML a validate-first daemon-namespace replacement [category: code] (depends: 1.4, 2.1)
 `kind: deliverable`
@@ -468,7 +505,9 @@ validation; run full Pydantic cross-field validation; then issue one CAS replace
 typed 409 conflict contract from universal PATCH, so a document edited against a stale
 revision requires an explicit refetch before resubmission. A replacement that persists
 but fails local activation reuses the committed-success contract with the new revision
-and failed-live metadata.
+and failed-live metadata. Replacement requests validate revisions in the same strict
+integer domain, and a ceiling-refused replacement returns the typed non-retryable
+`revision_exhausted` result rather than a conflict.
 
 Omitted daemon settings restore defaults. UI preferences, credentials, operational data,
 domain records, and bootstrap remain untouched. Export desired daemon configuration with
@@ -482,7 +521,8 @@ masks/references. Prompt/domain bundles remain separate.
 - 2.4.4 - Export round-trips without plaintext secret disclosure. test: `tests/servers/routes/test_config_yaml_replace.py::test_masked_export_round_trip`.
 - 2.4.5 - A stale-revision replacement returns 409 and leaves rows, secrets, and the revision untouched. test: `tests/servers/routes/test_config_yaml_replace.py::test_stale_revision_replacement_is_rejected`.
 - 2.4.6 - A replacement that persists but fails local activation reports committed success with failed-live metadata. test: `tests/servers/routes/test_config_yaml_replace.py::test_replacement_reports_apply_status`.
-- 2.4.7 - YAML import and export round-trip the shared codec vector set without collisions or unintended structure. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_round_trips_codec_vectors`.
+- 2.4.7 - YAML import and export round-trip the shared codec vector set with exact canonical bytes, without collisions or unintended structure. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_round_trips_codec_vectors`.
+- 2.4.8 - A replacement with an out-of-domain revision is rejected and a ceiling-refused replacement reports typed `revision_exhausted`. test: `tests/servers/routes/test_config_yaml_replace.py::test_yaml_revision_domain_and_exhaustion`.
 
 ### 2.5 Migrate browser configuration state [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -506,9 +546,11 @@ Targets:
 - `web/src/components/app/__tests__/useAppProjectSelection.test.tsx::*` — scope-reason: update project-selection persistence
 
 Add one typed client carrying the latest revision. On 409, refetch server state, preserve
-the unsaved local draft, and require explicit resubmission. Coalesce higher-revision
-WebSocket events into one refetch. Remove specialized UI-setting, reset, launch-default,
-and approval-setting writes.
+the unsaved local draft, and require explicit resubmission. The client models every
+revision as a strict integer in [0, 2^53−1] and branches `revision_exhausted` away from
+conflict handling: it renders a terminal non-retryable error and never refetches for
+resubmission. Coalesce higher-revision WebSocket events into one refetch. Remove
+specialized UI-setting, reset, launch-default, and approval-setting writes.
 
 Render activation state from the schema and values payloads section 2.1 already returns:
 each field shows its activation class, pending-restart keys show desired-versus-active
@@ -536,7 +578,8 @@ across `web/src`.
 - 2.5.7 - WebSocket reconnect refetches and converges on a mutation committed while disconnected. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::refetches_on_reconnect`.
 - 2.5.8 - A higher event during an in-flight refetch produces one trailing refetch and older responses never render. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::watermark_triggers_trailing_refetch`.
 - 2.5.9 - The browser-authority audit rejects direct fetches, specialized writers, reset calls, and revisionless mutations. test: `web/src/__tests__/config-authority-audit.test.ts::web_has_one_config_authority`.
-- 2.5.10 - The typed client round-trips the shared codec vector set through browser state without re-encoding drift. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::round_trips_codec_vectors`.
+- 2.5.10 - The typed client round-trips the shared codec vector set with exact canonical bytes through browser state without re-encoding drift. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::round_trips_codec_vectors`.
+- 2.5.11 - A `revision_exhausted` result renders as a terminal non-retryable state and triggers no refetch-resubmit loop. test: `web/src/hooks/__tests__/useConfiguration.revision.test.ts::exhausted_revision_is_terminal`.
 
 ### 2.6 Generate and consume the Rust runtime-config contract [category: code] (depends: 1.1, 2.2)
 `kind: deliverable`
@@ -587,7 +630,7 @@ both crates declare their new test submodule from the existing `config/tests.rs`
 - 2.6.2 - Rust rejects machine keys absent from the generated contract. test: `crates/gcore/src/config/tests/runtime_contract.rs::rejects_unregistered_machine_key`.
 - 2.6.3 - Gobby runtime mode ignores env/standalone precedence for registered keys. test: `crates/gcode/src/config/tests/runtime_contract.rs::gobby_mode_uses_registry_authority`.
 - 2.6.4 - Direct hub fallback resolves service families and secret bindings from one revision-coherent snapshot, and a paused reader racing a same-reference rotation returns wholly old or wholly new material. test: `crates/gcode/src/config/tests/runtime_contract.rs::hub_fallback_reads_atomic_snapshot`.
-- 2.6.5 - Rust and Python encode and match the shared codec vector set byte-identically. test: `crates/gcode/src/config/tests/runtime_contract.rs::dynamic_segment_codec_matches_python`.
+- 2.6.5 - Rust and Python encode, match, and reject the shared codec vector set byte-identically, including its malformed and non-canonical inputs. test: `crates/gcode/src/config/tests/runtime_contract.rs::dynamic_segment_codec_matches_python`.
 - 2.6.6 - Explicit standalone mode with no daemon or hub context honors environment and `gcore.yaml` precedence in their documented order. test: `crates/gcode/src/config/tests/runtime_contract.rs::standalone_mode_preserves_env_yaml_precedence`.
 
 ## P3: Consumer Migration and Activation
@@ -607,7 +650,10 @@ registry/store/runtime, starts the listener and awaits confirmed subscription
 activation on its autocommit connection, then performs the initial revision-coherent
 load before constructing post-database services. A revision committed between
 subscription activation and the initial load therefore converges without a later
-notification.
+notification. Service construction follows the section 1.4 first-initialization
+contract: required-subscriber failure blocks readiness before the first bundle
+publishes, and optional-capability failure surfaces recoverable degraded health that
+`ConfigRuntime` owns and clears after a successful affected-key activation.
 
 Startup also registers the section 2.1 `config_event` publisher against ConfigRuntime so
 each reconciled revision reaches WebSocket clients exactly once.
@@ -623,6 +669,7 @@ complete; section 4.1 deletes them. No new consumer may use them.
 - 3.1.3 - Runtime notification lifecycle closes cleanly with daemon shutdown. test: `tests/runner_init/test_config_runtime_startup.py::test_runtime_closes_with_daemon`.
 - 3.1.4 - Startup registers the config event publisher and one reconciled revision emits one event. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_registers_config_event_publisher`.
 - 3.1.5 - With a writer paused at the LISTEN-activation/reload boundary, a revision committed after subscription activation and before the initial reload converges before services construct, without a later notification. test: `tests/runner_init/test_config_runtime_startup.py::test_startup_closes_subscription_window`.
+- 3.1.6 - Fresh startup with a failing required subscriber never reports ready, and a failing optional capability reports degraded then recovers after a successful affected-key activation. test: `tests/runner_init/test_config_runtime_startup.py::test_first_start_failure_and_recovery`.
 
 ### 3.2 Migrate generic policy consumers [category: code] (depends: 2.1, 3.1)
 `kind: deliverable`
@@ -726,7 +773,11 @@ Adapters implement the section 1.4 work bounds: named preparation and disposal
 deadlines, timeout disposal that preserves last-good services and records failed-live
 keys, snapshot publication before bounded old-resource drain, and drain failures that
 never roll back active state. Daemon shutdown cancels in-flight preparation and drain
-work within the same bounds.
+work within the same bounds. Each adapter declares itself required or optional under
+the section 1.4 first-initialization contract: a required adapter's first-construction
+failure disposes partial state and blocks readiness, and a failed optional adapter
+publishes an explicit unavailable slot that recovers on a later successful
+affected-key activation.
 
 **Acceptance:**
 
@@ -739,6 +790,7 @@ work within the same bounds.
 - 3.4.7 - Shutdown cancels in-flight preparation and drain within bounds and a drain failure never rolls back active state. test: `tests/config/test_stateful_config_subscribers.py::test_shutdown_cancels_subscriber_work`.
 - 3.4.8 - Forced thread interleaving across a multi-key revision never observes a mixed service/snapshot epoch. test: `tests/config/test_stateful_config_subscribers.py::test_no_mixed_epoch_under_interleaving`.
 - 3.4.9 - Every live-activation registry key resolves to a subscriber adapter or a declared per-operation read, and the matrix assertion fails on an unmapped key. test: `tests/config/test_stateful_config_subscribers.py::test_live_key_consumer_matrix_is_complete`.
+- 3.4.10 - Adapter first-registration failure follows the declared contract: required blocks readiness with partial disposal, optional publishes an unavailable slot and recovers on later activation. test: `tests/config/test_stateful_config_subscribers.py::test_first_registration_failure_contract`.
 
 ### 3.5 Migrate loops and lifecycle consumers [category: code] (depends: 3.1, 3.4)
 `kind: deliverable`
@@ -777,6 +829,11 @@ Targets:
 - `src/gobby/ai/embedding_switch_runner.py::*` — scope-reason: replace fresh config loads throughout switch execution
 - `src/gobby/cli/installers/embedding.py::*` — scope-reason: use typed runtime snapshots during installation
 - `src/gobby/servers/routes/embeddings.py::create_embeddings_router`
+- `src/gobby/storage/embedding_generation_state.py`
+- `src/gobby/memory/vectorstore.py::*` — scope-reason: generation-pinned physical-target resolution and lease-gated serving
+- `src/gobby/memory/services/indexing.py::*` — scope-reason: memory producer appends projection changes with tombstones in the mutation transaction
+- `src/gobby/mcp_proxy/semantic_search.py::*` — scope-reason: tool producer appends projection changes and resolves generation-pinned targets
+- `src/gobby/github_triage/issue_index.py::*` — scope-reason: issue producer appends projection changes with tombstones
 - `tests/storage/test_embedding_switch_config_contract.py::*` — scope-reason: extend existing switch/config ownership tests
 - `tests/ai/test_embedding_switch_daemon_lifecycle.py::*` — scope-reason: verify revisioned switch recovery
 
@@ -803,14 +860,31 @@ and is retained until the next managed switch supersedes it. A remote daemon tha
 reloads after the journal is gone verifies the committed structural revision against
 that record, including after reconnect.
 
-Old generations outlive the flip: each daemon durably acknowledges the structural
-revision it has promoted, and generation GC deletes an old physical collection only
-after every acknowledgement inside the configured liveness window covers the committed
-revision and bounded in-flight drains complete. A daemon whose acknowledgement is
-stale beyond the window is excluded from the GC quorum and must reconcile to the
-committed generation before serving embedding requests on reconnect. A crash between
-the flip, commit, reconcile, and GC boundaries always recovers to a coherent
-generation.
+A promoted generation contains every source mutation committed before promotion:
+memory, tool, and GitHub-issue embedding producers append to the transactionally
+durable `embedding_projection_changes` sequence — with tombstones for deletions — in
+the same transaction as each source mutation. The switch captures a change-sequence
+watermark at build enumeration and replays every later create, update, and tombstone
+into the staged collections. A PostgreSQL-backed generation transition closes the
+replay-to-commit window: once the transition state is durable, every producer projects
+each mutation into both generations, directly or through replay, and the flip commits
+only at a watermark covering every previously committed mutation. The completed record
+binds the caught-up watermark and physical targets to the committed revision, and a
+daemon promoting the new generation applies its own post-watermark changes before
+acknowledging, so no daemon acknowledges a generation missing committed writes.
+
+Old generations outlive the flip behind renewable serving leases: each daemon holds a
+DB-authoritative `embedding_generation_acks` row keyed by its stable daemon-instance
+identity, carrying the generation and committed revision it serves, its
+acknowledgement, and a lease expiry it renews while serving. Embedding requests check
+lease validity locally; a daemon that cannot confirm renewal — PostgreSQL or
+notification connectivity lost — self-fences embedding requests before its lease
+expires, even while HTTP and Qdrant remain reachable, so exclusion from GC always
+implies inability to serve. Generation GC deletes an old physical collection only
+after every unexpired lease acknowledges the committed revision and bounded in-flight
+drains complete. A fenced or expired daemon reconciles to the committed generation
+before serving embedding requests again, and a crash between the flip, commit,
+reconcile, and GC boundaries always recovers to a coherent generation.
 
 **Acceptance:**
 
@@ -820,7 +894,8 @@ generation.
 - 3.6.4 - API-key rotation is live and invalidates the embedding client. test: `tests/storage/test_embedding_switch_config_contract.py::test_api_key_rotation_is_live`.
 - 3.6.5 - A remote runtime observing a managed structural revision verifies the journal, promotes by capturing the generation's physical targets, and rebuilds clients; crash recovery at any journal phase converges without a mixed state. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_managed_revision_converges_across_runtimes`.
 - 3.6.6 - A remote daemon reloading after journal deletion verifies the persisted completed record and converges, including after reconnect. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_remote_catchup_after_journal_gc`.
-- 3.6.7 - Generation GC waits for quorum acknowledgements and bounded drains, never deletes a generation a window-live daemon still holds, and a stale daemon reconciles before serving embedding requests. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_generation_gc_waits_for_acknowledgements`.
+- 3.6.7 - Generation GC waits for every unexpired lease's acknowledgement and bounded drains, never deletes a generation an unexpired lease still covers, and a daemon that cannot renew self-fences before expiry and reconciles before serving again. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_generation_gc_waits_for_acknowledgements`.
+- 3.6.8 - A mutation committed after build enumeration — in-process or on a second daemon — is present in the promoted generation, deletions tombstone through replay, and no daemon acknowledges a generation missing its committed writes. test: `tests/ai/test_embedding_switch_daemon_lifecycle.py::test_write_catchup_replays_into_promoted_generation`.
 
 ### 3.7 Replace load_full_config_from_db and every caller [category: code] (depends: 1.4)
 `kind: deliverable`
@@ -975,7 +1050,8 @@ Start two isolated daemon-runtime worker processes against one temporary Postgre
 schema. Each owns a separate pool and dedicated listener. Verify remote notification,
 local immediate reconciliation, CAS conflict, restart pending state, secret redaction,
 apply failure isolation, listener backend termination/reconnect, single-reconcile
-idempotency, and latest-snapshot convergence.
+idempotency, latest-snapshot convergence, generation lease fencing under PostgreSQL
+partition, and switch write-race catch-up.
 
 The workers use distinct daemon homes with the existing shared-passphrase KEK posture,
 proving remote secret activation across homes, per-daemon secret-binding isolation on
@@ -995,6 +1071,8 @@ Use isolated ports/state and never contact the user's running daemon.
 - 4.2.8 - A same-reference rotation with one failing daemon proves per-daemon payload isolation and public redaction. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_same_reference_rotation_failure_isolation`.
 - 4.2.9 - Concurrent cross-process writes sharing a stale expected revision yield exactly one commit and one typed conflict. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_cross_process_cas_conflict`.
 - 4.2.10 - A restart-required change keeps desired and active state separated on both daemons until a worker restart activates it. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_restart_pending_state_across_daemons`.
+- 4.2.11 - A daemon losing PostgreSQL connectivity while HTTP and Qdrant stay live self-fences embedding requests before lease expiry, GC proceeds safely, and the daemon reconciles and resumes serving after reconnect. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_partitioned_daemon_self_fences_before_gc`.
+- 4.2.12 - Create, update, and delete races at the build, flip, config-commit, and promotion boundaries across two daemons converge with every committed mutation present in the promoted generation. test: `tests/integration/config/test_reactive_config_multi_daemon.py::test_switch_write_races_converge`.
 
 ### 4.3 Delete auth-owned raw configuration access [category: code] (depends: 4.1)
 `kind: deferred`
@@ -1237,6 +1315,52 @@ deferral:
 ```json plan-review-round
 {"evidence_id":"6cb79c0b-3cb5-4f88-a164-72f47c4cb462","plan_hash":"18b5d0484c29187128f5cadb022ea82b54870182f05bfaff961346d00082e352","round_number":3,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"1074429300295fc26535c3fd486b53cfdb7f894bce712c9dc6de14814bb05d3d","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":8,"emitted_findings":12,"total":20},"evidence_id":"6cb79c0b-3cb5-4f88-a164-72f47c4cb462","lanes":[{"candidate_count":9,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":4,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":7,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":22,"manifest_digest":"6e58208b965fc9f5c49b1a97e454d46214c8784d61d45760809ddf400f769ccb","status":"valid"},"source_digest":"13f010becbf6486fa79e4b25bd1889074fbebdc53a8d96b06abb1cac1d393eca","version":1},"findings":[{"category":"weak-testability","check_key":"startup-integrity-acceptance","description":"On startup with stale `is_secret` metadata or an unknown residual ConfigStore row, an implementation may skip the repair or continue ready because none of 1.3.1–1.3.5 asserts either branch. All derived validation criteria can pass while secrecy metadata stays stale or an unregistered row remains authoritative.","finding_id":"APR3-001","fix":"Add section 1.3 acceptance items and focused tests proving registry-derived `is_secret` repair changes no effective value or revision, and proving any unknown residual row fails startup closed. Add both items to the companion ledger.","location":"P1 §1.3","prevention":"For each startup integrity branch, ledger a focused acceptance item covering trigger, state change, revision effect, and readiness outcome.","principle":"Every startup repair and fail-closed requirement must be represented in acceptance criteria and the coverage ledger.","root_cause":"Section 1.3 added startup secrecy-metadata reconciliation and unknown-row rejection only in implementation prose.","section_id":"1.3","severity":"blocking"},{"category":"weak-testability","check_key":"failed-live-record-lifecycle","description":"After revision N records a failed-live key, revision N+1 may change an unrelated key or a duplicate notification may reconcile N again. No acceptance item prevents either path from clearing the record while the daemon still serves the old active value, so public status can falsely report a healthy active configuration.","finding_id":"APR3-002","fix":"Add an acceptance item and focused test proving failed-live metadata survives unrelated revisions and duplicate/retry reconciliation, then clears only after a later operator mutation changes an affected key and activation succeeds. Add the item to the ledger.","location":"P1 §1.4","prevention":"For each durable or runtime-visible failure record, test create, unrelated update, duplicate/retry, affected-key update, and clear transitions.","principle":"Persistent failure metadata needs acceptance coverage for creation, retention, and clearing transitions.","root_cause":"The plan tests recording failed-live state but leaves its stated retention rule outside acceptance criteria.","section_id":"1.4","severity":"blocking"},{"category":"weak-testability","causal_finding_id":"APR2-009","causal_section_ids":["1.1","2.6"],"check_key":"dynamic-codec-interface-parity","description":"An identifier containing `.`, `%`, `/`, spaces, or child-field-like text can pass 1.1.4 and 2.6.5 while an HTTP/MCP/YAML/browser adapter double-encodes, decodes early, or treats the segment structurally. The plan can therefore satisfy every current acceptance item and still map one logical key to different persisted or client-visible paths.","finding_id":"APR3-003","fix":"Define shared canonical codec vectors and add acceptance coverage that round-trips them through dotted storage, HTTP, MCP, YAML import/export, browser state, and generated Rust matching. Update the affected ledger sections.","introduced_in_round":2,"location":"P1 §1.1 and P2 §§2.3–2.6","prevention":"Run one shared adversarial vector set through every encoder, decoder, flattening layer, and generated consumer whenever a path codec spans interfaces.","principle":"A canonical cross-representation codec must be tested at every representation boundary that promises to apply it.","root_cause":"The round-2 codec repair added registry round-trip and Python/Rust parity tests without pinning HTTP, MCP, YAML, browser, and dotted-storage transformations.","section_id":"1.1","severity":"blocking"},{"category":"weak-testability","check_key":"standalone-precedence-positive-regression","description":"The planned Rust layer rewrite can accidentally disable or reorder environment and `gcore.yaml` precedence in explicit standalone mode while 2.6.3 still passes, because that item checks only attached Gobby mode. This breaks the preserved fixed-standalone contract without failing the manifest criteria.","finding_id":"APR3-004","fix":"Add a Rust acceptance item and ledger entry proving that explicit standalone mode with no daemon or hub context still honors environment and `gcore.yaml` precedence, including their documented ordering.","location":"P2 §2.6","prevention":"For every mode split, include one positive acceptance test per retained mode and one negative cross-mode isolation test.","principle":"Preserved behavior needs a positive regression test when the same deliverable rewrites the controlling precedence layer.","root_cause":"Section 2.6 tests that attached Gobby mode ignores standalone sources but never tests the preserved explicit-standalone branch.","section_id":"2.6","severity":"blocking"},{"category":"traceability","check_key":"live-consumer-classification-closure","description":"A consumer can use the supported runtime snapshot once at construction for a live key, avoid every raw-authority pattern rejected by 4.1, and still never observe later revisions. Because neither a closed key-to-consumer matrix nor a lifecycle-aware audit is required, the root task’s complete consumer migration can pass with stale live consumers.","finding_id":"APR3-005","fix":"Replace the open-ended wording with a complete registry-key-to-consumer activation matrix, or add an exhaustive audit and acceptance item proving every live constructor-captured consumer has a subscriber and every restart-class consumer is explicitly startup-captured. Add the result to the ledger.","location":"P3 §3.4 and P4 §4.1","prevention":"Map every registered key to each production consumer, capture point, activation class, and subscriber or per-operation access path before cutover.","principle":"A runtime-consumer migration must enumerate a closed consumer set or provide an exhaustive lifecycle-aware audit.","root_cause":"Section 3.4 delegates an open-ended set to “other constructor-captured live settings,” while section 4.1 audits authority usage rather than activation-lifecycle correctness.","section_id":"3.4","severity":"blocking"},{"category":"weak-testability","check_key":"integration-scenario-acceptance-parity","description":"Cross-process CAS arbitration and restart-required desired/active separation may fail even while the unit tests in 1.3 and 3.3 pass. The dedicated two-daemon leaf says it verifies both, yet its derived validation criteria never run either scenario, so expansion can close the integration leaf without proving them.","finding_id":"APR3-006","fix":"Add explicit two-daemon acceptance items and tests for a concurrent stale-revision CAS conflict and for restart-required pending desired/active state across both daemons. Add both rows to the ledger.","location":"P4 §4.2","prevention":"Diff each integration scenario sentence against acceptance IDs and ledger rows before manifest derivation.","principle":"Every scenario promised by an integration deliverable must map to an explicit acceptance item.","root_cause":"The two-daemon scenario inventory names CAS conflict and restart-pending state, but 4.2.1–4.2.8 and the ledger omit both.","section_id":"4.2","severity":"blocking"},{"category":"weak-testability","check_key":"focused-validation-acceptance-closure","description":"`tests/runner_init/test_config_runtime_startup.py` carries all five section 3.1 acceptance items, yet no V2 command runs it. Leaf-level criteria still name the tests, so this is aggregate verification drift rather than missing behavioral coverage.","finding_id":"APR3-007","fix":"Add `tests/runner_init/test_config_runtime_startup.py` to the focused P3 pytest command.","location":"V2 Verification / P3 §3.1","prevention":"Generate or compare focused validation file lists against all `test:` artifact references in the ledger.","principle":"A focused aggregate validation command should execute every focused test file named by the plan’s acceptance criteria.","root_cause":"V2’s P3 pytest group omits the section 3.1 startup test file.","section_id":"3.1","severity":"nit"},{"category":"unhandled-edge","check_key":"revision-wire-integer-domain","description":"At revisions 9007199254740992 and 9007199254740993, JavaScript `Number` can collapse adjacent values. The browser may ignore a genuinely newer `config_event`, send a rounded `expected_revision`, and loop on CAS conflicts; at BIGINT_MAX the next mutation has no defined outcome.","finding_id":"APR3-008","fix":"Define revisions as canonical decimal strings on every public wire surface, parse them to bounded int64/bigint internally, reject non-canonical or out-of-range values, and use checked increment with a distinct `revision_exhausted` result. Add tests at 2^53−1, 2^53, adjacent values above 2^53, and BIGINT_MAX.","location":"P1 §§1.2–1.3 and P2 §§2.1–2.5","prevention":"For every persisted integer crossing JavaScript, test exact adjacent values at the safe-integer boundary and the storage maximum.","principle":"A cross-language revision token must round-trip exactly over its full persisted domain and define exhaustion.","root_cause":"PostgreSQL stores revisions as BIGINT while HTTP, MCP, WebSocket, YAML results, and TypeScript state leave the wire type and upper bound unspecified.","section_id":"2.5","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR2-008","causal_section_ids":["1.4"],"check_key":"sync-deadline-underlying-work","description":"A repository call or subscriber constructor can exceed its deadline and keep a worker occupied indefinitely. Repeating that branch can consume all bounded workers; disposal never runs for truly non-returning work, and LISTEN reloads, PATCH reconciliation, or shutdown can then exceed the guarantees asserted by 1.4.10 and 3.4.7.","finding_id":"APR3-009","fix":"Separate database and constructor/drain capacity with bounded admission. Require database statement/lock/connect timeouts plus connection cancellation, and run any constructor covered by a hard shutdown guarantee in a killable worker process with explicit result ownership. Add max-worker saturation tests proving LISTEN, PATCH, and shutdown retain their bounds.","introduced_in_round":2,"location":"P1 §1.4 and P3 §§3.3–3.4","prevention":"For every off-loop operation, specify admission bound, underlying cancellation mechanism, capacity isolation, late ownership, and shutdown behavior.","principle":"An async deadline bounds an await only when the underlying synchronous work has an enforceable termination and capacity policy.","root_cause":"The round-2 executor repair relies on timeout plus late-result disposal, which handles eventual completion but cannot stop non-returning synchronous work.","section_id":"1.4","severity":"blocking"},{"category":"unhandled-edge","check_key":"rust-secret-snapshot-binding","description":"Rust fallback can capture revision N and a stable secret reference, close or leave the snapshot boundary, then resolve plaintext after a same-reference rotation commits N+1. It returns N+1 secret material in a result claiming revision N, recreating the torn secret-binding path that sections 1.4 and 2.2 explicitly prevent for Python machine output.","finding_id":"APR3-010","fix":"Keep the REPEATABLE READ transaction alive through secret lookup and decryption, or load every referenced ciphertext and key-envelope binding into the immutable fallback map before commit. Extend 2.6.4 with a paused-reader same-reference rotation race.","location":"P2 §2.6","prevention":"Pause between reference capture and secret lookup, rotate the same reference concurrently, and require a wholly old or wholly new result.","principle":"A revision-coherent snapshot containing secret references must capture the referenced payload and envelope binding in the same database snapshot.","root_cause":"Section 2.6 explicitly captures revision and machine-visible config rows in REPEATABLE READ, then separately says secret references resolve through the hub secret store.","section_id":"2.6","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR1-014","causal_section_ids":["3.6","4.2"],"check_key":"managed-alias-epoch-isolation","description":"When daemon A flips a shared alias, daemon B can still hold the old model/dimension bundle while the same alias already selects the new physical collection. A crash before the config commit yields no revision event, and later GC can delete the old generation while a disconnected or failed daemon still relies on its promised last-good epoch. Local pointer swaps cannot make that shared alias transition atomic.","finding_id":"APR3-011","fix":"Persist generation-specific physical collection targets in the completed record and each runtime-active bundle, and make requests use the captured physical target rather than a mutable alias. Retain old generations until durable per-daemon revision acknowledgements and bounded in-flight drains prove they are unused; test every flip/commit/reconcile/GC boundary.","introduced_in_round":1,"location":"P3 §3.6 and P4 §4.2","prevention":"Walk pre-flip, partial-flip, post-flip/pre-commit, post-commit/pre-reconcile, failed-daemon, disconnect, drain, and GC boundaries for every shared selector.","principle":"Per-daemon last-good epochs require every shared resource selector to remain generation-stable until all consumers leave the old epoch.","root_cause":"The round-1 multi-daemon repair coordinates local active bundles through a globally mutable embedding alias and later GC.","section_id":"3.6","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR1-011","causal_section_ids":["1.4","3.1"],"check_key":"listen-subscription-activation","description":"PostgreSQL does not activate `LISTEN` issued inside a transaction until commit. If command completion is treated as acknowledgement, the runtime can reload and report ready while the subscription is still pending; a revision committed after that reload and before listener activation is lost. Acceptance 3.1.5 also describes the opposite read/ack ordering from the implementation prose, so it does not pin this window.","finding_id":"APR3-012","fix":"Require the dedicated listener connection to use autocommit for role setup and `LISTEN`, and define acknowledgement as confirmed subscription activation. Perform the coherent reload only afterward, then become ready. Rewrite 3.1.5 and add a failpoint test at the LISTEN-activation/reload boundary.","introduced_in_round":1,"location":"P1 §1.4 and P3 §3.1","prevention":"Test the LISTEN transaction commit, reload, and readiness boundaries with a writer paused at each interval.","principle":"A LISTEN startup barrier must acknowledge transactionally active subscription state before the catch-up reload begins.","root_cause":"The round-1 catch-up repair treats LISTEN command completion as acknowledgement without requiring autocommit or an explicit commit.","section_id":"3.1","severity":"blocking"}],"reviewer_session":"06d35258-3693-42a4-8286-05fc5bf786f4","round":3,"round_number":3,"verdict":"needs_review"},"session_id":"a05c50fe-9266-4c23-8944-e17d5ef6ffed"}
 ```
+
+
+**Round 4** `kind: verification`
+
+- reviewer_run: 2199ee2c-1371-48b0-8a6f-1dcbc40ff728
+- reviewer_session: 835c10fd-d320-4405-97ec-ab99256efc03
+- verdict: needs_review
+- findings:
+- APR4-001/blocking/liveness-window GC quorum excluded daemons without a serving lease or self-fence
+- APR4-002/blocking/build enumeration raced ordinary writers with no watermark, tombstones, or replay
+- APR4-003/blocking/codec pinned round-trips but left exact canonical bytes, multibyte vectors, and rejection open
+- APR4-004/blocking/subscriber failure policy defined replacement only, never first initialization
+- APR4-005/blocking/revision domain and typed exhaustion stopped at the storage path
+- resolution_notes: All five findings accepted. §1.2 gained the
+  embedding_generation_acks lease/acknowledgement table and the
+  embedding_projection_changes tombstoned change sequence with runtime-role
+  grants (1.2.7); §3.6 was rewritten to renewable serving leases with local
+  self-fence before expiry, lease-gated GC (3.6.7 rewritten), and
+  watermark-based write catch-up through a PostgreSQL-backed generation
+  transition (3.6.8), with producer and vector-wrapper targets added and
+  two-daemon partition and write-race scenarios in §4.2 (4.2.11/4.2.12);
+  §1.1 pinned the codec's exact unescaped alphabet, uppercase hex, UTF-8
+  bytes, and malformed-input rejection, and extended the vector set with
+  multibyte and non-canonical entries asserted byte-exactly across all six
+  surfaces (1.1.4, 2.1.8, 2.3.5, 2.4.7, 2.5.10, 2.6.5 reworded); §1.4
+  gained the first-initialization contract — required blocks readiness,
+  optional publishes an unavailable slot, ConfigRuntime owns and clears
+  degraded state — mirrored in §3.1 and §3.4 (1.4.16, 3.1.6, 3.4.10);
+  §§2.1/2.3/2.4/2.5 closed the revision domain with strict
+  [0, 2^53−1] validation and a typed non-retryable revision_exhausted
+  result branched away from conflict handling in the browser (2.1.9, 2.3.6,
+  2.4.8, 2.5.11). Acceptance items went from 135 to 146; the ledger and
+  registry plan_hash were regenerated to match.
+
+```json plan-review-round
+{"evidence_id":"305fd19b-6184-4799-a4e7-004039d9d6aa","plan_hash":"cef6053565fab08af6d0dec268aed27d5dea4fade1f6da268649d0cd5217a399","round_number":4,"round_result":{"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"78866b2c7b78743f0c3fd3626a547db74890e30a46969d5cf0b22e1538617fdc","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":3,"emitted_findings":5,"total":8},"evidence_id":"305fd19b-6184-4799-a4e7-004039d9d6aa","lanes":[{"candidate_count":0,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":3,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":5,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":22,"manifest_digest":"a14e119fb5b36101c47958f51414393669e92b3394d3047a2e022ec5ead31f25","status":"valid"},"source_digest":"b24065dd764bea5db78439d75ea5ef32491339593819a11e4419f573e069496b","version":1},"findings":[{"category":"unhandled-edge","causal_finding_id":"APR3-011","causal_section_ids":["3.6"],"check_key":"managed-generation-lease-fencing","description":"A daemon can lose PostgreSQL and notification connectivity while retaining HTTP and Qdrant connectivity, keep serving its captured old physical target past the liveness window, be excluded from the quorum, and then access a collection another daemon deletes. The current Targets also omit durable acknowledgement/lease storage, runtime-role grants, and readiness/health serving gates.","finding_id":"APR4-001","fix":"Fold durable embedding-generation acknowledgements and DB-authoritative renewable leases into baseline 375, keyed by stable daemon-instance identity and carrying generation, revision, acknowledgement, and expiry. Grant least-privilege runtime access; renew while serving; self-fence embedding requests before lease expiry when renewal cannot be confirmed; let GC delete only after every unexpired lease acknowledges the generation and drains complete. Add ConfigRuntime, readiness, health, schema/catalog/identity Targets and a two-daemon PostgreSQL-loss test that leaves HTTP/Qdrant live, proves self-fencing, then proves reconnect and reconciliation.","introduced_in_round":3,"location":"P1 §1.2, P3 §3.6, and P4 §4.2","prevention":"For each quorum exclusion rule, test the member while its control-plane connection is down and its data-plane serving path remains live.","principle":"A daemon may be excluded from generation GC only after it is also unable to serve the excluded generation.","root_cause":"The round-3 liveness-window repair ages acknowledgements out of the GC quorum without a renewable serving lease or local self-fence.","section_id":"3.6","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR3-011","causal_section_ids":["3.6"],"check_key":"managed-generation-write-catchup","description":"The existing switch pages sources into staging while ProjectWriteFence grants ordinary writer admission and only coordinates one process. A mutation after enumeration can land only in the old generation; the plan specifies no durable watermark, tombstone, delta replay, dual-generation catch-up, or cross-daemon barrier. Every daemon can acknowledge the new generation and GC the old one while committed updates are absent from the promoted collections.","finding_id":"APR4-002","fix":"Add a transactionally durable embedding-projection change sequence with tombstones for memory, tool, and issue producers in baseline 375. Capture a build watermark, replay later mutations into staging through a PostgreSQL-backed generation transition, bind the caught-up watermark and physical targets to the completed record/config revision, and retain replay through live-daemon promotion. Target every memory/tool/issue writer plus the fence/vector wrappers, and add two-daemon create/update/delete races at every switch boundary.","introduced_in_round":3,"location":"P1 §1.2, P3 §3.6, and P4 §4.2","prevention":"Pause every producer after enumeration and at build, flip, config-commit, local-promotion, and remote-promotion boundaries; prove the promoted generation contains each raced create, update, and tombstone.","principle":"A promoted derived-data generation must include every authoritative source mutation committed before promotion.","root_cause":"Generation-pinned selectors and acknowledgement-gated GC protect readers, while build enumeration still races ordinary in-process and cross-daemon create, update, and delete writers.","section_id":"3.6","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR3-003","causal_section_ids":["1.1","2.1","2.3","2.4","2.5","2.6"],"check_key":"dynamic-codec-canonical-bytes","description":"Python, Rust, and TypeScript may choose different safe characters or percent-hex case and still pass their local round trips; the listed vectors also omit multibyte Unicode and malformed/non-canonical input. A path written by one surface can therefore have different primary-key bytes or fail matching on another while all current acceptance items pass.","finding_id":"APR4-003","fix":"Specify the exact unescaped alphabet, uppercase percent-hex form, UTF-8 byte encoding, and malformed/non-canonical decode rejection. Define shared logical-segment-to-encoded-byte fixtures covering pre-encoded percent text, accented and CJK text, emoji, and distinct composed/decomposed sequences. Make dotted storage, HTTP, MCP, YAML, browser, and Rust acceptance tests assert those exact bytes as well as round-trip and collision freedom.","introduced_in_round":3,"location":"P1 §1.1 and P2 §§2.1, 2.3, 2.4, 2.5, and 2.6","prevention":"Pin logical input, canonical encoded bytes, decoded output or rejection, and collision behavior at every storage and interface boundary.","principle":"A canonical cross-language storage codec requires one exact encoded byte sequence and one rejection policy for every accepted logical segment.","root_cause":"The round-3 repair added shared self-round-trip vectors while retaining the open-ended phrase “escapes at least” and omitting exact encoded bytes and UTF-8 multibyte cases.","section_id":"1.1","severity":"blocking"},{"category":"unhandled-edge","check_key":"initial-subscriber-no-last-good","description":"On fresh startup, ConfigRuntime loads before post-database services and a subscriber constructor can fail with no prior service or active secret binding to preserve. The plan does not decide required versus optional service behavior, partial-constructor cleanup, first active-bundle publication, or ownership and clearing of the existing degraded-health marker. A daemon can report active desired values with a missing service or remain degraded after a later successful activation.","finding_id":"APR4-004","fix":"Define initial registration as a startup preparation transaction. Required-service failure disposes every partial replacement and blocks readiness before publishing the first bundle; optional-capability failure publishes an explicit unavailable slot and recoverable degraded state. Make ConfigRuntime own and clear that state after successful affected-key activation, target readiness and health consumers, and add fresh-start partial-failure plus later-recovery tests.","location":"P1 §1.4 and P3 §§3.1 and 3.4","prevention":"Test first construction, live replacement, restart, and reconnect as distinct subscriber lifecycle states, including cleanup, active projection, and health recovery.","principle":"A failure policy that preserves previous active state must separately define first initialization when no previous resource exists.","root_cause":"Preparation, timeout, and secret-binding failures are specified only for replacement of an existing active bundle; current startup constructors can instead leave service references absent and health state degraded.","section_id":"3.4","severity":"blocking"},{"category":"unhandled-edge","causal_finding_id":"APR3-008","causal_section_ids":["1.3"],"check_key":"revision-domain-interface-closure","description":"HTTP, MCP, YAML, and browser models do not explicitly reject negative, fractional, or greater-than-2^53−1 revisions, and they do not map checked `revision_exhausted` to a typed terminal result. Section 2.1 reserves 5xx for indeterminate persistence, while the browser’s stale-revision branch refetches for resubmission; either generic path misclassifies a determinate permanent failure.","finding_id":"APR4-005","fix":"Keep JSON-number revisions and require strict integers in [0, 2^53−1] on every request, response, event, YAML result, and browser model. Define a distinct non-retryable `revision_exhausted` public error/result across HTTP, MCP, and YAML, branch it away from stale-revision refetch/resubmit in the browser, and add boundary tests at each interface.","introduced_in_round":3,"location":"P1 §1.3 and P2 §§2.1, 2.3, 2.4, and 2.5","prevention":"For every numeric token crossing a wire, test negative, fractional, maximum, above-maximum, exhaustion, and retry classification on every producer and consumer.","principle":"A bounded cross-language revision token needs strict input validation and one typed, non-retryable exhaustion outcome at every mutation interface.","root_cause":"The round-3 ceiling repair stops at the storage mutation path and acceptance 1.3.8; public and browser sections retain generic revision fields and stale-conflict behavior.","section_id":"2.1","severity":"blocking"}],"reviewer_session":"835c10fd-d320-4405-97ec-ab99256efc03","round":4,"round_number":4,"verdict":"needs_review"},"session_id":"a05c50fe-9266-4c23-8944-e17d5ef6ffed"}
+```
+
+**Human handoff** `kind: verification`
+
+- The configured adversarial review cap of 4 rounds is reached with a
+  needs_review verdict. All five round-4 findings were accepted and their
+  repairs folded in above. Per the review-cap contract no further adversary
+  rounds launch; the plan proceeds only through explicit human decision —
+  continue interactively, hand off to build, or stop. Approval of the folded
+  round-4 repairs rests with the human owner.
 
 
 ## V2: Verification
