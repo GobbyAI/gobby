@@ -2,11 +2,11 @@
  * §4.2 codewiki mode acceptance (4.2.1–4.2.3): the code tree browses the
  * mirror with promoted roots and collapsed-by-default folders, code pages
  * render mermaid + highlighted fences and expose Copy source path while
- * staying read-only, and the freshness strip + "Refresh codewiki" kebab
- * action surface the codewiki trigger state.
+ * staying read-only, while the status strip explains that generation is
+ * paused pending the wiki redesign.
  */
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -83,57 +83,26 @@ function jsonResponse(body: unknown, status = 200) {
   } as Response;
 }
 
-interface CodewikiStatusOverrides {
-  pending?: string[];
-  running?: string[];
-  lastRun?: Record<string, unknown> | null;
-}
-
-/** Trigger snapshot as served by GET /api/code-index/codewiki/status. */
-function codewikiStatusBody(overrides: CodewikiStatusOverrides = {}) {
-  const finishedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+/** Dormant snapshot as served by GET /api/wiki/code/status. */
+function codewikiStatusBody() {
   return {
-    pending_roots: overrides.pending ?? [],
-    running_roots: overrides.running ?? [],
-    active_flush_tasks: 0,
-    last_run:
-      overrides.lastRun === undefined
-        ? {
-            outcome: "success",
-            root_path: "/repo",
-            project_id: "p1",
-            changed_count: 12,
-            indexed: true,
-            error: null,
-            started_at: finishedAt,
-            finished_at: finishedAt,
-          }
-        : overrides.lastRun,
+    enabled: false,
+    state: "disabled",
+    reason: "pending_wiki_redesign",
   };
 }
 
 interface CodeModeFetchOverrides {
   pages?: Response;
   codewikiStatus?: Response;
-  refresh?: Response;
-  project?: Response;
 }
 
 function stubCodeModeFetch(overrides: CodeModeFetchOverrides = {}) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = new URL(String(input), "http://localhost");
     const route = url.pathname;
-    if (route.includes("/api/code-index/codewiki/status")) {
+    if (route.includes("/api/wiki/code/status")) {
       return overrides.codewikiStatus ?? jsonResponse(codewikiStatusBody());
-    }
-    if (route.includes("/api/code-index/codewiki/refresh")) {
-      return (
-        overrides.refresh ??
-        jsonResponse({ accepted: true, root_path: "/repo", project_id: "p1", reason: null })
-      );
-    }
-    if (route.includes("/api/projects/")) {
-      return overrides.project ?? jsonResponse({ id: "p1", repo_path: "/repo" });
     }
     if (route.includes("/api/wiki/status")) return jsonResponse(statusEnvelope);
     if (route.includes("/api/wiki/health")) return jsonResponse(healthEnvelope);
@@ -289,36 +258,48 @@ describe("code page reader affordances (4.2.2)", () => {
   });
 });
 
-describe("codewiki freshness strip (4.2.3)", () => {
-  it("renders the last refresh time above the code tree", async () => {
-    stubCodeModeFetch();
+describe("dormant codewiki status", () => {
+  it("renders the paused badge and reason above the code tree", async () => {
+    const fetchMock = stubCodeModeFetch();
     seedCodeMode();
     render(<WikiTab projectId="p1" />);
 
-    const strip = await screen.findByRole("status", { name: /codewiki freshness/i });
-    expect(strip).toHaveTextContent(/refreshed 5m ago/i);
-    expect(strip).toHaveTextContent(/12 docs/i);
+    const strip = await screen.findByRole("status", { name: /codewiki status/i });
+    expect(within(strip).getByText("Paused")).toBeInTheDocument();
+    expect(strip).toHaveTextContent(/paused pending wiki redesign/i);
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("/api/wiki/code/status"),
+      ),
+    ).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.some((call) => String(call[0]).includes("/api/code-index/")),
+    ).toBe(false);
   });
 
-  it("shows a pending indicator while a refresh is queued or running", async () => {
+  it("does not poll while codewiki is disabled", async () => {
+    const intervalSpy = vi.spyOn(window, "setInterval");
+    const fetchMock = stubCodeModeFetch();
+    seedCodeMode();
+    render(<WikiTab projectId="p1" />);
+
+    await screen.findByRole("status", { name: /codewiki status/i });
+    expect(intervalSpy).not.toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(
+      fetchMock.mock.calls.filter((call) =>
+        String(call[0]).includes("/api/wiki/code/status"),
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("degrades quietly when the dormant status route is unavailable", async () => {
     stubCodeModeFetch({
-      codewikiStatus: jsonResponse(codewikiStatusBody({ running: ["/repo"] })),
+      codewikiStatus: jsonResponse({ detail: "Codewiki status unavailable" }, 503),
     });
     seedCodeMode();
     render(<WikiTab projectId="p1" />);
 
-    const strip = await screen.findByRole("status", { name: /codewiki freshness/i });
-    expect(strip).toHaveTextContent(/refreshing codewiki/i);
-  });
-
-  it("degrades quietly when the codewiki trigger is unavailable", async () => {
-    stubCodeModeFetch({
-      codewikiStatus: jsonResponse({ detail: "Codewiki refresh trigger not available" }, 503),
-    });
-    seedCodeMode();
-    render(<WikiTab projectId="p1" />);
-
-    const strip = await screen.findByRole("status", { name: /codewiki freshness/i });
+    const strip = await screen.findByRole("status", { name: /codewiki status/i });
     expect(strip).toHaveTextContent(/status unavailable/i);
   });
 
@@ -329,7 +310,7 @@ describe("codewiki freshness strip (4.2.3)", () => {
 
     await screen.findByRole("tree", { name: /wiki pages/i });
     expect(
-      screen.queryByRole("status", { name: /codewiki freshness/i }),
+      screen.queryByRole("status", { name: /codewiki status/i }),
     ).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));
@@ -342,48 +323,16 @@ describe("codewiki freshness strip (4.2.3)", () => {
     ).toBe(false);
   });
 
-  it("schedules a refresh from the kebab with the project repo root", async () => {
-    const fetchMock = stubCodeModeFetch();
+  it("offers no codewiki refresh action", async () => {
+    stubCodeModeFetch();
     seedCodeMode();
     const user = userEvent.setup();
     render(<WikiTab projectId="p1" />);
 
     await screen.findByRole("tree", { name: /wiki pages/i });
     await user.click(screen.getByRole("button", { name: "Wiki actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: /refresh codewiki/i }));
-
-    await waitFor(() => {
-      const refreshCall = fetchMock.mock.calls.find((call) =>
-        String(call[0]).includes("/api/code-index/codewiki/refresh"),
-      );
-      expect(refreshCall).toBeDefined();
-      const init = refreshCall?.[1];
-      expect(init?.method).toBe("POST");
-      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      expect(body.root_path).toBe("/repo");
-      expect(body.project_id).toBe("p1");
-    });
-    expect(await screen.findByText(/codewiki refresh scheduled/i)).toBeInTheDocument();
-  });
-
-  it("surfaces the not-accepted reason from the refresh endpoint", async () => {
-    stubCodeModeFetch({
-      refresh: jsonResponse({
-        accepted: false,
-        root_path: "/repo",
-        project_id: "p1",
-        reason: "wiki.codewiki_on_commit disabled",
-      }),
-    });
-    seedCodeMode();
-    const user = userEvent.setup();
-    render(<WikiTab projectId="p1" />);
-
-    await screen.findByRole("tree", { name: /wiki pages/i });
-    await user.click(screen.getByRole("button", { name: "Wiki actions" }));
-    await user.click(await screen.findByRole("menuitem", { name: /refresh codewiki/i }));
-
-    const alert = await screen.findByRole("alert");
-    expect(alert).toHaveTextContent(/wiki\.codewiki_on_commit disabled/i);
+    expect(
+      screen.queryByRole("menuitem", { name: /refresh codewiki/i }),
+    ).not.toBeInTheDocument();
   });
 });

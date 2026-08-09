@@ -26,8 +26,6 @@ const SEARCH_PLACEHOLDER: Record<WikiMode, string> = {
 
 export interface WikiToolbarActions {
   onRefreshIndex: () => void;
-  /** Code mode only — schedules a codewiki mirror refresh (§4.2). */
-  onRefreshCodewiki: () => void;
   onCompile: () => void;
   onAudit: () => void;
   onAttachFile: () => void;
@@ -79,15 +77,6 @@ export function WikiTabToolbar({
     { label: "Quick open", disabled: true, onSelect: noop },
     { type: "separator" },
     { label: "Refresh index", disabled: actionsDisabled, onSelect: actions.onRefreshIndex },
-    ...(mode === "code"
-      ? [
-          {
-            label: "Refresh codewiki",
-            disabled: actionsDisabled,
-            onSelect: actions.onRefreshCodewiki,
-          } satisfies QuickMenuItem,
-        ]
-      : []),
     { label: "Compile", disabled: actionsDisabled, onSelect: actions.onCompile },
     { label: "Audit", disabled: actionsDisabled, onSelect: actions.onAudit },
     { type: "separator" },

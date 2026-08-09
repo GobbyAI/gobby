@@ -33,3 +33,19 @@ def test_project_codewiki_scopes_are_stripped_after_validation() -> None:
     config = WikiConfig(codewiki_project_scopes_by_name={"gobby": [" crates/gcode "]})
 
     assert config.codewiki_project_scopes_by_name == {"gobby": ["crates/gcode"]}
+
+
+def test_codewiki_fields_explain_dormant_generation() -> None:
+    properties = WikiConfig.model_json_schema()["properties"]
+
+    for field_name in (
+        "codewiki_on_commit",
+        "codewiki_nightly_enabled",
+        "codewiki_nightly_schedule_cron",
+        "codewiki_nightly_timezone",
+        "codewiki_scopes",
+        "codewiki_project_scopes_by_name",
+    ):
+        description = properties[field_name]["description"]
+        assert "generation is paused pending the wiki redesign" in description
+        assert "has no effect until #19665 re-enables orchestration" in description

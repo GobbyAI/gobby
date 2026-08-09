@@ -93,21 +93,10 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 function codewikiStatusBody() {
-  const finishedAt = new Date(Date.now() - 5 * 60_000).toISOString();
   return {
-    pending_roots: [],
-    running_roots: [],
-    active_flush_tasks: 0,
-    last_run: {
-      outcome: "success",
-      root_path: "/repo",
-      project_id: "p1",
-      changed_count: 12,
-      indexed: true,
-      error: null,
-      started_at: finishedAt,
-      finished_at: finishedAt,
-    },
+    enabled: false,
+    state: "disabled",
+    reason: "pending_wiki_redesign",
   };
 }
 
@@ -117,7 +106,7 @@ function stubA11yFetch() {
     const url = new URL(String(input), "http://localhost");
     const route = url.pathname;
     if (route.includes("/api/providers/models")) return jsonResponse({ providers: [] });
-    if (route.includes("/api/code-index/codewiki/status")) {
+    if (route.includes("/api/wiki/code/status")) {
       return jsonResponse(codewikiStatusBody());
     }
     if (route.includes("/api/projects/")) {
@@ -204,7 +193,7 @@ describe("mode switcher keyboard operation", () => {
       "true",
     );
     expect(
-      await screen.findByRole("status", { name: /codewiki freshness/i }),
+      await screen.findByRole("status", { name: /codewiki status/i }),
     ).toBeInTheDocument();
 
     await user.keyboard("{ArrowRight}");
@@ -336,7 +325,7 @@ describe("code mode keyboard operation", () => {
     render(<WikiTab projectId="p1" />);
 
     expect(
-      await screen.findByRole("status", { name: /codewiki freshness/i }),
+      await screen.findByRole("status", { name: /codewiki status/i }),
     ).toBeInTheDocument();
 
     const tree = await screen.findByRole("tree", { name: /wiki pages/i });
