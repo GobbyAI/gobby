@@ -111,6 +111,34 @@ class ConfigRepository:
                 resolve_secrets=resolve_secrets,
             )
 
+    def read_bounded(
+        self,
+        *,
+        resolve_secrets: bool = True,
+        statement_timeout_ms: int = 5_000,
+        lock_timeout_ms: int = 5_000,
+    ) -> ConfigReadSnapshot:
+        """Read one coherent snapshot with PostgreSQL-enforced operation bounds."""
+        ambient = ambient_transaction(self.db)
+        if ambient is not None:
+            return self.read(resolve_secrets=resolve_secrets)
+        bounded_transaction = getattr(self.db, "bounded_transaction", None)
+        if bounded_transaction is None:
+            return self.read(resolve_secrets=resolve_secrets)
+        with bounded_transaction(
+            statement_timeout_ms=statement_timeout_ms,
+            lock_timeout_ms=lock_timeout_ms,
+            repeatable_read_read_only=True,
+        ) as transaction:
+            revision = self._read_revision(transaction)
+            rows = self._read_rows(transaction)
+            return self.snapshot_from_rows(
+                transaction,
+                revision,
+                rows,
+                resolve_secrets=resolve_secrets,
+            )
+
     def current_revision(self) -> int:
         row = self.db.fetchone("SELECT revision FROM config_state WHERE id = %s", (True,))
         return self._validated_revision(row)

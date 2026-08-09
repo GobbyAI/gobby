@@ -1,0 +1,983 @@
+"""Atomic desired/active configuration state for daemon consumers."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import logging
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from concurrent.futures import Future as ThreadFuture
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Protocol, TypeVar
+
+from gobby.config.app import DaemonConfig
+from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
+
+logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
+
+
+class StoredSecretBinding(Protocol):
+    @property
+    def reference(self) -> str: ...
+
+    @property
+    def plaintext(self) -> str | None: ...
+
+
+class StoredConfigSnapshot(Protocol):
+    @property
+    def revision(self) -> int: ...
+
+    @property
+    def values(self) -> Mapping[str, object]: ...
+
+    @property
+    def overrides(self) -> Mapping[str, object]: ...
+
+    @property
+    def row_revisions(self) -> Mapping[str, int]: ...
+
+    @property
+    def secret_bindings(self) -> Mapping[str, StoredSecretBinding]: ...
+
+
+class ConfigSnapshotRepository(Protocol):
+    def read(self, *, resolve_secrets: bool = True) -> StoredConfigSnapshot: ...
+
+    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig: ...
+
+
+class RegistrySpec(Protocol):
+    @property
+    def activation(self) -> ActivationPolicy: ...
+
+
+class RuntimeRegistry(Protocol):
+    def resolve(self, key: str) -> RegistrySpec: ...
+
+
+class PreparedSubscriber(Protocol):
+    """Prepared replacement whose reference swap cannot fail."""
+
+    value: object
+
+    def dispose(self) -> None: ...
+
+
+class ConfigSubscriber(Protocol):
+    """One replaceable service driven by a set of live configuration keys."""
+
+    name: str
+    keys: frozenset[str]
+    required: bool
+    prepare_timeout: float
+    dispose_timeout: float
+
+    def prepare(self, change: ConfigChange) -> PreparedSubscriber: ...
+
+
+class ConfigNotificationSource(Protocol):
+    async def connect(self) -> None: ...
+
+    def revisions(self) -> AsyncIterator[int]: ...
+
+    async def close(self) -> None: ...
+
+
+class ConfigRuntimeError(RuntimeError):
+    """Base error for runtime activation failures."""
+
+
+class SecretIdentityMismatchError(ConfigRuntimeError):
+    """Raised when a remote daemon has a different KEK/DEK identity."""
+
+
+class ConstructorLaneSaturatedError(ConfigRuntimeError):
+    """Raised when bounded constructor capacity is exhausted."""
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeSecretBinding:
+    """Private last-good secret payload captured with a content fingerprint."""
+
+    reference: str
+    plaintext: str | None = field(repr=False)
+    fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class ApplyFailure:
+    """Local activation failure for one committed revision."""
+
+    revision: int
+    subscriber: str
+    keys: frozenset[str]
+    message: str
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class ConfigSnapshot:
+    """One deeply immutable desired/active configuration epoch."""
+
+    revision: int
+    row_revisions: MappingProxyType[str, int]
+    pending_restart_keys: frozenset[str]
+    failed_live_keys: MappingProxyType[str, ApplyFailure]
+    _desired: DaemonConfig = field(repr=False, compare=False)
+    _active: DaemonConfig = field(repr=False, compare=False)
+    _desired_values: MappingProxyType[str, object] = field(repr=False, compare=False)
+    _active_values: MappingProxyType[str, object] = field(repr=False, compare=False)
+    _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
+        repr=False, compare=False
+    )
+    _active_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(repr=False, compare=False)
+
+    def __init__(
+        self,
+        *,
+        revision: int,
+        desired: DaemonConfig,
+        active: DaemonConfig,
+        row_revisions: Mapping[str, int],
+        pending_restart_keys: frozenset[str],
+        failed_live_keys: Mapping[str, ApplyFailure],
+        desired_values: Mapping[str, object] | None = None,
+        active_values: Mapping[str, object] | None = None,
+        desired_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
+        active_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
+    ) -> None:
+        object.__setattr__(self, "revision", revision)
+        object.__setattr__(self, "row_revisions", MappingProxyType(dict(row_revisions)))
+        object.__setattr__(self, "pending_restart_keys", pending_restart_keys)
+        object.__setattr__(
+            self,
+            "failed_live_keys",
+            MappingProxyType(dict(failed_live_keys)),
+        )
+        object.__setattr__(self, "_desired", desired.model_copy(deep=True))
+        object.__setattr__(self, "_active", active.model_copy(deep=True))
+        object.__setattr__(
+            self,
+            "_desired_values",
+            MappingProxyType(dict(desired_values or {})),
+        )
+        object.__setattr__(
+            self,
+            "_active_values",
+            MappingProxyType(dict(active_values or {})),
+        )
+        object.__setattr__(
+            self,
+            "_desired_bindings",
+            MappingProxyType(dict(desired_bindings or {})),
+        )
+        object.__setattr__(
+            self,
+            "_active_bindings",
+            MappingProxyType(dict(active_bindings or {})),
+        )
+
+    @property
+    def desired(self) -> DaemonConfig:
+        """Return an isolated typed desired projection."""
+        return self._desired.model_copy(deep=True)
+
+    @property
+    def active(self) -> DaemonConfig:
+        """Return an isolated typed active projection."""
+        return self._active.model_copy(deep=True)
+
+    def desired_secret(self, key: str) -> str | None:
+        binding = self._desired_bindings.get(key)
+        return None if binding is None else binding.plaintext
+
+    def active_secret(self, key: str) -> str | None:
+        binding = self._active_bindings.get(key)
+        return None if binding is None else binding.plaintext
+
+    def desired_secret_fingerprint(self, key: str) -> str | None:
+        binding = self._desired_bindings.get(key)
+        return None if binding is None else binding.fingerprint
+
+    def active_secret_fingerprint(self, key: str) -> str | None:
+        binding = self._active_bindings.get(key)
+        return None if binding is None else binding.fingerprint
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigChange:
+    """Candidate revision supplied to prepared subscribers."""
+
+    revision: int
+    changed_keys: frozenset[str]
+    previous: ConfigSnapshot | None
+    desired: DaemonConfig
+    _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
+        repr=False, compare=False
+    )
+
+    def desired_secret(self, key: str) -> str | None:
+        binding = self._desired_bindings.get(key)
+        return None if binding is None else binding.plaintext
+
+
+@dataclass(frozen=True, slots=True)
+class UnavailableService:
+    """Explicit optional-capability slot published after initial failure."""
+
+    failure: ApplyFailure
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeActiveBundle:
+    """Atomically published snapshot and replaceable service references."""
+
+    snapshot: ConfigSnapshot
+    services: MappingProxyType[str, object]
+    _handles: MappingProxyType[str, PreparedSubscriber] = field(
+        repr=False, compare=False, default_factory=lambda: MappingProxyType({})
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedValue:
+    """Simple prepared replacement for subscribers without custom cleanup."""
+
+    value: object
+    disposer: Callable[[], None] = field(repr=False, compare=False, default=lambda: None)
+
+    def dispose(self) -> None:
+        self.disposer()
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparationFailure:
+    subscriber: ConfigSubscriber
+    error: BaseException
+
+
+class ConfigRuntime:
+    """Serialize complete reloads and publish desired/active bundles atomically."""
+
+    def __init__(
+        self,
+        repository: ConfigSnapshotRepository,
+        *,
+        registry: RuntimeRegistry = CONFIG_REGISTRY,
+        subscribers: Iterable[ConfigSubscriber] = (),
+        notification_source: ConfigNotificationSource | None = None,
+        db_workers: int = 2,
+        constructor_workers: int = 2,
+        db_timeout: float = 5.5,
+        constructor_admission_timeout: float = 0.25,
+        statement_timeout_ms: int = 5_000,
+        lock_timeout_ms: int = 5_000,
+        reconnect_backoff: float = 0.1,
+        expected_secret_identity: str | None = None,
+        secret_identity_verifier: Callable[[], str] | None = None,
+    ) -> None:
+        if db_workers <= 0 or constructor_workers <= 0:
+            raise ValueError("Runtime lane worker counts must be positive")
+        if db_timeout <= 0 or constructor_admission_timeout <= 0:
+            raise ValueError("Runtime deadlines must be positive")
+        if (expected_secret_identity is None) != (secret_identity_verifier is None):
+            raise ValueError("Secret identity expectation and verifier must be configured together")
+        self._repository = repository
+        self._registry = registry
+        self._subscribers = list(subscribers)
+        self._notifications = notification_source
+        self._db_executor = ThreadPoolExecutor(
+            max_workers=db_workers,
+            thread_name_prefix="gobby-config-db",
+        )
+        self._constructor_executor = ThreadPoolExecutor(
+            max_workers=constructor_workers,
+            thread_name_prefix="gobby-config-constructor",
+        )
+        self._db_capacity = asyncio.Semaphore(db_workers)
+        self._constructor_capacity = asyncio.Semaphore(constructor_workers)
+        self._db_timeout = db_timeout
+        self._constructor_admission_timeout = constructor_admission_timeout
+        self._statement_timeout_ms = statement_timeout_ms
+        self._lock_timeout_ms = lock_timeout_ms
+        self._reconnect_backoff = reconnect_backoff
+        self._expected_secret_identity = expected_secret_identity
+        self._secret_identity_verifier = secret_identity_verifier
+        self._reconcile_lock = asyncio.Lock()
+        self._max_requested_revision = -1
+        self._bundle: RuntimeActiveBundle | None = None
+        self._listener_task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._ready = False
+        self._healthy = False
+        self._closed = False
+
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        return self.capture().snapshot
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
+
+    @property
+    def healthy(self) -> bool:
+        return self._healthy
+
+    @property
+    def degraded(self) -> bool:
+        bundle = self._bundle
+        return bundle is not None and bool(bundle.snapshot.failed_live_keys)
+
+    def capture(self) -> RuntimeActiveBundle:
+        bundle = self._bundle
+        if bundle is None:
+            raise RuntimeError("ConfigRuntime has not started")
+        return bundle
+
+    async def start(self) -> ConfigSnapshot:
+        if self._closed:
+            raise RuntimeError("ConfigRuntime is closed")
+        if self._bundle is not None:
+            return self._bundle.snapshot
+        self._loop = asyncio.get_running_loop()
+        if self._notifications is not None:
+            await self._notifications.connect()
+        try:
+            await self._verify_secret_identity()
+            stored, desired = await self._read_projection()
+            if stored.revision < 0:
+                raise ConfigRuntimeError("Stored configuration revision must be non-negative")
+            snapshot, services, handles = await self._initialize(stored, desired)
+            self._bundle = RuntimeActiveBundle(
+                snapshot,
+                MappingProxyType(services),
+                MappingProxyType(handles),
+            )
+            self._max_requested_revision = stored.revision
+            self._ready = True
+            self._healthy = True
+            if self._notifications is not None:
+                self._listener_task = asyncio.create_task(
+                    self._listen(),
+                    name="config-runtime-listener",
+                )
+            return snapshot
+        except BaseException:
+            self._healthy = False
+            if self._notifications is not None:
+                await self._notifications.close()
+            raise
+
+    async def reconcile_revision(self, revision: int) -> ConfigSnapshot:
+        if revision < 0:
+            raise ValueError("Configuration revision must be non-negative")
+        if self._closed:
+            raise RuntimeError("ConfigRuntime is closed")
+        self._max_requested_revision = max(self._max_requested_revision, revision)
+        async with self._reconcile_lock:
+            return await self._reconcile_locked(force=False)
+
+    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
+        """Await immediate reconciliation for a locally committed PATCH."""
+        return await self.reconcile_revision(revision)
+
+    def local_commit_handoff(self, revision: int) -> ThreadFuture[ConfigSnapshot]:
+        """Schedule local reconciliation safely from a synchronous request thread."""
+        loop = self._loop
+        if loop is None or not loop.is_running():
+            raise RuntimeError("ConfigRuntime event loop is unavailable")
+        return asyncio.run_coroutine_threadsafe(self.reconcile_revision(revision), loop)
+
+    async def register_subscriber(self, subscriber: ConfigSubscriber) -> ConfigSnapshot:
+        """Register against one stable epoch and return its active projection/revision."""
+        if any(existing.name == subscriber.name for existing in self._subscribers):
+            raise ValueError(f"Configuration subscriber already registered: {subscriber.name}")
+        async with self._reconcile_lock:
+            while True:
+                bundle = self.capture()
+                change = ConfigChange(
+                    revision=bundle.snapshot.revision,
+                    changed_keys=subscriber.keys,
+                    previous=bundle.snapshot,
+                    desired=bundle.snapshot.desired,
+                    _desired_bindings=bundle.snapshot._desired_bindings,
+                )
+                prepared, failure = await self._prepare_one(subscriber, change)
+                if self._max_requested_revision > bundle.snapshot.revision:
+                    if prepared is not None:
+                        await self._dispose(prepared, subscriber)
+                    await self._reconcile_locked(force=False)
+                    continue
+                services = dict(bundle.services)
+                handles = dict(bundle._handles)
+                snapshot = bundle.snapshot
+                if failure is not None:
+                    if subscriber.required:
+                        raise RuntimeError(str(failure.error)) from failure.error
+                    apply_failure = self._apply_failure(subscriber, subscriber.keys, failure.error)
+                    services[subscriber.name] = UnavailableService(apply_failure)
+                    failed = dict(snapshot.failed_live_keys)
+                    for key in subscriber.keys:
+                        failed[key] = apply_failure
+                    snapshot = self._copy_snapshot(snapshot, failed_live_keys=failed)
+                else:
+                    assert prepared is not None
+                    services[subscriber.name] = prepared.value
+                    handles[subscriber.name] = prepared
+                self._subscribers.append(subscriber)
+                self._bundle = RuntimeActiveBundle(
+                    snapshot,
+                    MappingProxyType(services),
+                    MappingProxyType(handles),
+                )
+                return snapshot
+
+    async def _initialize(
+        self,
+        stored: StoredConfigSnapshot,
+        desired: DaemonConfig,
+    ) -> tuple[ConfigSnapshot, dict[str, object], dict[str, PreparedSubscriber]]:
+        bindings = _runtime_bindings(stored.secret_bindings)
+        desired_values = dict(stored.values)
+        failures: dict[str, ApplyFailure] = {}
+        services: dict[str, object] = {}
+        handles: dict[str, PreparedSubscriber] = {}
+        base = ConfigSnapshot(
+            revision=stored.revision,
+            desired=desired,
+            active=desired,
+            row_revisions=stored.row_revisions,
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values=desired_values,
+            active_values=desired_values,
+            desired_bindings=bindings,
+            active_bindings=bindings,
+        )
+        change = ConfigChange(
+            revision=stored.revision,
+            changed_keys=frozenset(desired_values) | frozenset(bindings),
+            previous=None,
+            desired=desired.model_copy(deep=True),
+            _desired_bindings=bindings,
+        )
+        for subscriber in self._subscribers:
+            prepared, failure = await self._prepare_one(subscriber, change)
+            if failure is None:
+                assert prepared is not None
+                services[subscriber.name] = prepared.value
+                handles[subscriber.name] = prepared
+                continue
+            apply_failure = self._apply_failure(
+                subscriber, subscriber.keys, failure.error, revision=stored.revision
+            )
+            if subscriber.required:
+                await self._dispose_many(handles, self._subscribers)
+                raise RuntimeError(str(failure.error)) from failure.error
+            services[subscriber.name] = UnavailableService(apply_failure)
+            for key in subscriber.keys:
+                failures[key] = apply_failure
+        return self._copy_snapshot(base, failed_live_keys=failures), services, handles
+
+    async def _reconcile_locked(self, *, force: bool) -> ConfigSnapshot:
+        while True:
+            current_bundle = self.capture()
+            current = current_bundle.snapshot
+            requested = self._max_requested_revision
+            if not force and requested <= current.revision:
+                return current
+            stored, desired = await self._read_projection()
+            if self._max_requested_revision > stored.revision:
+                await asyncio.sleep(0)
+                continue
+            if stored.revision <= current.revision:
+                return current
+            changed_keys = _changed_keys(current, stored)
+            desired_bindings = _runtime_bindings(stored.secret_bindings)
+            changed_live, _changed_restart = self._partition_changes(changed_keys)
+            change = ConfigChange(
+                revision=stored.revision,
+                changed_keys=changed_live,
+                previous=current,
+                desired=desired.model_copy(deep=True),
+                _desired_bindings=desired_bindings,
+            )
+            prepared, failure = await self._prepare_matching(change)
+            if self._max_requested_revision > stored.revision:
+                await self._dispose_prepared_map(prepared)
+                force = False
+                continue
+            snapshot, services, handles, old_handles = self._activate(
+                current_bundle,
+                stored,
+                desired,
+                desired_bindings,
+                changed_keys,
+                changed_live,
+                prepared,
+                failure,
+            )
+            self._bundle = RuntimeActiveBundle(
+                snapshot,
+                MappingProxyType(services),
+                MappingProxyType(handles),
+            )
+            await self._dispose_replaced(old_handles)
+            force = False
+            if self._max_requested_revision <= snapshot.revision:
+                return snapshot
+
+    def _activate(
+        self,
+        current_bundle: RuntimeActiveBundle,
+        stored: StoredConfigSnapshot,
+        desired: DaemonConfig,
+        desired_bindings: MappingProxyType[str, RuntimeSecretBinding],
+        changed_keys: frozenset[str],
+        changed_live: frozenset[str],
+        prepared: dict[str, PreparedSubscriber],
+        failure: _PreparationFailure | None,
+    ) -> tuple[
+        ConfigSnapshot,
+        dict[str, object],
+        dict[str, PreparedSubscriber],
+        list[tuple[PreparedSubscriber, ConfigSubscriber]],
+    ]:
+        current = current_bundle.snapshot
+        active_values = dict(current._active_values)
+        active_bindings = dict(current._active_bindings)
+        failed = dict(current.failed_live_keys)
+        services = dict(current_bundle.services)
+        handles = dict(current_bundle._handles)
+        old_handles: list[tuple[PreparedSubscriber, ConfigSubscriber]] = []
+        if failure is None:
+            for key in changed_live:
+                if key in stored.values:
+                    active_values[key] = stored.values[key]
+                else:
+                    active_values.pop(key, None)
+                if key in desired_bindings:
+                    active_bindings[key] = desired_bindings[key]
+                else:
+                    active_bindings.pop(key, None)
+                failed.pop(key, None)
+            for subscriber in self._subscribers:
+                replacement = prepared.get(subscriber.name)
+                if replacement is None:
+                    continue
+                previous = handles.pop(subscriber.name, None)
+                if previous is not None:
+                    old_handles.append((previous, subscriber))
+                handles[subscriber.name] = replacement
+                services[subscriber.name] = replacement.value
+        else:
+            apply_failure = self._apply_failure(
+                failure.subscriber,
+                changed_live,
+                failure.error,
+                revision=stored.revision,
+            )
+            for key in changed_live:
+                failed[key] = apply_failure
+            for subscriber in self._subscribers:
+                replacement = prepared.get(subscriber.name)
+                if replacement is not None:
+                    old_handles.append((replacement, subscriber))
+        active = self._repository.runtime_candidate(active_values)
+        pending = self._pending_restart_keys(
+            stored.values,
+            active_values,
+            desired_bindings,
+            active_bindings,
+        )
+        snapshot = ConfigSnapshot(
+            revision=stored.revision,
+            desired=desired,
+            active=active,
+            row_revisions=stored.row_revisions,
+            pending_restart_keys=pending,
+            failed_live_keys=failed,
+            desired_values=stored.values,
+            active_values=active_values,
+            desired_bindings=desired_bindings,
+            active_bindings=active_bindings,
+        )
+        return snapshot, services, handles, old_handles
+
+    async def _prepare_matching(
+        self,
+        change: ConfigChange,
+    ) -> tuple[dict[str, PreparedSubscriber], _PreparationFailure | None]:
+        prepared: dict[str, PreparedSubscriber] = {}
+        for subscriber in self._subscribers:
+            if not subscriber.keys.intersection(change.changed_keys):
+                continue
+            replacement, failure = await self._prepare_one(subscriber, change)
+            if failure is not None:
+                return prepared, failure
+            assert replacement is not None
+            prepared[subscriber.name] = replacement
+            if self._max_requested_revision > change.revision:
+                return prepared, None
+        return prepared, None
+
+    async def _prepare_one(
+        self,
+        subscriber: ConfigSubscriber,
+        change: ConfigChange,
+    ) -> tuple[PreparedSubscriber | None, _PreparationFailure | None]:
+        try:
+            replacement = await self._run_constructor(
+                lambda: subscriber.prepare(change),
+                timeout=subscriber.prepare_timeout,
+            )
+            return replacement, None
+        except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            return None, _PreparationFailure(subscriber, exc)
+
+    async def _run_constructor(
+        self,
+        operation: Callable[[], PreparedSubscriber],
+        *,
+        timeout: float,
+    ) -> PreparedSubscriber:
+        try:
+            await asyncio.wait_for(
+                self._constructor_capacity.acquire(),
+                timeout=min(timeout, self._constructor_admission_timeout),
+            )
+        except TimeoutError as exc:
+            raise ConstructorLaneSaturatedError("Constructor lane admission timed out") from exc
+        loop = asyncio.get_running_loop()
+        try:
+            future = self._constructor_executor.submit(operation)
+        except BaseException:
+            self._constructor_capacity.release()
+            raise
+        self._release_capacity_when_done(future, self._constructor_capacity, loop)
+        wrapped = asyncio.wrap_future(future)
+        try:
+            return await asyncio.wait_for(asyncio.shield(wrapped), timeout=timeout)
+        except TimeoutError:
+            future.add_done_callback(_dispose_late_result)
+            raise
+
+    async def _run_disposer(self, operation: Callable[[], None], *, timeout: float) -> None:
+        try:
+            await asyncio.wait_for(
+                self._constructor_capacity.acquire(),
+                timeout=min(timeout, self._constructor_admission_timeout),
+            )
+        except TimeoutError:
+            logger.warning("Config resource disposal skipped: constructor lane saturated")
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            future = self._constructor_executor.submit(operation)
+        except BaseException:
+            self._constructor_capacity.release()
+            raise
+        self._release_capacity_when_done(future, self._constructor_capacity, loop)
+        try:
+            await asyncio.wait_for(asyncio.shield(asyncio.wrap_future(future)), timeout=timeout)
+        except TimeoutError:
+            logger.warning("Config resource disposal exceeded its deadline")
+        except Exception:
+            logger.warning("Config resource disposal failed", exc_info=True)
+
+    async def _read_projection(self) -> tuple[StoredConfigSnapshot, DaemonConfig]:
+        def read() -> tuple[StoredConfigSnapshot, DaemonConfig]:
+            bounded = getattr(self._repository, "read_bounded", None)
+            if bounded is None:
+                stored = self._repository.read(resolve_secrets=True)
+            else:
+                stored = bounded(
+                    resolve_secrets=True,
+                    statement_timeout_ms=self._statement_timeout_ms,
+                    lock_timeout_ms=self._lock_timeout_ms,
+                )
+            return stored, self._repository.runtime_candidate(dict(stored.values))
+
+        return await self._run_db(read)
+
+    async def _run_db(self, operation: Callable[[], _T]) -> _T:
+        try:
+            await asyncio.wait_for(self._db_capacity.acquire(), timeout=self._db_timeout)
+        except TimeoutError as exc:
+            raise ConfigRuntimeError("Database lane admission timed out") from exc
+        loop = asyncio.get_running_loop()
+        try:
+            future = self._db_executor.submit(operation)
+        except BaseException:
+            self._db_capacity.release()
+            raise
+        self._release_capacity_when_done(future, self._db_capacity, loop)
+        try:
+            return await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(future)),
+                timeout=self._db_timeout,
+            )
+        except TimeoutError as exc:
+            raise ConfigRuntimeError("Bounded configuration database work timed out") from exc
+
+    @staticmethod
+    def _release_capacity_when_done(
+        future: ThreadFuture[_T],
+        capacity: asyncio.Semaphore,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        def release(_future: ThreadFuture[_T]) -> None:
+            with suppress(RuntimeError):
+                loop.call_soon_threadsafe(capacity.release)
+
+        future.add_done_callback(release)
+
+    async def _verify_secret_identity(self) -> None:
+        verifier = self._secret_identity_verifier
+        expected = self._expected_secret_identity
+        if verifier is None or expected is None:
+            return
+        observed = await self._run_db(verifier)
+        if observed != expected:
+            raise SecretIdentityMismatchError(
+                f"Remote secret identity mismatch: expected {expected!r}, observed {observed!r}"
+            )
+
+    def _partition_changes(
+        self,
+        changed_keys: frozenset[str],
+    ) -> tuple[frozenset[str], frozenset[str]]:
+        live: set[str] = set()
+        restart: set[str] = set()
+        for key in changed_keys:
+            activation = self._registry.resolve(key).activation
+            if activation is ActivationPolicy.MANAGED:
+                raise ConfigRuntimeError(f"Managed configuration key reached runtime: {key}")
+            if activation is ActivationPolicy.RESTART_REQUIRED:
+                restart.add(key)
+            else:
+                live.add(key)
+        return frozenset(live), frozenset(restart)
+
+    def _pending_restart_keys(
+        self,
+        desired_values: Mapping[str, object],
+        active_values: Mapping[str, object],
+        desired_bindings: Mapping[str, RuntimeSecretBinding],
+        active_bindings: Mapping[str, RuntimeSecretBinding],
+    ) -> frozenset[str]:
+        pending: set[str] = set()
+        keys = (
+            set(desired_values) | set(active_values) | set(desired_bindings) | set(active_bindings)
+        )
+        for key in keys:
+            if self._registry.resolve(key).activation is not ActivationPolicy.RESTART_REQUIRED:
+                continue
+            desired_fp = desired_bindings.get(key)
+            active_fp = active_bindings.get(key)
+            if desired_values.get(key) != active_values.get(key) or (
+                None if desired_fp is None else desired_fp.fingerprint
+            ) != (None if active_fp is None else active_fp.fingerprint):
+                pending.add(key)
+        return frozenset(pending)
+
+    def _apply_failure(
+        self,
+        subscriber: ConfigSubscriber,
+        keys: frozenset[str],
+        error: BaseException,
+        *,
+        revision: int | None = None,
+    ) -> ApplyFailure:
+        return ApplyFailure(
+            revision=self.capture().snapshot.revision if revision is None else revision,
+            subscriber=subscriber.name,
+            keys=keys,
+            message=str(error),
+        )
+
+    @staticmethod
+    def _copy_snapshot(
+        snapshot: ConfigSnapshot,
+        *,
+        failed_live_keys: Mapping[str, ApplyFailure],
+    ) -> ConfigSnapshot:
+        return ConfigSnapshot(
+            revision=snapshot.revision,
+            desired=snapshot._desired,
+            active=snapshot._active,
+            row_revisions=snapshot.row_revisions,
+            pending_restart_keys=snapshot.pending_restart_keys,
+            failed_live_keys=failed_live_keys,
+            desired_values=snapshot._desired_values,
+            active_values=snapshot._active_values,
+            desired_bindings=snapshot._desired_bindings,
+            active_bindings=snapshot._active_bindings,
+        )
+
+    async def _dispose_prepared_map(
+        self,
+        prepared: Mapping[str, PreparedSubscriber],
+    ) -> None:
+        by_name = {subscriber.name: subscriber for subscriber in self._subscribers}
+        for name, replacement in prepared.items():
+            subscriber = by_name[name]
+            await self._dispose(replacement, subscriber)
+
+    async def _dispose_replaced(
+        self,
+        resources: Iterable[tuple[PreparedSubscriber, ConfigSubscriber]],
+    ) -> None:
+        for resource, subscriber in resources:
+            await self._dispose(resource, subscriber)
+
+    async def _dispose_many(
+        self,
+        handles: Mapping[str, PreparedSubscriber],
+        subscribers: Iterable[ConfigSubscriber],
+    ) -> None:
+        by_name = {subscriber.name: subscriber for subscriber in subscribers}
+        for name, resource in handles.items():
+            await self._dispose(resource, by_name[name])
+
+    async def _dispose(
+        self,
+        resource: PreparedSubscriber,
+        subscriber: ConfigSubscriber,
+    ) -> None:
+        await self._run_disposer(resource.dispose, timeout=subscriber.dispose_timeout)
+
+    async def _listen(self) -> None:
+        assert self._notifications is not None
+        while not self._closed:
+            try:
+                async for revision in self._notifications.revisions():
+                    await self.reconcile_revision(revision)
+                    if self._closed:
+                        return
+                raise ConnectionError("Configuration notification stream ended")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self._healthy = False
+                logger.warning("Configuration listener disconnected", exc_info=True)
+                await self._reconnect()
+
+    async def _reconnect(self) -> None:
+        assert self._notifications is not None
+        while not self._closed:
+            with suppress(Exception):
+                await self._notifications.close()
+            await asyncio.sleep(self._reconnect_backoff)
+            try:
+                await self._notifications.connect()
+                async with self._reconcile_lock:
+                    await self._reconcile_locked(force=True)
+                self._healthy = True
+                return
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Configuration listener reconnect failed", exc_info=True)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._ready = False
+        self._healthy = False
+        listener = self._listener_task
+        if listener is not None:
+            listener.cancel()
+            with suppress(asyncio.CancelledError):
+                await listener
+        if self._notifications is not None:
+            with suppress(Exception):
+                await self._notifications.close()
+        bundle = self._bundle
+        if bundle is not None:
+            await self._dispose_many(bundle._handles, self._subscribers)
+        self._db_executor.shutdown(wait=False, cancel_futures=True)
+        self._constructor_executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _runtime_bindings(
+    bindings: Mapping[str, StoredSecretBinding],
+) -> MappingProxyType[str, RuntimeSecretBinding]:
+    captured = {
+        key: RuntimeSecretBinding(
+            reference=binding.reference,
+            plaintext=binding.plaintext,
+            fingerprint=_secret_fingerprint(binding.plaintext),
+        )
+        for key, binding in bindings.items()
+    }
+    return MappingProxyType(captured)
+
+
+def _secret_fingerprint(plaintext: str | None) -> str:
+    payload = b"\x00" if plaintext is None else b"\x01" + plaintext.encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _changed_keys(
+    current: ConfigSnapshot,
+    stored: StoredConfigSnapshot,
+) -> frozenset[str]:
+    desired_bindings = _runtime_bindings(stored.secret_bindings)
+    keys = (
+        set(current._desired_values)
+        | set(stored.values)
+        | set(current.row_revisions)
+        | set(stored.row_revisions)
+        | set(current._desired_bindings)
+        | set(desired_bindings)
+    )
+    changed = {
+        key
+        for key in keys
+        if current._desired_values.get(key) != stored.values.get(key)
+        or current.row_revisions.get(key) != stored.row_revisions.get(key)
+        or _binding_fingerprint(current._desired_bindings.get(key))
+        != _binding_fingerprint(desired_bindings.get(key))
+    }
+    return frozenset(changed)
+
+
+def _binding_fingerprint(binding: RuntimeSecretBinding | None) -> str | None:
+    return None if binding is None else binding.fingerprint
+
+
+def _dispose_late_result(future: ThreadFuture[PreparedSubscriber]) -> None:
+    try:
+        replacement = future.result()
+    except BaseException:
+        return
+    try:
+        replacement.dispose()
+    except Exception:
+        logger.warning("Late configuration replacement disposal failed", exc_info=True)
+
+
+__all__ = [
+    "ApplyFailure",
+    "ConfigChange",
+    "ConfigRuntime",
+    "ConfigRuntimeError",
+    "ConfigSnapshot",
+    "ConfigSubscriber",
+    "ConstructorLaneSaturatedError",
+    "PreparedSubscriber",
+    "PreparedValue",
+    "RuntimeActiveBundle",
+    "SecretIdentityMismatchError",
+    "UnavailableService",
+]
