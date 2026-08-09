@@ -281,6 +281,10 @@ fn resolve_gwiki_handler(command: &str) -> (&'static str, &'static str) {
             "crates/gwiki/src/commands/collect.rs",
             "commands::collect::execute",
         ),
+        "code" => (
+            "crates/gwiki/src/commands/code/command.rs",
+            "commands::code::run_command",
+        ),
         "compile" => (
             "crates/gwiki/src/commands/compile.rs",
             "commands::compile::execute",

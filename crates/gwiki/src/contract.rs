@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 15,
+        contract_version: 16,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -268,6 +268,74 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new(
                     "collect",
                     "Collect recognized inbox drops into raw storage.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: false,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--out", "DIR"),
+                    FlagContract::switch("--purge"),
+                    FlagContract::switch("--force"),
+                    FlagContract::repeatable_value("--scope", "PATH"),
+                    FlagContract::switch("--complete-scope"),
+                    ai_flag("--ai"),
+                    FlagContract::value("--ai-depth", "sections|files|symbols")
+                        .allowed(vec!["sections", "files", "symbols"]),
+                    FlagContract::value("--ai-aggregate-profile", "PROFILE"),
+                    FlagContract::repeatable_value(
+                        "--ai-aggregate-candidate",
+                        "PROVIDER/MODEL[@EFFORT]",
+                    ),
+                    FlagContract::value("--ai-verify-profile", "PROFILE"),
+                    FlagContract::value("--ai-verify-scope", "aggregates|all")
+                        .allowed(vec!["aggregates", "all"]),
+                    FlagContract::value("--ai-prose-depth", "brief|standard|deep")
+                        .allowed(vec!["brief", "standard", "deep"]),
+                    FlagContract::value("--ai-register", "newcomer|maintainer|agent")
+                        .allowed(vec!["newcomer", "maintainer", "agent"]),
+                    FlagContract::value("--edge-limit", "N"),
+                    FlagContract::switch("--include-docs"),
+                    FlagContract::value("--since", "GIT_REF"),
+                    FlagContract::value("--compare-to", "GIT_REF[:META_PATH]"),
+                    FlagContract::value("--max-workers", "N"),
+                    FlagContract::switch("--repair-citations"),
+                ],
+                json_output_keys: vec![
+                    "command",
+                    "project_id",
+                    "project_root",
+                    "out_dir",
+                    "generated_pages",
+                    "changed_paths",
+                    "skipped",
+                    "files",
+                    "modules",
+                    "symbols",
+                    "ai_enabled",
+                    "degraded_pages",
+                    "markdown_removed",
+                    "metadata_removed",
+                    "pages_scanned",
+                    "pages_repaired",
+                    "citations_repaired",
+                    "citations_unresolved",
+                    "base",
+                    "current",
+                    "added",
+                    "removed",
+                    "changed",
+                ],
+                hard_dependencies: vec!["PostgreSQL", "vault"],
+                optional_dependencies: vec!["FalkorDB", "model synthesis"],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "graph outages fall back to indexed facts; AI off or failed writes structural pages",
+                    metadata_keys: vec!["degraded_pages[]"],
+                }),
+                ..CommandContract::new(
+                    "code",
+                    "Generate vault-ready hierarchical code documentation.",
                 )
             },
             CommandContract {

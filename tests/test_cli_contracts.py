@@ -366,7 +366,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 15
+    assert contract["contract_version"] == 16
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )

@@ -5,7 +5,14 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 14
+`contract_version`: 16
+
+Version 16 adds `gwiki code`, the project-scoped CodeWiki generation surface.
+The contract covers generation, purge, citation repair, and metadata comparison,
+including AI routing, graph degradation, and JSON output keys.
+
+Version 15 adds `--time-budget-seconds` to `gwiki upkeep` and exposes
+`budget_exhausted` plus `deferred_clusters` in its JSON output.
 
 Version 14 adds the `--force` switch to `gwiki index`: re-index documents
 whose content hashes are unchanged. This backfills derived rows (such as

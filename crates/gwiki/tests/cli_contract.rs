@@ -278,7 +278,48 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 15);
+    assert_eq!(contract["contract_version"], 16);
+
+    let code = command(&contract, "code");
+    assert_eq!(code["daemon_consumed"], false);
+    assert_eq!(code["positionals"], serde_json::json!([]));
+    assert_eq!(
+        code["flags"]
+            .as_array()
+            .expect("code flags")
+            .iter()
+            .map(|flag| flag["name"].as_str().expect("flag name"))
+            .collect::<Vec<_>>(),
+        vec![
+            "--out",
+            "--purge",
+            "--force",
+            "--scope",
+            "--complete-scope",
+            "--ai",
+            "--ai-depth",
+            "--ai-aggregate-profile",
+            "--ai-aggregate-candidate",
+            "--ai-verify-profile",
+            "--ai-verify-scope",
+            "--ai-prose-depth",
+            "--ai-register",
+            "--edge-limit",
+            "--include-docs",
+            "--since",
+            "--compare-to",
+            "--max-workers",
+            "--repair-citations",
+        ]
+    );
+    assert_eq!(
+        code["hard_dependencies"],
+        serde_json::json!(["PostgreSQL", "vault"])
+    );
+    assert_eq!(
+        code["optional_dependencies"],
+        serde_json::json!(["FalkorDB", "model synthesis"])
+    );
 
     let ask = command(&contract, "ask");
     assert_classification(
