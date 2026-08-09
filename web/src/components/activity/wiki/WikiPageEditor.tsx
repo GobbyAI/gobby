@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
 import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
+import { Card } from "../../ui/Card";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DetailActionButton, DetailPaneHeader, useDetailDraft } from "../fields";
 import { fetchPage, type WikiFetchScope } from "./WikiTabData";
@@ -291,10 +292,10 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             ariaLabel="Page editor"
           />
         ) : (
-          <div
+          <Card
             role="status"
             aria-label="Loading editor"
-            className="mx-4 my-6 h-24 animate-pulse rounded-lg border border-border bg-muted/30"
+            className="mx-4 my-6 h-24 animate-pulse bg-muted/30"
           />
         )}
       </div>

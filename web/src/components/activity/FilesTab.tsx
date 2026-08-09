@@ -14,6 +14,7 @@ import {
   getGitStatusColorVar,
   getLanguageColorVar,
 } from '../../lib/languageColors'
+import { Card } from '../ui/Card'
 import { ActivityPanelEmpty, FilesEmptyIcon } from './ActivityPanelEmpty'
 
 interface FilesTabProps {
@@ -660,46 +661,47 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             if (event.target === event.currentTarget) setMoving(null)
           }}
         >
-          <form
-            ref={moveDialogRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="files-move-title"
-            className="w-full max-w-md rounded-lg border border-border bg-background p-4 shadow-xl"
-            onSubmit={(event) => {
-              event.preventDefault()
-              void submitMove()
-            }}
-          >
-            <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
-              Move {moving.name}
-            </h2>
-            <label className="grid gap-1.5 text-sm text-foreground">
-              Move to path
-              <input
-                autoFocus
-                value={movePath}
-                onChange={(event) => {
-                  setMovePath(event.target.value)
-                  setMoveError(null)
-                }}
-                className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-              />
-            </label>
-            {moveError && <p className="mt-2 text-sm text-destructive-foreground" role="alert">{moveError}</p>}
-            <div className="mt-4 flex justify-end gap-2">
-              <button type="button" className="min-h-9 rounded-md border border-border px-3 text-sm" onClick={() => setMoving(null)}>
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="min-h-9 rounded-md bg-accent px-3 text-sm text-accent-foreground disabled:opacity-50"
-                disabled={!movePath.trim() || movePath.trim() === moving.path}
-              >
-                Move file
-              </button>
-            </div>
-          </form>
+          <Card asChild padding="md" className="w-full max-w-md shadow-xl">
+            <form
+              ref={moveDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="files-move-title"
+              onSubmit={(event) => {
+                event.preventDefault()
+                void submitMove()
+              }}
+            >
+              <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
+                Move {moving.name}
+              </h2>
+              <label className="grid gap-1.5 text-sm text-foreground">
+                Move to path
+                <input
+                  autoFocus
+                  value={movePath}
+                  onChange={(event) => {
+                    setMovePath(event.target.value)
+                    setMoveError(null)
+                  }}
+                  className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                />
+              </label>
+              {moveError && <p className="mt-2 text-sm text-destructive-foreground" role="alert">{moveError}</p>}
+              <div className="mt-4 flex justify-end gap-2">
+                <button type="button" className="min-h-9 rounded-md border border-border px-3 text-sm" onClick={() => setMoving(null)}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="min-h-9 rounded-md bg-accent px-3 text-sm text-accent-foreground disabled:opacity-50"
+                  disabled={!movePath.trim() || movePath.trim() === moving.path}
+                >
+                  Move file
+                </button>
+              </div>
+            </form>
+          </Card>
         </div>
       )}
       {ConfirmDialogElement}

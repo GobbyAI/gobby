@@ -20,6 +20,7 @@ import {
 } from "react";
 
 import { useResolvedTheme } from "../../../hooks/useResolvedTheme";
+import { Card } from "../../ui/Card";
 import { SegmentedControl } from "../../ui/SegmentedControl";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DetailActionButton } from "../fields";
@@ -238,10 +239,10 @@ export function WikiGraphView({
   }, [scene]);
 
   const loadingSkeleton = (
-    <div
+    <Card
       role="status"
       aria-label="Loading graph"
-      className="m-4 h-40 animate-pulse rounded-lg border border-border bg-muted/30"
+      className="m-4 h-40 animate-pulse bg-muted/30"
     />
   );
 

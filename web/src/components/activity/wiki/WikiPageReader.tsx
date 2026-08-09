@@ -14,6 +14,7 @@ import { MermaidBlock } from "../../shared/MermaidBlock";
 import { remarkWikilink } from "../../../lib/markdown/remarkWikilink";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
+import { Card } from "../../ui/Card";
 import {
   fetchPage,
   type WikiFetchScope,
@@ -313,10 +314,10 @@ export function WikiPageReader({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {state.status === "loading" ? (
-          <div
+          <Card
             role="status"
             aria-label="Loading page"
-            className="mx-4 my-6 h-24 max-w-[70ch] animate-pulse rounded-lg border border-border bg-muted/30"
+            className="mx-4 my-6 h-24 max-w-[70ch] animate-pulse bg-muted/30"
           />
         ) : null}
 

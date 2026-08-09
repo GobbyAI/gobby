@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
 import { inputFocusCls } from "../../shared/focusStyles";
+import { Card } from "../../ui/Card";
 import { fetchSearch, type WikiFetchScope } from "./WikiTabData";
 import type { WikiNodeIndex, WikiPageMeta } from "./WikiTabModel";
 
@@ -148,10 +149,10 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
         if (event.button === 0) onClose()
       }}
     >
-      <div
+      <Card
         role="dialog"
         aria-label="Quick open"
-        className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg"
+        className="w-full max-w-md shadow-lg"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <input
@@ -202,7 +203,7 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
             </li>
           ))}
         </ul>
-      </div>
+      </Card>
     </div>
   );
 }
