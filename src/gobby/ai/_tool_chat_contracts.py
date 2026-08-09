@@ -49,10 +49,11 @@ class ToolPolicy:
     investigation surface here. ``cli`` selects the executable family
     (``"gcode"`` or ``"gwiki"``), ``tools`` lists the exposed subcommands, and
     ``allow_mutation`` gates whether mutating subcommands are permitted. A
-    read-only caller (codewiki) leaves ``allow_mutation`` False; a write-capable
-    caller (a future gwiki compile policy) sets it True and lists the mutating
-    subcommands it needs. The policy is validated against the registry whitelist
-    in :mod:`gobby.ai._tool_chat_tools`.
+    read-only caller (the ``gwiki code`` tool loop querying gcode) leaves
+    ``allow_mutation`` False; a write-capable caller (a future gwiki compile
+    policy) sets it True and lists the mutating subcommands it needs. The
+    policy is validated against the registry whitelist in
+    :mod:`gobby.ai._tool_chat_tools`.
     """
 
     cli: str

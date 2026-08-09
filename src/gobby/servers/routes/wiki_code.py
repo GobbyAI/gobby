@@ -5,11 +5,10 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 
 from gobby.servers.responses import JSONResponse
+from gobby.wiki.codewiki_dormant import CODEWIKI_DISABLED_REASON
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-
-_DISABLED_REASON = "pending_wiki_redesign"
 
 
 def create_wiki_code_router(_server: "HTTPServer") -> APIRouter:
@@ -21,7 +20,7 @@ def create_wiki_code_router(_server: "HTTPServer") -> APIRouter:
         return {
             "enabled": False,
             "state": "disabled",
-            "reason": _DISABLED_REASON,
+            "reason": CODEWIKI_DISABLED_REASON,
         }
 
     @router.post("/refresh")
@@ -30,7 +29,7 @@ def create_wiki_code_router(_server: "HTTPServer") -> APIRouter:
             status_code=409,
             content={
                 "error": "codewiki_disabled_pending_redesign",
-                "reason": _DISABLED_REASON,
+                "reason": CODEWIKI_DISABLED_REASON,
             },
         )
 

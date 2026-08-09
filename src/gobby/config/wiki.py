@@ -137,14 +137,6 @@ class WikiConfig(BaseModel):
         return validated
 
 
-def resolve_codewiki_scopes(wiki_config: WikiConfig, project_name: str | None) -> list[str]:
-    """Resolve codewiki scopes using project-name override then global fallback."""
-    project_key = project_name.strip() if project_name is not None else None
-    if project_key and project_key in wiki_config.codewiki_project_scopes_by_name:
-        return list(wiki_config.codewiki_project_scopes_by_name[project_key])
-    return list(wiki_config.codewiki_scopes)
-
-
 def _validate_codewiki_scope_list(value: object, *, field_name: str) -> list[str]:
     if not isinstance(value, list):
         raise ValueError(f"{field_name} must be a list of non-empty strings")

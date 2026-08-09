@@ -7,11 +7,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CODEWIKI_NIGHTLY_JOB_PREFIX, CronJobStorage
 
-CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
 CODEWIKI_DISABLED_REASON = "pending_wiki_redesign"
-GENERATED_CONTENT_MAINTENANCE_STATE = "generated-content maintenance paused"
+
+__all__ = [
+    "CODEWIKI_DISABLED_REASON",
+    "CODEWIKI_NIGHTLY_JOB_PREFIX",
+    "CodewikiCronReconciliation",
+    "reconcile_codewiki_crons_disabled",
+]
 
 
 @dataclass(frozen=True)
@@ -30,7 +35,7 @@ def reconcile_codewiki_crons_disabled(
     disabled: list[str] = []
     failed: list[str] = []
 
-    jobs = cron_storage.list_jobs_by_name_prefix(CODEWIKI_NIGHTLY_JOB_PREFIX)
+    jobs = cron_storage.list_jobs_by_name_prefix(CODEWIKI_NIGHTLY_JOB_PREFIX, enabled=True)
     for job in jobs:
         try:
             updated = cron_storage.update_job(job.id, enabled=False)
@@ -42,7 +47,7 @@ def reconcile_codewiki_crons_disabled(
         else:
             disabled.append(job.id)
 
-    residual = cron_storage.list_jobs_by_name_prefix(CODEWIKI_NIGHTLY_JOB_PREFIX)
+    residual = cron_storage.list_jobs_by_name_prefix(CODEWIKI_NIGHTLY_JOB_PREFIX, enabled=True)
     return CodewikiCronReconciliation(
         disabled=tuple(disabled),
         failed=tuple(failed),

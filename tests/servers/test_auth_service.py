@@ -221,6 +221,9 @@ def test_agent_bearer_is_bound_to_run_identity_and_routes(
         _request(headers, method="POST", path="/api/mcp/tools/call")
     )
     assert service.is_request_authenticated(
+        _request(headers, method="GET", path="/api/wiki/code/status")
+    )
+    assert not service.is_request_authenticated(
         _request(headers, method="POST", path="/api/wiki/code/refresh")
     )
     assert not service.is_request_authenticated(

@@ -17,6 +17,8 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 
+pytestmark = pytest.mark.unit
+
 
 def _write_frozen_digest(repo_path: Path, project_id: str) -> Path:
     vault = repo_path / "wiki"

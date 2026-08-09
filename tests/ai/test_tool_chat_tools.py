@@ -83,6 +83,11 @@ def test_validate_policy_rejects_codewiki_when_mutation_enabled() -> None:
         validate_policy(ToolPolicy(cli="gcode", tools=("codewiki",), allow_mutation=True))
 
 
+def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
+    with pytest.raises(ToolPolicyError):
+        validate_policy(ToolPolicy(cli="gwiki", tools=("destroy",), allow_mutation=True))
+
+
 def test_validate_policy_rejects_metacharacter_subcommand() -> None:
     with pytest.raises(ToolPolicyError):
         validate_policy(ToolPolicy(cli="gcode", tools=("search; rm -rf /",)))

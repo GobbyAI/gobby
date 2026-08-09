@@ -20,7 +20,6 @@ from gobby.code_index.gcode_gateway import (
     GcodeVersionError,
 )
 from gobby.servers.responses import JSONResponse
-from gobby.storage.projects import LocalProjectManager, Project
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -54,16 +53,6 @@ def _scoped_project_id(
     if project_id is not None and project_id != claims.project_id:
         raise HTTPException(status_code=403, detail="Project does not match agent capability")
     return claims.project_id
-
-
-async def _resolve_project_name(server: HTTPServer, project_id: str | None) -> str | None:
-    if project_id is None:
-        return None
-    project_manager = LocalProjectManager(server.services.database)
-    project = cast(Project | None, await _run_db(server, project_manager.get, project_id))
-    if project is None:
-        raise HTTPException(status_code=400, detail=f"Unknown project_id: {project_id}")
-    return project.name
 
 
 def _graph_http_exception(error: Exception) -> HTTPException:

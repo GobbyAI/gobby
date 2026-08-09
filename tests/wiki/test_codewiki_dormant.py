@@ -10,10 +10,9 @@ from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.wiki.codewiki_dormant import (
     CODEWIKI_NIGHTLY_JOB_PREFIX,
-    GENERATED_CONTENT_MAINTENANCE_STATE,
     reconcile_codewiki_crons_disabled,
 )
-from gobby.wiki.scheduled_jobs import _wiki_command_specs
+from gobby.wiki.scheduled_jobs import WIKI_JOB_NAME_PREFIX, _wiki_command_specs
 
 pytestmark = pytest.mark.unit
 
@@ -137,5 +136,10 @@ def test_scheduled_wiki_jobs_exclude_generated_code_maintenance() -> None:
         fallback_project_id=PROJECT_ID,
     )
 
-    assert GENERATED_CONTENT_MAINTENANCE_STATE == "generated-content maintenance paused"
-    assert all("code" not in command for command, *_rest in specs)
+    commands = [command for command, *_rest in specs]
+    assert commands, "wiki job specs must not be empty"
+    assert "code" not in commands, "generated-content maintenance must stay unscheduled"
+    # Job names derive as f"{WIKI_JOB_NAME_PREFIX}{command}:{scope}", so no
+    # spec can produce a row the retired-prefix guards would have to police.
+    assert not WIKI_JOB_NAME_PREFIX.startswith(CODEWIKI_NIGHTLY_JOB_PREFIX)
+    assert not CODEWIKI_NIGHTLY_JOB_PREFIX.startswith(WIKI_JOB_NAME_PREFIX)

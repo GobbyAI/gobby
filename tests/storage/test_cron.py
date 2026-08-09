@@ -490,7 +490,7 @@ def test_list_jobs_by_name_prefix_includes_system_and_legacy_rows(
         is_system=True,
     )
 
-    enabled = cron_storage.list_jobs_by_name_prefix("gobby:codewiki-nightly:")
+    enabled = cron_storage.list_jobs_by_name_prefix("gobby:codewiki-nightly:", enabled=True)
 
     assert [job.id for job in enabled] == [system.id, legacy.id]
     assert [
@@ -500,6 +500,30 @@ def test_list_jobs_by_name_prefix_includes_system_and_legacy_rows(
 
     with pytest.raises(ValueError, match="prefix"):
         cron_storage.list_jobs_by_name_prefix("")
+
+
+def test_retired_codewiki_rows_cannot_reenable_and_stay_hidden(
+    cron_storage: CronJobStorage,
+) -> None:
+    retired = _named_job(
+        cron_storage,
+        project_id=PROJECT_ID,
+        name="gobby:codewiki-nightly:project:alpha",
+        is_system=False,
+    )
+    cron_storage.update_job(retired.id, enabled=False)
+
+    with pytest.raises(SystemRowProtected, match="retired automation"):
+        cron_storage.update_job(retired.id, enabled=True)
+    with pytest.raises(SystemRowProtected, match="retired automation"):
+        cron_storage.toggle_job(retired.id)
+
+    listed = cron_storage.list_jobs(project_id=PROJECT_ID, exclude_removed_automation=True)
+    assert retired.id not in {job.id for job in listed}
+
+    refreshed = cron_storage.get_job(retired.id)
+    assert refreshed is not None
+    assert refreshed.enabled is False
 
 
 def test_delete_system_jobs_by_project_and_name_prefix_isolates_rows(
