@@ -492,6 +492,7 @@ class EvaluationMixin:
 
         watch_paths = evaluation.variables.pop("_watch_paths", None)
         worktree_path = evaluation.variables.pop("_worktree_path", None)
+        display_content = evaluation.variables.pop("_display_content", None)
         retry = bool(evaluation.variables.pop("_retry", False))
         elicitation_meta = evaluation.variables.pop("_elicitation", None)
         elicitation_action: str | None = None
@@ -511,6 +512,7 @@ class EvaluationMixin:
             "retry": retry,
             "watch_paths": watch_paths,
             "worktree_path": worktree_path,
+            "display_content": display_content,
             "elicitation_action": elicitation_action,
             "elicitation_content": elicitation_content,
             "elicitation_error": elicitation_error,

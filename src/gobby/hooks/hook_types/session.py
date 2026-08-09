@@ -42,6 +42,23 @@ class SessionStartOutput(HookOutput):
     )
 
 
+class SetupInput(HookInput):
+    """Input model for Claude's setup hook."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    trigger: str = Field(..., min_length=1, description="Setup trigger (init or maintenance)")
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class SetupOutput(HookOutput):
+    """Output model for Claude's setup hook."""
+
+    additional_context: str | None = Field(default=None, alias="additionalContext")
+
+
 class SessionEndInput(HookInput):
     """Input model for session-end hook."""
 
@@ -94,3 +111,45 @@ class UserPromptSubmitOutput(HookOutput):
         alias="sessionTitle",
         description="Optional session title override",
     )
+
+
+class UserPromptExpansionInput(HookInput):
+    """Input model for Claude prompt expansion hooks."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    expansion_type: str = Field(..., min_length=1, description="Expansion source type")
+    command_name: str = Field(..., min_length=1, description="Expanded command name")
+    command_args: str | None = Field(default=None, description="Command arguments")
+    command_source: str | None = Field(default=None, description="Command definition source")
+    prompt: str = Field(..., description="Expanded prompt")
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class UserPromptExpansionOutput(HookOutput):
+    """Output model for Claude prompt expansion hooks."""
+
+    additional_context: str | None = Field(default=None, alias="additionalContext")
+
+
+class MessageDisplayInput(HookInput):
+    """Input model for Claude message display hooks."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    turn_id: str = Field(..., min_length=1, description="Rendered turn identifier")
+    message_id: str = Field(..., min_length=1, description="Rendered message identifier")
+    index: int = Field(..., ge=0, description="Delta index within the message")
+    final: bool = Field(..., description="Whether this is the final delta")
+    delta: str = Field(..., description="Original display delta")
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class MessageDisplayOutput(HookOutput):
+    """Output model for Claude message display hooks."""
+
+    display_content: str | None = Field(default=None, alias="displayContent")

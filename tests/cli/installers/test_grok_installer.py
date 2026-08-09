@@ -35,6 +35,16 @@ def _write_grok_template(install_dir: Path) -> None:
     )
 
 
+def test_current_grok_hooks_are_matcherless_canonical_and_standard_timeout() -> None:
+    template_path = Path(__file__).parents[3] / "src/gobby/install/grok/hooks-template.json"
+    hooks = json.loads(template_path.read_text(encoding="utf-8"))["hooks"]
+
+    for event_name in ("PermissionDenied", "StopFailure", "SubagentStart", "SubagentStop"):
+        assert "matcher" not in hooks[event_name][0]
+        assert hooks[event_name][0]["hooks"][0]["timeout"] == 120
+    assert "SubagentEnd" not in hooks
+
+
 @pytest.mark.parametrize("installed_version", [None, "0.4.9", "not-a-version"])
 def test_install_grok_refuses_unsupported_ghook_without_side_effects(
     temp_dir: Path,

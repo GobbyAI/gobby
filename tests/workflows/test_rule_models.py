@@ -17,7 +17,7 @@ class TestRuleTriggerEvent:
     def test_enum_exposes_raw_hook_events_and_semantic_turn_boundaries(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
 
-        assert len(RuleTriggerEvent) == 31
+        assert len(RuleTriggerEvent) == 36
 
     def test_enum_values(self) -> None:
         from gobby.workflows.definitions import RuleTriggerEvent
@@ -30,6 +30,11 @@ class TestRuleTriggerEvent:
         assert RuleTriggerEvent.AFTER_AGENT == "after_agent"
         assert RuleTriggerEvent.SESSION_START == "session_start"
         assert RuleTriggerEvent.SESSION_END == "session_end"
+        assert RuleTriggerEvent.SETUP == "setup"
+        assert RuleTriggerEvent.USER_PROMPT_EXPANSION == "user_prompt_expansion"
+        assert RuleTriggerEvent.POST_TOOL_BATCH == "post_tool_batch"
+        assert RuleTriggerEvent.MESSAGE_DISPLAY == "message_display"
+        assert RuleTriggerEvent.DIRECTORY_ADDED == "directory_added"
         assert RuleTriggerEvent.STOP == "stop"
         assert RuleTriggerEvent.PRE_COMPACT == "pre_compact"
         assert RuleTriggerEvent.BEFORE_TOOL_SELECTION == "before_tool_selection"
@@ -269,11 +274,11 @@ class TestRuleEffect:
             ("block", {"reason": "test"}),
             ("set_variable", {"variable": "flag"}),
             ("inject_context", {"template": "test"}),
+            ("set_display_content", {"template": "Replacement {{ event.data.delta }}"}),
             ("mcp_call", {"server": "gobby-tasks", "tool": "get_task"}),
         ],
     )
-    def test_four_valid_types(self, effect_type: str, fields: dict[str, object]) -> None:
-        """All four original effect types should be accepted with their required fields."""
+    def test_core_effect_types(self, effect_type: str, fields: dict[str, object]) -> None:
         from gobby.workflows.definitions import RuleEffect
 
         effect = RuleEffect(type=effect_type, **fields)
@@ -285,6 +290,7 @@ class TestRuleEffect:
             ("block", {}),
             ("set_variable", {}),
             ("inject_context", {}),
+            ("set_display_content", {}),
             ("mcp_call", {"tool": "get_task"}),
             ("mcp_call", {"server": "gobby-tasks"}),
             ("rewrite_input", {}),

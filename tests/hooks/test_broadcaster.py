@@ -435,6 +435,35 @@ async def test_broadcast_event_with_response(mock_websocket_server, default_conf
     assert "result" in call_args
 
 
+async def test_broadcast_message_display_serializes_replacement(
+    mock_websocket_server, default_config
+) -> None:
+    from datetime import UTC, datetime
+
+    default_config.hook_extensions.websocket.broadcast_events.append("message-display")
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.MESSAGE_DISPLAY,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={
+            "turn_id": "turn-1",
+            "message_id": "message-1",
+            "index": 0,
+            "final": False,
+            "delta": "Original delta",
+        },
+    )
+
+    await broadcaster.broadcast_event(event, HookResponse(display_content="Replacement delta"))
+
+    payload = mock_websocket_server.broadcast.call_args[0][0]
+    assert payload["event_type"] == "message-display"
+    assert payload["data"]["delta"] == "Original delta"
+    assert payload["result"]["displayContent"] == "Replacement delta"
+
+
 @pytest.mark.asyncio
 async def test_broadcast_event_permission_request_allow_uses_decision_payload(
     mock_websocket_server,
@@ -1035,7 +1064,9 @@ async def test_broadcast_with_response_context_dict(mock_websocket_server, defau
 
 
 @pytest.mark.asyncio
-async def test_broadcast_input_with_stop_event(mock_websocket_server, default_config):
+async def test_broadcast_input_with_stop_event(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test broadcast extracts session_id from external_id for stop events."""
     from gobby.hooks.hook_types import StopInput
 

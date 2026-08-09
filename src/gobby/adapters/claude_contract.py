@@ -25,6 +25,8 @@ class ClaudeDecisionStyle(str, Enum):
     WORKTREE_CREATE = "worktree_create"
     ELICITATION = "elicitation"
     ELICITATION_RESULT = "elicitation_result"
+    IGNORE_BLOCK = "ignore_block"
+    DISPLAY_CONTENT = "display_content"
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,13 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         allows_additional_context=True,
     ),
     ClaudeHookContract(
+        native_name="setup",
+        hook_event_name="Setup",
+        event_type=HookEventType.SETUP,
+        decision_style=ClaudeDecisionStyle.IGNORE_BLOCK,
+        allows_additional_context=True,
+    ),
+    ClaudeHookContract(
         native_name="instructions-loaded",
         hook_event_name="InstructionsLoaded",
         event_type=HookEventType.INSTRUCTIONS_LOADED,
@@ -54,6 +63,13 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         native_name="user-prompt-submit",
         hook_event_name="UserPromptSubmit",
         event_type=HookEventType.BEFORE_AGENT,
+        decision_style=ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
+        allows_additional_context=True,
+    ),
+    ClaudeHookContract(
+        native_name="user-prompt-expansion",
+        hook_event_name="UserPromptExpansion",
+        event_type=HookEventType.USER_PROMPT_EXPANSION,
         decision_style=ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
         allows_additional_context=True,
     ),
@@ -85,6 +101,13 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         allows_additional_context=True,
     ),
     ClaudeHookContract(
+        native_name="post-tool-batch",
+        hook_event_name="PostToolBatch",
+        event_type=HookEventType.POST_TOOL_BATCH,
+        decision_style=ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
+        allows_additional_context=True,
+    ),
+    ClaudeHookContract(
         native_name="permission-denied",
         hook_event_name="PermissionDenied",
         event_type=HookEventType.PERMISSION_DENIED,
@@ -95,6 +118,12 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         hook_event_name="Notification",
         event_type=HookEventType.NOTIFICATION,
         allows_additional_context=True,
+    ),
+    ClaudeHookContract(
+        native_name="message-display",
+        hook_event_name="MessageDisplay",
+        event_type=HookEventType.MESSAGE_DISPLAY,
+        decision_style=ClaudeDecisionStyle.DISPLAY_CONTENT,
     ),
     ClaudeHookContract(
         native_name="subagent-start",
@@ -148,6 +177,12 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         hook_event_name="CwdChanged",
         event_type=HookEventType.CWD_CHANGED,
         decision_style=ClaudeDecisionStyle.WATCH_PATHS,
+    ),
+    ClaudeHookContract(
+        native_name="directory-added",
+        hook_event_name="DirectoryAdded",
+        event_type=HookEventType.DIRECTORY_ADDED,
+        decision_style=ClaudeDecisionStyle.IGNORE_BLOCK,
     ),
     ClaudeHookContract(
         native_name="file-changed",

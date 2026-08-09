@@ -22,17 +22,20 @@ class TestHookEventType:
         """Test session lifecycle event types."""
         assert HookEventType.SESSION_START.value == "session_start"
         assert HookEventType.SESSION_END.value == "session_end"
+        assert HookEventType.SETUP.value == "setup"
 
     def test_agent_lifecycle_events(self) -> None:
         """Test agent lifecycle event types."""
         assert HookEventType.BEFORE_AGENT.value == "before_agent"
         assert HookEventType.AFTER_AGENT.value == "after_agent"
+        assert HookEventType.USER_PROMPT_EXPANSION.value == "user_prompt_expansion"
 
     def test_tool_lifecycle_events(self) -> None:
         """Test tool lifecycle event types."""
         assert HookEventType.BEFORE_TOOL.value == "before_tool"
         assert HookEventType.AFTER_TOOL.value == "after_tool"
         assert HookEventType.BEFORE_TOOL_SELECTION.value == "before_tool_selection"
+        assert HookEventType.POST_TOOL_BATCH.value == "post_tool_batch"
 
     def test_model_lifecycle_events(self) -> None:
         """Test model lifecycle event types."""
@@ -46,6 +49,8 @@ class TestHookEventType:
         assert HookEventType.SUBAGENT_STOP.value == "subagent_stop"
         assert HookEventType.NOTIFICATION.value == "notification"
         assert HookEventType.PERMISSION_REQUEST.value == "permission_request"
+        assert HookEventType.MESSAGE_DISPLAY.value == "message_display"
+        assert HookEventType.DIRECTORY_ADDED.value == "directory_added"
 
     def test_all_event_types_covered(self) -> None:
         """Test that all event types are in the support matrix."""
@@ -137,6 +142,7 @@ class TestHookResponse:
         assert response.context is None
         assert response.system_message is None
         assert response.reason is None
+        assert response.display_content is None
         assert response.modify_args is None
         assert response.trigger_action is None
         assert response.metadata == {}
@@ -180,6 +186,11 @@ class TestHookResponse:
 
         assert response.system_message == "Context restored from previous session."
 
+    def test_response_with_display_content(self) -> None:
+        response = HookResponse(display_content="Replacement delta")
+
+        assert response.display_content == "Replacement delta"
+
     def test_response_with_metadata(self) -> None:
         """Test response with custom metadata."""
         response = HookResponse(
@@ -199,6 +210,14 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["claude"] == "SessionStart"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["claude"] == "PreToolUse"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["claude"] == "PostToolUse"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SETUP]["claude"] == "Setup"
+        assert (
+            EVENT_TYPE_CLI_SUPPORT[HookEventType.USER_PROMPT_EXPANSION]["claude"]
+            == "UserPromptExpansion"
+        )
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.POST_TOOL_BATCH]["claude"] == "PostToolBatch"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.MESSAGE_DISPLAY]["claude"] == "MessageDisplay"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.DIRECTORY_ADDED]["claude"] == "DirectoryAdded"
 
     def test_qwen_support(self) -> None:
         """Test Qwen support in mapping."""
@@ -221,6 +240,12 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["grok"] == "session_start"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["grok"] == "pre_compact"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.POST_COMPACT]["grok"] == "post_compact"
+        assert (
+            EVENT_TYPE_CLI_SUPPORT[HookEventType.PERMISSION_DENIED]["grok"] == "permission_denied"
+        )
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP_FAILURE]["grok"] == "stop_failure"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["grok"] == "subagent_start"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_STOP]["grok"] == "subagent_stop"
 
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""

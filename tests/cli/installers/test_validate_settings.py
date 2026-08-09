@@ -54,6 +54,26 @@ def test_inlined_hook_names_match_adapter_contracts() -> None:
     assert validate_settings.CLI_VALIDATION_CONFIGS["qwen"].required_hooks == QWEN_HOOK_NAMES
 
 
+def test_current_claude_and_grok_hooks_are_required() -> None:
+    claude_required = set(validate_settings.CLI_VALIDATION_CONFIGS["claude"].required_hooks)
+    grok_required = set(validate_settings.CLI_VALIDATION_CONFIGS["grok"].required_hooks)
+
+    assert {
+        "Setup",
+        "UserPromptExpansion",
+        "PostToolBatch",
+        "MessageDisplay",
+        "DirectoryAdded",
+    } <= claude_required
+    assert {
+        "PostCompact",
+        "PermissionDenied",
+        "StopFailure",
+        "SubagentStart",
+        "SubagentStop",
+    } <= grok_required
+
+
 def test_qwen_validator_requires_current_hooks_and_enabled_top_level(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

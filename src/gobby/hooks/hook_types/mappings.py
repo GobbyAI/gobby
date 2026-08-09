@@ -19,6 +19,8 @@ from .environment import (
     ConfigChangeOutput,
     CwdChangedInput,
     CwdChangedOutput,
+    DirectoryAddedInput,
+    DirectoryAddedOutput,
     FileChangedInput,
     FileChangedOutput,
     InstructionsLoadedInput,
@@ -55,14 +57,22 @@ from .lifecycle import (
     StopOutput,
 )
 from .session import (
+    MessageDisplayInput,
+    MessageDisplayOutput,
     SessionEndInput,
     SessionEndOutput,
     SessionStartInput,
     SessionStartOutput,
+    SetupInput,
+    SetupOutput,
+    UserPromptExpansionInput,
+    UserPromptExpansionOutput,
     UserPromptSubmitInput,
     UserPromptSubmitOutput,
 )
 from .tool import (
+    PostToolBatchInput,
+    PostToolBatchOutput,
     PostToolUseFailureInput,
     PostToolUseFailureOutput,
     PostToolUseInput,
@@ -72,12 +82,15 @@ from .tool import (
 )
 
 HOOK_INPUT_MODELS: dict[HookType, type[HookInput]] = {
+    HookType.SETUP: SetupInput,
     HookType.SESSION_START: SessionStartInput,
     HookType.SESSION_END: SessionEndInput,
     HookType.USER_PROMPT_SUBMIT: UserPromptSubmitInput,
+    HookType.USER_PROMPT_EXPANSION: UserPromptExpansionInput,
     HookType.PRE_TOOL_USE: PreToolUseInput,
     HookType.POST_TOOL_USE: PostToolUseInput,
     HookType.POST_TOOL_USE_FAILURE: PostToolUseFailureInput,
+    HookType.POST_TOOL_BATCH: PostToolBatchInput,
     HookType.PRE_COMPACT: PreCompactInput,
     HookType.POST_COMPACT: PostCompactInput,
     HookType.STOP: StopInput,
@@ -88,6 +101,8 @@ HOOK_INPUT_MODELS: dict[HookType, type[HookInput]] = {
     HookType.TASK_COMPLETED: TaskCompletedInput,
     HookType.TEAMMATE_IDLE: TeammateIdleInput,
     HookType.NOTIFICATION: NotificationInput,
+    HookType.MESSAGE_DISPLAY: MessageDisplayInput,
+    HookType.DIRECTORY_ADDED: DirectoryAddedInput,
     HookType.INSTRUCTIONS_LOADED: InstructionsLoadedInput,
     HookType.CONFIG_CHANGE: ConfigChangeInput,
     HookType.CWD_CHANGED: CwdChangedInput,
@@ -103,12 +118,15 @@ HOOK_INPUT_MODELS: dict[HookType, type[HookInput]] = {
 }
 
 HOOK_OUTPUT_MODELS: dict[HookType, type[HookOutput]] = {
+    HookType.SETUP: SetupOutput,
     HookType.SESSION_START: SessionStartOutput,
     HookType.SESSION_END: SessionEndOutput,
     HookType.USER_PROMPT_SUBMIT: UserPromptSubmitOutput,
+    HookType.USER_PROMPT_EXPANSION: UserPromptExpansionOutput,
     HookType.PRE_TOOL_USE: PreToolUseOutput,
     HookType.POST_TOOL_USE: PostToolUseOutput,
     HookType.POST_TOOL_USE_FAILURE: PostToolUseFailureOutput,
+    HookType.POST_TOOL_BATCH: PostToolBatchOutput,
     HookType.PRE_COMPACT: PreCompactOutput,
     HookType.POST_COMPACT: PostCompactOutput,
     HookType.STOP: StopOutput,
@@ -119,6 +137,8 @@ HOOK_OUTPUT_MODELS: dict[HookType, type[HookOutput]] = {
     HookType.TASK_COMPLETED: TaskCompletedOutput,
     HookType.TEAMMATE_IDLE: TeammateIdleOutput,
     HookType.NOTIFICATION: NotificationOutput,
+    HookType.MESSAGE_DISPLAY: MessageDisplayOutput,
+    HookType.DIRECTORY_ADDED: DirectoryAddedOutput,
     HookType.INSTRUCTIONS_LOADED: InstructionsLoadedOutput,
     HookType.CONFIG_CHANGE: ConfigChangeOutput,
     HookType.CWD_CHANGED: CwdChangedOutput,

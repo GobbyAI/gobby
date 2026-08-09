@@ -1,5 +1,7 @@
 """Enums shared across all hook input/output models."""
 
+from __future__ import annotations
+
 from enum import Enum
 
 
@@ -17,8 +19,14 @@ class HookType(str, Enum):
     SESSION_END = "session-end"
     """Triggered when a Claude Code session ends (clear, logout, exit)"""
 
+    SETUP = "setup"
+    """Triggered when Claude Code starts or runs repository maintenance"""
+
     USER_PROMPT_SUBMIT = "user-prompt-submit"
     """Triggered before user prompt is submitted for validation/filtering"""
+
+    USER_PROMPT_EXPANSION = "user-prompt-expansion"
+    """Triggered when a slash command or skill expands into a prompt"""
 
     PRE_TOOL_USE = "pre-tool-use"
     """Triggered before a tool is executed (for context injection)"""
@@ -28,6 +36,9 @@ class HookType(str, Enum):
 
     POST_TOOL_USE_FAILURE = "post-tool-use-failure"
     """Triggered after a tool execution fails"""
+
+    POST_TOOL_BATCH = "post-tool-batch"
+    """Triggered after a batch of tool calls completes"""
 
     PRE_COMPACT = "pre-compact"
     """Triggered before context window compaction (for summary generation)"""
@@ -58,6 +69,12 @@ class HookType(str, Enum):
 
     NOTIFICATION = "notification"
     """Triggered for system notifications and alerts"""
+
+    MESSAGE_DISPLAY = "message-display"
+    """Triggered while Claude renders an assistant message delta"""
+
+    DIRECTORY_ADDED = "directory-added"
+    """Triggered after a working directory is added to the session"""
 
     INSTRUCTIONS_LOADED = "instructions-loaded"
     """Triggered when CLAUDE.md or rule files are loaded"""

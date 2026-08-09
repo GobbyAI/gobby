@@ -115,17 +115,22 @@ class TestEventMap:
         "hook_type,expected_event_type",
         [
             ("session-start", HookEventType.SESSION_START),
+            ("setup", HookEventType.SETUP),
             ("session-end", HookEventType.SESSION_END),
             ("user-prompt-submit", HookEventType.BEFORE_AGENT),
+            ("user-prompt-expansion", HookEventType.USER_PROMPT_EXPANSION),
             ("stop", HookEventType.STOP),
             ("pre-tool-use", HookEventType.BEFORE_TOOL),
             ("post-tool-use", HookEventType.AFTER_TOOL),
             ("post-tool-use-failure", HookEventType.AFTER_TOOL),
+            ("post-tool-batch", HookEventType.POST_TOOL_BATCH),
             ("pre-compact", HookEventType.PRE_COMPACT),
             ("subagent-start", HookEventType.SUBAGENT_START),
             ("subagent-stop", HookEventType.SUBAGENT_STOP),
             ("permission-request", HookEventType.PERMISSION_REQUEST),
             ("notification", HookEventType.NOTIFICATION),
+            ("message-display", HookEventType.MESSAGE_DISPLAY),
+            ("directory-added", HookEventType.DIRECTORY_ADDED),
         ],
     )
     def test_event_map_entry(self, hook_type: str, expected_event_type: HookEventType) -> None:
@@ -145,17 +150,22 @@ class TestHookEventNameMap:
         "hook_type,expected_name",
         [
             ("session-start", "SessionStart"),
+            ("setup", "Setup"),
             ("session-end", "SessionEnd"),
             ("user-prompt-submit", "UserPromptSubmit"),
+            ("user-prompt-expansion", "UserPromptExpansion"),
             ("stop", "Stop"),
             ("pre-tool-use", "PreToolUse"),
             ("post-tool-use", "PostToolUse"),
             ("post-tool-use-failure", "PostToolUseFailure"),
+            ("post-tool-batch", "PostToolBatch"),
             ("pre-compact", "PreCompact"),
             ("subagent-start", "SubagentStart"),
             ("subagent-stop", "SubagentStop"),
             ("permission-request", "PermissionRequest"),
             ("notification", "Notification"),
+            ("message-display", "MessageDisplay"),
+            ("directory-added", "DirectoryAdded"),
         ],
     )
     def test_hook_event_name(self, hook_type: str, expected_name: str) -> None:
@@ -387,6 +397,91 @@ class TestTranslateToHookEvent:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.PERMISSION_REQUEST
+
+    @pytest.mark.parametrize(
+        ("hook_type", "event_type", "payload"),
+        [
+            (
+                "setup",
+                HookEventType.SETUP,
+                {
+                    "session_id": "sess-setup",
+                    "trigger": "maintenance",
+                    "transcript_path": "/tmp/transcript.jsonl",
+                    "cwd": "/tmp/project",
+                    "permission_mode": "acceptEdits",
+                },
+            ),
+            (
+                "user-prompt-expansion",
+                HookEventType.USER_PROMPT_EXPANSION,
+                {
+                    "session_id": "sess-expand",
+                    "expansion_type": "skill",
+                    "command_name": "review",
+                    "command_args": "--strict",
+                    "command_source": "project",
+                    "prompt": "Expanded prompt",
+                },
+            ),
+            (
+                "post-tool-batch",
+                HookEventType.POST_TOOL_BATCH,
+                {
+                    "session_id": "sess-batch",
+                    "tool_calls": [
+                        {
+                            "tool_name": "Read",
+                            "tool_input": {"file_path": "/tmp/a.py"},
+                            "tool_use_id": "tool-1",
+                            "tool_response": [{"type": "text", "text": "contents"}],
+                        },
+                        {
+                            "tool_name": "Bash",
+                            "tool_input": {"command": "false"},
+                            "tool_use_id": "tool-2",
+                            "tool_response": "exit code 1",
+                        },
+                    ],
+                },
+            ),
+            (
+                "message-display",
+                HookEventType.MESSAGE_DISPLAY,
+                {
+                    "session_id": "sess-display",
+                    "turn_id": "turn-1",
+                    "message_id": "message-1",
+                    "index": 3,
+                    "final": True,
+                    "delta": "Original transcript delta",
+                    "transcript_path": "/tmp/transcript.jsonl",
+                },
+            ),
+            (
+                "directory-added",
+                HookEventType.DIRECTORY_ADDED,
+                {
+                    "session_id": "sess-directory",
+                    "directory": "/tmp/repo",
+                    "source": "register_repo_root",
+                },
+            ),
+        ],
+    )
+    def test_current_hook_payloads_preserve_native_fields(
+        self,
+        hook_type: str,
+        event_type: HookEventType,
+        payload: dict[str, object],
+    ) -> None:
+        event = ClaudeCodeAdapter().translate_to_hook_event(
+            {"hook_type": hook_type, "input_data": payload}
+        )
+
+        assert event.event_type == event_type
+        for field, value in payload.items():
+            assert event.data[field] == value
 
 
 class TestBashFailureDetection:
@@ -909,6 +1004,72 @@ class TestTranslateFromHookResponse:
         response = HookResponse(decision="allow")
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
         assert "hookSpecificOutput" not in result
+
+    def test_setup_context_ignores_block(self) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="ignored", context="Startup context"),
+            hook_type="setup",
+        )
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "Setup",
+                "additionalContext": "Startup context",
+            },
+        }
+
+    @pytest.mark.parametrize(
+        ("hook_type", "hook_event_name"),
+        [
+            ("user-prompt-expansion", "UserPromptExpansion"),
+            ("post-tool-batch", "PostToolBatch"),
+        ],
+    )
+    def test_current_pre_model_hooks_block_with_context(
+        self, hook_type: str, hook_event_name: str
+    ) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Revise input", context="Relevant context"),
+            hook_type=hook_type,
+        )
+
+        assert result == {
+            "continue": True,
+            "decision": "block",
+            "reason": "Revise input",
+            "hookSpecificOutput": {
+                "hookEventName": hook_event_name,
+                "additionalContext": "Relevant context",
+            },
+        }
+
+    def test_message_display_emits_only_replacement_and_ignores_block(self) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(
+                decision="block",
+                reason="ignored",
+                context="ignored",
+                system_message="ignored",
+                display_content="Replacement delta",
+            ),
+            hook_type="message-display",
+        )
+
+        assert result == {
+            "hookSpecificOutput": {
+                "hookEventName": "MessageDisplay",
+                "displayContent": "Replacement delta",
+            }
+        }
+
+    def test_directory_added_ignores_block_and_keeps_system_message(self) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="ignored", system_message="Directory tracked"),
+            hook_type="directory-added",
+        )
+
+        assert result == {"continue": True, "systemMessage": "Directory tracked"}
 
     def test_non_context_hook_event_name_no_hook_specific_output(self) -> None:
         """Hook types without additionalContext support should not produce hookSpecificOutput."""

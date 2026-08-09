@@ -136,6 +136,14 @@ class EffectsMixin(DeliveryFormattingMixin):
                 # context-handoff/inject-previous-session-summary.yaml.
                 context_parts.append(template_text)
 
+        elif effect.type == "set_display_content":
+            variables["_display_content"] = await offload(
+                self._render_template,
+                effect.template,
+                ctx,
+                allowed_funcs,
+            )
+
         elif effect.type == "observe":
             obs_list = variables.get("_observations", [])
             msg = effect.message or ""

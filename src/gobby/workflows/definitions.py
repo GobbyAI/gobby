@@ -87,12 +87,15 @@ class RuleTriggerEvent(str, Enum):
 
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    SETUP = "setup"
     BEFORE_AGENT = "before_agent"
     AFTER_AGENT = "after_agent"
     STOP = "stop"
+    USER_PROMPT_EXPANSION = "user_prompt_expansion"
     BEFORE_TOOL = "before_tool"
     AFTER_TOOL = "after_tool"
     BEFORE_TOOL_SELECTION = "before_tool_selection"
+    POST_TOOL_BATCH = "post_tool_batch"
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
     PRE_COMPACT = "pre_compact"
@@ -102,6 +105,8 @@ class RuleTriggerEvent(str, Enum):
     PERMISSION_REQUEST = "permission_request"
     PERMISSION_DENIED = "permission_denied"
     NOTIFICATION = "notification"
+    MESSAGE_DISPLAY = "message_display"
+    DIRECTORY_ADDED = "directory_added"
     STOP_FAILURE = "stop_failure"
     TASK_CREATED = "task_created"
     TASK_COMPLETED = "task_completed"
@@ -125,6 +130,7 @@ class RuleEffect(BaseModel):
         "block",
         "set_variable",
         "inject_context",
+        "set_display_content",
         "mcp_call",
         "observe",
         "rewrite_input",
@@ -204,6 +210,7 @@ class RuleEffect(BaseModel):
             "block": ("reason",),
             "set_variable": ("variable",),
             "inject_context": ("template",),
+            "set_display_content": ("template",),
             "mcp_call": ("server", "tool"),
             "rewrite_input": ("input_updates",),
             "set_watch_paths": ("watch_paths",),
@@ -260,6 +267,7 @@ class RuleEffect(BaseModel):
             "block": {"reason", "acknowledge_variable", *selector_fields},
             "set_variable": {"variable", "value"},
             "inject_context": {"template", *selector_fields},
+            "set_display_content": {"template", *selector_fields},
             "mcp_call": {
                 "server",
                 "tool",

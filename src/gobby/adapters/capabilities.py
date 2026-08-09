@@ -38,6 +38,8 @@ class ProviderDecisionStyle(StrEnum):
     COMPACT_STOP = "compact_stop"
     MODEL_REQUEST = "model_request"
     TOOL_SELECTION = "tool_selection"
+    IGNORE_BLOCK = "ignore_block"
+    DISPLAY_CONTENT = "display_content"
 
 
 class ReasonFormat(StrEnum):
@@ -52,6 +54,7 @@ RESPONSE_FIELD_NAMES: frozenset[str] = frozenset(
         "context",
         "system_message",
         "reason",
+        "display_content",
         "modified_input",
         "auto_approve",
         "permission_decision",
@@ -164,6 +167,8 @@ def _claude_capabilities() -> ProviderCapabilities:
             extra_fields.extend(["elicitation_action", "elicitation_content", "elicitation_error"])
         elif contract.decision_style.value == ProviderDecisionStyle.ELICITATION_RESULT:
             extra_fields.extend(["elicitation_action", "elicitation_content"])
+        elif contract.decision_style.value == ProviderDecisionStyle.DISPLAY_CONTENT:
+            extra_fields.append("display_content")
 
         events[contract.native_name] = HookCapability(
             hook_name=contract.native_name,
@@ -366,6 +371,10 @@ GROK_EVENT_MAP: dict[str, HookEventType] = {
     "post_compact": HookEventType.POST_COMPACT,
     "stop": HookEventType.STOP,
     "notification": HookEventType.NOTIFICATION,
+    "permission_denied": HookEventType.PERMISSION_DENIED,
+    "stop_failure": HookEventType.STOP_FAILURE,
+    "subagent_start": HookEventType.SUBAGENT_START,
+    "subagent_stop": HookEventType.SUBAGENT_STOP,
 }
 
 GROK_HOOK_ALIASES: dict[str, str] = {
@@ -379,9 +388,17 @@ GROK_HOOK_ALIASES: dict[str, str] = {
     "PostCompact": "post_compact",
     "Stop": "stop",
     "Notification": "notification",
+    "PermissionDenied": "permission_denied",
+    "StopFailure": "stop_failure",
+    "SubagentStart": "subagent_start",
+    "SubagentStop": "subagent_stop",
+    "SubagentEnd": "subagent_stop",
+    "subagent_end": "subagent_stop",
 }
 
-GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"session_start", "user_prompt_submit", "post_tool_use"})
+GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset(
+    {"session_start", "user_prompt_submit", "post_tool_use", "subagent_stop"}
+)
 GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS = frozenset({"pre_tool_use", "pre_compact", "stop"})
 GROK_TRANSPORT_CAPABILITIES: dict[str, TransportCapabilityValue] = {
     "loadSession": True,
@@ -413,6 +430,9 @@ def _grok_capabilities() -> ProviderCapabilities:
             "user_prompt_submit",
             "post_tool_use",
             "post_compact",
+            "permission_denied",
+            "stop_failure",
+            "subagent_start",
         }:
             decision_style = ProviderDecisionStyle.NONE
 

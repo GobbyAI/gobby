@@ -82,7 +82,7 @@ variables:
     description: Default unlocked_tools to empty list
   is_subagent:
     value: false
-    description: "True while a native Claude Code or Codex subagent is active (toggled by SUBAGENT_START/STOP hooks)"
+    description: "True while a native Claude Code, Codex, or Grok subagent is active (toggled by SUBAGENT_START/STOP hooks)"
   loaded_skills:
     value: []
     description: "Skill names the agent has fetched with gobby-skills:get_skill this session"

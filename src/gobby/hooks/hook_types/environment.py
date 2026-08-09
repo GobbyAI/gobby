@@ -93,6 +93,24 @@ class CwdChangedOutput(HookOutput):
     )
 
 
+class DirectoryAddedInput(HookInput):
+    """Input model for Claude's directory-added hook."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    directory: str = Field(..., min_length=1, description="Added directory")
+    source: str = Field(..., min_length=1, description="Directory addition source")
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class DirectoryAddedOutput(HookOutput):
+    """Output model for Claude's directory-added hook."""
+
+    pass
+
+
 class FileChangedInput(HookInput):
     """Input model for file-changed hook."""
 

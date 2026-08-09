@@ -92,6 +92,34 @@ class PostToolUseOutput(HookOutput):
     )
 
 
+class ToolBatchCall(BaseModel):
+    """One completed tool call in Claude's PostToolBatch payload."""
+
+    tool_name: str = Field(..., min_length=1)
+    tool_input: dict[str, Any] = Field(default_factory=dict)
+    tool_use_id: str = Field(..., min_length=1)
+    tool_response: Any
+
+    model_config = ConfigDict(extra="allow")
+
+
+class PostToolBatchInput(HookInput):
+    """Input model for Claude's post-tool-batch hook."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    tool_calls: list[ToolBatchCall] = Field(default_factory=list)
+    transcript_path: str | None = Field(default=None, description="Path to transcript file")
+    cwd: str | None = Field(default=None, description="Current working directory")
+    permission_mode: str | None = Field(default=None, description="Active permission mode")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class PostToolBatchOutput(HookOutput):
+    """Output model for Claude's post-tool-batch hook."""
+
+    additional_context: str | None = Field(default=None, alias="additionalContext")
+
+
 class PostToolUseFailureInput(HookInput):
     """Input model for post-tool-use-failure hook."""
 

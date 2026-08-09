@@ -29,16 +29,19 @@ class HookEventType(str, Enum):
     # Session lifecycle
     SESSION_START = "session_start"
     SESSION_END = "session_end"
+    SETUP = "setup"
 
     # Agent/turn lifecycle
     BEFORE_AGENT = "before_agent"
     AFTER_AGENT = "after_agent"
     STOP = "stop"  # Agent is about to stop/exit
+    USER_PROMPT_EXPANSION = "user_prompt_expansion"
 
     # Tool lifecycle
     BEFORE_TOOL = "before_tool"
     AFTER_TOOL = "after_tool"
     BEFORE_TOOL_SELECTION = "before_tool_selection"
+    POST_TOOL_BATCH = "post_tool_batch"
 
     # Model lifecycle
     BEFORE_MODEL = "before_model"
@@ -54,10 +57,12 @@ class HookEventType(str, Enum):
 
     # Permissions & notifications
     PERMISSION_REQUEST = "permission_request"
-    PERMISSION_DENIED = "permission_denied"  # Claude Code only
+    PERMISSION_DENIED = "permission_denied"
     NOTIFICATION = "notification"
+    MESSAGE_DISPLAY = "message_display"
+    DIRECTORY_ADDED = "directory_added"
 
-    # Claude-specific lifecycle and observability events
+    # Provider-specific lifecycle and observability events
     STOP_FAILURE = "stop_failure"
     TASK_CREATED = "task_created"
     TASK_COMPLETED = "task_completed"
@@ -166,6 +171,7 @@ class HookResponse:
     context: str | None = None  # Inject into agent context (AI-only)
     system_message: str | None = None  # User-visible message (e.g., handoff notification)
     reason: str | None = None  # Explanation for decision
+    display_content: str | None = None  # Replacement MessageDisplay delta
 
     # Input rewriting (PreToolUse / PermissionRequest)
     modified_input: dict[str, Any] | None = None
@@ -190,6 +196,7 @@ class HookResponse:
 # Event type mapping table for documentation (see plan-multi-cli.md section 1.2)
 # This is informational - actual mappings are in adapters
 EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
+    HookEventType.SETUP: {"claude": "Setup", "qwen": None, "codex": None},
     HookEventType.SESSION_START: {
         "claude": "SessionStart",
         "qwen": "SessionStart",
@@ -204,6 +211,11 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
         "claude": "UserPromptSubmit",
         "qwen": "UserPromptSubmit",
         "codex": "UserPromptSubmit",
+    },
+    HookEventType.USER_PROMPT_EXPANSION: {
+        "claude": "UserPromptExpansion",
+        "qwen": None,
+        "codex": None,
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
@@ -227,6 +239,11 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.POST_TOOL_BATCH: {
+        "claude": "PostToolBatch",
         "qwen": None,
         "codex": None,
     },
@@ -273,6 +290,16 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     HookEventType.NOTIFICATION: {
         "claude": "Notification",
         "qwen": "Notification",
+        "codex": None,
+    },
+    HookEventType.MESSAGE_DISPLAY: {
+        "claude": "MessageDisplay",
+        "qwen": None,
+        "codex": None,
+    },
+    HookEventType.DIRECTORY_ADDED: {
+        "claude": "DirectoryAdded",
+        "qwen": None,
         "codex": None,
     },
     HookEventType.STOP_FAILURE: {
@@ -361,3 +388,7 @@ EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["grok"] = "post_tool_use"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["grok"] = "pre_compact"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.POST_COMPACT]["grok"] = "post_compact"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.NOTIFICATION]["grok"] = "notification"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.PERMISSION_DENIED]["grok"] = "permission_denied"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.STOP_FAILURE]["grok"] = "stop_failure"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["grok"] = "subagent_start"
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_STOP]["grok"] = "subagent_stop"

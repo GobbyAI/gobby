@@ -122,6 +122,54 @@
           }
         ]
       }
+    ],
+    "PermissionDenied": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-permission-denied",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=permission_denied",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-stop-failure",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=stop_failure",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-subagent-start",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=subagent_start",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "name": "gobby-subagent-stop",
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=grok --type=subagent_stop",
+            "timeout": 120
+          }
+        ]
+      }
     ]
   }
 }

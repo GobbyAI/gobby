@@ -17,6 +17,21 @@ from gobby.cli.utils import get_install_dir as get_real_install_dir
 pytestmark = pytest.mark.unit
 
 
+def test_current_claude_hooks_are_matcherless_with_standard_timeout() -> None:
+    template_path = Path(__file__).parents[3] / "src/gobby/install/claude/hooks-template.json"
+    hooks = json.loads(template_path.read_text(encoding="utf-8"))["hooks"]
+
+    for event_name in (
+        "Setup",
+        "UserPromptExpansion",
+        "PostToolBatch",
+        "MessageDisplay",
+        "DirectoryAdded",
+    ):
+        assert "matcher" not in hooks[event_name][0]
+        assert hooks[event_name][0]["hooks"][0]["timeout"] == 120
+
+
 class TestInstallClaude:
     """Tests for the install_claude function."""
 

@@ -647,3 +647,123 @@ class TestBlockToDenyMapping:
         assert result["decision"] == "deny"
         assert result["continue"] is False
         assert result["reason"] == "Hard stop gate"
+
+
+class TestGrokCurrentHookContract:
+    """Grok 1.0.0 hook payloads retain native data and canonical aliases."""
+
+    def test_permission_denied_preserves_common_and_tool_fields(self) -> None:
+        payload = {
+            "sessionId": "grok-session",
+            "workspaceRoot": "/tmp/project",
+            "transcriptPath": "/tmp/transcript.jsonl",
+            "clientIdentifier": "grok-build",
+            "promptId": "prompt-7",
+            "permissionMode": "default",
+            "toolName": "Bash",
+            "toolUseId": "tool-7",
+            "toolInput": {"command": "rm file"},
+            "toolInputTruncated": True,
+            "toolResult": "denied",
+            "toolResultTruncated": False,
+        }
+
+        event = GrokAdapter().translate_to_hook_event(
+            {"source": "grok", "hook_type": "PermissionDenied", "input_data": payload}
+        )
+
+        assert event.event_type == HookEventType.PERMISSION_DENIED
+        assert event.session_id == "grok-session"
+        assert event.data["toolInput"] == {"command": "rm file"}
+        assert event.data["tool_input"]["command"] == "rm file"
+        assert event.data["tool_input_truncated"] is True
+        assert event.data["tool_output"] == "denied"
+        assert event.data["workspace_root"] == "/tmp/project"
+        assert event.data["transcript_path"] == "/tmp/transcript.jsonl"
+        assert event.data["prompt_id"] == "prompt-7"
+        assert event.data["permission_mode"] == "default"
+
+    def test_stop_failure_preserves_error_and_stop_state(self) -> None:
+        event = GrokAdapter().translate_to_hook_event(
+            {
+                "hook_type": "StopFailure",
+                "input_data": {
+                    "sessionId": "grok-session",
+                    "errorDetails": {"code": "rate_limit", "retryable": True},
+                    "lastAssistantMessage": "Working",
+                    "phase": "streaming",
+                    "stopHookActive": True,
+                },
+            }
+        )
+
+        assert event.event_type == HookEventType.STOP_FAILURE
+        assert event.data["error_details"] == {"code": "rate_limit", "retryable": True}
+        assert event.data["last_assistant_message"] == "Working"
+        assert event.data["phase"] == "streaming"
+        assert event.data["stop_hook_active"] is True
+
+    @pytest.mark.parametrize(
+        ("hook_type", "event_type"),
+        [
+            ("SubagentStart", HookEventType.SUBAGENT_START),
+            ("SubagentStop", HookEventType.SUBAGENT_STOP),
+            ("SubagentEnd", HookEventType.SUBAGENT_STOP),
+        ],
+    )
+    def test_subagent_hooks_expose_both_identifier_vocabularies(
+        self, hook_type: str, event_type: HookEventType
+    ) -> None:
+        event = GrokAdapter().translate_to_hook_event(
+            {
+                "hook_type": hook_type,
+                "input_data": {
+                    "sessionId": "grok-session",
+                    "subagentId": "agent-9",
+                    "subagentType": "Explore",
+                    "promptId": "prompt-9",
+                },
+            }
+        )
+
+        assert event.event_type == event_type
+        assert event.metadata["_native_hook_type"] == hook_type
+        assert event.data["subagent_id"] == "agent-9"
+        assert event.data["agent_id"] == "agent-9"
+        assert event.data["subagent_type"] == "Explore"
+        assert event.data["agent_type"] == "Explore"
+        assert event.data["prompt_id"] == "prompt-9"
+
+    @pytest.mark.parametrize("hook_type", ["PermissionDenied", "StopFailure", "SubagentStart"])
+    def test_observe_only_hooks_always_continue_neutrally(self, hook_type: str) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Workflow still ran"),
+            hook_type=hook_type,
+        )
+
+        assert result == {"decision": "allow", "continue": True}
+
+    def test_subagent_stop_block_is_recoverable_with_feedback(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Finish the task", context="Resolve tests"),
+            hook_type="SubagentEnd",
+        )
+
+        assert result == {
+            "continue": True,
+            "decision": "block",
+            "reason": "Finish the task",
+            "hookSpecificOutput": {
+                "hookEventName": "SubagentStop",
+                "additionalContext": "Resolve tests",
+            },
+        }
+
+    def test_subagent_stop_block_has_non_empty_fallback_reason(self) -> None:
+        result = GrokAdapter().translate_from_hook_response(
+            HookResponse(decision="block"), hook_type="subagent_stop"
+        )
+
+        assert result["continue"] is True
+        assert result["decision"] == "block"
+        assert result["reason"]

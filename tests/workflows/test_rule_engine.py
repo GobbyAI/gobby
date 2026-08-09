@@ -657,6 +657,42 @@ class TestInjectContextEffect:
         assert INJECTED_CONTEXT_BEGIN not in context
 
 
+class TestDisplayContentEffect:
+    @pytest.mark.asyncio
+    async def test_template_last_writer_transient_and_logged(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "replace-display-delta",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.MESSAGE_DISPLAY,
+                effects=[
+                    RuleEffect(type="set_display_content", template="first"),
+                    RuleEffect(
+                        type="set_display_content",
+                        template="{{ event.data.delta }} -> replacement",
+                    ),
+                ],
+            ),
+        )
+        variables: dict[str, Any] = {"persisted": True}
+        event = _make_event(
+            HookEventType.MESSAGE_DISPLAY,
+            data={"delta": "original", "turn_id": "turn-1", "message_id": "message-1"},
+        )
+
+        with patch("gobby.workflows.engine.evaluation.record_rule_evaluation") as record_evaluation:
+            response = await _assert_evaluation(db, event, "allow", variables=variables)
+
+        assert response.display_content == "original -> replacement"
+        assert variables["persisted"] is True
+        assert "_display_content" not in variables
+        record_evaluation.assert_called_once()
+        assert record_evaluation.call_args.kwargs["rule_name"] == "replace-display-delta"
+        assert record_evaluation.call_args.kwargs["result"] == "allow"
+
+
 class TestWhenConditions:
     @pytest.mark.asyncio
     async def test_when_true_fires(

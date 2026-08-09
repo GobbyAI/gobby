@@ -65,6 +65,11 @@ class MiscEventHandlerMixin(EventHandlersBase):
         else:
             self.logger.debug(event_name)
 
+    def handle_neutral(self, event: HookEvent) -> HookResponse:
+        """Allow a semantic event whose provider contract has no handler side effects."""
+        self._log_observe_only_event(event.event_type.value.upper(), event)
+        return HookResponse(decision="allow")
+
     def handle_notification(self, event: HookEvent) -> HookResponse:
         """Handle NOTIFICATION event."""
         input_data = event.data

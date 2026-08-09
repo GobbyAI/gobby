@@ -5,7 +5,7 @@ This module defines all Claude Code hook types and their associated input/output
 using Pydantic for validation. Each hook type has specific input and output schemas
 that ensure type safety and validation across the hook execution pipeline.
 
-Hook Types (28 total):
+Hook Types (33 total):
 1. session-start: Triggered when a Claude Code session starts
 2. session-end: Triggered when a session ends
 3. user-prompt-submit: Triggered before user prompt is submitted
@@ -34,6 +34,11 @@ Hook Types (28 total):
 26. after-model: Triggered after model inference
 27. permission-request: Triggered when permission is requested (Claude)
 28. permission-denied: Triggered when YOLO mode denies a tool (Claude)
+29. setup: Triggered during Claude startup or maintenance
+30. user-prompt-expansion: Triggered when a slash command or skill expands
+31. post-tool-batch: Triggered after a batch of tool calls completes
+32. message-display: Triggered while Claude renders assistant output
+33. directory-added: Triggered after a working directory is added
 
 Example:
     ```python
@@ -73,6 +78,8 @@ from .environment import (
     ConfigChangeOutput,
     CwdChangedInput,
     CwdChangedOutput,
+    DirectoryAddedInput,
+    DirectoryAddedOutput,
     FileChangedInput,
     FileChangedOutput,
     InstructionsLoadedInput,
@@ -110,21 +117,30 @@ from .lifecycle import (
 )
 from .mappings import HOOK_INPUT_MODELS, HOOK_OUTPUT_MODELS
 from .session import (
+    MessageDisplayInput,
+    MessageDisplayOutput,
     SessionEndInput,
     SessionEndOutput,
     SessionStartInput,
     SessionStartOutput,
+    SetupInput,
+    SetupOutput,
+    UserPromptExpansionInput,
+    UserPromptExpansionOutput,
     UserPromptSubmitInput,
     UserPromptSubmitOutput,
 )
 from .tool import (
     ContextItem,
+    PostToolBatchInput,
+    PostToolBatchOutput,
     PostToolUseFailureInput,
     PostToolUseFailureOutput,
     PostToolUseInput,
     PostToolUseOutput,
     PreToolUseInput,
     PreToolUseOutput,
+    ToolBatchCall,
 )
 
 __all__ = [
@@ -140,6 +156,8 @@ __all__ = [
     "ContextItem",
     "CwdChangedInput",
     "CwdChangedOutput",
+    "DirectoryAddedInput",
+    "DirectoryAddedOutput",
     "ElicitationInput",
     "ElicitationOutput",
     "ElicitationResultInput",
@@ -151,6 +169,8 @@ __all__ = [
     "HookType",
     "InstructionsLoadedInput",
     "InstructionsLoadedOutput",
+    "MessageDisplayInput",
+    "MessageDisplayOutput",
     "NotificationInput",
     "NotificationOutput",
     "NotificationSeverity",
@@ -160,6 +180,8 @@ __all__ = [
     "PermissionRequestOutput",
     "PostCompactInput",
     "PostCompactOutput",
+    "PostToolBatchInput",
+    "PostToolBatchOutput",
     "PostToolUseFailureInput",
     "PostToolUseFailureOutput",
     "PostToolUseInput",
@@ -174,6 +196,8 @@ __all__ = [
     "SessionStartInput",
     "SessionStartOutput",
     "SessionStartSource",
+    "SetupInput",
+    "SetupOutput",
     "StopFailureInput",
     "StopFailureOutput",
     "StopInput",
@@ -188,6 +212,9 @@ __all__ = [
     "TaskCreatedOutput",
     "TeammateIdleInput",
     "TeammateIdleOutput",
+    "ToolBatchCall",
+    "UserPromptExpansionInput",
+    "UserPromptExpansionOutput",
     "UserPromptSubmitInput",
     "UserPromptSubmitOutput",
 ]

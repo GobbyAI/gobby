@@ -9,15 +9,21 @@ from gobby.hooks.hook_types import (
     HOOK_OUTPUT_MODELS,
     CompactTrigger,
     ContextItem,
+    DirectoryAddedInput,
+    DirectoryAddedOutput,
     # Base models
     HookInput,
     HookOutput,
     # Enums
     HookType,
+    MessageDisplayInput,
+    MessageDisplayOutput,
     # Notification
     NotificationInput,
     NotificationOutput,
     NotificationSeverity,
+    PostToolBatchInput,
+    PostToolBatchOutput,
     PostToolUseInput,
     PostToolUseOutput,
     # Pre-Compact
@@ -34,6 +40,8 @@ from gobby.hooks.hook_types import (
     SessionStartInput,
     SessionStartOutput,
     SessionStartSource,
+    SetupInput,
+    SetupOutput,
     # Stop
     StopInput,
     StopOutput,
@@ -42,6 +50,8 @@ from gobby.hooks.hook_types import (
     SubagentStartOutput,
     SubagentStopInput,
     SubagentStopOutput,
+    UserPromptExpansionInput,
+    UserPromptExpansionOutput,
     # User Prompt Submit
     UserPromptSubmitInput,
     UserPromptSubmitOutput,
@@ -58,10 +68,13 @@ class TestHookTypeEnum:
         expected_types = {
             "SESSION_START",
             "SESSION_END",
+            "SETUP",
             "USER_PROMPT_SUBMIT",
+            "USER_PROMPT_EXPANSION",
             "PRE_TOOL_USE",
             "POST_TOOL_USE",
             "POST_TOOL_USE_FAILURE",
+            "POST_TOOL_BATCH",
             "PRE_COMPACT",
             "POST_COMPACT",
             "STOP",
@@ -72,6 +85,8 @@ class TestHookTypeEnum:
             "TASK_COMPLETED",
             "TEAMMATE_IDLE",
             "NOTIFICATION",
+            "MESSAGE_DISPLAY",
+            "DIRECTORY_ADDED",
             "INSTRUCTIONS_LOADED",
             "CONFIG_CHANGE",
             "CWD_CHANGED",
@@ -92,14 +107,19 @@ class TestHookTypeEnum:
         """Test that hook type values use kebab-case."""
         assert HookType.SESSION_START.value == "session-start"
         assert HookType.SESSION_END.value == "session-end"
+        assert HookType.SETUP.value == "setup"
         assert HookType.USER_PROMPT_SUBMIT.value == "user-prompt-submit"
+        assert HookType.USER_PROMPT_EXPANSION.value == "user-prompt-expansion"
         assert HookType.PRE_TOOL_USE.value == "pre-tool-use"
         assert HookType.POST_TOOL_USE.value == "post-tool-use"
+        assert HookType.POST_TOOL_BATCH.value == "post-tool-batch"
         assert HookType.PRE_COMPACT.value == "pre-compact"
         assert HookType.STOP.value == "stop"
         assert HookType.SUBAGENT_START.value == "subagent-start"
         assert HookType.SUBAGENT_STOP.value == "subagent-stop"
         assert HookType.NOTIFICATION.value == "notification"
+        assert HookType.MESSAGE_DISPLAY.value == "message-display"
+        assert HookType.DIRECTORY_ADDED.value == "directory-added"
         assert HookType.BEFORE_MODEL.value == "before-model"
         assert HookType.AFTER_MODEL.value == "after-model"
         assert HookType.PERMISSION_REQUEST.value == "permission-request"
@@ -548,6 +568,11 @@ class TestHookMappings:
         assert HOOK_INPUT_MODELS[HookType.SUBAGENT_START] == SubagentStartInput
         assert HOOK_INPUT_MODELS[HookType.SUBAGENT_STOP] == SubagentStopInput
         assert HOOK_INPUT_MODELS[HookType.NOTIFICATION] == NotificationInput
+        assert HOOK_INPUT_MODELS[HookType.SETUP] == SetupInput
+        assert HOOK_INPUT_MODELS[HookType.USER_PROMPT_EXPANSION] == UserPromptExpansionInput
+        assert HOOK_INPUT_MODELS[HookType.POST_TOOL_BATCH] == PostToolBatchInput
+        assert HOOK_INPUT_MODELS[HookType.MESSAGE_DISPLAY] == MessageDisplayInput
+        assert HOOK_INPUT_MODELS[HookType.DIRECTORY_ADDED] == DirectoryAddedInput
 
     def test_output_model_mapping_correct(self) -> None:
         """Test that output model mapping returns correct types."""
@@ -561,3 +586,76 @@ class TestHookMappings:
         assert HOOK_OUTPUT_MODELS[HookType.SUBAGENT_START] == SubagentStartOutput
         assert HOOK_OUTPUT_MODELS[HookType.SUBAGENT_STOP] == SubagentStopOutput
         assert HOOK_OUTPUT_MODELS[HookType.NOTIFICATION] == NotificationOutput
+        assert HOOK_OUTPUT_MODELS[HookType.SETUP] == SetupOutput
+        assert HOOK_OUTPUT_MODELS[HookType.USER_PROMPT_EXPANSION] == UserPromptExpansionOutput
+        assert HOOK_OUTPUT_MODELS[HookType.POST_TOOL_BATCH] == PostToolBatchOutput
+        assert HOOK_OUTPUT_MODELS[HookType.MESSAGE_DISPLAY] == MessageDisplayOutput
+        assert HOOK_OUTPUT_MODELS[HookType.DIRECTORY_ADDED] == DirectoryAddedOutput
+
+
+class TestClaudeCurrentHookModels:
+    """Validate fields unique to Claude Code 2.1.226 hooks."""
+
+    def test_inputs_preserve_native_fields(self) -> None:
+        setup = SetupInput(external_id="sess", trigger="maintenance")
+        expansion = UserPromptExpansionInput(
+            external_id="sess",
+            expansion_type="skill",
+            command_name="review",
+            command_args="--strict",
+            command_source="project",
+            prompt="Review this change",
+        )
+        batch = PostToolBatchInput(
+            external_id="sess",
+            tool_calls=[
+                {
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/tmp/a.py"},
+                    "tool_use_id": "tool-1",
+                    "tool_response": [{"type": "text", "text": "contents"}],
+                }
+            ],
+        )
+        display = MessageDisplayInput(
+            external_id="sess",
+            turn_id="turn-1",
+            message_id="message-1",
+            index=2,
+            final=True,
+            delta="original",
+        )
+        directory = DirectoryAddedInput(
+            external_id="sess", directory="/tmp/repo", source="register_repo_root"
+        )
+
+        assert setup.trigger == "maintenance"
+        assert expansion.command_name == "review"
+        assert expansion.command_args == "--strict"
+        assert batch.tool_calls[0].tool_response == [{"type": "text", "text": "contents"}]
+        assert display.delta == "original"
+        assert directory.source == "register_repo_root"
+
+    def test_outputs_serialize_provider_aliases(self) -> None:
+        assert (
+            SetupOutput(additional_context="setup").model_dump(by_alias=True)["additionalContext"]
+            == "setup"
+        )
+        assert (
+            UserPromptExpansionOutput(additional_context="expansion").model_dump(by_alias=True)[
+                "additionalContext"
+            ]
+            == "expansion"
+        )
+        assert (
+            PostToolBatchOutput(additional_context="batch").model_dump(by_alias=True)[
+                "additionalContext"
+            ]
+            == "batch"
+        )
+        assert (
+            MessageDisplayOutput(display_content="replacement").model_dump(by_alias=True)[
+                "displayContent"
+            ]
+            == "replacement"
+        )

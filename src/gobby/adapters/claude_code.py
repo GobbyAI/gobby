@@ -45,6 +45,8 @@ DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
         ClaudeDecisionStyle.ELICITATION_RESULT,
         ClaudeDecisionStyle.HARD_STOP,
         ClaudeDecisionStyle.NONE,
+        ClaudeDecisionStyle.IGNORE_BLOCK,
+        ClaudeDecisionStyle.DISPLAY_CONTENT,
     }
 )
 
@@ -271,6 +273,17 @@ class ClaudeCodeAdapter(BaseAdapter):
             event_logger=event_logger,
         )
         hook_event_name = contract.hook_event_name if contract else "Unknown"
+        decision_style = contract.decision_style if contract else ClaudeDecisionStyle.NONE
+        if decision_style == ClaudeDecisionStyle.DISPLAY_CONTENT:
+            if response.display_content is None:
+                return {}
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": hook_event_name,
+                    "displayContent": response.display_content,
+                }
+            }
+
         additional_context = self._build_additional_context(response, hook_type=hook_type)
 
         result: dict[str, Any] = {"continue": True}
@@ -294,8 +307,6 @@ class ClaudeCodeAdapter(BaseAdapter):
             hook_type=hook_type,
             logger=event_logger,
         )
-        decision_style = contract.decision_style if contract else ClaudeDecisionStyle.NONE
-
         if decision_style == ClaudeDecisionStyle.TOP_LEVEL_BLOCK and is_denied:
             result["decision"] = "block"
             if normalized_reason:

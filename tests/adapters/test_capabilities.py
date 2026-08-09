@@ -109,6 +109,34 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert droid_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
 
+def test_claude_2_1_226_hook_capabilities_are_declared() -> None:
+    capabilities = get_provider_capabilities("claude")
+
+    setup = capabilities.get_hook("Setup")
+    expansion = capabilities.get_hook("UserPromptExpansion")
+    batch = capabilities.get_hook("PostToolBatch")
+    display = capabilities.get_hook("MessageDisplay")
+    directory = capabilities.get_hook("DirectoryAdded")
+
+    assert setup is not None
+    assert setup.event_type is HookEventType.SETUP
+    assert setup.decision_style is ProviderDecisionStyle.IGNORE_BLOCK
+    assert setup.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert expansion is not None
+    assert expansion.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
+    assert expansion.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert batch is not None
+    assert batch.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
+    assert batch.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert display is not None
+    assert display.event_type is HookEventType.MESSAGE_DISPLAY
+    assert display.decision_style is ProviderDecisionStyle.DISPLAY_CONTENT
+    assert display.supports_response_field("display_content")
+    assert directory is not None
+    assert directory.event_type is HookEventType.DIRECTORY_ADDED
+    assert directory.decision_style is ProviderDecisionStyle.IGNORE_BLOCK
+
+
 def test_agy_hook_capabilities_have_no_live_transport_claims() -> None:
     """AGY supports hook install parity only; live runtime transport stays unavailable."""
     capabilities = get_provider_capabilities("agy")
@@ -120,7 +148,7 @@ def test_agy_hook_capabilities_have_no_live_transport_claims() -> None:
     assert capabilities.get_hook("Stop").decision_style is ProviderDecisionStyle.HARD_STOP
 
 
-def test_grok_0_2_hook_capabilities_are_declared() -> None:
+def test_grok_1_0_hook_capabilities_are_declared() -> None:
     """Keep the Grok hook registry aligned with current ACP hook names."""
     capabilities = get_provider_capabilities("grok")
 
@@ -135,11 +163,20 @@ def test_grok_0_2_hook_capabilities_are_declared() -> None:
     assert capabilities.get_hook("PreCompact") is capabilities.get_hook("pre_compact")
     assert capabilities.get_hook("PostCompact") is capabilities.get_hook("post_compact")
     assert capabilities.get_hook("Stop") is capabilities.get_hook("stop")
+    assert capabilities.get_hook("PermissionDenied") is capabilities.get_hook("permission_denied")
+    assert capabilities.get_hook("StopFailure") is capabilities.get_hook("stop_failure")
+    assert capabilities.get_hook("SubagentStart") is capabilities.get_hook("subagent_start")
+    assert capabilities.get_hook("SubagentStop") is capabilities.get_hook("subagent_stop")
+    assert capabilities.get_hook("SubagentEnd") is capabilities.get_hook("subagent_stop")
 
     pre_tool = capabilities.get_hook("pre_tool_use")
     pre_compact = capabilities.get_hook("pre_compact")
     post_compact = capabilities.get_hook("post_compact")
     post_tool = capabilities.get_hook("post_tool_use")
+    permission_denied = capabilities.get_hook("permission_denied")
+    stop_failure = capabilities.get_hook("stop_failure")
+    subagent_start = capabilities.get_hook("subagent_start")
+    subagent_stop = capabilities.get_hook("subagent_stop")
 
     assert pre_tool is not None
     assert pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
@@ -160,6 +197,15 @@ def test_grok_0_2_hook_capabilities_are_declared() -> None:
     assert post_tool is not None
     assert post_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
     assert post_tool.decision_style is ProviderDecisionStyle.NONE
+    assert permission_denied is not None
+    assert permission_denied.decision_style is ProviderDecisionStyle.NONE
+    assert stop_failure is not None
+    assert stop_failure.decision_style is ProviderDecisionStyle.NONE
+    assert subagent_start is not None
+    assert subagent_start.decision_style is ProviderDecisionStyle.NONE
+    assert subagent_stop is not None
+    assert subagent_stop.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
+    assert subagent_stop.context_channel is ContextChannel.ADDITIONAL_CONTEXT
 
 
 def test_unsupported_elicitation_fields_are_dropped_with_telemetry(

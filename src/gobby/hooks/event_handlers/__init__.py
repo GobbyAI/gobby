@@ -126,7 +126,7 @@ class EventHandlers(
         self._memory_recall_config = memory_recall_config
         self._call_tool = call_tool
         self._workflow_config = workflow_config
-        self._get_machine_id = get_machine_id or (lambda: None)
+        self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
         self._attention_metadata_store = attention_metadata_store
@@ -140,15 +140,20 @@ class EventHandlers(
         self._handler_map: dict[HookEventType, Callable[[HookEvent], HookResponse]] = {
             HookEventType.SESSION_START: self.handle_session_start,
             HookEventType.SESSION_END: self.handle_session_end,
+            HookEventType.SETUP: self.handle_neutral,
             HookEventType.BEFORE_AGENT: self.handle_before_agent,
+            HookEventType.USER_PROMPT_EXPANSION: self.handle_neutral,
             HookEventType.AFTER_AGENT: self.handle_after_agent,
             HookEventType.BEFORE_TOOL: self.handle_before_tool,
             HookEventType.AFTER_TOOL: self.handle_after_tool,
+            HookEventType.POST_TOOL_BATCH: self.handle_neutral,
             HookEventType.PRE_COMPACT: self.handle_pre_compact,
             HookEventType.POST_COMPACT: self.handle_post_compact,
             HookEventType.SUBAGENT_START: self.handle_subagent_start,
             HookEventType.SUBAGENT_STOP: self.handle_subagent_stop,
             HookEventType.NOTIFICATION: self.handle_notification,
+            HookEventType.MESSAGE_DISPLAY: self.handle_neutral,
+            HookEventType.DIRECTORY_ADDED: self.handle_neutral,
             HookEventType.BEFORE_TOOL_SELECTION: self.handle_before_tool_selection,
             HookEventType.BEFORE_MODEL: self.handle_before_model,
             HookEventType.AFTER_MODEL: self.handle_after_model,

@@ -12,6 +12,17 @@
         ]
       }
     ],
+    "Setup": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=setup",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "InstructionsLoaded": [
       {
         "hooks": [
@@ -30,6 +41,17 @@
             "type": "command",
           "command": "ghook --gobby-owned --cli=claude --type=user-prompt-submit",
           "timeout": 120
+          }
+        ]
+      }
+    ],
+    "UserPromptExpansion": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=user-prompt-expansion",
+            "timeout": 120
           }
         ]
       }
@@ -82,6 +104,17 @@
         ]
       }
     ],
+    "PostToolBatch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=post-tool-batch",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
     "PermissionDenied": [
       {
         "matcher": "*",
@@ -101,6 +134,17 @@
             "type": "command",
           "command": "ghook --gobby-owned --cli=claude --type=notification",
           "timeout": 120
+          }
+        ]
+      }
+    ],
+    "MessageDisplay": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=message-display",
+            "timeout": 120
           }
         ]
       }
@@ -200,6 +244,17 @@
             "type": "command",
           "command": "ghook --gobby-owned --cli=claude --type=cwd-changed",
           "timeout": 120
+          }
+        ]
+      }
+    ],
+    "DirectoryAdded": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=claude --type=directory-added",
+            "timeout": 120
           }
         ]
       }

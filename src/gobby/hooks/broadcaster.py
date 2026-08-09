@@ -27,20 +27,25 @@ logger = logging.getLogger(__name__)
 
 # Mapping from unified HookEventType to specific HookType Pydantic models
 EVENT_TYPE_TO_HOOK_TYPE: dict[str, HookType] = {
+    "setup": HookType.SETUP,
     "session_start": HookType.SESSION_START,
     "session_end": HookType.SESSION_END,
     "before_agent": HookType.USER_PROMPT_SUBMIT,
+    "user_prompt_expansion": HookType.USER_PROMPT_EXPANSION,
     "after_agent": HookType.STOP,
     "stop": HookType.STOP,
     "stop_failure": HookType.STOP_FAILURE,
     "before_tool": HookType.PRE_TOOL_USE,
     "after_tool": HookType.POST_TOOL_USE,
+    "post_tool_batch": HookType.POST_TOOL_BATCH,
     "before_tool_selection": HookType.PRE_TOOL_USE,  # Maps to same as before_tool
     "pre_compact": HookType.PRE_COMPACT,
     "post_compact": HookType.POST_COMPACT,
     "subagent_start": HookType.SUBAGENT_START,
     "subagent_stop": HookType.SUBAGENT_STOP,
     "notification": HookType.NOTIFICATION,
+    "message_display": HookType.MESSAGE_DISPLAY,
+    "directory_added": HookType.DIRECTORY_ADDED,
     "task_created": HookType.TASK_CREATED,
     "task_completed": HookType.TASK_COMPLETED,
     "teammate_idle": HookType.TEAMMATE_IDLE,
@@ -298,6 +303,7 @@ class HookEventBroadcaster:
                     "decision": response.decision,
                     "stopReason": response.reason,
                     "systemMessage": response.system_message,
+                    "displayContent": response.display_content,
                 }
 
                 if response.context:
