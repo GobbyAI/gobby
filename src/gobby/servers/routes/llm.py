@@ -87,8 +87,8 @@ def _generation_timeout_overrides(
     """Resolve per-request timeout overrides against the configured budgets.
 
     Payload-supplied per-candidate timeouts are capped at the total attempt
-    budget only — a caller that declares a long-running generation (e.g. a
-    codewiki aggregate page, #18288) may raise its candidate budget above the
+    budget only — a caller that declares a long-running aggregate generation may
+    raise its candidate budget above the
     tight configured per-candidate defaults, which exist for fast failover on
     short per-file generations (#17710) and still apply when the payload omits
     them.

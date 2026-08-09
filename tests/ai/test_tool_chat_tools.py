@@ -75,9 +75,12 @@ def test_validate_policy_allows_mutator_when_opted_in() -> None:
     assert policy.allow_mutation is True
 
 
-def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
-    with pytest.raises(ToolPolicyError):
-        validate_policy(ToolPolicy(cli="gwiki", tools=("search", "destroy"), allow_mutation=True))
+def test_validate_policy_rejects_codewiki_when_mutation_enabled() -> None:
+    with pytest.raises(
+        ToolPolicyError,
+        match="Subcommand gcode 'codewiki' is not allowed by policy",
+    ):
+        validate_policy(ToolPolicy(cli="gcode", tools=("codewiki",), allow_mutation=True))
 
 
 def test_validate_policy_rejects_metacharacter_subcommand() -> None:
