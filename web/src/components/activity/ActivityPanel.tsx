@@ -193,7 +193,7 @@ function ActivityDropdown({
         variant="ghost"
         size="sm"
         className={cn(
-          "activity-panel-mobile-trigger flex w-full items-center justify-between gap-1.5 rounded border-0 bg-transparent px-2 py-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 max-[768px]:min-h-11 max-[768px]:px-3 max-[768px]:py-2 pointer-coarse:min-h-11",
+          "activity-panel-mobile-trigger flex w-full items-center justify-between gap-1.5 rounded border-0 bg-transparent px-2 py-1 text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 mobile:min-h-11 mobile:px-3 mobile:py-2 pointer-coarse:min-h-11",
           coarseHitAreaCls,
         )}
         onClick={onToggle}
@@ -219,7 +219,7 @@ function ActivityDropdown({
               aria-current={activeTab === tab.id ? "page" : undefined}
               className={cn(
                 "activity-panel-mobile-menu__item",
-                "mb-0.5 inline-flex min-h-7 w-full break-inside-avoid items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] max-[768px]:min-h-11 max-[768px]:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+                "mb-0.5 inline-flex min-h-7 w-full break-inside-avoid items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] mobile:min-h-11 mobile:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
                 activeTab === tab.id &&
                   "active bg-[var(--bg-tertiary)] text-[var(--text-primary)]",
                 coarseHitAreaCls,

@@ -97,6 +97,11 @@ const PIPELINE_SURFACE_FILES = [
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
+// Viewport variants that hand-roll the mobile-tier breakpoint. The tier is
+// authored once in tailwind-theme.css (width <=767px OR height <=500px, 768px
+// desktop); components must use the shared `mobile:` variant. `@max-[...]`
+// container queries are element-scoped and exempt.
+const TIER_VARIANT = /(?<!@)max-\[76[78]px\]:/g
 const IMPORTANT = /!\s*important\b/g
 const RAW_ELEMENTS: Record<RawElement, RegExp> = {
   button: /<button\b/g,
@@ -136,6 +141,7 @@ interface Scan {
   cssFiles: string[]
   important: Map<string, number>
   cssTotalLines: number
+  tierVariant: Map<string, number>
 }
 
 function runScan(): Scan {
@@ -146,6 +152,7 @@ function runScan(): Scan {
     cssFiles: [],
     important: new Map(),
     cssTotalLines: 0,
+    tierVariant: new Map(),
   }
 
   for (const file of scannedFiles(join(process.cwd(), 'src'))) {
@@ -161,6 +168,8 @@ function runScan(): Scan {
       if (btn > 0) scan.btnClass.set(rel, btn)
       const cls = countMatches(source, CLS_CONSTANT)
       if (cls > 0) scan.clsConstant.set(rel, cls)
+      const tier = countMatches(source, TIER_VARIANT)
+      if (tier > 0) scan.tierVariant.set(rel, tier)
       if (rel.endsWith('.tsx') && !rel.startsWith(UI_PRIMITIVES_DIR)) {
         for (const [element, pattern] of Object.entries(RAW_ELEMENTS)) {
           const count = countMatches(source, pattern)
@@ -455,6 +464,10 @@ describe('style ratchet', () => {
   it('bans *_CLS style constants', () => {
     expect(CLS_CONSTANT_ALLOWLIST).toEqual({})
     expect([...scan.clsConstant.entries()]).toEqual([])
+  })
+
+  it('bans hand-rolled mobile-tier viewport variants', () => {
+    expect([...scan.tierVariant.entries()]).toEqual([])
   })
 
   it('bans stylesheets beyond the recorded set', () => {

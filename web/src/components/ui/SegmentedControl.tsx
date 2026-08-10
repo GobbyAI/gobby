@@ -87,7 +87,7 @@ export function SegmentedControl<T extends string>({
       className={cn(
         'segmented-control',
         'inline-flex items-stretch rounded-md border border-border [--segmented-option-px:0.75rem] text-[length:var(--text-base)]',
-        'max-[768px]:[--segmented-option-px:0.55rem] max-[768px]:text-[length:var(--text-sm)]',
+        'mobile:[--segmented-option-px:0.55rem] mobile:text-[length:var(--text-sm)]',
         coarseTouchTarget && 'pointer-coarse:min-h-11',
         trackBg,
         className,

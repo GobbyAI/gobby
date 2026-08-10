@@ -128,7 +128,7 @@ export function AgentStatusBar({
       )}
       data-testid="agent-status-bar"
     >
-      <div className="agent-status-bar__summary flex min-w-0 flex-1 flex-wrap items-center justify-start gap-3 max-[768px]:gap-2 @max-[360px]/chat-column:flex-nowrap">
+      <div className="agent-status-bar__summary flex min-w-0 flex-1 flex-wrap items-center justify-start gap-3 mobile:gap-2 @max-[360px]/chat-column:flex-nowrap">
         {viewingMeta && stateText ? (
           <div className="chat-session-status flex min-w-0 flex-wrap items-center gap-1.5 @max-[360px]/chat-column:flex-nowrap">
             <span className="chat-session-status__state whitespace-nowrap text-[length:var(--text-sm)] font-medium leading-none text-[var(--text-muted)] @max-[360px]/chat-column:hidden">

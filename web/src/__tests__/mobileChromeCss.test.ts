@@ -460,8 +460,8 @@ describe('mobile chrome CSS', () => {
     for (const token of [
       '[--segmented-option-px:0.75rem]',
       'text-[length:var(--text-base)]',
-      'max-[768px]:[--segmented-option-px:0.55rem]',
-      'max-[768px]:text-[length:var(--text-sm)]',
+      'mobile:[--segmented-option-px:0.55rem]',
+      'mobile:text-[length:var(--text-sm)]',
       'px-[var(--segmented-option-px)]',
       'pointer-coarse:min-h-11',
       'pointer-coarse:min-w-11',
@@ -569,7 +569,7 @@ describe('mobile chrome CSS', () => {
     expect(activityPanelSource).toContain(
       'pointer-coarse:[&_.activity-panel-search]:min-h-11',
     )
-    expect(activityPanelSource).toContain('max-[768px]:min-h-11')
+    expect(activityPanelSource).toContain('mobile:min-h-11')
     expect(activityPanelSource).toContain(
       'pointer-coarse:[&_.activity-filter-dropdown__item]:min-h-11',
     )
