@@ -35,6 +35,13 @@ from gobby.memory.vectorstore_maintenance import (
 from gobby.memory.vectorstore_queries import VectorStoreQueries
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 from gobby.memory.vectorstore_status import VectorStoreStatus
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
+
+_COLLECTION_SOURCE_KINDS = {
+    "memories": "memory",
+    "tool_embeddings": "tool",
+    "gobby_github_issues": "github_issue",
+}
 
 
 class VectorStore:
@@ -59,12 +66,16 @@ class VectorStore:
         api_key: str | None = None,
         collection_name: str = "memories",
         embedding_dim: int = 768,
+        serving_guard: Callable[[], None] | None = None,
+        generation_state: EmbeddingGenerationState | None = None,
     ) -> None:
         self._path = path
         self._url = url
         self._api_key = api_key
         self._collection_name = collection_name
         self._embedding_dim = embedding_dim
+        self._serving_guard = serving_guard
+        self._generation_state = generation_state
         self._client: QdrantClientLike | None = None
         self._retired_clients: list[QdrantClientLike] = []
         self._init_lock = asyncio.Lock()
@@ -86,6 +97,13 @@ class VectorStore:
     def collection_name(self) -> str:
         """Return the default collection name configured for this store."""
         return self._client_ops.collection_name
+
+    def _projection_targets(self, collection_name: str | None) -> tuple[str, ...]:
+        primary = collection_name or self._collection_name
+        source_kind = _COLLECTION_SOURCE_KINDS.get(primary.split("@", 1)[0])
+        if self._generation_state is None or source_kind is None:
+            return (primary,)
+        return self._generation_state.projection_targets(source_kind, primary)
 
     def status_snapshot(self) -> dict[str, Any]:
         """Return structured collection lifecycle and recovery state."""
@@ -114,6 +132,8 @@ class VectorStore:
         timeout_hint: bool = True,
         **kwargs: Any,
     ) -> Any:
+        if self._serving_guard is not None:
+            self._serving_guard()
         return await self._client_ops.call(
             client,
             method_name,
@@ -167,7 +187,8 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update a single point."""
-        await self._queries.upsert(memory_id, embedding, payload, collection_name)
+        for target in self._projection_targets(collection_name):
+            await self._queries.upsert(memory_id, embedding, payload, target)
 
     async def search(
         self,
@@ -227,7 +248,8 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Update payload fields on a point without re-embedding."""
-        await self._queries.set_payload(memory_id, payload, collection_name)
+        for target in self._projection_targets(collection_name):
+            await self._queries.set_payload(memory_id, payload, target)
 
     async def delete(
         self,
@@ -236,7 +258,8 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Delete a point by memory ID or filter."""
-        await self._queries.delete(memory_id, filters, collection_name)
+        for target in self._projection_targets(collection_name):
+            await self._queries.delete(memory_id, filters, target)
 
     async def delete_many(
         self,
@@ -244,7 +267,8 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Delete multiple points by memory ID in a single batch call."""
-        await self._queries.delete_many(memory_ids, collection_name)
+        for target in self._projection_targets(collection_name):
+            await self._queries.delete_many(memory_ids, target)
 
     async def batch_upsert(
         self,
@@ -252,7 +276,8 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update multiple points at once."""
-        await self._queries.batch_upsert(items, collection_name)
+        for target in self._projection_targets(collection_name):
+            await self._queries.batch_upsert(items, target)
 
     async def get_collection_dimension(self, collection_name: str | None = None) -> int | None:
         """Return the vector dimension for a collection when readable."""

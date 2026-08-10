@@ -155,6 +155,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             config_store=runner.config_store,
             db=runner.database,
             fence=runner.project_write_fence,
+            config_runtime=runner.config_runtime,
         )
     except Exception:
         mark_service_degraded(runner, "embedding_switch_coordinator")

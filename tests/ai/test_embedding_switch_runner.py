@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -11,13 +11,19 @@ from gobby.ai.embedding_switch import (
     PHASE_ACTIVE,
     PHASE_BUILDING,
     PHASE_FLIPPING,
+    PHASE_GC,
     PHASE_STAGING,
     SwitchJournal,
     get_switch_status,
 )
 from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
 from gobby.ai.embedding_switch_service import EmbeddingSwitchControl
-from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
+)
+from gobby.storage.embedding_generation_state import ProjectionChange
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 
 pytestmark = pytest.mark.unit
@@ -30,6 +36,9 @@ class FakeConfigStore:
 
     def get(self, key: str) -> Any:
         return self.values.get(key)
+
+    def get_all(self) -> dict[str, Any]:
+        return {}
 
     def get_internal_lifecycle(self, key: str) -> Any:
         return self.values.get(key)
@@ -52,6 +61,20 @@ class FakeConfigStore:
         self.operations.append(("owner_set", run_id, dict(entries)))
         return len(entries)
 
+    def complete_embedding_switch(
+        self,
+        run_id: str,
+        entries: dict[str, Any],
+        completed_key: str,
+        completed_record: dict[str, Any],
+    ) -> int:
+        revision = 42
+        self.values.update(entries)
+        self.values[completed_key] = {**completed_record, "committed_revision": revision}
+        self.values.pop(EMBEDDING_SWITCH_JOURNAL_KEY, None)
+        self.operations.append(("complete", run_id, dict(entries), completed_key))
+        return revision
+
     def delete(self, key: str) -> None:
         self.values.pop(key, None)
         self.operations.append(("delete", key))
@@ -60,6 +83,16 @@ class FakeConfigStore:
         existed = self.values.pop(key, None) is not None
         self.operations.append(("lifecycle_delete", key, run_id))
         return existed
+
+
+class FakeDatabase:
+    def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, int]:
+        if "MAX(sequence)" in query:
+            return {"watermark": 0}
+        return {"incompatible": 0}
+
+    def fetchall(self, query: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
+        return []
 
 
 class FakeVectorStore:
@@ -88,6 +121,9 @@ class FakeVectorStore:
 
     async def delete_collection(self, collection_name: str) -> None:
         self.operations.append(("delete", collection_name, None))
+
+    async def delete(self, point_id: str, *, collection_name: str) -> None:
+        self.operations.append(("delete", point_id, collection_name))
 
 
 class FakeEmbeddingService:
@@ -138,7 +174,7 @@ def _issue_record(*, source_text: str | None) -> GitHubIssueTriageRecord:
 async def test_run_staging_failure_keeps_staging_phase(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=object())
+    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=FakeDatabase())
 
     async def fail_stage(_journal: SwitchJournal) -> object:
         raise RuntimeError("stage failed")
@@ -165,17 +201,20 @@ async def test_flip_records_old_targets_before_config_write(
             "gobby_github_issues": "gobby_github_issues@old",
         }
     )
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
 
     assert journal.phase == PHASE_ACTIVE
     assert store.operations[0][0] == "lifecycle_set"
-    assert store.operations[1][0] == "owner_set"
+    assert store.operations[1][0] == "complete"
     run_id = store.operations[1][1]
     assert run_id == journal.run_id
     assert store.operations[1][2][AI_EMBEDDING_API_BASE_KEY] is None
+    completed = store.values[EMBEDDING_SWITCH_COMPLETED_KEY]
+    assert completed["committed_revision"] == 42
+    assert completed["old_physical_names"]["memories"] == "memories@old"
     assert journal.old_physical_names["memories"] == "memories@old"
     assert ("alias", "memories@4096-run", "memories") in vector_store.operations
     assert not any(operation[0] == "delete" for operation in vector_store.operations)
@@ -187,7 +226,7 @@ async def test_legacy_bare_collection_flip_deletes_old_bare_collection(
 ) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
@@ -199,10 +238,10 @@ async def test_legacy_bare_collection_flip_deletes_old_bare_collection(
 
 
 @pytest.mark.asyncio
-async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gc_failure_keeps_gc_phase_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore({"memories": "memories@old"})
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     journal = _journal(PHASE_ACTIVE)
     journal.old_physical_names = {"memories": "memories@old"}
@@ -211,7 +250,7 @@ async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.Monk
 
     assert report.failed is True
     assert report.journal is not None
-    assert report.journal.phase == PHASE_ACTIVE
+    assert report.journal.phase == PHASE_GC
     assert "still targeted by an alias" in (report.journal.error or "")
 
 
@@ -219,7 +258,7 @@ async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.Monk
 async def test_build_uses_target_physical_collections(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
 
@@ -241,12 +280,60 @@ async def test_build_uses_target_physical_collections(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
+async def test_build_replays_changes_after_enumeration_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
+    builds: list[str] = []
+
+    async def build_memory(*args: Any, **kwargs: Any) -> int:
+        builds.append("memory")
+        return 0
+
+    async def build_tool(*args: Any, **kwargs: Any) -> int:
+        builds.append("tool")
+        return 0
+
+    async def build_issue(*args: Any, **kwargs: Any) -> int:
+        builds.append("github_issue")
+        return 0
+
+    class GenerationState:
+        def watermark(self) -> int:
+            return 7
+
+        def changes_after(self, sequence: int) -> list[ProjectionChange]:
+            if sequence == 7:
+                return [
+                    ProjectionChange(8, "tool", "tool-1", False),
+                    ProjectionChange(9, "memory", "memory-1", True),
+                ]
+            return []
+
+    cast(Any, runner).generation_state = GenerationState()
+    monkeypatch.setattr(runner, "_build_memory_collection", build_memory)
+    monkeypatch.setattr(runner, "_build_tool_collection", build_tool)
+    monkeypatch.setattr(runner, "_build_github_issue_collection", build_issue)
+
+    _result, journal = await runner.build(_journal(PHASE_BUILDING))
+
+    assert journal.physical_names["memories"] == "memories@4096-run"
+    assert journal.caught_up_watermark == 9
+    assert builds == ["memory", "tool", "github_issue", "tool"]
+    assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
+
+
+@pytest.mark.asyncio
 async def test_legacy_github_issue_without_source_text_leaves_building_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
 
@@ -282,7 +369,7 @@ async def test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry(
     vector_store = FakeVectorStore()
     control = EmbeddingSwitchControl()
     control.abort_requested.set()
-    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control)
     monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
     cleanup_attempts = 0
 
@@ -323,7 +410,7 @@ async def test_abort_cleanup_refuses_to_delete_alias_target(
     vector_store = FakeVectorStore({"memories": "memories@4096-run"})
     control = EmbeddingSwitchControl()
     control.abort_requested.set()
-    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control)
     monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
 
     result = await runner.run(_journal(PHASE_BUILDING))

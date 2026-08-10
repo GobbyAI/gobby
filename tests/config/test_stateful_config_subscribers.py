@@ -156,10 +156,20 @@ async def test_failed_prepare_keeps_last_good_services() -> None:
 async def test_successful_swap_drains_old_client() -> None:
     repository = FakeRepository([snapshot(0, alpha=0), snapshot(1, alpha=1)])
     disposed: list[int] = []
+    lifecycle: list[tuple[str, int]] = []
 
     def build(change: ConfigChange) -> PreparedService:
         client = Client(change.revision, disposed)
-        return PreparedService(client, client.close)
+
+        def dispose() -> None:
+            client.close()
+            lifecycle.append(("dispose", change.revision))
+
+        return PreparedService(
+            client,
+            dispose,
+            lambda: lifecycle.append(("activate", change.revision)),
+        )
 
     runtime = ConfigRuntime(
         repository,
@@ -167,12 +177,14 @@ async def test_successful_swap_drains_old_client() -> None:
         subscribers=[subscriber("client", {"alpha"}, build)],
     )
     await runtime.start()
+    lifecycle.clear()
     repository.index = 1
 
     await runtime.reconcile_revision(1)
 
     assert cast(Client, runtime.capture().services["client"]).revision == 1
     assert disposed == [0]
+    assert lifecycle == [("dispose", 0), ("activate", 1)]
     await runtime.close()
 
 
@@ -219,13 +231,17 @@ async def test_registration_race_resolves_to_latest_revision() -> None:
     entered = threading.Event()
     release = threading.Event()
     revisions: list[int] = []
+    activated: list[int] = []
 
-    def build(change: ConfigChange) -> object:
+    def build(change: ConfigChange) -> PreparedService:
         revisions.append(change.revision)
         if change.revision == 0:
             entered.set()
             assert release.wait(timeout=1)
-        return change.revision
+        return PreparedService(
+            change.revision,
+            _activate=lambda: activated.append(change.revision),
+        )
 
     registration = asyncio.create_task(
         runtime.register_subscriber(subscriber("late", {"alpha"}, build))
@@ -240,6 +256,7 @@ async def test_registration_race_resolves_to_latest_revision() -> None:
     assert runtime.capture().snapshot.revision == 1
     assert runtime.capture().services["late"] == 1
     assert revisions == [0, 1]
+    assert activated == [1]
     await runtime.close()
 
 

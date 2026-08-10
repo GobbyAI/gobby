@@ -170,6 +170,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     )
     _warn_missing_terminal_dependency(runner.config)
     postgres_database = cast(PostgresHubDatabase, runner.database)
+    from gobby.ai.embedding_switch import managed_embedding_projection
     from gobby.config.runtime import ConfigRuntime
     from gobby.storage.config_notifications import ConfigNotificationListener
     from gobby.storage.config_repository import ConfigRepository
@@ -183,6 +184,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         notification_source=ConfigNotificationListener(
             postgres_database.open_runtime_async_connection,
         ),
+        managed_resolver=lambda snapshot: managed_embedding_projection(snapshot),
     )
     from gobby.storage.model_metadata import ModelMetadataStore
 

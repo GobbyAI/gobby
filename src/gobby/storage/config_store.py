@@ -25,6 +25,7 @@ from gobby.storage.config_mutations import (
     ConfigMutationResult,
     ConfigMutations,
     ConfigPatch,
+    ConfigValidationError,
     EmbeddingConfigMutationBlocked,
     SecretUpdate,
     config_key_to_secret_name,
@@ -174,6 +175,16 @@ class ConfigStore:
         secret_store: SecretStore | None = None,
         embedding_run_id: str | None = None,
     ) -> ConfigMutationResult:
+        structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
+        patch_keys = set(patch.values) | set(patch.unset) | set(patch.secrets)
+        if source not in {"embedding_switch", "install"} and patch_keys.intersection(
+            structural_keys
+        ):
+            key = sorted(patch_keys.intersection(structural_keys))[0]
+            raise ConfigValidationError(
+                f"Configuration key {key!r} requires managed activation",
+                key=key,
+            )
         mutations = self._bind_secret_store(secret_store) if secret_store else self.mutations
         return mutations.patch_internal(
             expected_revision=mutations.repository.current_revision(),
@@ -337,6 +348,30 @@ class ConfigStore:
             )
         return len(result.changed_keys)
 
+    def complete_embedding_switch(
+        self,
+        run_id: str,
+        entries: dict[str, Any],
+        completed_key: str,
+        completed_record: dict[str, object],
+    ) -> int:
+        """Commit structural values and durable completion state in one revision."""
+        if not entries or not set(entries).issubset(AI_EMBEDDING_CONFIG_KEY_SET):
+            raise ValueError("Embedding switch owner may write only canonical embedding values")
+        snapshot = self.read_snapshot()
+        record = dict(completed_record)
+        record["committed_revision"] = snapshot.revision + 1
+        result = self.mutations.patch_internal(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(
+                values={**entries, completed_key: record},
+                unset=frozenset({EMBEDDING_SWITCH_JOURNAL_KEY}),
+            ),
+            source="embedding_switch",
+            embedding_run_id=run_id,
+        )
+        return result.revision
+
     def set_embedding_bootstrap_values(
         self,
         entries: dict[str, Any],
@@ -463,7 +498,8 @@ class ConfigStore:
         keys: Collection[str],
         transaction: Any,
     ) -> None:
-        if not set(keys).intersection(AI_EMBEDDING_CONFIG_KEY_SET):
+        structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
+        if not set(keys).intersection(structural_keys):
             return
         run_id = self._active_switch_run_id(transaction)
         if run_id is not None:

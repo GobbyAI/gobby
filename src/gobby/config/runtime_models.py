@@ -136,6 +136,7 @@ class ConfigChange:
     _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
         repr=False, compare=False
     )
+    managed: MappingProxyType[str, object] = field(default_factory=lambda: MappingProxyType({}))
 
     def desired_secret(self, key: str) -> str | None:
         binding = self._desired_bindings.get(key)

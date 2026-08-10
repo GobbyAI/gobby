@@ -6,6 +6,10 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_CONFIG_KEY_SET,
+)
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy, ConfigRegistry
 from gobby.config.runtime_models import ConfigChange
 
@@ -63,6 +67,10 @@ class PreparedService:
 
     value: object
     _dispose: Callable[[], None] = lambda: None
+    _activate: Callable[[], None] = lambda: None
+
+    def activate(self) -> None:
+        self._activate()
 
     def dispose(self) -> None:
         self._dispose()
@@ -295,9 +303,12 @@ def live_consumer_matrix(
 
 def live_subscriber_keys(name: str) -> frozenset[str]:
     """Return canonical live registry keys consumed by one subscriber."""
-    return frozenset(
+    keys = frozenset(
         entry.registry_key for entry in live_consumer_matrix() if name in entry.subscribers
     )
+    if name in _STATEFUL_ROUTES["ai"].subscribers:
+        return keys | (AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY})
+    return keys
 
 
 __all__ = [

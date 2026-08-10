@@ -11,6 +11,7 @@ from typing import Any, ClassVar, cast
 from pydantic import TypeAdapter, ValidationError
 
 from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
     AI_EMBEDDING_CONFIG_KEY_SET,
     EMBEDDING_SWITCH_JOURNAL_KEY,
     embedding_config_secret_name,
@@ -276,7 +277,8 @@ class ConfigMutations:
         embedding_run_id: str | None,
     ) -> None:
         keys = set(patch.values) | set(patch.secrets) | set(patch.unset)
-        if not keys.intersection(AI_EMBEDDING_CONFIG_KEY_SET):
+        structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
+        if not keys.intersection(structural_keys):
             return
         active_run_id = _journal_run_id(snapshot.overrides.get(EMBEDDING_SWITCH_JOURNAL_KEY))
         if active_run_id == "unknown":

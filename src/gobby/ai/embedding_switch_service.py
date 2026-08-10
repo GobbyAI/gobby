@@ -71,6 +71,7 @@ class EmbeddingSwitchCoordinator:
         config_store: Any,
         db: Any,
         fence: Any,
+        config_runtime: Any | None = None,
         runner_factory: RunnerFactory | None = None,
         start_journal: Callable[..., Any] | None = None,
         load_journal: Callable[[], Any | None] | None = None,
@@ -78,7 +79,8 @@ class EmbeddingSwitchCoordinator:
         self.config_store = config_store
         self.db = db
         self.fence = fence
-        self._runner_factory = runner_factory or _default_runner_factory
+        self.config_runtime = config_runtime
+        self._runner_factory = runner_factory
         self._start_journal = start_journal or self._start_default_journal
         self._load_journal = load_journal or (lambda: get_switch_status(config_store))
         self._lock = asyncio.Lock()
@@ -185,7 +187,16 @@ class EmbeddingSwitchCoordinator:
         self.control = EmbeddingSwitchControl()
         if str(journal.phase) in (PHASE_FLIPPING, PHASE_ACTIVE, PHASE_GC):
             self.control.mark_flipping_started()
-        runner = self._runner_factory(self.config_store, self.db, self.control, self.fence)
+        if self._runner_factory is None:
+            runner = _default_runner_factory(
+                self.config_store,
+                self.db,
+                self.control,
+                self.fence,
+                self.config_runtime,
+            )
+        else:
+            runner = self._runner_factory(self.config_store, self.db, self.control, self.fence)
         run_id = str(journal.run_id)
         self._run_id = run_id
         task = asyncio.create_task(runner.run(journal))
@@ -235,5 +246,12 @@ def _default_runner_factory(
     db: Any,
     control: EmbeddingSwitchControl,
     fence: Any,
+    config_runtime: Any | None,
 ) -> SwitchRunner:
-    return EmbeddingSwitchRunner(config_store, db, control=control, fence=fence)
+    return EmbeddingSwitchRunner(
+        config_store,
+        db,
+        control=control,
+        fence=fence,
+        config_runtime=config_runtime,
+    )

@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
@@ -117,6 +117,7 @@ class RuntimeActiveBundle:
     _handles: MappingProxyType[str, PreparedSubscriber] = field(
         repr=False, compare=False, default_factory=lambda: MappingProxyType({})
     )
+    managed: MappingProxyType[str, object] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +156,7 @@ class ConfigRuntime:
         reconnect_backoff: float = 0.1,
         expected_secret_identity: str | None = None,
         secret_identity_verifier: Callable[[], str] | None = None,
+        managed_resolver: Callable[[StoredConfigSnapshot], Mapping[str, object]] | None = None,
     ) -> None:
         if db_workers <= 0 or constructor_workers <= 0:
             raise ValueError("Runtime lane worker counts must be positive")
@@ -183,6 +185,7 @@ class ConfigRuntime:
         self._reconnect_backoff = reconnect_backoff
         self._expected_secret_identity = expected_secret_identity
         self._secret_identity_verifier = secret_identity_verifier
+        self._managed_resolver = managed_resolver
         self._reconcile_lock = asyncio.Lock()
         self._max_requested_revision = -1
         self._bundle: RuntimeActiveBundle | None = None
@@ -238,11 +241,17 @@ class ConfigRuntime:
             stored, desired = await self._read_projection()
             if stored.revision < 0:
                 raise ConfigRuntimeError("Stored configuration revision must be non-negative")
-            snapshot, services, handles = await self._initialize(stored, desired)
+            snapshot, services, handles, managed = await self._initialize(stored, desired)
+            try:
+                await self._activate_many(handles, self._subscribers)
+            except BaseException:
+                await self._dispose_many(handles, self._subscribers)
+                raise
             self._bundle = RuntimeActiveBundle(
                 snapshot,
                 MappingProxyType(services),
                 MappingProxyType(handles),
+                managed,
             )
             self._max_requested_revision = stored.revision
             self._ready = True
@@ -292,6 +301,7 @@ class ConfigRuntime:
                     previous=bundle.snapshot,
                     desired=bundle.snapshot.desired,
                     _desired_bindings=bundle.snapshot._desired_bindings,
+                    managed=bundle.managed,
                 )
                 prepared, failure = await self._prepare_one(subscriber, change)
                 if self._max_requested_revision > bundle.snapshot.revision:
@@ -320,15 +330,28 @@ class ConfigRuntime:
                     snapshot,
                     MappingProxyType(services),
                     MappingProxyType(handles),
+                    bundle.managed,
                 )
+                if failure is None:
+                    assert prepared is not None
+                    await self._activate_many(
+                        {subscriber.name: prepared},
+                        (subscriber,),
+                    )
                 return snapshot
 
     async def _initialize(
         self,
         stored: StoredConfigSnapshot,
         desired: DaemonConfig,
-    ) -> tuple[ConfigSnapshot, dict[str, object], dict[str, PreparedSubscriber]]:
+    ) -> tuple[
+        ConfigSnapshot,
+        dict[str, object],
+        dict[str, PreparedSubscriber],
+        MappingProxyType[str, object],
+    ]:
         bindings = _runtime_bindings(stored.secret_bindings)
+        managed = self._resolve_managed(stored)
         desired_values = dict(stored.values)
         failures: dict[str, ApplyFailure] = {}
         services: dict[str, object] = {}
@@ -351,6 +374,7 @@ class ConfigRuntime:
             previous=None,
             desired=desired.model_copy(deep=True),
             _desired_bindings=bindings,
+            managed=managed,
         )
         for subscriber in self._subscribers:
             prepared, failure = await self._prepare_one(subscriber, change)
@@ -368,7 +392,7 @@ class ConfigRuntime:
             services[subscriber.name] = UnavailableService(apply_failure)
             for key in subscriber.keys:
                 failures[key] = apply_failure
-        return self._copy_snapshot(base, failed_live_keys=failures), services, handles
+        return self._copy_snapshot(base, failed_live_keys=failures), services, handles, managed
 
     async def _reconcile_locked(self, *, force: bool) -> ConfigSnapshot:
         while True:
@@ -385,6 +409,7 @@ class ConfigRuntime:
                 return current
             changed_keys = _changed_keys(current, stored)
             desired_bindings = _runtime_bindings(stored.secret_bindings)
+            managed = self._resolve_managed(stored)
             changed_live, _changed_restart = self._partition_changes(changed_keys)
             change = ConfigChange(
                 revision=stored.revision,
@@ -392,6 +417,7 @@ class ConfigRuntime:
                 previous=current,
                 desired=desired.model_copy(deep=True),
                 _desired_bindings=desired_bindings,
+                managed=managed,
             )
             prepared, failure = await self._prepare_matching(change)
             if self._max_requested_revision > stored.revision:
@@ -412,8 +438,11 @@ class ConfigRuntime:
                 snapshot,
                 MappingProxyType(services),
                 MappingProxyType(handles),
+                managed if failure is None else current_bundle.managed,
             )
             await self._dispose_replaced(old_handles)
+            if failure is None:
+                await self._activate_many(prepared, self._subscribers)
             if self._revision_publisher is not None:
                 await self._revision_publisher(snapshot.revision)
             force = False
@@ -647,12 +676,23 @@ class ConfigRuntime:
         for key in changed_keys:
             activation = self._registry.resolve(key).activation
             if activation is ActivationPolicy.MANAGED:
-                raise ConfigRuntimeError(f"Managed configuration key reached runtime: {key}")
+                if self._managed_resolver is None:
+                    raise ConfigRuntimeError(f"Managed configuration key reached runtime: {key}")
+                live.add(key)
+                continue
             if activation is ActivationPolicy.RESTART_REQUIRED:
                 restart.add(key)
             else:
                 live.add(key)
         return frozenset(live), frozenset(restart)
+
+    def _resolve_managed(
+        self,
+        stored: StoredConfigSnapshot,
+    ) -> MappingProxyType[str, object]:
+        if self._managed_resolver is None:
+            return MappingProxyType({})
+        return MappingProxyType(dict(self._managed_resolver(stored)))
 
     def _pending_restart_keys(
         self,
@@ -734,6 +774,30 @@ class ConfigRuntime:
         by_name = {subscriber.name: subscriber for subscriber in subscribers}
         for name, resource in handles.items():
             await self._dispose(resource, by_name[name])
+
+    async def _activate_many(
+        self,
+        handles: Mapping[str, PreparedSubscriber],
+        subscribers: Iterable[ConfigSubscriber],
+    ) -> None:
+        by_name = {subscriber.name: subscriber for subscriber in subscribers}
+        for name, resource in handles.items():
+            activate = getattr(resource, "activate", None)
+            if activate is None:
+                continue
+            activate_callback = cast(Callable[[], None], activate)
+
+            def activate_resource(
+                _activate: Callable[[], None] = activate_callback,
+                _resource: PreparedSubscriber = resource,
+            ) -> PreparedSubscriber:
+                _activate()
+                return _resource
+
+            await self._run_constructor(
+                activate_resource,
+                timeout=by_name[name].prepare_timeout,
+            )
 
     async def _dispose(
         self,

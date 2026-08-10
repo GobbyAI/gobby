@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from gobby.ai import (
     build_daemon_text_generation_service,
     build_daemon_tool_chat_service,
 )
+from gobby.ai.embedding_switch import CompletedSwitchRecord
 from gobby.ai.embeddings import EmbeddingService
-from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.embedding_keys import (
+    EMBEDDING_API_KEY_SECRET_NAME,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+)
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
@@ -23,6 +29,11 @@ from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationState,
+    EmbeddingServingLease,
+)
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
@@ -39,6 +50,9 @@ if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
+
+_EMBEDDING_LEASE_SECONDS = 30.0
+_EMBEDDING_LEASE_RENEW_SECONDS = 10.0
 
 
 def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
@@ -97,6 +111,42 @@ class MemoryServiceBundle:
         return self._memory_manager
 
 
+class _ManagedEmbeddingLease:
+    """Activate, renew, and fence one runtime bundle's serving lease."""
+
+    def __init__(
+        self,
+        lease: EmbeddingServingLease,
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        self.lease = lease
+        self.loop = loop
+        self.renewal: Future[None] | None = None
+
+    def activate(self) -> None:
+        self.lease.activate()
+        self.renewal = asyncio.run_coroutine_threadsafe(
+            _renew_embedding_lease(self.lease),
+            self.loop,
+        )
+
+    def dispose(self) -> None:
+        self.lease.fence()
+        if self.renewal is not None:
+            self.renewal.cancel()
+
+
+async def _renew_embedding_lease(lease: EmbeddingServingLease) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
+            await asyncio.to_thread(lease.renew)
+    except asyncio.CancelledError:
+        raise
+    except EmbeddingGenerationLeaseLost:
+        logger.error("Managed embedding generation lease was lost; serving fenced")
+
+
 def _init_stateful_dependencies(runner: GobbyRunner) -> None:
     from gobby.mcp_proxy.metrics import ToolMetricsManager
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
@@ -134,7 +184,13 @@ async def _register_stateful_services(runner: GobbyRunner) -> None:
         ServiceSubscriber(
             name="memory_services",
             keys=live_subscriber_keys("memory_services"),
-            builder=lambda change: _build_memory_services(runner, change.desired, loop),
+            builder=lambda change: _build_memory_services(
+                runner,
+                change.desired,
+                loop,
+                change.managed,
+                change.revision,
+            ),
         ),
         ServiceSubscriber(
             name="code_index",
@@ -190,6 +246,8 @@ def _build_memory_services(
     runner: GobbyRunner,
     config: DaemonConfig,
     loop: asyncio.AbstractEventLoop,
+    managed: Mapping[str, object],
+    revision: int,
 ) -> PreparedService:
     from gobby.mcp_proxy.semantic_search import SemanticToolSearch
     from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
@@ -197,10 +255,32 @@ def _build_memory_services(
     db_cfg = config.databases
     emb_cfg = config.embeddings
     api_key = _resolve_embedding_api_key(runner, emb_cfg)
+    generation_state = EmbeddingGenerationState(runner.database)
+    managed_record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if isinstance(managed_record, CompletedSwitchRecord):
+        generation = managed_record.run_id
+        serving_revision = managed_record.committed_revision
+        caught_up_watermark = managed_record.caught_up_watermark
+    else:
+        generation = f"config-revision:{revision}"
+        serving_revision = revision
+        caught_up_watermark = None
+    lease = generation_state.prepare_serving_lease(
+        UUID(runner.machine_id),
+        generation,
+        serving_revision,
+        lease_seconds=_EMBEDDING_LEASE_SECONDS,
+        caught_up_watermark=caught_up_watermark,
+        required_watermark=caught_up_watermark,
+    )
+    lease_handle = _ManagedEmbeddingLease(lease, loop)
     raw_vector_store = VectorStore(
         url=db_cfg.qdrant.url,
         api_key=db_cfg.qdrant.api_key,
+        collection_name=_managed_embedding_collection(managed, "memories"),
         embedding_dim=emb_cfg.dim,
+        generation_state=generation_state,
+        serving_guard=lease.assert_serving,
     )
     vector_store = cast(
         VectorStore,
@@ -258,9 +338,29 @@ def _build_memory_services(
         embedding_dim=emb_cfg.dim,
         api_base=emb_cfg.api_base,
         vector_store=vector_store,
+        collection_name=_managed_embedding_collection(managed, "tool_embeddings"),
     )
     bundle = MemoryServiceBundle(vector_store, memory_manager, backup, semantic_search)
-    return PreparedService(bundle, lambda: _dispose_async(loop, memory_manager.close))
+
+    def dispose() -> None:
+        lease_handle.dispose()
+        _dispose_async(loop, memory_manager.close)
+
+    return PreparedService(
+        bundle,
+        dispose,
+        lease_handle.activate,
+    )
+
+
+def _managed_embedding_collection(managed: Mapping[str, object], kind: str) -> str:
+    record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if not isinstance(record, CompletedSwitchRecord):
+        return kind
+    try:
+        return record.physical_names[kind]
+    except KeyError as exc:
+        raise RuntimeError(f"Managed embedding generation lacks collection {kind}") from exc
 
 
 def _build_code_index(runner: GobbyRunner, config: DaemonConfig) -> CodeIndexContext | None:

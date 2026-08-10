@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -16,13 +18,27 @@ from gobby.ai.embedding_switch import (
 )
 from gobby.config.app import load_config
 from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_SWITCH_JOURNAL_KEY,
 )
-from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
+from gobby.storage.config_mutations import ConfigValidationError
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.secrets import SecretStore
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _worktree_gdaemon() -> Iterator[None]:
+    patch = pytest.MonkeyPatch()
+    binary = Path.cwd() / "target" / "debug" / "gdaemon"
+    patch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: str(binary) if name == "gdaemon" else None,
+    )
+    yield
+    patch.undo()
 
 
 def test_internal_switch_journal_is_real_but_invisible_to_public_reads(
@@ -54,7 +70,7 @@ def test_live_journal_blocks_embedding_mutation_and_bulk_reset_preserves_it(
     store.set("rules.enforcement_enabled", False)
     store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
 
-    with pytest.raises(EmbeddingConfigMutationBlocked, match="run-1"):
+    with pytest.raises(ConfigValidationError, match="managed activation"):
         store.set(AI_EMBEDDING_MODEL_KEY, "new-model")
     assert store.delete_all() == 1
 
@@ -78,7 +94,7 @@ def test_lifecycle_owner_can_write_config_and_delete_journal_atomically(
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is None
 
 
-def test_bulk_delete_preserves_journal_and_embedding_secret_mutation_is_blocked(
+def test_bulk_delete_preserves_journal(
     temp_db: HubDatabase,
 ) -> None:
     class SecretStore:
@@ -95,14 +111,30 @@ def test_bulk_delete_preserves_journal_and_embedding_secret_mutation_is_blocked(
 
     assert store.delete_all_except(secrets, set()) == 1  # type: ignore[arg-type]
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
-    with pytest.raises(EmbeddingConfigMutationBlocked, match="run-1"):
-        store.set_named_secret(
-            secrets,  # type: ignore[arg-type]
-            EMBEDDING_API_KEY_SECRET_NAME,
-            "new-secret",
-            category="general",
-            description=None,
-        )
+
+
+def test_structural_keys_require_switch(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+
+    with pytest.raises(ConfigValidationError, match="managed"):
+        store.set(AI_EMBEDDING_MODEL_KEY, "text-embedding-3-large")
+
+
+def test_api_key_rotation_is_live(temp_db: HubDatabase, tmp_path: Path) -> None:
+    secrets = SecretStore(temp_db, gobby_home=tmp_path)
+    store = ConfigStore(temp_db, secret_store=secrets)
+    store.set_secret(AI_EMBEDDING_API_KEY_KEY, "first-key", secrets)
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
+    before = store.read_snapshot()
+
+    store.set_secret(AI_EMBEDDING_API_KEY_KEY, "rotated-key", secrets)
+
+    after = store.read_snapshot()
+    assert secrets.get(EMBEDDING_API_KEY_SECRET_NAME) == "rotated-key"
+    assert after.revision == before.revision + 1
+    assert before.secret_bindings[AI_EMBEDDING_API_KEY_KEY].plaintext == "first-key"
+    assert after.secret_bindings[AI_EMBEDDING_API_KEY_KEY].plaintext == "rotated-key"
+    assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) == {"run_id": "run-1"}
 
 
 def test_real_config_store_persists_phase_error_and_abort_cleanup_lifecycle(
@@ -139,7 +171,7 @@ def test_malformed_switch_journal_blocks_embedding_mutation(
         (json.dumps("{not json"), EMBEDDING_SWITCH_JOURNAL_KEY),
     )
 
-    with pytest.raises(EmbeddingConfigMutationBlocked, match="Malformed embedding switch journal"):
+    with pytest.raises(ConfigValidationError, match="managed activation"):
         store.set(AI_EMBEDDING_MODEL_KEY, "recovered-model")
 
     assert store.get(AI_EMBEDDING_MODEL_KEY) is None

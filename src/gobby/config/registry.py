@@ -25,6 +25,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_DIM_FIELD,
     EMBEDDING_MODEL_FIELD,
     EMBEDDING_QUERY_PREFIX_FIELD,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
     EMBEDDING_SWITCH_JOURNAL_KEY,
     RUNTIME_EMBEDDINGS_CONFIG_PREFIX,
     runtime_embedding_key,
@@ -711,6 +712,7 @@ def _supplemental_key_specs() -> tuple[ConfigKeySpec, ...]:
             ("auth.password_hash", str),
             ("auth.password", str),
             (EMBEDDING_SWITCH_JOURNAL_KEY, dict[str, object]),
+            (EMBEDDING_SWITCH_COMPLETED_KEY, dict[str, object]),
         )
     )
     return (*public, *machine, *restricted)
