@@ -1,6 +1,6 @@
 /**
  * Wiki envelope fixtures shaped from live captures:
- * - `gwiki pages/read/backlinks/ask/status/health --format json` against the
+ * - `gwiki pages/read/backlinks/status/health --format json` against the
  *   real vault (2026-07-10), wrapped in the daemon gateway envelope
  *   `{ok, command, payload, stderr}` from GwikiGateway._success_envelope.
  * - Graph subset shaped from `wiki/outputs/graph.json` (1,846 nodes in the
@@ -248,88 +248,6 @@ export const backlinksEnvelope: EnvelopeFixture = {
         raw_target: "knowledge/concepts/gobby|Gobby",
       },
     ],
-  },
-};
-
-/** Retrieval-only ask (live capture; `ai`/`synthesis` absent without --llm). */
-export const askRetrievalEnvelope: EnvelopeFixture = {
-  ok: true,
-  command: "ask",
-  stderr: "",
-  payload: {
-    command: "ask",
-    scope,
-    query: "how does the wiki watcher work",
-    status: "retrieved",
-    degraded: false,
-    degraded_sources: [],
-    hits: [
-      {
-        title: "Session: c1c0c073",
-        fusion_key:
-          "project:d45545c5:knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-        result_type: "wiki",
-        score: 0.03278688524590164,
-        snippet: "watcher debounce and poll intervals",
-        source_path: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-        wiki_page: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-        sources: ["bm25", "semantic"],
-        explanations: [
-          { rank: 1, score: 0.01639344262295082, source: "bm25" },
-          { rank: 1, score: 0.01639344262295082, source: "semantic" },
-        ],
-      },
-    ],
-    sources: ["bm25", "code/INDEX.md"],
-    code_citations: [
-      { file: "code/files/src/gobby/wiki/watcher.py.md", symbol: "src/gobby/wiki/watcher.py" },
-    ],
-    evidence: [
-      {
-        excerpt_chars: 2503,
-        source_path: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-        wiki_page: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-      },
-    ],
-    prompt_token_budget: 12000,
-    prompt_tokens_estimated: 4547,
-    truncated: false,
-    truncated_components: [],
-    warnings: [],
-    hint: null,
-  },
-};
-
-/**
- * Synthesized ask: retrieval payload plus `ai` + `synthesis`, shaped from the
- * representative output pinned in crates/gwiki/tests/cli_contract.rs.
- */
-export const askSynthesisEnvelope: EnvelopeFixture = {
-  ok: true,
-  command: "ask",
-  stderr: "",
-  payload: {
-    ...askRetrievalEnvelope.payload,
-    status: "answered",
-    warnings: ["semantic search degraded"],
-    ai: {
-      requested: true,
-      requested_mode: "auto",
-      route: "local",
-      status: "ok",
-      model: "test-model",
-      error: null,
-    },
-    synthesis: {
-      answer:
-        "The watcher polls [[knowledge/concepts/gobby|Gobby]] roots and debounces writes; see [[code/files/src/gobby/wiki/watcher.py]] for the loop.",
-      model: "test-model",
-      citation_check: {
-        status: "unsupported_claims",
-        checked_claims: 2,
-        unsupported_claims: ["The watcher restarts the daemon on every write."],
-      },
-    },
   },
 };
 

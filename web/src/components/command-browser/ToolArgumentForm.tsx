@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Input } from '../ui/Input'
+import { NativeSelect } from '../ui/NativeSelect'
+import { Textarea } from '../ui/Textarea'
 import { cn } from '../../lib/utils'
 
 interface ToolArgumentFormProps {
@@ -112,7 +114,7 @@ function FieldRow({
     return (
       <div>
         {label}
-        <select
+        <NativeSelect
           id={inputId}
           className={cn(
             'flex h-9 w-full rounded-md border border-border bg-transparent px-3 py-1 text-sm',
@@ -127,7 +129,7 @@ function FieldRow({
           {prop.enum.map((opt) => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
-        </select>
+        </NativeSelect>
         {help}
       </div>
     )
@@ -137,17 +139,21 @@ function FieldRow({
   if (prop.type === 'boolean') {
     return (
       <div>
-        <label className="flex items-center gap-2 text-sm font-medium text-foreground cursor-pointer">
-          <input
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+          <Input
+            id={inputId}
             type="checkbox"
+            wrapperClassName="w-auto shrink-0"
             checked={!!value}
             onChange={(e) => handleChange(e.target.checked)}
             disabled={disabled}
-            className="h-4 w-4 rounded border-border accent-accent"
+            className="h-4 w-4 shrink-0 rounded border-border p-0 accent-accent"
           />
-          {name}
-          {isRequired && <span className="text-destructive-foreground">*</span>}
-        </label>
+          <label htmlFor={inputId} className="cursor-pointer">
+            {name}
+            {isRequired && <span className="text-destructive-foreground">*</span>}
+          </label>
+        </div>
         {help}
       </div>
     )
@@ -181,7 +187,7 @@ function FieldRow({
     return (
       <div>
         {label}
-        <textarea
+        <Textarea
           id={inputId}
           className={cn(
             'flex w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono',

@@ -9,6 +9,8 @@ import {
 } from "react";
 
 import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 export interface QuickMenuAnchor {
   x: number;
@@ -239,10 +241,16 @@ export function QuickMenu({
   return (
     <>
       {!anchor && (
-        <button
+        <Button
           ref={triggerRef}
           type="button"
-          className="quick-menu-trigger"
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn(
+            "quick-menu-trigger size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] disabled:cursor-not-allowed disabled:opacity-[0.55] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+            coarseHitAreaCls,
+          )}
           aria-label={triggerLabel}
           title={triggerLabel}
           aria-haspopup="menu"
@@ -258,19 +266,19 @@ export function QuickMenu({
           }}
         >
           <KebabIcon />
-        </button>
+        </Button>
       )}
       {isOpen && (
         <>
           <div
-            className="session-ctx-backdrop"
+            className="session-ctx-backdrop fixed inset-0 z-[90]"
             role="presentation"
             tabIndex={-1}
             onClick={closeMenu}
           />
           <div
             ref={menuRef}
-            className="session-ctx-menu"
+            className="session-ctx-menu z-[91] min-w-[150px] rounded-md border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]"
             style={menuStyle}
             role="menu"
             aria-label={menuLabel}
@@ -279,18 +287,31 @@ export function QuickMenu({
           >
             {items.map((item, index) => {
               if (!isActionItem(item)) {
-                return <div key={`separator-${index}`} className="session-ctx-divider" role="separator" />;
+                return (
+                  <div
+                    key={`separator-${index}`}
+                    className="session-ctx-divider my-1 h-px bg-border"
+                    role="separator"
+                  />
+                );
               }
               const currentActionIndex = actionIndexFor(items, index);
               return (
-                <button
+                <Button
                   key={`${item.label}-${index}`}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
                   ref={(node) => {
                     if (node) itemRefs.current[currentActionIndex] = node;
                   }}
                   className={cn(
                     "session-ctx-item quick-menu-item",
-                    item.destructive && "session-ctx-item--destructive",
+                    "flex min-h-8 w-full items-center gap-2 border-0 bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:cursor-not-allowed disabled:opacity-[0.55] pointer-coarse:min-h-11",
+                    item.destructive &&
+                      "session-ctx-item--destructive text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]",
+                    coarseHitAreaCls,
                   )}
                   role="menuitem"
                   disabled={item.disabled}
@@ -301,12 +322,15 @@ export function QuickMenu({
                   }}
                 >
                   {(item.icon || item.destructive) && (
-                    <span className="quick-menu-item-icon" aria-hidden="true">
+                    <span
+                      className="quick-menu-item-icon inline-flex shrink-0"
+                      aria-hidden="true"
+                    >
                       {item.icon ?? <DestructiveIcon />}
                     </span>
                   )}
                   <span>{item.label}</span>
-                </button>
+                </Button>
               );
             })}
           </div>

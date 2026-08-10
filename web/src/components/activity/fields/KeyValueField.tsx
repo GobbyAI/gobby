@@ -1,6 +1,9 @@
 import { useState } from "react";
 
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Input } from "../../ui/Input";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 interface KeyValueFieldProps {
   label: string;
@@ -70,7 +73,7 @@ export function KeyValueField({
         )}
         {entries.map(([key, entryValue], index) => (
           <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
-            <input
+            <Input
               type="text"
               aria-label={`Key ${index + 1}`}
               className={inputClass}
@@ -78,7 +81,7 @@ export function KeyValueField({
               disabled={disabled}
               onChange={(event) => updateKey(index, event.target.value)}
             />
-            <input
+            <Input
               type="text"
               aria-label={`Value ${index + 1}`}
               className={inputClass}
@@ -86,20 +89,25 @@ export function KeyValueField({
               disabled={disabled}
               onChange={(event) => updateValue(index, event.target.value)}
             />
-            <button
+            <Button
               type="button"
-              className={iconButtonClass}
+              variant="secondary"
+              size="icon"
+              className={cn(iconButtonClass, coarseHitAreaCls)}
               aria-label={key ? `Remove ${key}` : `Remove row ${index + 1}`}
               disabled={disabled}
               onClick={() => removeRow(index)}
             >
               x
-            </button>
+            </Button>
           </div>
         ))}
-        <button
+        <Button
           type="button"
+          variant="secondary"
+          size="sm"
           className={cn(
+            coarseHitAreaCls,
             "inline-flex min-h-11 items-center justify-center self-start rounded-md",
             "border border-border px-3 text-sm font-medium text-foreground",
             "transition-colors hover:bg-muted focus-visible:outline-none",
@@ -111,7 +119,7 @@ export function KeyValueField({
           onClick={() => onChange({ ...value, "": "" })}
         >
           Add row
-        </button>
+        </Button>
       </div>
     </div>
   );

@@ -277,17 +277,22 @@ export const MessageList = memo(
 
     if (messages.length === 0 && !isThinking) {
       return (
-        <div className="chat-scaled flex-1 min-h-0 flex items-center justify-center">
-          <div className="chat-empty-state">
+        <div className="flex min-h-0 flex-1 items-center justify-center [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)]">
+          <div className="chat-empty-state flex flex-col items-center gap-3 text-center text-[var(--text-muted)]">
             {isLoadingMessages ? (
               <p className="text-sm animate-pulse">Loading messages...</p>
             ) : (
               <>
-                <div className="chat-empty-state__icon" aria-hidden="true">
+                <div
+                  className="chat-empty-state__icon inline-flex items-center justify-center opacity-[0.35]"
+                  aria-hidden="true"
+                >
                   <ChatEmptyIcon />
                 </div>
-                <div className="chat-empty-state__title">Chat</div>
-                <p className="chat-empty-state__copy">
+                <div className="chat-empty-state__title text-[length:var(--text-xl)] text-[var(--text-secondary)]">
+                  Chat
+                </div>
+                <p className="chat-empty-state__copy max-w-[26rem] text-[length:var(--text-base)] text-[var(--text-muted)]">
                   Start a conversation with Gobby
                 </p>
               </>
@@ -300,7 +305,7 @@ export const MessageList = memo(
     return (
       <Virtuoso
         ref={virtuosoRef}
-        className="chat-scaled flex-1 min-h-0 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+        className="min-h-0 flex-1 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
         data={messages}
         computeItemKey={(_, message) => message.id}
         itemContent={itemContent}

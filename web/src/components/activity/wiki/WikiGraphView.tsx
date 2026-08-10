@@ -20,6 +20,8 @@ import {
 } from "react";
 
 import { useResolvedTheme } from "../../../hooks/useResolvedTheme";
+import { Card } from "../../ui/Card";
+import { Input } from "../../ui/Input";
 import { SegmentedControl } from "../../ui/SegmentedControl";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DetailActionButton } from "../fields";
@@ -238,10 +240,10 @@ export function WikiGraphView({
   }, [scene]);
 
   const loadingSkeleton = (
-    <div
+    <Card
       role="status"
       aria-label="Loading graph"
-      className="m-4 h-40 animate-pulse rounded-lg border border-border bg-muted/30"
+      className="m-4 h-40 animate-pulse bg-muted/30"
     />
   );
 
@@ -281,7 +283,7 @@ export function WikiGraphView({
           ariaLabel="Graph scope"
           controlHeight="sm"
         />
-        <input
+        <Input
           aria-label="Search graph"
           value={searchText}
           onChange={(event) => {
@@ -290,21 +292,24 @@ export function WikiGraphView({
           }}
           placeholder="Search nodes…"
           spellCheck={false}
-          className="min-w-0 flex-1 basis-40 rounded-md border border-border bg-transparent px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground"
+          wrapperClassName="min-w-0 flex-1 basis-40"
+          className="h-7 px-2 text-xs"
         />
         {TOGGLES.map(({ key, label }) => (
-          <label
+          <div
             key={key}
             className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-muted-foreground"
           >
-            <input
+            <Input
+              id={`wiki-graph-${key}`}
               type="checkbox"
               checked={settings[key]}
               onChange={() => updateSettings({ [key]: !settings[key] })}
-              className="accent-[var(--accent)]"
+              wrapperClassName="w-auto shrink-0"
+              className="h-4 w-4 rounded-sm p-0 accent-[var(--accent)]"
             />
-            {label}
-          </label>
+            <label htmlFor={`wiki-graph-${key}`}>{label}</label>
+          </div>
         ))}
       </div>
 

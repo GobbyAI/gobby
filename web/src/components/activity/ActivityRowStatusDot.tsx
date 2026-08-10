@@ -1,5 +1,7 @@
 import { memo, type ReactNode, type SVGProps } from "react";
 
+import { cn } from "../../lib/utils";
+
 export type StatusKind =
   | "active"
   | "success"
@@ -169,11 +171,11 @@ function ActivityRowStatusDotImpl({
   const Icon = glyph ?? KIND_ICON[kind];
   return (
     <span
-      className={
-        pulse
-          ? "activity-row-status-dot activity-row-status-dot--pulse"
-          : "activity-row-status-dot"
-      }
+      className={cn(
+        "activity-row-status-dot inline-flex size-3 shrink-0 items-center justify-center leading-[0]",
+        pulse &&
+          "animate-[pulse_1.5s_ease-in-out_infinite] motion-reduce:animate-none",
+      )}
       style={{ color: KIND_TOKEN[kind] }}
       data-kind={kind}
       aria-label={label}

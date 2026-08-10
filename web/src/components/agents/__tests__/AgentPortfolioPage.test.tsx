@@ -16,6 +16,11 @@ describe('AgentPortfolioPage', () => {
     const refreshButton = screen.getByRole('button', { name: 'Refresh agents' })
     expect(refreshButton).toHaveTextContent('↻')
     expect(refreshButton).not.toHaveTextContent('\\u21BB')
+    expect(refreshButton).toHaveClass('relative')
+    for (const select of screen.getAllByRole('combobox')) {
+      expect(select.parentElement).toHaveClass('relative')
+    }
+    expect(screen.getByText('Agent Types').parentElement).toHaveClass('rounded-lg')
   })
 
   it('renders the escalated task metric once with danger styling', async () => {

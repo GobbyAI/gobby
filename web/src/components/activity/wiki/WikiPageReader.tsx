@@ -9,8 +9,11 @@ import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
 
 import { Anchor } from "../../chat/CodeBlockRenderers";
-import { MarkdownBody } from "../../shared/MarkdownBody";
+import { MarkdownBody, markdownBodyClassName } from "../../shared/MarkdownBody";
 import { MermaidBlock } from "../../shared/MermaidBlock";
+import { Button } from "../../ui/Button";
+import { Card } from "../../ui/Card";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { remarkWikilink } from "../../../lib/markdown/remarkWikilink";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
@@ -30,10 +33,6 @@ import {
 import type { WikiNav } from "./WikiTabState";
 
 const WIKILINK_PREFIX = "wikilink:";
-
-const ghostIconButton =
-  "rounded-md px-1.5 py-1 text-muted-foreground hover:bg-muted hover:text-foreground " +
-  "disabled:opacity-40 disabled:hover:bg-transparent";
 
 type ReadState =
   | { status: "loading" }
@@ -260,24 +259,28 @@ export function WikiPageReader({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-2">
-        <button
+        <Button
           type="button"
           aria-label="Back"
-          className={ghostIconButton}
+          variant="ghost"
+          size="icon"
+          className={coarseHitAreaCls}
           disabled={!nav.canBack}
           onClick={() => void nav.back()}
         >
           <Chevron direction="left" />
-        </button>
-        <button
+        </Button>
+        <Button
           type="button"
           aria-label="Forward"
-          className={ghostIconButton}
+          variant="ghost"
+          size="icon"
+          className={coarseHitAreaCls}
           disabled={!nav.canForward}
           onClick={() => void nav.forward()}
         >
           <Chevron direction="right" />
-        </button>
+        </Button>
         <nav aria-label="Breadcrumbs" className="flex min-w-0 items-center gap-1 px-1">
           {segments.map((segment, index) => {
             const isLeaf = index === segments.length - 1;
@@ -298,14 +301,16 @@ export function WikiPageReader({
         </nav>
         <div className="ml-auto flex items-center gap-1">
           {onToggleEdit && !readOnly ? (
-            <button
+            <Button
               type="button"
-              className={ghostIconButton}
+              variant="ghost"
+              size="sm"
+              className={coarseHitAreaCls}
               title="Edit page"
               onClick={onToggleEdit}
             >
               Edit
-            </button>
+            </Button>
           ) : null}
           <QuickMenu items={kebabItems} menuLabel="Page actions" triggerLabel="Page actions" />
         </div>
@@ -313,10 +318,10 @@ export function WikiPageReader({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {state.status === "loading" ? (
-          <div
+          <Card
             role="status"
             aria-label="Loading page"
-            className="mx-4 my-6 h-24 max-w-[70ch] animate-pulse rounded-lg border border-border bg-muted/30"
+            className="mx-4 my-6 h-24 max-w-[70ch] animate-pulse bg-muted/30"
           />
         ) : null}
 
@@ -330,13 +335,15 @@ export function WikiPageReader({
             body={`“${path}” has not been created yet.`}
             footer={
               onCreate && !readOnly ? (
-                <button
+                <Button
                   type="button"
-                  className="rounded-md border border-border px-2 py-1 text-xs text-foreground hover:bg-muted"
+                  variant="secondary"
+                  size="sm"
+                  className={coarseHitAreaCls}
                   onClick={() => onCreate(seedCreatePath(path))}
                 >
                   Create this page
-                </button>
+                </Button>
               ) : undefined
             }
           />
@@ -348,16 +355,18 @@ export function WikiPageReader({
             <ul className="mt-2 flex list-none flex-col gap-1">
               {detail.candidates.map((candidate) => (
                 <li key={candidate.path}>
-                  <button
+                  <Button
                     type="button"
-                    className="rounded-md border border-border px-2 py-1 text-left text-sm text-foreground hover:bg-muted"
+                    variant="secondary"
+                    size="sm"
+                    className={`${coarseHitAreaCls} justify-start text-left text-sm`}
                     onClick={() => void nav.openPage(candidate.path)}
                   >
                     <span>{candidate.title ?? candidate.path}</span>
                     <span className="ml-2 font-mono text-2xs text-muted-foreground">
                       {candidate.path}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -404,18 +413,22 @@ export function WikiPageReader({
               >
                 <span>“{missingTarget}” has not been created yet.</span>
                 {onCreate ? (
-                  <button
+                  <Button
                     type="button"
-                    className="rounded-md border border-border px-1.5 py-0.5 text-xs text-foreground hover:bg-muted"
+                    variant="secondary"
+                    size="sm"
+                    className={coarseHitAreaCls}
                     onClick={() => onCreate(seedCreatePath(missingTarget))}
                   >
                     Create this page
-                  </button>
+                  </Button>
                 ) : null}
               </p>
             ) : null}
 
-            <div className="message-content text-sm text-foreground">
+            <div
+              className={`message-content text-sm text-foreground ${markdownBodyClassName}`}
+            >
               <MarkdownBody
                 content={stripLeadingTitleHeading(detail.body, title)}
                 id={`wiki-${path}`}
@@ -432,9 +445,11 @@ export function WikiPageReader({
                 <ul className="mt-2 flex list-none flex-wrap gap-1.5">
                   {citations.map((citation) => (
                     <li key={citation.target}>
-                      <button
+                      <Button
                         type="button"
-                        className="rounded-md border border-border px-1.5 py-0.5 text-xs text-foreground hover:bg-muted"
+                        variant="secondary"
+                        size="sm"
+                        className={coarseHitAreaCls}
                         onClick={() => {
                           const resolved = resolveWikilinkTarget(nodeIndex, citation.target);
                           if (resolved) void nav.openPage(resolved);
@@ -442,7 +457,7 @@ export function WikiPageReader({
                         }}
                       >
                         {citation.label}
-                      </button>
+                      </Button>
                     </li>
                   ))}
                   {trustSources

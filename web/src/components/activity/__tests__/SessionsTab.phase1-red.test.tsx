@@ -75,8 +75,8 @@ describe('SessionsTab Phase 1 chip contract', () => {
 
     await waitFor(() => expect(screen.getByText('#201: Terminal Session')).toBeInTheDocument())
 
-    expect(screen.getByText('tmux')).toHaveClass('chip', 'chip--tmux')
-    expect(screen.getByText('SB')).toHaveClass('chip', 'chip--sandbox')
+    expect(screen.getByText('tmux')).toHaveClass('rounded-full', 'uppercase', 'font-mono')
+    expect(screen.getByText('SB')).toHaveClass('rounded-full', 'uppercase', 'font-mono')
   })
 
   it('shows LOCAL only for sessions marked as local', async () => {
@@ -115,7 +115,7 @@ describe('SessionsTab Phase 1 chip contract', () => {
     const localBadges = screen.getAllByText('LOCAL')
     expect(localBadges).toHaveLength(2)
     const localBadge = localBadges[0]
-    expect(localBadge).toHaveClass('chip', 'chip--local')
+    expect(localBadge).toHaveClass('rounded-full', 'uppercase', 'font-mono')
     expect(
       screen.getByText('#303: Legacy Local Session').closest('.session-entry')?.textContent,
     ).toContain('LOCAL')

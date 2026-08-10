@@ -14,3 +14,13 @@
     outline-offset: 2px;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  /* Voice feedback is otherwise continuous and can trigger vestibular symptoms;
+     suppress it decisively even when animation utilities win the cascade. */
+  .chat-input-primary-button[aria-pressed="true"],
+  .chat-input-voice-toggle[aria-busy="true"],
+  .voice-status-bar [data-voice-motion] {
+    animation: none !important;
+  }
+}

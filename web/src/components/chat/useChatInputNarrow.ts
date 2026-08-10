@@ -6,7 +6,7 @@ export function useChatInputNarrow(metaRef: RefObject<HTMLDivElement>): boolean 
   const [isNarrow, setIsNarrow] = useState(false)
 
   useEffect(() => {
-    const el = metaRef.current?.closest('.chat-column')
+    const el = metaRef.current?.closest('[data-chat-column]')
     if (!el) return
     setIsNarrow(el.getBoundingClientRect().width <= NARROW_WIDTH_THRESHOLD)
     if (typeof ResizeObserver === 'undefined') return

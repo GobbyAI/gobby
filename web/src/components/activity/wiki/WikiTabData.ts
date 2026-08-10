@@ -329,98 +329,6 @@ export function normalizeSearch(payload: unknown): WikiSearchResult {
   };
 }
 
-export interface WikiAskCitation {
-  target: string;
-  title: string;
-  resolvedPath: string | null;
-}
-
-export interface WikiCodeCitation {
-  file: string;
-  line: number | null;
-  symbol: string | null;
-}
-
-export interface WikiAskResult {
-  status: string;
-  degraded: boolean;
-  degradedSources: string[];
-  answer: string | null;
-  model: string | null;
-  citations: WikiAskCitation[];
-  groundingWarnings: string[];
-  hits: WikiSearchHit[];
-  codeCitations: WikiCodeCitation[];
-  warnings: string[];
-  hint: string | null;
-  aiStatus: string | null;
-  aiError: string | null;
-}
-
-const WIKILINK_PATTERN = /\[\[([^\][|]+?)(?:\|([^\][]+?))?\]\]/g;
-
-function citationsFromAnswer(
-  answer: string,
-  resolve?: (target: string) => string | null,
-): WikiAskCitation[] {
-  const citations: WikiAskCitation[] = [];
-  const seen = new Set<string>();
-  for (const match of answer.matchAll(WIKILINK_PATTERN)) {
-    const target = match[1].trim();
-    if (!target || seen.has(target)) continue;
-    seen.add(target);
-    const alias = match[2]?.trim();
-    citations.push({
-      target,
-      title: alias || pageTitleFromPath(target),
-      resolvedPath: resolve?.(target) ?? null,
-    });
-  }
-  return citations;
-}
-
-export function normalizeAskAnswer(
-  payload: unknown,
-  resolve?: (target: string) => string | null,
-): WikiAskResult {
-  const record = asRecord(payload);
-  const synthesis = asRecord(record.synthesis);
-  const ai = asRecord(record.ai);
-  const answer = fieldText(synthesis, "answer");
-
-  const groundingWarnings: string[] = [];
-  const citationCheck = asRecord(synthesis.citation_check);
-  for (const claim of fieldStringList(citationCheck, "unsupported_claims")) {
-    groundingWarnings.push(`Unsupported claim: ${claim}`);
-  }
-  const aiError = fieldText(ai, "error");
-  if (aiError) groundingWarnings.push(aiError);
-  groundingWarnings.push(...fieldStringList(record, "warnings"));
-
-  return {
-    status: fieldText(record, "status") ?? "unknown",
-    degraded: fieldBoolean(record, "degraded"),
-    degradedSources: fieldStringList(record, "degraded_sources"),
-    answer,
-    model: fieldText(synthesis, "model") ?? fieldText(ai, "model"),
-    citations: answer ? citationsFromAnswer(answer, resolve) : [],
-    groundingWarnings,
-    hits: asList(record.hits).map(normalizeSearchHit),
-    codeCitations: asList(record.code_citations).map((value) => {
-      const row = asRecord(value);
-      return {
-        file: fieldText(row, "file") ?? "",
-        line: fieldNumber(row, "line"),
-        symbol: fieldText(row, "symbol"),
-      };
-    }),
-    warnings: fieldStringList(record, "warnings"),
-    hint: fieldText(record, "hint"),
-    aiStatus: fieldText(ai, "status"),
-    aiError,
-  };
-}
-
 export interface WikiServiceState {
   name: string;
   configured: boolean;
@@ -545,24 +453,6 @@ export async function fetchSearch(
 ): Promise<WikiSearchResult> {
   const envelope = await readEnvelope(`/api/wiki/search${wikiQuery(scope, { query, limit })}`);
   return normalizeSearch(envelopePayload(envelope));
-}
-
-export interface WikiAskRequest {
-  query: string;
-  llm?: boolean;
-  signal?: AbortSignal;
-}
-
-export async function fetchAsk(
-  scope: WikiFetchScope,
-  request: WikiAskRequest,
-  resolve?: (target: string) => string | null,
-): Promise<WikiAskResult> {
-  const envelope = await readEnvelope(
-    `/api/wiki/ask${wikiQuery(scope, { query: request.query, llm: request.llm ? "true" : undefined })}`,
-    { signal: request.signal },
-  );
-  return normalizeAskAnswer(envelopePayload(envelope), resolve);
 }
 
 export type WikiPageWriteMode = "upsert" | "create" | "replace";

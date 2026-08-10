@@ -5,21 +5,75 @@ import { fileURLToPath } from 'node:url'
 import { compile } from '@tailwindcss/node'
 import postcss from 'postcss'
 import { buttonVariants } from '../components/ui/buttonVariants'
+import { coarseHitAreaCls } from '../components/ui/controlStyles'
 
 const targets = [
   'primary action',
   'queued-file remove',
   'code copy',
   'session actions',
+  'task row',
   'task actions',
   'task expand',
   'activity menu item',
   'filter option',
   'session role filter',
   'error dismiss',
+  'pipeline row',
 ] as const
 
 const srcRoot = dirname(dirname(fileURLToPath(import.meta.url)))
+
+const CHAT_INPUT_TOUCH_CANDIDATES = [
+  'h-[36px]',
+  'w-[36px]',
+  'pointer-coarse:h-11',
+  'pointer-coarse:w-11',
+] as const
+
+const ACTIVITY_MENU_TOUCH_CANDIDATES = [
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const SESSION_ACTION_TOUCH_CANDIDATES = [
+  'pointer-coarse:h-11',
+  'pointer-coarse:w-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_ACTION_TOUCH_CANDIDATES = [
+  'pointer-coarse:size-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_ROW_TOUCH_CANDIDATES = [
+  'w-full',
+  'min-h-[var(--activity-panel-row-height)]',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_EXPAND_TOUCH_CANDIDATES = [
+  'h-6',
+  'w-6',
+  'pointer-coarse:size-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_ERROR_DISMISS_TOUCH_CANDIDATES = [
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const ACTIVITY_TAB_TOUCH_CANDIDATES = [
+  'min-h-[var(--activity-panel-row-height)]',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
 
 async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
@@ -30,20 +84,18 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     'flex',
     'h-4',
     'w-4',
-    'h-[36px]',
-    'w-[36px]',
-    'pointer-coarse:h-11',
-    'pointer-coarse:w-11',
+    ...CHAT_INPUT_TOUCH_CANDIDATES,
+    ...ACTIVITY_MENU_TOUCH_CANDIDATES,
+    ...SESSION_ACTION_TOUCH_CANDIDATES,
+    ...TASK_ROW_TOUCH_CANDIDATES,
+    ...TASK_ACTION_TOUCH_CANDIDATES,
+    ...TASK_EXPAND_TOUCH_CANDIDATES,
+    ...TASK_ERROR_DISMISS_TOUCH_CANDIDATES,
+    ...ACTIVITY_TAB_TOUCH_CANDIDATES,
     'pointer-coarse:min-h-11',
     'pointer-coarse:min-w-11',
   ])
-  const cssSources = [
-    tailwindCss,
-    readFileSync(join(srcRoot, 'components/chat/styles/sessions-tab.css'), 'utf8'),
-    readFileSync(join(srcRoot, 'components/chat/styles/activity-panel.css'), 'utf8'),
-    readFileSync(join(srcRoot, 'components/tasks/task-execution.css'), 'utf8'),
-    readFileSync(join(srcRoot, 'components/activity/taskdetail/task-detail.css'), 'utf8'),
-  ]
+  const cssSources = [tailwindCss]
   const coarseRules: string[] = []
   let spacing: string | undefined
   for (const css of cssSources) {
@@ -134,6 +186,76 @@ async function emulateButtonStyles(candidates: readonly string[]): Promise<HTMLS
   return style
 }
 
+/**
+ * Compile the shared control hit-area recipe and split it into the parts the
+ * primitive contract cares about: base (unconditional) rules, coarse-pointer
+ * rules that target the host element itself, and the declarations of the
+ * coarse-pointer `::before` expansion. The pseudo declarations are re-homed
+ * onto a `.pseudo-probe` class so a real element can measure the box jsdom
+ * cannot compute for pseudo-elements.
+ */
+async function emulateHitAreaStyles(): Promise<{
+  style: HTMLStyleElement
+  coarseHostDeclarations: string[]
+}> {
+  const tailwind = await compile('@import "tailwindcss";', {
+    base: srcRoot,
+    onDependency() {},
+  })
+  const css = tailwind.build([...coarseHitAreaCls.split(/\s+/), 'h-9'])
+  const root = postcss.parse(css)
+  let spacing: string | undefined
+  root.walkDecls('--spacing', declaration => {
+    spacing ??= declaration.value
+  })
+
+  const baseRules: string[] = []
+  root.walkRules(rule => {
+    let conditional = false
+    for (
+      let parent: typeof rule.parent = rule.parent;
+      parent && parent.type !== 'root';
+      parent = parent.parent as typeof rule.parent
+    ) {
+      if (parent.type === 'atrule' && (parent as postcss.AtRule).name !== 'layer') {
+        conditional = true
+        break
+      }
+    }
+    if (conditional || rule.selector.includes('::before')) return
+    const declarations = (rule.nodes ?? [])
+      .filter(node => node.type === 'decl')
+      .map(String)
+      .join('; ')
+    if (declarations) baseRules.push(`${rule.selector} { ${declarations} }`)
+  })
+
+  const pseudoDeclarations: string[] = []
+  const coarseHostDeclarations: string[] = []
+  root.walkAtRules('media', atRule => {
+    if (!/pointer\s*:\s*coarse/.test(atRule.params)) return
+    atRule.walkRules(rule => {
+      const declarations = (rule.nodes ?? [])
+        .filter(node => node.type === 'decl')
+        .map(String)
+      if (rule.selector.includes('::before')) pseudoDeclarations.push(...declarations)
+      else coarseHostDeclarations.push(...declarations)
+    })
+  })
+
+  expect(spacing).toBeDefined()
+  expect(pseudoDeclarations.length).toBeGreaterThan(0)
+  document.documentElement.style.setProperty('--spacing', spacing!)
+  const style = document.createElement('style')
+  style.dataset.testCoarsePointer = 'true'
+  style.textContent = [
+    ...baseRules,
+    `.pseudo-probe { ${pseudoDeclarations.join('; ')} }`,
+  ].join('\n')
+  document.head.append(style)
+  return { style, coarseHostDeclarations }
+}
+
 function cssLengthToPixels(value: string): number {
   if (!value || value === 'auto') return 0
   const number = parseFloat(value)
@@ -163,18 +285,47 @@ describe('coarse-pointer touch targets', () => {
   })
 
   it('promotes compact chat and activity controls to at least 44px', async () => {
+    const pipelinesSource = readFileSync(
+      join(srcRoot, 'components/activity/PipelinesTab.tsx'),
+      'utf8',
+    )
+    expect(pipelinesSource).toContain('pointer-coarse:min-h-11')
+    expect(pipelinesSource).toContain('pointer-coarse:min-w-11')
+    const taskRowSource = readFileSync(
+      join(srcRoot, 'components/activity/TaskTreeRow.tsx'),
+      'utf8',
+    )
+    const taskDetailSource = readFileSync(
+      join(srcRoot, 'components/activity/TasksTabDetailPanel.tsx'),
+      'utf8',
+    )
+    for (const candidate of TASK_ROW_TOUCH_CANDIDATES) {
+      expect(taskRowSource).toContain(candidate)
+    }
+    for (const candidate of [
+      ...TASK_ACTION_TOUCH_CANDIDATES,
+      ...TASK_EXPAND_TOUCH_CANDIDATES,
+    ]) {
+      expect(taskRowSource).toContain(candidate)
+    }
+    for (const candidate of TASK_ERROR_DISMISS_TOUCH_CANDIDATES) {
+      expect(taskDetailSource).toContain(candidate)
+    }
+
     await emulateCoarsePointer()
     document.body.innerHTML = `
-      <button data-target="primary action" class="h-[36px] w-[36px] pointer-coarse:h-11 pointer-coarse:w-11">Send</button>
+      <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(' ')}">Send</button>
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
-      <button data-target="session actions" class="session-more-btn">⋮</button>
-      <button data-target="task actions" class="task-more-btn">⋮</button>
-      <button data-target="task expand" class="activity-task-row-toggle">›</button>
-      <button data-target="activity menu item" class="activity-panel-mobile-menu__item">Sessions</button>
+      <button data-target="session actions" class="session-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
+      <div data-target="task row" class="${TASK_ROW_TOUCH_CANDIDATES.join(' ')}">Task</div>
+      <button data-target="task actions" class="${TASK_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
+      <button data-target="task expand" class="${TASK_EXPAND_TOUCH_CANDIDATES.join(' ')}">›</button>
+      <button data-target="activity menu item" class="activity-panel-mobile-menu__item ${ACTIVITY_MENU_TOUCH_CANDIDATES.join(' ')}">Sessions</button>
       <label data-target="filter option" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Filter</label>
       <label data-target="session role filter" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Parent</label>
-      <button data-target="error dismiss" class="activity-task-detail-edit-error__dismiss">×</button>
+      <button data-target="error dismiss" class="${TASK_ERROR_DISMISS_TOUCH_CANDIDATES.join(' ')}">×</button>
+      <button data-target="pipeline row" class="${ACTIVITY_TAB_TOUCH_CANDIDATES.join(' ')}">Run</button>
     `
 
     for (const target of targets) {
@@ -184,6 +335,30 @@ describe('coarse-pointer touch targets', () => {
       expect(computedFloor(style, 'width'), `${target} width`).toBeGreaterThanOrEqual(44)
       expect(computedFloor(style, 'height'), `${target} height`).toBeGreaterThanOrEqual(44)
     }
+  })
+
+  it('expands control primitives to an invisible ≥44×44 coarse hit area', async () => {
+    await emulateHitAreaStyles()
+    document.body.innerHTML = '<span class="pseudo-probe"></span>'
+    const probe = getComputedStyle(document.querySelector('.pseudo-probe')!)
+    // The expansion overlays the control (absolute, centered) instead of
+    // growing it, and floors both axes at the 44px touch target.
+    expect(probe.position).toBe('absolute')
+    expect(computedFloor(probe, 'width')).toBeGreaterThanOrEqual(44)
+    expect(computedFloor(probe, 'height')).toBeGreaterThanOrEqual(44)
+  })
+
+  it('keeps the visible control box on the 36px ladder under coarse pointers', async () => {
+    const { coarseHostDeclarations } = await emulateHitAreaStyles()
+    // No coarse-pointer rule may size the host element itself — the whole
+    // point of the pseudo-element expansion is unchanged rendered visuals.
+    for (const declaration of coarseHostDeclarations) {
+      expect(declaration).not.toMatch(/(?:^|\s)(?:min-)?(?:width|height)\s*:/)
+    }
+    document.body.innerHTML = `<input class="${coarseHitAreaCls} h-9">`
+    const host = getComputedStyle(document.querySelector('input')!)
+    expect(computedFloor(host, 'height')).toBe(36)
+    expect(computedFloor(host, 'height')).toBeLessThan(44)
   })
 
   it('promotes every Button size to 44px on coarse pointers unless dense', async () => {

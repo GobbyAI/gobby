@@ -1,5 +1,7 @@
 import { memo, type ChangeEvent, type KeyboardEvent } from "react";
 
+import { Input } from "../ui/Input";
+
 interface ActivityPanelSearchProps {
   value: string;
   onChange: (value: string) => void;
@@ -28,9 +30,10 @@ function ActivityPanelSearchImpl({
       .replace(/^-+|-+$/g, "") || "activity-panel-search";
 
   return (
-    <input
+    <Input
       type="search"
-      className="activity-panel-search pointer-coarse:min-h-11"
+      wrapperClassName="min-w-0 flex-1"
+      className="activity-panel-search"
       value={value}
       name={inputName}
       autoComplete="off"

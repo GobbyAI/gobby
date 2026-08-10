@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { CodeBlockInner, type CodeProps } from '../chat/CodeBlockRenderers'
 import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 import { cn, resolveCssVar } from '../../lib/utils'
+import { Button } from '../ui/Button'
 
 // The only value import of mermaid lives inside loadMermaid() — the library
 // must stay a lazy chunk and never enter the main bundle. Type-only
@@ -111,12 +112,16 @@ function MermaidDiagram({ code, fallback }: { code: string; fallback: CodeProps 
         dangerouslySetInnerHTML={{ __html: state.svg }}
       />
       <div className="flex justify-end border-t border-border bg-muted/50 px-3 py-1">
-        <button
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          dense
           className="rounded px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
           onClick={() => setExpanded((value) => !value)}
         >
           {expanded ? 'Collapse' : 'Expand'}
-        </button>
+        </Button>
       </div>
     </div>
   )

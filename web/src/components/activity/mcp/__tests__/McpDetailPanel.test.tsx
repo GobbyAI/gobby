@@ -27,6 +27,20 @@ describe('McpDetailPanel', () => {
     )
 
     const callButton = screen.getByRole('button', { name: 'Call tool' })
+    const title = screen.getByText('demo.run')
+    expect(title).toHaveClass(
+      'truncate',
+      'text-[length:var(--text-base)]',
+      'font-[var(--font-weight-medium)]',
+    )
+    expect(title.parentElement).toHaveClass(
+      'min-h-[var(--activity-panel-bar-height)]',
+      'justify-between',
+    )
+    expect(callButton).not.toHaveClass('activity-panel-action-btn')
+    expect(callButton.querySelector('span')).toHaveClass(
+      '@max-[479px]/activity-panel:hidden',
+    )
     fireEvent.change(screen.getByRole('textbox', { name: 'payload' }), {
       target: { value: '{' },
     })

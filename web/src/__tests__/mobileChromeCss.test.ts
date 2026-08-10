@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import postcss, { type Root, type Rule } from 'postcss'
+import { compile } from '@tailwindcss/node'
+import postcss from 'postcss'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
@@ -21,28 +22,9 @@ function resolveWebPackageRoot(): string {
 
 let webPackageRoot: string | undefined
 
-interface CssParent {
-  type: string
-  name?: string
-  params?: string
-  parent?: CssParent
-}
-
 function readSource(rel: string): string {
   webPackageRoot ??= resolveWebPackageRoot()
   return readFileSync(join(webPackageRoot, rel), 'utf8')
-}
-
-function readCssSource(rel: string, seen = new Set<string>()): string {
-  if (seen.has(rel)) return ''
-  seen.add(rel)
-
-  const source = readSource(rel)
-  const baseDir = dirname(rel)
-  return source.replace(
-    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
-    (_statement: string, specifier: string) => readCssSource(join(baseDir, specifier), seen),
-  )
 }
 
 function importSpecifiers(source: string): string[] {
@@ -84,6 +66,12 @@ function expressionTextParts(expression: ts.Expression): string[] {
     return [
       ...expressionTextParts(expression.whenTrue),
       ...expressionTextParts(expression.whenFalse),
+    ]
+  }
+  if (ts.isBinaryExpression(expression)) {
+    return [
+      ...expressionTextParts(expression.left),
+      ...expressionTextParts(expression.right),
     ]
   }
   if (ts.isParenthesizedExpression(expression)) {
@@ -140,384 +128,513 @@ function expectStringAttribute(source: string, attrName: string, value: string):
   expect(jsxAttributeValues(source, attrName)).toContain(value)
 }
 
-function parseCss(rel: string): Root {
-  return postcss.parse(readCssSource(rel), { from: rel })
-}
+async function injectUtilityStyles(
+  candidates: readonly string[],
+  includeCoarsePointer = false,
+): Promise<HTMLStyleElement> {
+  const tailwind = await compile('@import "tailwindcss";', {
+    base: join(resolveWebPackageRoot(), 'src'),
+    onDependency() {},
+  })
+  const root = postcss.parse(tailwind.build([...new Set(candidates)]))
+  const rules: string[] = []
+  let spacing: string | undefined
 
-function hasMediaAncestor(rule: Rule, media: string): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'media') {
-      if (parent.params?.includes(media)) return true
-    }
-    parent = parent.parent
-  }
-  return false
-}
-
-function hasAnyMediaAncestor(rule: Rule): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule') return true
-    parent = parent.parent
-  }
-  return false
-}
-
-function hasContainerAncestor(rule: Rule, container: string): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'container') {
-      if (parent.params === container) return true
-    }
-    parent = parent.parent
-  }
-  return false
-}
-
-function findRule(root: Root, selector: string, media?: string): Rule {
-  let found: Rule | undefined
+  root.walkDecls('--spacing', declaration => {
+    spacing ??= declaration.value
+  })
   root.walkRules(rule => {
-    if (found) return
-    if (!rule.selectors.includes(selector)) return
-    const mediaMatches = media ? hasMediaAncestor(rule, media) : !hasAnyMediaAncestor(rule)
-    if (mediaMatches) found = rule
+    let conditional = false
+    for (
+      let parent = rule.parent;
+      parent && parent.type !== 'root';
+      parent = parent.parent
+    ) {
+      if (parent.type === 'atrule' && parent.name !== 'layer') conditional = true
+    }
+    if (conditional) return
+    const declarations = (rule.nodes ?? [])
+      .filter(node => node.type === 'decl')
+      .map(String)
+      .join('; ')
+    if (declarations) rules.push(`${rule.selector} { ${declarations} }`)
   })
-  expect(found, `Expected CSS rule ${selector}${media ? ` in ${media}` : ''}`).toBeDefined()
-  return found as Rule
-}
-
-function findContainerRule(root: Root, selector: string, container: string): Rule {
-  let found: Rule | undefined
-  root.walkRules(selector, rule => {
-    if (found) return
-    if (hasContainerAncestor(rule, container)) found = rule
-  })
-  expect(found, `Expected CSS rule ${selector} in @container ${container}`).toBeDefined()
-  return found as Rule
-}
-
-function expectDeclarations(
-  root: Root,
-  selector: string,
-  expected: Record<string, string>,
-  media?: string,
-): void {
-  const rule = findRule(root, selector, media)
-  const declarations = new Map<string, string>()
-  rule.walkDecls(declaration => {
-    declarations.set(declaration.prop, declaration.value)
-  })
-
-  for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property)).toBe(value)
+  if (includeCoarsePointer) {
+    root.walkAtRules('media', rule => {
+      if (!/pointer\s*:\s*coarse/.test(rule.params)) return
+      if (rule.parent?.type === 'rule') {
+        rules.push(rule.parent.clone({ nodes: rule.nodes }).toString())
+      } else {
+        for (const nestedRule of rule.nodes ?? []) rules.push(nestedRule.toString())
+      }
+    })
   }
+
+  expect(spacing).toBeDefined()
+  document.documentElement.style.setProperty('--spacing', spacing!)
+  const style = document.createElement('style')
+  style.textContent = rules.join('\n')
+  document.head.append(style)
+  return style
 }
 
-function expectNoDeclaration(root: Root, selector: string, property: string, media?: string): void {
-  const rule = findRule(root, selector, media)
-  const declarations = new Set<string>()
-  rule.walkDecls(declaration => {
-    declarations.add(declaration.prop)
-  })
+function cssLengthToPixels(value: string): number {
+  if (!value || value === 'auto') return 0
+  const number = Number.parseFloat(value)
+  if (value.endsWith('px')) return number
+  if (value.endsWith('rem')) return number * 16
 
-  expect(declarations.has(property)).toBe(false)
-}
-
-function expectContainerDeclarations(
-  root: Root,
-  selector: string,
-  container: string,
-  expected: Record<string, string>,
-): void {
-  const rule = findContainerRule(root, selector, container)
-  const declarations = new Map<string, string>()
-  rule.walkDecls(declaration => {
-    declarations.set(declaration.prop, declaration.value)
-  })
-
-  for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property)).toBe(value)
-  }
+  const spacingMultiple = value.match(
+    /^calc\(var\(--spacing\)\s*\*\s*([\d.]+)\)$/,
+  )?.[1]
+  if (!spacingMultiple) return 0
+  const spacing = getComputedStyle(document.documentElement).getPropertyValue('--spacing')
+  return cssLengthToPixels(spacing) * Number(spacingMultiple)
 }
 
 describe('mobile chrome CSS', () => {
-  it('owns Tailwind from the app global stylesheet and keeps chat variables alias-only', () => {
-    const globalStyles = readSource('src/styles/index.css')
-    const chatVariables = readSource('src/components/chat/styles/variables.css')
-    const chatVariableNames = Array.from(
-      chatVariables.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm),
-      match => match[1],
+  it('pins the final app style-bearing import order', () => {
+    const styleBearingImports = importSpecifiers(readSource('src/main.tsx')).filter(
+      specifier =>
+        specifier.startsWith('@fontsource-variable/') || specifier.endsWith('.css'),
     )
 
-    expect(globalStyles).toContain('@import "tailwindcss";')
-    expect(globalStyles).toContain('@config "../../tailwind.config.ts";')
-    expect(globalStyles).toContain('@import "./tailwind-theme.css";')
-    expect(chatVariables).not.toMatch(/tailwindcss|@config|@theme/)
-    expect(chatVariableNames).toEqual([
-      '--bg-code',
-      '--bg-muted',
-      '--border-color',
-      '--accent-color',
+    expect(styleBearingImports).toEqual([
+      '@fontsource-variable/geist',
+      '@fontsource-variable/jetbrains-mono',
+      './styles/index.css',
     ])
+
+    for (const sheet of [
+      'src/styles/app-shell.css',
+      'src/styles/segmented-control.css',
+      'src/styles/dropdown-caret.css',
+      'src/styles/settings-overlay.css',
+    ]) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
+    }
   })
 
-  it('loads the app shell stylesheet after the segmented control styles', () => {
-    const source = readSource('src/main.tsx')
-    const imports = importSpecifiers(source)
-    const segmentedControlIndex = imports.indexOf('./styles/segmented-control.css')
-    const appShellIndex = imports.indexOf('./styles/app-shell.css')
+  it('pins the final global stylesheet directive order', () => {
+    const directives = readSource('src/styles/index.css')
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
 
-    expect(segmentedControlIndex).toBeGreaterThanOrEqual(0)
-    expect(appShellIndex).toBeGreaterThanOrEqual(0)
-    expect(segmentedControlIndex).toBeLessThan(appShellIndex)
+    expect(directives).toEqual([
+      '@import "tailwindcss";',
+      '@config "../../tailwind.config.ts";',
+      '@import "./tailwind-theme.css";',
+      '@import "./tokens.css";',
+      '@import "./base.css";',
+      '@import "./markdown.css";',
+      '@import "./accessibility.css";',
+    ])
+
+    const chatRoot = join(resolveWebPackageRoot(), 'src/components/chat')
+
+    for (const retiredSheet of ['styles.css', 'styles/layout.css', 'styles/variables.css']) {
+      expect(existsSync(join(chatRoot, retiredSheet))).toBe(false)
+    }
   })
 
-  it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', () => {
+  it('keeps settings overlay geometry and coarse input floors pixel-neutral', async () => {
+    const overlaySource = readSource('src/components/settings/SettingsOverlay.tsx')
+    const appearanceSource = readSource(
+      'src/components/settings/sections/AppearanceSection.tsx',
+    )
+    const hubsSource = readSource('src/components/settings/sections/McpToolsSection.tsx')
+    const approvalsSource = readSource(
+      'src/components/settings/sections/ToolApprovalsSection.tsx',
+    )
+    const themeSource = readSource('src/styles/tailwind-theme.css')
+
+    for (const token of [
+      '[--control-row-height:var(--status-bar-control-height)]',
+      '[@media(max-width:768px)]:p-0',
+      '[@media(max-width:768px)]:h-full',
+      '[@media(max-width:768px)]:w-full',
+      '[@media(max-width:768px)]:rounded-none',
+      '[@media(max-width:768px)]:border-0',
+      'animate-settings-overlay-fade',
+      'animate-settings-overlay-rise',
+      'aria-expanded:[&_svg]:text-accent',
+    ]) {
+      expectClassToken(overlaySource, token)
+    }
+    expect(overlaySource).not.toContain(
+      'pointer-coarse:[--control-row-height:2.75rem]',
+    )
+    expect(themeSource).toContain(
+      '--animate-settings-overlay-fade: settings-overlay-fade 0.15s ease-out',
+    )
+    expect(themeSource).toContain(
+      '--animate-settings-overlay-rise: settings-overlay-rise 0.18s ease-out',
+    )
+    expectClassToken(appearanceSource, 'pointer-coarse:min-h-11')
+    expectClassToken(hubsSource, 'pointer-coarse:min-h-11')
+    expectClassToken(approvalsSource, 'pointer-coarse:min-h-11')
+
+    const inputTokens = ['h-9', 'pointer-coarse:min-h-11'] as const
+    const rangeTokens = ['h-auto', 'pointer-coarse:min-h-11'] as const
+    document.body.innerHTML = `
+      <input data-settings-input class="${inputTokens.join(' ')}" />
+      <input data-font-range type="range" class="${rangeTokens.join(' ')}" />
+    `
+    const style = await injectUtilityStyles([...inputTokens, ...rangeTokens], true)
+    const inputStyle = getComputedStyle(
+      document.querySelector('[data-settings-input]')!,
+    )
+    const rangeStyle = getComputedStyle(document.querySelector('[data-font-range]')!)
+    expect(cssLengthToPixels(inputStyle.minHeight)).toBe(44)
+    expect(cssLengthToPixels(rangeStyle.minHeight)).toBe(44)
+
+    style.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
+  })
+
+  it('retires the small activity tab sheets and every owner import', () => {
+    const retiredSheets = [
+      'src/components/activity/skills/SkillsTab.css',
+      'src/components/chat/styles/cron-tab.css',
+      'src/components/chat/styles/files-tab.css',
+      'src/components/chat/styles/mcp-tab.css',
+      'src/components/chat/styles/pipelines-tab.css',
+      'src/components/chat/styles/rules-tab.css',
+      'src/components/chat/styles/traces-tab.css',
+    ] as const
+    const retiredImports = [
+      ['src/components/activity/ActivityMcpTab.tsx', '../chat/styles/mcp-tab.css'],
+      ['src/components/activity/RulesTab.tsx', '../chat/styles/rules-tab.css'],
+      ['src/components/activity/FilesTab.tsx', '../chat/styles/files-tab.css'],
+      ['src/components/activity/CronTab.tsx', '../chat/styles/cron-tab.css'],
+      ['src/components/activity/TracesTab.tsx', '../chat/styles/traces-tab.css'],
+      ['src/components/activity/PipelinesTab.tsx', '../chat/styles/pipelines-tab.css'],
+      ['src/components/activity/SkillsTab.tsx', '../chat/styles/rules-tab.css'],
+      ['src/components/activity/SkillsTab.tsx', './skills/SkillsTab.css'],
+      [
+        'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+        '../../chat/styles/rules-tab.css',
+      ],
+    ] as const
+
+    for (const sheet of retiredSheets) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
+    }
+    for (const [owner, stylesheet] of retiredImports) {
+      expect(importSpecifiers(readSource(owner))).not.toContain(stylesheet)
+    }
+
+    const chatPageImports = importSpecifiers(readSource('src/components/chat/ChatPage.tsx'))
+    expect(chatPageImports).not.toContain('./styles.css')
+  })
+
+  it('retires the activity panel and sessions sheets in favor of component utilities', () => {
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
+    const sessionsTabSource = readSource('src/components/activity/SessionsTab.tsx')
+
+    for (const sheet of ['activity-panel.css', 'sessions-tab.css']) {
+      expect(
+        existsSync(join(resolveWebPackageRoot(), 'src/components/chat/styles', sheet)),
+      ).toBe(false)
+    }
+    expect(importSpecifiers(activityPanelSource)).not.toContain(
+      '../chat/styles/activity-panel.css',
+    )
+    expect(importSpecifiers(sessionsTabSource)).not.toContain(
+      '../chat/styles/sessions-tab.css',
+    )
+  })
+
+  it('retires the task execution and detail sheets with their owner imports', () => {
+    for (const sheet of [
+      'src/components/tasks/task-execution.css',
+      'src/components/activity/taskdetail/task-detail.css',
+    ]) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
+    }
+
+    expect(
+      importSpecifiers(readSource('src/components/tasks/TaskBadges.tsx')),
+    ).not.toContain('./task-execution.css')
+    expect(
+      importSpecifiers(readSource('src/components/activity/TasksTabDetailPanel.tsx')),
+    ).not.toContain('./taskdetail/task-detail.css')
+  })
+
+  it('retires the chat input stylesheet family in favor of component utilities', () => {
+    const retiredSheets = [
+      'input-base.css',
+      'input-composer.css',
+      'input-voice.css',
+      'input-responsive.css',
+      'input-status.css',
+      'input.css',
+    ]
+
+    for (const sheet of retiredSheets) {
+      expect(existsSync(join(resolveWebPackageRoot(), 'src/components/chat/styles', sheet))).toBe(
+        false,
+      )
+    }
+  })
+
+  it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', async () => {
     const appSource = readSource('src/App.tsx')
     const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')
-    const segmentedControlCss = parseCss('src/styles/segmented-control.css')
-    const shellCss = parseCss('src/styles/app-shell.css')
+    const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const themeToggleSource = readSource('src/components/ThemeToggle.tsx')
+    const activityActionsSource = readSource('src/components/activity/ActivityActionsContext.tsx')
 
-    expectClassToken(appSource, 'app-header')
-    expectClassToken(appSource, 'app-brand')
+    for (const token of [
+      'relative',
+      'z-[100]',
+      'justify-between',
+      'gap-3',
+      'border-b',
+      'border-border',
+      'px-4',
+      'py-3',
+      '[@media(max-width:768px)]:gap-2',
+      '[@media(max-width:768px)]:px-3',
+      '[@media(max-width:768px)]:py-2.5',
+      '[@media(max-width:768px)]:text-[length:var(--text-2xl)]',
+      '[--control-row-height:var(--status-bar-control-height)]',
+      'pointer-coarse:[--control-row-height:2.75rem]',
+      'flex-nowrap',
+      'pointer-coarse:min-w-11',
+      '[--app-brand-logo-size:2.75rem]',
+      '[@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]',
+    ]) {
+      expectClassToken(appSource, token)
+    }
     expectStringAttribute(appSource, 'aria-label', 'Log out')
-    expectClassToken(appSource, 'app-logout-btn')
-    expectClassToken(appSource, 'app-brand-logo')
-    expectClassToken(appSource, 'app-brand-title')
-    expectClassToken(appSource, 'app-header-actions')
-    expectClassToken(appSource, 'app-health-badge')
-    expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
+    expectStringAttribute(appSource, 'size', 'var(--app-brand-logo-size)')
+    for (const hook of [
+      'app-header',
+      'app-brand',
+      'app-brand-logo',
+      'app-brand-title',
+      'app-header-actions',
+      'app-health-badge',
+      'app-settings-cog',
+      'app-logout-btn',
+    ]) {
+      expectNoClassToken(appSource, hook)
+    }
 
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions .project-selector-segmented-wrap',
-      { display: 'none' },
-      '(max-width: 430px)',
+    expectStringAttribute(themeToggleSource, 'size', 'icon')
+    expectClassToken(themeToggleSource, 'shrink-0')
+    expectClassToken(themeToggleSource, 'pointer-coarse:min-w-11')
+    expectNoClassToken(themeToggleSource, 'app-theme-toggle')
+
+    for (const token of [
+      'relative',
+      'min-w-0',
+      'mobile:w-25',
+      'mobile:hidden',
+      'hidden',
+      'h-[var(--control-row-height)]',
+      'min-h-[var(--control-row-height)]',
+      'mobile:inline-flex',
+      'w-full',
+      'py-0',
+      '[font-family:inherit]',
+      'overflow-hidden',
+      'text-ellipsis',
+      'whitespace-nowrap',
+    ]) {
+      expectClassToken(projectSelectorSource, token)
+    }
+    expect(projectSelectorSource).not.toContain('coarseTouchTarget={false}')
+    for (const hook of [
+      'project-selector',
+      'project-selector-segmented-wrap',
+      'project-selector-compact-wrap',
+      'project-selector-compact-trigger',
+      'project-selector-compact-label',
+    ]) {
+      expectNoClassToken(projectSelectorSource, hook)
+    }
+    for (const token of [
+      '[--segmented-option-px:0.75rem]',
+      'text-[length:var(--text-base)]',
+      'mobile:[--segmented-option-px:0.55rem]',
+      'mobile:text-[length:var(--text-sm)]',
+      'px-[var(--segmented-option-px)]',
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    ]) {
+      expectClassToken(segmentedControlSource, token)
+    }
+    expect(segmentedControlSource).toContain(
+      "controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'",
     )
-    expectDeclarations(
-      shellCss,
-      '.project-selector-compact-wrap',
-      { display: 'inline-flex' },
-      '(max-width: 430px)',
+    expect(segmentedControlSource).toContain('style={{ height: heightVar }}')
+    expect(activityActionsSource).toContain(
+      '@max-[479px]/activity-panel:[&>.segmented-control__option]:[--segmented-option-px:0.5rem]',
     )
-    expectDeclarations(shellCss, '.project-selector-compact-trigger', {
-      background: 'var(--accent-tint)',
-      color: 'var(--accent)',
-    })
-    expectDeclarations(shellCss, '.project-selector-compact-wrap', {
-      height: 'var(--control-row-height)',
-      'min-height': 'var(--control-row-height)',
-    })
-    expectDeclarations(segmentedControlCss, '.segmented-control', {
-      'font-size': 'var(--text-base)',
-    })
-    expectDeclarations(segmentedControlCss, '.segmented-control__option', {
-      'padding-inline': '0.75rem',
-    })
-    expectDeclarations(shellCss, '.app-header-actions', {
-      '--control-row-height': 'var(--status-bar-control-height)',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions',
-      { '--control-row-height': '2.75rem' },
-      '(pointer: coarse)',
+    const denseIconTokens = ['min-h-8', 'w-8', 'pointer-coarse:min-w-11'] as const
+    document.body.innerHTML = `<button data-dense-header-icon class="${denseIconTokens.join(' ')}"></button>`
+    const style = await injectUtilityStyles(denseIconTokens, true)
+    const denseIconStyle = getComputedStyle(
+      document.querySelector('[data-dense-header-icon]')!,
     )
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions .app-theme-toggle',
-      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions .segmented-control__option',
-      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
-    expectDeclarations(
-      shellCss,
-      '.app-brand-title',
-      { 'font-size': 'var(--text-2xl)' },
-      '(max-width: 768px)',
-    )
+    expect(cssLengthToPixels(denseIconStyle.width)).toBe(32)
+    expect(cssLengthToPixels(denseIconStyle.minWidth)).toBe(44)
+    expect(cssLengthToPixels(denseIconStyle.minHeight)).toBe(32)
+
+    style.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
+  })
+
+  it('keeps segmented-control and dropdown-caret computed geometry pixel-neutral', async () => {
+    const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const dropdownCaretSource = readSource('src/components/ui/DropdownCaret.tsx')
+    const rootTokens = [
+      'inline-flex',
+      '[--segmented-option-px:0.75rem]',
+      'text-[length:var(--text-base)]',
+      'pointer-coarse:min-h-11',
+    ] as const
+    const optionTokens = [
+      'px-[var(--segmented-option-px)]',
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    ] as const
+    const caretTokens = ['inline-flex', 'items-center', 'justify-center', 'shrink-0', 'opacity-70']
+
+    for (const token of [...rootTokens, ...optionTokens]) {
+      expectClassToken(segmentedControlSource, token)
+    }
+    for (const token of [...caretTokens, 'size-3']) {
+      expectClassToken(dropdownCaretSource, token)
+    }
+
+    document.body.innerHTML = `
+      <div data-segmented-root class="${rootTokens.join(' ')}">
+        <button data-segmented-option class="${optionTokens.join(' ')}">One</button>
+      </div>
+      <span data-caret class="${caretTokens.join(' ')}"><svg class="size-3"></svg></span>
+    `
+    const candidates = [...rootTokens, ...optionTokens, ...caretTokens, 'size-3']
+    const fineStyle = await injectUtilityStyles(candidates)
+    const rootStyle = getComputedStyle(document.querySelector('[data-segmented-root]')!)
+    const optionStyle = getComputedStyle(document.querySelector('[data-segmented-option]')!)
+    const caretStyle = getComputedStyle(document.querySelector('[data-caret]')!)
+    const caretSvgStyle = getComputedStyle(document.querySelector('[data-caret] svg')!)
+
+    expect(rootStyle.getPropertyValue('--segmented-option-px').trim()).toBe('0.75rem')
+    expect(rootStyle.fontSize).toBe('var(--text-base)')
+    expect(optionStyle.paddingInline).toBe('var(--segmented-option-px)')
+    expect(cssLengthToPixels(optionStyle.minWidth)).toBe(0)
+    expect(cssLengthToPixels(optionStyle.minHeight)).toBe(0)
+    expect(caretStyle.display).toBe('inline-flex')
+    expect(caretStyle.alignItems).toBe('center')
+    expect(caretStyle.justifyContent).toBe('center')
+    expect(caretStyle.flexShrink).toBe('0')
+    const caretOpacity = Number.parseFloat(caretStyle.opacity)
+    expect(caretStyle.opacity.endsWith('%') ? caretOpacity / 100 : caretOpacity).toBe(0.7)
+    expect(cssLengthToPixels(caretSvgStyle.width)).toBe(12)
+    expect(cssLengthToPixels(caretSvgStyle.height)).toBe(12)
+
+    fineStyle.remove()
+    const coarseStyle = await injectUtilityStyles(candidates, true)
+    const coarseRoot = getComputedStyle(document.querySelector('[data-segmented-root]')!)
+    const coarseOption = getComputedStyle(document.querySelector('[data-segmented-option]')!)
+    expect(cssLengthToPixels(coarseRoot.minHeight)).toBeGreaterThanOrEqual(44)
+    expect(cssLengthToPixels(coarseOption.minWidth)).toBeGreaterThanOrEqual(44)
+    expect(cssLengthToPixels(coarseOption.minHeight)).toBeGreaterThanOrEqual(44)
+
+    coarseStyle.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
   })
 
   it('keeps activity panel filter toolbars to one compact row', () => {
-    const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
-    const sessionsCss = parseCss('src/components/chat/styles/sessions-tab.css')
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
+    const quickMenuSource = readSource('src/components/activity/QuickMenu.tsx')
 
-    expect(findRule(activityCss, '.activity-panel-toolbar').selector).toBe(
-      '.activity-panel-toolbar',
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-toolbar]:[--control-row-height-sm:var(--status-bar-control-height)]',
     )
-    expectDeclarations(activityCss, '.activity-panel-toolbar', {
-      '--control-row-height-sm': 'var(--status-bar-control-height)',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(activityCss, '.activity-panel-search', {
-      flex: '1 1 9rem',
-      'min-width': '0',
-      'min-height': 'var(--control-row-height-sm)',
-    })
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-search',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain('[&_.activity-panel-toolbar]:flex-nowrap')
+    expect(activityPanelSource).toContain('[&_.activity-panel-search]:flex-[1_1_9rem]')
+    expect(activityPanelSource).toContain('[&_.activity-panel-search]:min-w-0')
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search]:min-h-[var(--control-row-height-sm)]',
     )
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-mobile-trigger',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain(
+      'pointer-coarse:[&_.activity-panel-search]:min-h-11',
     )
-    expectDeclarations(
-      activityCss,
-      '.activity-filter-dropdown__item',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain('mobile:min-h-11')
+    expect(activityPanelSource).toContain(
+      'pointer-coarse:[&_.activity-filter-dropdown__item]:min-h-11',
     )
-    expectDeclarations(
-      sessionsCss,
-      '.quick-menu-item',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
+    expect(quickMenuSource).toContain('pointer-coarse:min-h-11')
   })
 
   it('shows an accent focus-visible ring on activity panel search inputs', () => {
-    const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
-    const focusOutlines: string[] = []
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
 
-    findRule(activityCss, '.activity-panel-search:focus').walkDecls('outline', declaration => {
-      focusOutlines.push(declaration.value)
-    })
-
-    expect(focusOutlines).toEqual([])
-    expectDeclarations(activityCss, '.activity-panel-search:focus-visible', {
-      outline: '2px solid var(--accent)',
-      'outline-offset': '1px',
-    })
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-2',
+    )
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-accent',
+    )
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-offset-1',
+    )
   })
 
   it('keeps the minimum-width chat status bar to one row', () => {
-    const inputCss = parseCss('src/components/chat/styles/input.css')
-    const narrowChatColumn = 'chat-column (max-width: 360px)'
+    const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
-    expect(
-      findContainerRule(inputCss, '.agent-status-bar__summary', narrowChatColumn).selector,
-    ).toBe('.agent-status-bar__summary')
-    expectContainerDeclarations(inputCss, '.agent-status-bar__summary', narrowChatColumn, {
-      'flex-wrap': 'nowrap',
-    })
-    expectContainerDeclarations(inputCss, '.chat-session-status', narrowChatColumn, {
-      'flex-wrap': 'nowrap',
-    })
-    expectContainerDeclarations(inputCss, '.chat-session-status__state', narrowChatColumn, {
-      display: 'none',
-    })
+    expect(statusBarSource).toContain('@max-[360px]/chat-column:flex-nowrap')
+    expect(statusBarSource).toContain('@max-[360px]/chat-column:hidden')
   })
 
   it('right-aligns command and status bar action slots', () => {
-    const layoutCss = parseCss('src/components/chat/styles/layout.css')
-    const inputCss = parseCss('src/components/chat/styles/input.css')
+    const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
+    const mainColumnSource = readSource('src/components/chat/ChatMainColumn.tsx')
+    const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
-    expect(findRule(layoutCss, '.command-bar').selector).toBe('.command-bar')
-    expectDeclarations(layoutCss, '.command-bar', {
-      padding: '0 0.75rem',
-    })
-    expectDeclarations(inputCss, '.agent-status-bar', {
-      padding: '0 0.75rem',
-    })
-    expectContainerDeclarations(inputCss, '.command-bar', 'chat-column (max-width: 360px)', {
-      'padding-inline': '0.75rem 0.5rem',
-    })
-    expectContainerDeclarations(inputCss, '.agent-status-bar', 'chat-column (max-width: 360px)', {
-      'padding-inline': '0.75rem 0.5rem',
-    })
+    expectClassToken(commandBarSource, 'px-3')
+    expectClassToken(statusBarSource, 'px-3')
+    expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pl-3')
+    expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pr-2')
   })
 
   it('keeps the minimum-width chat input toolbar controls to one row', () => {
-    const inputCss = parseCss('src/components/chat/styles/input.css')
     const chatInputSource = readSource('src/components/chat/ChatInput.tsx')
+    const toolbarSource = readSource('src/components/chat/ChatInputToolbar.tsx')
+    const voiceControlsSource = readSource('src/components/chat/ChatInputVoiceControls.tsx')
+    const mainColumnSource = readSource('src/components/chat/ChatMainColumn.tsx')
+    const narrowHookSource = readSource('src/components/chat/useChatInputNarrow.ts')
     const modeSelectorSource = readSource('src/components/chat/ModeSelector.tsx')
     const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
     const agentIndicatorSource = readSource('src/components/chat/ActiveAgentIndicator.tsx')
-    const narrowChatColumn = 'chat-column (max-width: 360px)'
 
     expectClassToken(chatInputSource, 'chat-input-footer')
     expectClassToken(chatInputSource, 'py-3')
-    expectNoClassToken(chatInputSource, 'px-4')
     expectNoClassToken(segmentedControlSource, 'px-2')
     expectNoClassToken(segmentedControlSource, 'px-3')
     expect(modeSelectorSource).toContain('controlHeight="sm"')
     expect(modeSelectorSource).toContain('coarseTouchTarget={false}')
     expectClassToken(agentIndicatorSource, 'chat-input-agent-button')
     expectClassToken(agentIndicatorSource, 'rounded')
-    expectNoClassToken(agentIndicatorSource, 'p-1.5')
-    expectDeclarations(inputCss, '.chat-input-footer', {
-      'padding-inline': '1rem',
-    })
-    expectDeclarations(inputCss, '.chat-input-toolbar', {
-      '--control-row-height-sm': 'var(--status-bar-control-height)',
-    })
-    expectNoDeclaration(inputCss, '.chat-input-toolbar', 'padding-right')
-    expectContainerDeclarations(inputCss, '.chat-input-toolbar__left', narrowChatColumn, {
-      gap: '0.25rem',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(inputCss, '.chat-input-voice-mic', {
-      gap: '0.25rem',
-    })
-    expectDeclarations(inputCss, '.chat-input-agent-button', {
-      display: 'inline-flex',
-      width: '2.25rem',
-      height: '2.25rem',
-      padding: '0.375rem',
-    })
-    expectContainerDeclarations(
-      inputCss,
-      '.chat-input-toolbar__left .segmented-control__option',
-      narrowChatColumn,
-      { 'padding-inline': '0.375rem' },
-    )
-    expectContainerDeclarations(inputCss, '.chat-input-footer', narrowChatColumn, {
-      'padding-inline': '0.75rem 0.5rem',
-    })
-  })
-
-  it('promotes sidebar tabs to 44px touch targets for coarse pointers', () => {
-    const sidebarCss = parseCss('src/components/shared/SidebarPanel.css')
-
-    expect(
-      findRule(sidebarCss, '.sidebar-tab', '(pointer: coarse)').selector,
-    ).toBe('.sidebar-tab')
-    expectDeclarations(
-      sidebarCss,
-      '.sidebar-tab',
-      { 'min-width': '44px', 'min-height': '44px' },
-      '(pointer: coarse)',
-    )
-  })
-
-  it('keeps session delete controls discoverable and touch-sized', () => {
-    const sessionCss = parseCss('src/styles/session-primitives.css')
-
-    expect(findRule(sessionCss, '.session-delete-btn:focus-visible').selector).toBe(
-      '.session-delete-btn:focus-visible',
-    )
-    expectDeclarations(sessionCss, '.session-delete-btn', {
-      width: '1.5rem',
-      height: '1.5rem',
-    })
-    expectDeclarations(sessionCss, '.session-delete-btn:focus-visible', { opacity: '1' })
-    expectDeclarations(
-      sessionCss,
-      '.session-delete-btn',
-      { width: '2.75rem', height: '2.75rem' },
-      '(pointer: coarse)',
-    )
+    expectClassToken(agentIndicatorSource, 'p-1.5')
+    expectClassToken(agentIndicatorSource, 'size-9')
+    expectClassToken(chatInputSource, 'px-4')
+    expect(toolbarSource).toContain('[--control-row-height-sm:var(--status-bar-control-height)]')
+    expect(toolbarSource).toContain('@max-[360px]/chat-column:flex-nowrap')
+    expect(toolbarSource).toContain('@max-[360px]/chat-column:[&_button[role=radio]]:px-1.5')
+    expect(voiceControlsSource).toContain('gap-1')
+    expect(mainColumnSource).toContain('@container/chat-column')
+    expect(mainColumnSource).toContain('data-chat-column')
+    expect(narrowHookSource).toContain("closest('[data-chat-column]')")
   })
 })

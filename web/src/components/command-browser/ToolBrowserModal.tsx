@@ -134,13 +134,17 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
             <span className="text-xs text-muted-foreground">({totalToolCount})</span>
           )}
         </div>
-        <button
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          dense
           onClick={onClose}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-md hover:bg-muted"
+          className="min-h-0 w-auto text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-md hover:bg-muted"
           aria-label="Close"
         >
           <XIcon />
-        </button>
+        </Button>
       </div>
 
       {/* Mobile: stacked layout. Desktop: side-by-side */}
@@ -172,8 +176,12 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
             ) : (
               Object.entries(filteredToolsByServer).map(([serverName, tools]) => (
                 <div key={serverName}>
-                  <button
-                    className="w-full flex items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 transition-colors bg-muted/20"
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    dense
+                    className="min-h-0 w-full rounded-none border-0 flex items-center justify-between px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted/50 transition-colors bg-muted/20"
                     onClick={() => toggleCollapse(serverName)}
                   >
                     <span className="flex items-center gap-1.5">
@@ -181,12 +189,16 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                       <span className="font-semibold">{serverName}</span>
                     </span>
                     <Badge variant="default">{tools.length}</Badge>
-                  </button>
+                  </Button>
                   {!collapsedServers.has(serverName) && tools.map((tool) => (
-                    <button
+                    <Button
                       key={`${serverName}.${tool.name}`}
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      dense
                       className={cn(
-                        'w-full text-left px-3 py-2 pl-7 text-sm transition-colors border-b border-border/20',
+                        'min-h-0 w-full items-stretch justify-start whitespace-normal rounded-none border-x-0 border-t-0 px-3 py-2 pl-7 text-left text-sm font-normal transition-colors border-b border-border/20',
                         selectedServer === serverName && selectedTool === tool.name
                           ? 'bg-accent/15 text-foreground'
                           : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
@@ -197,7 +209,7 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
                       {tool.brief && (
                         <div className="text-xs opacity-60 truncate mt-0.5">{tool.brief}</div>
                       )}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ))
@@ -218,13 +230,17 @@ export function ToolBrowserModal({ filter, onSendMessage, onClose }: ToolBrowser
           ) : (
             <>
               {/* Mobile back button */}
-              <button
-                className="md:hidden flex items-center gap-1 px-3 py-2 text-sm text-accent hover:bg-muted/50 border-b border-border shrink-0"
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                dense
+                className="min-h-0 md:hidden flex items-center justify-start gap-1 rounded-none border-x-0 border-t-0 px-3 py-2 text-sm text-accent hover:bg-muted/50 border-b border-border shrink-0"
                 onClick={handleBack}
               >
                 <ChevronLeftIcon />
                 Back to list
-              </button>
+              </Button>
 
               <div className="px-4 py-3 border-b border-border shrink-0 bg-muted/20">
                 <div className="flex items-center gap-2 flex-wrap">

@@ -17,6 +17,9 @@ import {
 } from "./TasksTabModel";
 import { DEFAULT_TASK_PRIORITY } from "../../lib/taskOptions";
 import { KebabIcon } from "./QuickMenu";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 
 interface TaskTreeRowProps {
   row: VisibleTaskRow;
@@ -96,13 +99,6 @@ function TaskTreeRowComponent({
   const ref = task.seq_num != null ? `#${task.seq_num}` : null;
   const labelRef = ref ?? task.ref ?? task.id;
   const labelTitle = task.title || "Untitled task";
-  const taskRowClass = [
-    "activity-task-row",
-    isSelected && "activity-task-row--selected",
-    displayState === "closed" && "activity-task-row--closed",
-  ]
-    .filter(Boolean)
-    .join(" ");
 
   return (
     <div
@@ -110,7 +106,12 @@ function TaskTreeRowComponent({
       style={{
         paddingLeft: `${row.depth * TASK_ROW_DEPTH_INDENT_REM + TASK_ROW_BASE_INDENT_REM}rem`,
       }}
-      className={taskRowClass}
+      className={cn(
+        "flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pr-[0.35rem] text-left text-[length:var(--text-base)] text-inherit transition-colors hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+        isSelected &&
+          "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
+        displayState === "closed" && "opacity-[0.72]",
+      )}
       role="treeitem"
       tabIndex={tabIndex}
       aria-level={row.depth + 1}
@@ -122,8 +123,14 @@ function TaskTreeRowComponent({
       onKeyDown={(event) => onRowKeyDown(task.id, event)}
     >
       {row.isInternal ? (
-        <button
-          className="activity-task-row-toggle"
+        <Button
+          variant="ghost"
+          size="icon"
+          dense
+          className={cn(
+            coarseHitAreaCls,
+            "h-6 min-h-0 w-6 shrink-0 rounded-[0.35rem] p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+          )}
           onClick={(event) => {
             event.stopPropagation();
             onToggleOpen(task.id);
@@ -132,9 +139,10 @@ function TaskTreeRowComponent({
           title={row.isOpen ? "Collapse subtasks" : "Expand subtasks"}
         >
           <span
-            className={`activity-task-row-toggle-icon${
-              row.isOpen ? " activity-task-row-toggle-icon--open" : ""
-            }`}
+            className={cn(
+              "flex size-4 transition-transform duration-150 ease-out [&_svg]:size-full",
+              row.isOpen && "rotate-90",
+            )}
             aria-hidden="true"
           >
             <svg viewBox="0 0 12 12" fill="none">
@@ -147,44 +155,59 @@ function TaskTreeRowComponent({
               />
             </svg>
           </span>
-        </button>
+        </Button>
       ) : (
-        <span className="activity-task-row-toggle-spacer" aria-hidden="true" />
+        <span className="size-6 shrink-0" aria-hidden="true" />
       )}
       <PriorityGlyph priority={priority} />
       <StatusDot task={failed ? undefined : task} status={displayState} />
-      {ref && <span className="activity-task-row-ref">{ref}</span>}
+      {ref && (
+        <span className="shrink-0 text-[length:var(--text-sm)] font-[var(--font-weight-normal)] tracking-normal text-[var(--text-muted)] tabular-nums">
+          {ref}
+        </span>
+      )}
       <span
-        className="activity-task-row-title"
+        className="min-w-0 flex-1 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] leading-[1.3] text-[var(--text-primary)]"
+        data-task-row-title
         style={{ color: textColor, fontWeight: textWeight }}
       >
         {task.title}
       </span>
-      <span className="activity-task-row-chips">
+      <span className="inline-flex shrink-0 items-center gap-[0.3rem]">
         <TypeBadge type={task.task_type} />
       </span>
       {currentStage && (
-        <span className="activity-task-row-stage" title={stateSummary}>
+        <span
+          className="inline-flex h-[1.15rem] min-w-0 max-w-[7.5rem] flex-[0_1_auto] items-center gap-1 rounded-[0.35rem] border border-border bg-[color-mix(in_srgb,var(--bg-secondary)_82%,transparent)] px-[0.35rem] text-[length:var(--text-2xs)] font-medium leading-none text-[var(--text-secondary)]"
+          data-task-row-stage
+          title={stateSummary}
+        >
           <span
-            className="activity-task-row-stage-pip"
+            className="size-[0.4rem] shrink-0 rounded-full"
             style={{ backgroundColor: getStageStateColor(currentStage.state) }}
             aria-hidden="true"
           />
-          <span className="activity-task-row-stage-label">
+          <span className="min-w-0 truncate">
             {currentStage.display_name}
           </span>
         </span>
       )}
-      <button
+      <Button
         type="button"
-        className="task-more-btn"
+        variant="ghost"
+        size="icon"
+        dense
+        className={cn(
+          "size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+          coarseHitAreaCls,
+        )}
         onClick={(event) => onMenuButtonClick(event, task)}
         title="Task actions"
         aria-label="Task actions"
         disabled={isBusy}
       >
         <KebabIcon />
-      </button>
+      </Button>
     </div>
   );
 }

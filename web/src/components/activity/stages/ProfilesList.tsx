@@ -1,6 +1,9 @@
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { BuildProfile } from "./StagesTabData";
 import { profileKey } from "./StagesTabData";
 
@@ -69,9 +72,10 @@ export function ProfilesList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${profile.display_label}`}
               onClick={() => onSelect(profile)}
             >
@@ -81,12 +85,12 @@ export function ProfilesList({
                 pulse={profile.enabled}
               />
               <span className="activity-row-title">{profile.display_label}</span>
-              <span className="activity-chip">{profile.source}</span>
-              <span className="activity-chip">{profile.isolation}</span>
+              <Chip>{profile.source}</Chip>
+              <Chip>{profile.isolation}</Chip>
               {profile.name === "default" && (
-                <span className="activity-chip activity-chip--accent">default</span>
+                <Chip tone="accent">default</Chip>
               )}
-            </button>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

@@ -4,8 +4,8 @@ export function ChevronIcon({ open }: { open: boolean }) {
   return (
     <span
       className={cn(
-        "activity-mcp-row-chevron",
-        open && "activity-mcp-row-chevron--open",
+        "inline-flex size-4 shrink-0 text-[var(--text-muted)] transition-transform duration-150 ease-in-out",
+        open && "rotate-90",
       )}
       aria-hidden="true"
     >

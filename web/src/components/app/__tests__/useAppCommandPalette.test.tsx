@@ -21,7 +21,7 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     sendMode: vi.fn(),
     addSystemMessage,
     setActiveModal: vi.fn(),
-    setSettingsOpen: vi.fn(),
+    settingsOverlay: { open: vi.fn() },
     setResumeModalOpen: vi.fn(),
     showPlanRef: { current: vi.fn() },
     openActivityTab: vi.fn(),
@@ -93,6 +93,29 @@ describe('useAppCommandPalette', () => {
 
     expect(args.openActivityTab).toHaveBeenCalledWith('mcp')
     expect(args.setActiveModal).not.toHaveBeenCalledWith('mcp')
+  })
+
+  it('opens the settings overlay exactly once from both settings actions', () => {
+    const args = makeHookArgs()
+    const { result } = renderHook(() => useAppCommandPalette(args))
+
+    act(() => {
+      result.current.handlePaletteSelect({
+        kind: 'command',
+        name: 'settings',
+        description: 'Open settings',
+        action: 'open_settings',
+      })
+    })
+    expect(args.settingsOverlay.open).toHaveBeenCalledOnce()
+
+    args.settingsOverlay.open.mockClear()
+    const settingsAction = result.current.commandPaletteActions.find(
+      (action) => action.id === 'settings',
+    )
+    act(() => settingsAction?.onSelect())
+
+    expect(args.settingsOverlay.open).toHaveBeenCalledOnce()
   })
 
   it('derives activity navigation actions from the activity tab registry', () => {

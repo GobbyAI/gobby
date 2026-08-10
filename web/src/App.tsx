@@ -20,7 +20,6 @@ import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { ActivityTab } from "./components/activity/ActivityPanelTabs";
-import { Settings } from "./components/Settings";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
@@ -138,15 +137,12 @@ export default function App() {
   const clientSettings = useSettings();
   const {
     settings,
-    updateFontSize,
     updateModel,
     updateChatMode,
     updateTheme,
-    updateDefaultChatMode,
     updateSttEnabled,
     updateTtsEnabled,
     updateVoiceInputMode,
-    resetSettings,
   } = clientSettings;
   const voiceConversationId =
     attachedSessionId && sessionInteractionMode === "proxy"
@@ -200,7 +196,6 @@ export default function App() {
   const [activeModal, setActiveModal] = useState<"skills" | "gobby" | null>(
     null,
   );
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOverlay = useSettingsOverlay();
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
@@ -442,7 +437,7 @@ export default function App() {
     sendMode,
     addSystemMessage,
     setActiveModal,
-    setSettingsOpen,
+    settingsOverlay,
     setResumeModalOpen,
     showPlanRef,
     openActivityTab: handleOpenActivityTab,
@@ -477,17 +472,25 @@ export default function App() {
         activeTab="header"
         onReturnToChat={() => setActiveTab("chat")}
       >
-        <header className="app-header">
-          <div className="app-brand">
-            <GobbyLogo className="app-brand-logo" size={44} />
-            <span className="app-brand-title">Gobby</span>
+        <header
+          data-testid="app-header"
+          className="relative z-[100] flex items-center justify-between gap-3 border-b border-border px-4 py-3 [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:px-3 [@media(max-width:768px)]:py-2.5"
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <GobbyLogo
+              className="[--app-brand-logo-size:2.75rem] [@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]"
+              size="var(--app-brand-logo-size)"
+            />
+            <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[length:var(--text-3xl)] font-semibold leading-none text-foreground [@media(max-width:768px)]:text-[length:var(--text-2xl)]">
+              Gobby
+            </span>
           </div>
-          <div className="app-header-actions">
+          <div className="[--control-row-height:var(--status-bar-control-height)] flex shrink-0 flex-nowrap items-center justify-end gap-2 pointer-coarse:[--control-row-height:2.75rem]">
             {!isConnected && (
               <Badge
                 variant="error"
                 style={{ height: "var(--control-row-height)" }}
-                className="app-health-badge gap-2 uppercase tracking-[0.05em]"
+                className="gap-2 uppercase tracking-[0.05em]"
               >
                 <span
                   aria-hidden="true"
@@ -510,7 +513,7 @@ export default function App() {
               variant="accent"
               size="icon"
               dense
-              className="app-settings-cog"
+              className="shrink-0 pointer-coarse:min-w-11"
               onClick={() => settingsOverlay.open()}
               aria-label="Open settings"
               aria-haspopup="dialog"
@@ -525,7 +528,7 @@ export default function App() {
                 variant="accent"
                 size="icon"
                 dense
-                className="app-logout-btn"
+                className="shrink-0 pointer-coarse:min-w-11"
                 onClick={() => logout()}
                 aria-label="Log out"
                 title="Log out"
@@ -681,15 +684,6 @@ export default function App() {
         activeTab="modal"
         onReturnToChat={() => setActiveTab("chat")}
       >
-        <Settings
-          isOpen={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          settings={settings}
-          onFontSizeChange={updateFontSize}
-          onThemeChange={updateTheme}
-          onDefaultChatModeChange={updateDefaultChatMode}
-          onReset={resetSettings}
-        />
         {settingsOverlay.isOpen && (
           <Suspense fallback={null}>
             <SettingsOverlay
@@ -743,8 +737,11 @@ export default function App() {
         )}
       </AppErrorBoundary>
       {visibleToastMessage && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
+          dense
           className="app-toast"
           onClick={() => {
             setToastMessage(null);
@@ -753,7 +750,7 @@ export default function App() {
           aria-label={`Dismiss notification: ${visibleToastMessage}`}
         >
           {visibleToastMessage}
-        </button>
+        </Button>
       )}
     </div>
   );

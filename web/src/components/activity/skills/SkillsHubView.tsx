@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "r
 
 import { ResizeHandle } from "../../shared/ResizeHandle";
 import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { Input } from "../../ui/Input";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
+import { SelectField } from "../fields";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { loadSkillHubs, searchSkillHubs } from "./SkillsTabActions";
@@ -104,27 +108,21 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="overflow-y-auto border-b border-border" style={{ height: `${topHeight}%` }}>
         <div className="flex flex-col gap-3 p-3">
-          <div className="grid gap-2 [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] max-[560px]:grid-cols-1">
-            <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Hub</span>
-              <select
-                className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                aria-label="Hub source"
-                name="hub-source"
-                value={selectedHub}
-                onChange={(event) => setSelectedHub(event.target.value)}
-              >
-                <option value="all">All hubs</option>
-                {hubs.map((hub) => (
-                  <option key={hub.name} value={hub.name}>
-                    {hub.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="flex min-w-0 flex-col gap-1.5">
+          <div className="grid gap-2 [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] mobile:grid-cols-1">
+            <SelectField
+              label="Hub"
+              ariaLabel="Hub source"
+              name="hub-source"
+              value={selectedHub}
+              onChange={setSelectedHub}
+              options={[
+                { value: "all", label: "All hubs" },
+                ...hubs.map((hub) => ({ value: hub.name, label: hub.name })),
+              ]}
+            />
+            <div className="flex min-w-0 flex-col gap-1.5">
               <span className="text-xs font-medium text-muted-foreground">Search</span>
-              <input
+              <Input
                 type="search"
                 className="min-h-11 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
                 aria-label="Search hub skills"
@@ -134,11 +132,11 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                 onKeyDown={handleSearchKeyDown}
                 onChange={(event) => setQuery(event.target.value)}
               />
-            </label>
+            </div>
             <Button
               type="button"
               variant="primary"
-              className="mt-auto"
+              className={`mt-auto ${coarseHitAreaCls}`}
               aria-label="Search hub skills"
               disabled={searching}
               onClick={() => void handleSearch()}
@@ -197,10 +195,11 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                       selected ? "bg-[var(--accent-tint)]" : "bg-[var(--bg-primary)]"
                     }`}
                   >
-                    <button
+                    <Button
                       type="button"
+                      variant="ghost"
                       aria-label={`Select ${result.display_name || result.slug}`}
-                      className="flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+                      className={`flex min-h-14 w-full min-w-0 items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${coarseHitAreaCls}`}
                       onClick={() => setSelectedKey(resultKey(result))}
                     >
                       <span className="flex min-w-0 flex-1 flex-col">
@@ -209,13 +208,13 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                           {result.description || "No description"}
                         </span>
                       </span>
-                      <span className="activity-chip">
+                      <Chip>
                         {result.hub_name}
-                      </span>
-                      <span className="activity-chip">
+                      </Chip>
+                      <Chip>
                         {result.version ? `v${result.version}` : "latest"}
-                      </span>
-                    </button>
+                      </Chip>
+                    </Button>
                   </div>
                 );
               })}

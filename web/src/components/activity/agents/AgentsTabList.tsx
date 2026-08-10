@@ -1,6 +1,9 @@
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { AgentDefInfo } from "./AgentsTabData";
 import { SOURCE_LABELS, getAgentKey } from "./AgentsTabData";
 
@@ -60,9 +63,10 @@ export function AgentsTabList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${agent.definition.name}`}
               onClick={() => onSelect(agent)}
             >
@@ -72,13 +76,13 @@ export function AgentsTabList({
                 pulse={agent.enabled}
               />
               <span className="activity-row-title">{agent.definition.name}</span>
-              <span className="activity-chip">
+              <Chip>
                 {agent.definition.provider}
-              </span>
-              <span className="activity-chip">
+              </Chip>
+              <Chip>
                 {sourceLabel}
-              </span>
-            </button>
+              </Chip>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { AgentPickerDropdown } from './AgentPickerDropdown'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
+import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
 
 interface ActiveAgentIndicatorProps {
   agentName: string
@@ -32,13 +34,17 @@ export function ActiveAgentIndicator({
 
   return (
     <>
-      <button
+      <Button
         type="button"
-        className={`chat-input-agent-button rounded transition-colors ${
+        variant="ghost"
+        size="icon"
+        dense
+        className={cn(
+          'chat-input-agent-button inline-flex size-9 min-h-9 min-w-9 items-center justify-center rounded p-1.5 transition-colors',
           disabled
-            ? "cursor-not-allowed text-muted-foreground/50"
-            : "text-muted-foreground hover:text-foreground hover:bg-muted"
-        }`}
+            ? 'cursor-not-allowed text-muted-foreground/50'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+        )}
         onClick={() => {
           if (!disabled) setIsOpen(!isOpen)
         }}
@@ -50,7 +56,7 @@ export function ActiveAgentIndicator({
           <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
           <circle cx="12" cy="7" r="4" />
         </svg>
-      </button>
+      </Button>
       {isOpen && !disabled && (
         <AgentPickerDropdown
           definitions={definitions}

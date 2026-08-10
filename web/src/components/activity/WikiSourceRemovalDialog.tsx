@@ -2,12 +2,15 @@ import { useState } from "react";
 
 import type { WikiEnvelope, WikiSourceRecord } from "../../hooks/useWiki";
 import { JsonBlock } from "../chat/JsonBlock";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogTitle,
 } from "../ui/Dialog";
+import { Input } from "../ui/Input";
 
 interface WikiSourceRemovalDialogProps {
   source: WikiSourceRecord | null;
@@ -70,35 +73,39 @@ export function WikiSourceRemovalDialog({
             </div>
           ) : null}
 
-          <label className="flex items-center gap-2 text-sm text-foreground">
-            <input
+          <div className="flex items-center gap-2 text-sm text-foreground">
+            <Input
+              id="wiki-source-keep-asset"
               type="checkbox"
               checked={keepAsset}
               onChange={(event) =>
                 setKeepAssetDraft({ sourceId, keepAsset: event.target.checked })
               }
-              className="h-4 w-4"
+              wrapperClassName="w-auto shrink-0"
+              className="h-4 w-4 p-0"
             />
-            Keep source asset
-          </label>
+            <label htmlFor="wiki-source-keep-asset">Keep source asset</label>
+          </div>
 
           <div className="flex justify-end gap-2">
-            <button
+            <Button
               type="button"
               onClick={onCancel}
               disabled={isConfirming}
-              className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:bg-muted disabled:opacity-50"
+              variant="secondary"
+              className={coarseHitAreaCls}
             >
               Cancel
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               onClick={() => onConfirm({ keep_asset: keepAsset })}
               disabled={!preview || isPreviewLoading || isConfirming}
-              className="rounded-md bg-destructive px-3 py-1.5 text-sm font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
+              variant="destructive"
+              className={`${coarseHitAreaCls} bg-destructive text-destructive-foreground hover:bg-destructive/90`}
             >
               {isConfirming ? "Removing..." : "Confirm removal"}
-            </button>
+            </Button>
           </div>
         </div>
       </DialogContent>

@@ -1,8 +1,14 @@
-/* Global reset and app chrome */
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+/* Global reset and app chrome.
+   The universal resets live in the `base` layer so element-scoped utilities
+   (p-2, px-2.5, …) keep beating them — un-layered they would outrank every
+   layered normal declaration. Our base layer comes after Tailwind's
+   preflight in layer order, so it still wins that contest. */
+@layer base {
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
 }
 
 html,
@@ -53,18 +59,15 @@ body {
   height: 100dvh;
 }
 
+/* Overlay geometry only — surface chrome (background, border, radius,
+   typography scale) comes from the ghost Button primitive rendering it. */
 .app-toast {
   position: fixed;
   top: 60px;
   right: 20px;
   z-index: 1000;
-  background: var(--bg-secondary);
-  color: var(--text-primary);
-  padding: 0.5rem 1rem;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  font-size: var(--text-base);
+  padding-block: 0.5rem;
+  font-family: inherit;
   text-align: left;
   cursor: pointer;
   animation: fade-in 0.2s ease;
@@ -80,14 +83,21 @@ body {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-    transition-duration: 0.01ms !important;
+/* The reduced-motion kill switch lives in the `base` layer deliberately:
+ * for !important declarations, earlier layers outrank later ones — so this
+ * beats any !important animation declaration in later layers or un-layered
+ * sheets, and it trivially beats the normal (non-!important) `animate-*`
+ * utilities in the `utilities` layer. */
+@layer base {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
@@ -133,14 +143,40 @@ body {
   background: var(--text-muted);
 }
 
-/* Firefox scrollbar */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) var(--bg-primary);
+/* Firefox scrollbar — base layer for the same reason as the reset above. */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) var(--bg-primary);
+  }
 }
 
 /* float-tooltip (3d-force-graph) paints a black plate; the KG node card owns its surface. */
 .knowledge-graph .float-tooltip-kap {
   background: none;
   padding: 0;
+}
+
+.tool-result-wrap {
+  text-indent: -2ch;
+}
+
+/* The <pre> consumer carries its own p-2 utility; only the bare <code>
+   consumer (CodeBlock inline results) needs the hanging-indent gutter. */
+code.tool-result-wrap {
+  padding-inline-start: 2ch;
+}
+
+/* #14721: call_tool / tool-result code & JSON blocks sit directly on the
+   bordered tool card, not on a second var(--code-bg) slab. react-syntax-
+   highlighter writes the theme's pre background as an inline style, so a
+   scoped !important is the only reliable override. Carrying this only on
+   the chat tool-result CodeBlock/JsonBlock instances keeps file viewers'
+   code surface intact. Syntax token colors and textShadow:none come from
+   buildCodeBlockTheme and are unaffected. Both themes. */
+.tool-code-surface > div,
+.tool-code-surface > pre,
+.tool-code-surface [class*="language-"],
+.tool-code-surface :is(div, pre):has(> code[class*="language-"]) {
+  background: transparent !important;
 }

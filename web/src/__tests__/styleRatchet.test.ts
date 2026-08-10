@@ -1,13 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { compile } from '@tailwindcss/node'
 import { describe, expect, it } from 'vitest'
 import {
   BTN_CLASS_ALLOWLIST,
   CLS_CONSTANT_ALLOWLIST,
   CSS_FILE_ALLOWLIST,
-  CSS_LINE_TIGHTEN_SLACK,
-  CSS_TOTAL_LINE_CEILING,
+  CSS_TOTAL_LINE_PIN,
   IMPORTANT_ALLOWLIST,
   RAW_ELEMENT_ALLOWLIST,
   type RawElement,
@@ -23,9 +24,85 @@ const ALLOWLIST = 'src/__tests__/styleRatchet.allowlist.ts'
 const SKIP_DIRS = new Set(['__tests__', '__visual__', '__fixtures__', '__mocks__', 'test'])
 const UI_PRIMITIVES_DIR = 'src/components/ui/'
 const ALLOWLIST_REPO_PATH = `web/${ALLOWLIST}`
+const AGENT_EDITOR_FILES = [
+  'src/components/agents/AgentEditForm.tsx',
+  'src/components/agents/AgentRulesEditor.tsx',
+  'src/components/agents/AgentSkillsEditor.tsx',
+  'src/components/agents/AgentStepsEditor.tsx',
+  'src/components/agents/AgentToolBlocksEditor.tsx',
+  'src/components/agents/AgentVariablesEditor.tsx',
+  'src/components/agents/IsolationTargetSelector.tsx',
+] as const
+const AGENT_SURFACE_FILES = [
+  'src/components/activity/agents/AgentsTabList.tsx',
+  'src/components/agents/AgentPortfolioPage.tsx',
+] as const
+const ACTIVITY_LIST_DETAIL_SURFACE_FILES = [
+  'src/components/activity/ActivityMcpTab.tsx',
+  'src/components/activity/CronTab.tsx',
+  'src/components/activity/FileChangesTab.tsx',
+  'src/components/activity/IntegrationsTab.tsx',
+  'src/components/activity/MemoryTab.tsx',
+  'src/components/activity/PlanReviewCard.tsx',
+  'src/components/activity/RulesTab.tsx',
+  'src/components/activity/SkillsTab.tsx',
+  'src/components/activity/StagesTab.tsx',
+  'src/components/activity/TasksTabDetailPanel.tsx',
+  'src/components/activity/TracesTab.tsx',
+  'src/components/activity/fields/KeyValueField.tsx',
+  'src/components/activity/integrations/ChannelDetailPanel.tsx',
+  'src/components/activity/integrations/ChannelsList.tsx',
+  'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+  'src/components/activity/memory/MemoryDetailPanel.tsx',
+  'src/components/activity/memory/MemoryTabList.tsx',
+  'src/components/activity/rules/RulesTabList.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+  'src/components/activity/skills/SkillsInstalledList.tsx',
+  'src/components/activity/stages/ProfilesList.tsx',
+  'src/components/activity/stages/StagesList.tsx',
+  'src/components/activity/taskdetail/TaskDetailKV.tsx',
+  'src/components/activity/taskdetail/TaskDetailRelationships.tsx',
+] as const
+const ACTIVITY_SELECT_FIELD_FILES = [
+  'src/components/activity/RulesTab.tsx',
+  'src/components/activity/SkillsTab.tsx',
+  'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+] as const
+const ACTIVITY_CHIP_ADOPTER_FILES = [
+  'src/components/activity/ActivityMcpTab.tsx',
+  'src/components/activity/integrations/ChannelDetailPanel.tsx',
+  'src/components/activity/integrations/ChannelsList.tsx',
+  'src/components/activity/memory/MemoryDetailPanel.tsx',
+  'src/components/activity/memory/MemoryTabList.tsx',
+  'src/components/activity/rules/RulesDetailPanel.tsx',
+  'src/components/activity/rules/RulesTabList.tsx',
+  'src/components/activity/skills/SkillsHubView.tsx',
+  'src/components/activity/skills/SkillsInstalledDetail.tsx',
+  'src/components/activity/skills/SkillsInstalledList.tsx',
+  'src/components/activity/stages/ProfileDetailPanel.tsx',
+  'src/components/activity/stages/ProfilesList.tsx',
+  'src/components/activity/stages/StageDetailPanel.tsx',
+  'src/components/activity/stages/StagesList.tsx',
+] as const
+const PIPELINE_SURFACE_FILES = [
+  'src/components/activity/PipelinesTab.tsx',
+  'src/components/activity/pipelines/PipelineEditor.tsx',
+  'src/components/activity/pipelines/PipelineStepFields.tsx',
+  'src/components/activity/pipelines/PipelineStepList.tsx',
+  'src/components/activity/pipelines/PipelinesDefsDetail.tsx',
+  'src/components/activity/pipelines/PipelinesDefsList.tsx',
+  'src/components/shared/executions/execution-utils.tsx',
+] as const
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
+// Viewport width variants hand-roll a breakpoint the responsive contract
+// forbids: the tier is authored once in tailwind-theme.css (width <=767px OR
+// height <=500px, 768px desktop) and per-component width thresholds collapse
+// into the shared `mobile:` variant. `@max-[...]` container queries are
+// element-scoped and exempt.
+const TIER_VARIANT = /(?<!@)max-\[\d+px\]:/g
 const IMPORTANT = /!\s*important\b/g
 const RAW_ELEMENTS: Record<RawElement, RegExp> = {
   button: /<button\b/g,
@@ -65,6 +142,7 @@ interface Scan {
   cssFiles: string[]
   important: Map<string, number>
   cssTotalLines: number
+  tierVariant: Map<string, number>
 }
 
 function runScan(): Scan {
@@ -75,6 +153,7 @@ function runScan(): Scan {
     cssFiles: [],
     important: new Map(),
     cssTotalLines: 0,
+    tierVariant: new Map(),
   }
 
   for (const file of scannedFiles(join(process.cwd(), 'src'))) {
@@ -90,6 +169,8 @@ function runScan(): Scan {
       if (btn > 0) scan.btnClass.set(rel, btn)
       const cls = countMatches(source, CLS_CONSTANT)
       if (cls > 0) scan.clsConstant.set(rel, cls)
+      const tier = countMatches(source, TIER_VARIANT)
+      if (tier > 0) scan.tierVariant.set(rel, tier)
       if (rel.endsWith('.tsx') && !rel.startsWith(UI_PRIMITIVES_DIR)) {
         for (const [element, pattern] of Object.entries(RAW_ELEMENTS)) {
           const count = countMatches(source, pattern)
@@ -137,7 +218,7 @@ function ratchet(
 interface AllowlistSnapshot {
   counts: Map<string, number>
   cssFiles: Set<string>
-  cssTotalLineCeiling: number
+  cssTotalLinePin: number
 }
 
 function delimitedBody(
@@ -184,13 +265,15 @@ function parseAllowlistSnapshot(source: string): AllowlistSnapshot {
     [...delimitedBody(source, 'export const CSS_FILE_ALLOWLIST', '[', ']').matchAll(/'([^']+)'/g)]
       .map((match) => match[1]),
   )
-  const ceilingMatch = source.match(/export const CSS_TOTAL_LINE_CEILING\s*=\s*(\d+)/)
-  if (!ceilingMatch) throw new Error('Missing CSS_TOTAL_LINE_CEILING in style ratchet allowlist')
+  const linePinMatch = source.match(/export const CSS_TOTAL_LINE_(?:PIN|CEILING)\s*=\s*(\d+)/)
+  if (!linePinMatch) {
+    throw new Error('Missing CSS_TOTAL_LINE_PIN or legacy CSS_TOTAL_LINE_CEILING')
+  }
 
   return {
     counts,
     cssFiles,
-    cssTotalLineCeiling: Number(ceilingMatch[1]),
+    cssTotalLinePin: Number(linePinMatch[1]),
   }
 }
 
@@ -242,10 +325,10 @@ function targetBranchFailures(
       failures.push(`CSS_FILE_ALLOWLIST:${file}: new recorded stylesheet`)
     }
   }
-  if (current.cssTotalLineCeiling > target.cssTotalLineCeiling) {
+  if (current.cssTotalLinePin > target.cssTotalLinePin) {
     failures.push(
-      `CSS_TOTAL_LINE_CEILING: increased from ${target.cssTotalLineCeiling} ` +
-        `to ${current.cssTotalLineCeiling}`,
+      `CSS_TOTAL_LINE_PIN: increased from ${target.cssTotalLinePin} ` +
+        `to ${current.cssTotalLinePin}`,
     )
   }
   return failures
@@ -275,12 +358,12 @@ describe('style ratchet', () => {
     const target: AllowlistSnapshot = {
       counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/OldPanel.tsx', 2]]),
       cssFiles: new Set(['styles/old-panel.css']),
-      cssTotalLineCeiling: 10,
+      cssTotalLinePin: 10,
     }
     const current: AllowlistSnapshot = {
       counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/NewPanel.tsx', 2]]),
       cssFiles: new Set(['styles/new-panel.css']),
-      cssTotalLineCeiling: 10,
+      cssTotalLinePin: 10,
     }
     const renames = new Map([
       ['src/NewPanel.tsx', 'src/OldPanel.tsx'],
@@ -295,15 +378,20 @@ describe('style ratchet', () => {
     ])
   })
 
-  it('keeps .btn class usage at or below the recorded per-file counts', () => {
-    expect(
-      ratchet(
-        scan.btnClass,
-        BTN_CLASS_ALLOWLIST,
-        'btn class tokens',
-        `Migrate onto <Button> from components/ui — see ${STYLE_GUIDE}.`,
-      ),
-    ).toEqual([])
+  it('parses legacy target-branch line ceilings as exact pins', () => {
+    const currentSource = readFileSync(ALLOWLIST, 'utf8')
+    const legacyTargetSource = `${currentSource.replace(
+      'CSS_TOTAL_LINE_PIN',
+      'CSS_TOTAL_LINE_CEILING',
+    )}\nexport const CSS_LINE_TIGHTEN_SLACK = 200\n`
+
+    expect(parseAllowlistSnapshot(currentSource).cssTotalLinePin).toBe(CSS_TOTAL_LINE_PIN)
+    expect(parseAllowlistSnapshot(legacyTargetSource).cssTotalLinePin).toBe(CSS_TOTAL_LINE_PIN)
+  })
+
+  it('bans .btn class usage', () => {
+    expect(BTN_CLASS_ALLOWLIST).toEqual({})
+    expect([...scan.btnClass.entries()]).toEqual([])
   })
 
   it('keeps raw interactive elements at or below the recorded per-file counts', () => {
@@ -312,21 +400,75 @@ describe('style ratchet', () => {
         scan.rawElements[element],
         RAW_ELEMENT_ALLOWLIST[element],
         `raw <${element}> elements`,
-        `Use the components/ui primitive instead of a raw <${element}> — see ${STYLE_GUIDE}.`,
+        `Use the components/ui primitive instead of a raw <${element}>; additions require an ` +
+          `explicit moat — see ${STYLE_GUIDE}.`,
       ),
     )
     expect(failures).toEqual([])
   })
 
-  it('keeps *_CLS style constants at or below the recorded per-file counts', () => {
+  it('keeps agent editors at zero raw-control and shared-style debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of AGENT_EDITOR_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+    expect(scan.clsConstant.get('src/components/agents/agents-styles.ts') ?? 0).toBe(0)
+  })
+
+  it('keeps swept agent surfaces at zero raw-control and SidebarPanel stylesheet debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of AGENT_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+    expect(scan.cssFiles).not.toContain('src/components/shared/SidebarPanel.css')
+  })
+
+  it('keeps swept activity lists and detail panels at zero raw-control debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of ACTIVITY_LIST_DETAIL_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
+  })
+
+  it('keeps activity filter-panel selects on SelectField', () => {
+    for (const file of ACTIVITY_SELECT_FIELD_FILES) {
+      expect(readFileSync(file, 'utf8'), `${file} SelectField composition`).toMatch(/<SelectField\b/)
+    }
+  })
+
+  it('keeps activity metadata chip adopters on ui Chip', () => {
+    for (const file of ACTIVITY_CHIP_ADOPTER_FILES) {
+      const source = readFileSync(file, 'utf8')
+      expect(source, `${file} Chip composition`).toMatch(/<Chip\b/)
+      // Adoption must orphan the legacy pill classes so 5.4 can delete
+      // their rules with the sheet; tones replace the -- modifiers.
+      expect(source, `${file} legacy chip class residue`).not.toMatch(/activity-(?:mcp-)?chip/)
+    }
+  })
+
+  it('keeps swept pipeline surfaces at zero raw-control and shared-style debt', () => {
+    for (const element of Object.keys(RAW_ELEMENTS) as RawElement[]) {
+      for (const file of PIPELINE_SURFACE_FILES) {
+        expect(scan.rawElements[element].get(file) ?? 0, `${file} raw <${element}> count`).toBe(0)
+      }
+    }
     expect(
-      ratchet(
-        scan.clsConstant,
-        CLS_CONSTANT_ALLOWLIST,
-        '*_CLS constants',
-        `Style at the call site with Tailwind utilities (cva for variants) — see ${STYLE_GUIDE}.`,
-      ),
-    ).toEqual([])
+      existsSync('src/components/activity/pipelines/PipelineEditor.styles.ts'),
+      'PipelineEditor.styles.ts must stay retired',
+    ).toBe(false)
+    expect(scan.clsConstant.get('src/components/shared/executions/execution-utils.tsx') ?? 0).toBe(0)
+  })
+
+  it('bans *_CLS style constants', () => {
+    expect(CLS_CONSTANT_ALLOWLIST).toEqual({})
+    expect([...scan.clsConstant.entries()]).toEqual([])
+  })
+
+  it('bans viewport width variants outside the shared tier', () => {
+    expect([...scan.tierVariant.entries()]).toEqual([])
   })
 
   it('bans stylesheets beyond the recorded set', () => {
@@ -357,16 +499,32 @@ describe('style ratchet', () => {
     ).toEqual([])
   })
 
-  it('holds the total CSS line ceiling and demands tightening as CSS shrinks', () => {
+  it('pins the exact total CSS line count', () => {
     expect(
       scan.cssTotalLines,
-      `Total CSS grew to ${scan.cssTotalLines} lines (ceiling ${CSS_TOTAL_LINE_CEILING}). ` +
-        `Move styling to Tailwind utilities instead of stylesheets — see ${STYLE_GUIDE}.`,
-    ).toBeLessThanOrEqual(CSS_TOTAL_LINE_CEILING)
-    expect(
-      scan.cssTotalLines,
-      `Total CSS shrank to ${scan.cssTotalLines} lines, more than ${CSS_LINE_TIGHTEN_SLACK} below ` +
-        `the ceiling ${CSS_TOTAL_LINE_CEILING}. Lower CSS_TOTAL_LINE_CEILING to ${scan.cssTotalLines} in ${ALLOWLIST}.`,
-    ).toBeGreaterThanOrEqual(CSS_TOTAL_LINE_CEILING - CSS_LINE_TIGHTEN_SLACK)
+      `Total CSS is ${scan.cssTotalLines} lines; the exact pin is ${CSS_TOTAL_LINE_PIN}. ` +
+        `Update CSS_TOTAL_LINE_PIN consciously in the same commit as any infra CSS change ` +
+        `(${ALLOWLIST}).`,
+    ).toBe(CSS_TOTAL_LINE_PIN)
+  })
+})
+
+describe('tailwind cascade', () => {
+  // Plan section 6.1: the `important: true` config flag is retired. Utilities
+  // win by layer order alone; the only !important left in the codebase is the
+  // six-declaration set recorded in IMPORTANT_ALLOWLIST.
+  it('emits no !important from compiled utilities', async () => {
+    const webRoot = join(fileURLToPath(import.meta.url), '..', '..', '..')
+    const tailwind = await compile(
+      '@import "tailwindcss";\n@config "./tailwind.config.ts";',
+      { base: webRoot, onDependency() {} },
+    )
+    const css = tailwind.build(['flex', 'h-4', 'text-sm', 'animate-spin'])
+    // Preflight legitimately ships one !important ([hidden] display), so the
+    // assertion scopes to the utilities layer — the surface the retired
+    // `important: true` flag used to blanket.
+    const utilitiesLayer = css.slice(css.indexOf('@layer utilities'))
+    expect(utilitiesLayer).toContain('@layer utilities')
+    expect(utilitiesLayer).not.toMatch(IMPORTANT)
   })
 })

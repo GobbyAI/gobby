@@ -72,7 +72,7 @@ describe("ActivityActionButtons", () => {
 
     const button = screen.getByRole("button", { name: "Filter sessions" });
     expect(button).toHaveAttribute("aria-expanded", "true");
-    expect(button.querySelector(".activity-filter-badge")?.textContent).toBe("2");
+    expect(button.querySelector("[data-filter-active-count]")?.textContent).toBe("2");
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
@@ -83,7 +83,7 @@ describe("ActivityActionButtons", () => {
     });
     const button = screen.getByRole("button", { name: "Filter sessions" });
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button.querySelector(".activity-filter-badge")).toBeNull();
+    expect(button.querySelector("[data-filter-active-count]")).toBeNull();
   });
 
   it("renders Search as a toggle with expanded state", () => {
@@ -93,8 +93,23 @@ describe("ActivityActionButtons", () => {
     });
     const button = screen.getByRole("button", { name: "Search sessions" });
     expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(button).not.toHaveClass("activity-panel-action-btn");
+    expect(button.querySelector("span")).toHaveClass(
+      "@max-[479px]/activity-panel:hidden",
+    );
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it("owns the action-slot layout through component utilities", () => {
+    renderHeader({ onAdd: vi.fn() });
+    expect(document.querySelector(".activity-panel-actions-slot")).toHaveClass(
+      "flex",
+      "min-w-0",
+      "items-center",
+      "gap-2",
+      "shrink",
+    );
   });
 
   it("labels the add action New by default", () => {

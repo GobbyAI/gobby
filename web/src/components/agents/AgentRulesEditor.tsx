@@ -1,27 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
+import { Button } from '../ui/Button'
+import { Chip } from '../ui/Chip'
+import { Input } from '../ui/Input'
+import { NativeSelect } from '../ui/NativeSelect'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { getAgentEditorCaughtError, getAgentEditorResponseError } from './agent-editor-errors'
-import {
-  AGENT_BTN_CLS,
-  AGENT_EDITOR_ERROR_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_RULE_SELECTOR_GROUP_CLS,
-  AGENT_RULE_SELECTOR_HEADING_CLS,
-  AGENT_RULE_SELECTOR_INPUT_ROW_CLS,
-  AGENT_RULE_SELECTOR_PREFIX_CLS,
-  AGENT_RULE_SELECTOR_VALUE_WRAP_CLS,
-  AGENT_RULE_SELECTORS_CLS,
-  AGENT_RULE_SELECTORS_LABEL_CLS,
-  AGENT_RULES_ADD_BTN_CLS,
-  AGENT_RULES_ADD_SELECT_CLS,
-  AGENT_RULES_CHIP_CLS,
-  AGENT_RULES_CHIP_EXCLUDE_CLS,
-  AGENT_RULES_CHIP_INCLUDE_CLS,
-  AGENT_RULES_CHIP_REMOVE_CLS,
-  AGENT_RULES_CHIP_SELECTOR_CLS,
-  AGENT_RULES_CHIPS_CLS,
-  AGENT_RULES_EDITOR_CLS,
-  AGENT_RULES_EMPTY_CLS,
-} from './agents-styles'
 
 interface RuleInfo {
   name: string
@@ -226,185 +209,211 @@ export function AgentRulesEditor({
     !selectors.exclude.includes(`${selectorPrefix}${s}`)
   )
 
+  const removeButton = (type: 'include' | 'exclude' | 'rule', value: string) => (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      dense
+      className={`${coarseHitAreaCls} min-h-0 w-auto px-0.5 text-base leading-none hover:text-[var(--color-error)]`}
+      onClick={() => {
+        if (type === 'rule') void handleRemove(value)
+        else void handleRemoveSelector(type, value)
+      }}
+      title={`Remove ${value}`}
+    >
+      &times;
+    </Button>
+  )
+
+  const selectorInput = (type: 'include' | 'exclude') => (
+    <div className="flex items-center gap-1">
+      <NativeSelect
+        wrapperClassName="w-20 shrink-0"
+        className="px-1 text-xs"
+        aria-label={`${type} selector prefix`}
+        value={selectorPrefix}
+        onChange={(event) => {
+          setSelectorPrefix(event.target.value)
+          setSelectorValue('')
+        }}
+      >
+        {SELECTOR_PREFIXES.map((prefix) => (
+          <option key={prefix} value={prefix}>
+            {prefix}
+          </option>
+        ))}
+      </NativeSelect>
+      <div className="min-w-0 flex-1">
+        <Input
+          autoFocus
+          value={selectorValue}
+          onChange={(event) => setSelectorValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') commitSelector()
+            if (event.key === 'Escape') setAddingSelectorType(null)
+          }}
+          placeholder="value"
+          aria-label={`${type} selector value`}
+          list={`selector-suggestions-${type}`}
+        />
+        {filteredSuggestions.length > 0 && (
+          <datalist id={`selector-suggestions-${type}`}>
+            {filteredSuggestions.map((suggestion) => (
+              <option key={suggestion} value={suggestion}>
+                {suggestion}
+              </option>
+            ))}
+          </datalist>
+        )}
+      </div>
+      <Button
+        type="button"
+        size="sm"
+        dense
+        className={coarseHitAreaCls}
+        onClick={commitSelector}
+      >
+        Add
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        dense
+        className={coarseHitAreaCls}
+        onClick={() => setAddingSelectorType(null)}
+      >
+        Cancel
+      </Button>
+    </div>
+  )
+
   return (
-    <div className={AGENT_RULES_EDITOR_CLS}>
+    <div className="flex flex-col gap-2">
       {actionError && (
-        <button
+        <Button
           type="button"
-          className={AGENT_EDITOR_ERROR_CLS}
+          variant="destructive"
+          size="sm"
+          dense
+          className={`${coarseHitAreaCls} justify-start border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive-foreground`}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
           {actionError}
-        </button>
+        </Button>
       )}
-      {/* Explicit rules */}
-      <div className={AGENT_RULES_CHIPS_CLS}>
-        {rules.map(name => (
-          <span key={name} className={AGENT_RULES_CHIP_CLS}>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        {rules.map((name) => (
+          <Chip key={name} className="gap-1 border border-border pl-2.5 pr-2 text-sm">
             {name}
-            <button
-              type="button"
-              className={AGENT_RULES_CHIP_REMOVE_CLS}
-              onClick={() => handleRemove(name)}
-              title={`Remove ${name}`}
-            >
-              &times;
-            </button>
-          </span>
+            {removeButton('rule', name)}
+          </Chip>
         ))}
         {rules.length === 0 && !adding && (
-          <span className={AGENT_RULES_EMPTY_CLS}>No rules assigned</span>
+          <span className="text-sm italic text-[var(--text-muted)]">No rules assigned</span>
         )}
       </div>
       {adding ? (
-        <select
-          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULES_ADD_SELECT_CLS}`}
+        <NativeSelect
+          wrapperClassName="max-w-50"
+          className="text-sm"
+          aria-label="Select rule"
           autoFocus
           value=""
-          onChange={e => { if (e.target.value) handleAdd(e.target.value) }}
+          onChange={(event) => {
+            if (event.target.value) void handleAdd(event.target.value)
+          }}
           onBlur={() => setAdding(false)}
         >
           <option value="">Select rule...</option>
           {projectRules.length > 0 && (
             <optgroup label="Project">
-              {projectRules.map(r => (
-                <option key={r.name} value={r.name}>{r.name}</option>
+              {projectRules.map((rule) => (
+                <option key={rule.name} value={rule.name}>
+                  {rule.name}
+                </option>
               ))}
             </optgroup>
           )}
           {globalRules.length > 0 && (
             <optgroup label="Global">
-              {globalRules.map(r => (
-                <option key={r.name} value={r.name}>{r.name}</option>
+              {globalRules.map((rule) => (
+                <option key={rule.name} value={rule.name}>
+                  {rule.name}
+                </option>
               ))}
             </optgroup>
           )}
           {projectRules.length === 0 && globalRules.length === 0 && (
             <option disabled>No rules available</option>
           )}
-        </select>
+        </NativeSelect>
       ) : (
-        <button
+        <Button
           type="button"
-          className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
+          size="sm"
+          dense
+          className={`${coarseHitAreaCls} self-start`}
           onClick={() => setAdding(true)}
           disabled={addableRules.length === 0}
         >
           + Add Rule
-        </button>
+        </Button>
       )}
 
-      {/* Rule Selectors */}
       {onRuleSelectorsChange && (
-        <div className={AGENT_RULE_SELECTORS_CLS}>
-          <div className={AGENT_RULE_SELECTORS_LABEL_CLS}>Rule Selectors</div>
-
-          {/* Include */}
-          <div className={AGENT_RULE_SELECTOR_GROUP_CLS}>
-            <span className={AGENT_RULE_SELECTOR_HEADING_CLS}>Include</span>
-            <div className={AGENT_RULES_CHIPS_CLS}>
-              {selectors.include.map(s => (
-                <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_INCLUDE_CLS}`}>
-                  {s}
-                  <button type="button" className={AGENT_RULES_CHIP_REMOVE_CLS} onClick={() => handleRemoveSelector('include', s)} title={`Remove ${s}`}>&times;</button>
+        <div className="mt-2.5 flex flex-col gap-2 border-t border-border pt-2.5">
+          <div className="text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            Rule Selectors
+          </div>
+          {(['include', 'exclude'] as const).map((type) => {
+            const values = selectors[type]
+            return (
+              <div key={type} className="flex flex-col gap-1">
+                <span className="text-xs uppercase tracking-wider text-[var(--text-muted)]">
+                  {type}
                 </span>
-              ))}
-              {selectors.include.length === 0 && addingSelectorType !== 'include' && (
-                <span className={AGENT_RULES_EMPTY_CLS}>None</span>
-              )}
-            </div>
-            {addingSelectorType === 'include' ? (
-              <div className={AGENT_RULE_SELECTOR_INPUT_ROW_CLS}>
-                <select
-                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULE_SELECTOR_PREFIX_CLS}`}
-                  value={selectorPrefix}
-                  onChange={e => { setSelectorPrefix(e.target.value); setSelectorValue('') }}
-                >
-                  {SELECTOR_PREFIXES.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-                <div className={AGENT_RULE_SELECTOR_VALUE_WRAP_CLS}>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
-                    autoFocus
-                    value={selectorValue}
-                    onChange={e => setSelectorValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') commitSelector(); if (e.key === 'Escape') setAddingSelectorType(null) }}
-                    placeholder="value"
-                    list="selector-suggestions-include"
-                  />
-                  {filteredSuggestions.length > 0 && (
-                    <datalist id="selector-suggestions-include">
-                      {filteredSuggestions.map(s => <option key={s} value={s}>{s}</option>)}
-                    </datalist>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {values.map((selector) => (
+                    <Chip
+                      key={selector}
+                      tone={type === 'include' ? 'info' : 'error'}
+                      className={`gap-1 border border-dashed pl-2.5 pr-2 text-sm ${
+                        type === 'include'
+                          ? 'border-[var(--color-info)]'
+                          : 'border-[var(--color-error)]'
+                      }`}
+                    >
+                      {selector}
+                      {removeButton(type, selector)}
+                    </Chip>
+                  ))}
+                  {values.length === 0 && addingSelectorType !== type && (
+                    <span className="text-sm italic text-[var(--text-muted)]">None</span>
                   )}
                 </div>
-                <button type="button" className={AGENT_BTN_CLS} onClick={commitSelector}>Add</button>
-                <button type="button" className={AGENT_BTN_CLS} onClick={() => setAddingSelectorType(null)}>Cancel</button>
+                {addingSelectorType === type ? (
+                  selectorInput(type)
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    dense
+                    className={`${coarseHitAreaCls} self-start`}
+                    onClick={() => {
+                      setAddingSelectorType(type)
+                      setSelectorPrefix('tag:')
+                      setSelectorValue('')
+                    }}
+                  >
+                    + Add {type === 'include' ? 'Include' : 'Exclude'}
+                  </Button>
+                )}
               </div>
-            ) : (
-              <button
-                type="button"
-                className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
-                onClick={() => { setAddingSelectorType('include'); setSelectorPrefix('tag:'); setSelectorValue('') }}
-              >
-                + Add Include
-              </button>
-            )}
-          </div>
-
-          {/* Exclude */}
-          <div className={AGENT_RULE_SELECTOR_GROUP_CLS}>
-            <span className={AGENT_RULE_SELECTOR_HEADING_CLS}>Exclude</span>
-            <div className={AGENT_RULES_CHIPS_CLS}>
-              {selectors.exclude.map(s => (
-                <span key={s} className={`${AGENT_RULES_CHIP_CLS} ${AGENT_RULES_CHIP_SELECTOR_CLS} ${AGENT_RULES_CHIP_EXCLUDE_CLS}`}>
-                  {s}
-                  <button type="button" className={AGENT_RULES_CHIP_REMOVE_CLS} onClick={() => handleRemoveSelector('exclude', s)} title={`Remove ${s}`}>&times;</button>
-                </span>
-              ))}
-              {selectors.exclude.length === 0 && addingSelectorType !== 'exclude' && (
-                <span className={AGENT_RULES_EMPTY_CLS}>None</span>
-              )}
-            </div>
-            {addingSelectorType === 'exclude' ? (
-              <div className={AGENT_RULE_SELECTOR_INPUT_ROW_CLS}>
-                <select
-                  className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULE_SELECTOR_PREFIX_CLS}`}
-                  value={selectorPrefix}
-                  onChange={e => { setSelectorPrefix(e.target.value); setSelectorValue('') }}
-                >
-                  {SELECTOR_PREFIXES.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
-                <div className={AGENT_RULE_SELECTOR_VALUE_WRAP_CLS}>
-                  <input
-                    className={AGENT_EDIT_INPUT_CLS}
-                    autoFocus
-                    value={selectorValue}
-                    onChange={e => setSelectorValue(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') commitSelector(); if (e.key === 'Escape') setAddingSelectorType(null) }}
-                    placeholder="value"
-                    list="selector-suggestions-exclude"
-                  />
-                  {filteredSuggestions.length > 0 && (
-                    <datalist id="selector-suggestions-exclude">
-                      {filteredSuggestions.map(s => <option key={s} value={s}>{s}</option>)}
-                    </datalist>
-                  )}
-                </div>
-                <button type="button" className={AGENT_BTN_CLS} onClick={commitSelector}>Add</button>
-                <button type="button" className={AGENT_BTN_CLS} onClick={() => setAddingSelectorType(null)}>Cancel</button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
-                onClick={() => { setAddingSelectorType('exclude'); setSelectorPrefix('tag:'); setSelectorValue('') }}
-              >
-                + Add Exclude
-              </button>
-            )}
-          </div>
+            )
+          })}
         </div>
       )}
     </div>

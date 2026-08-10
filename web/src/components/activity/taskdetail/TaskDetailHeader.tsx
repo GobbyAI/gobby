@@ -25,10 +25,15 @@ export function TaskDetailHeader({
   const titlePending = edit?.isFieldPending(task.id, "title") ?? false;
 
   return (
-    <header className="activity-task-detail-header">
-      <div className="activity-task-detail-header__top">
-        <span className="activity-task-detail-header__ref">{task.ref}</span>
-        <div className="activity-task-detail-header__chips">
+    <header className="flex flex-col gap-[0.55rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-[0.9rem] pt-4">
+      <div className="flex items-center justify-between gap-[0.6rem]">
+        <span
+          className="shrink-0 font-mono text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]"
+          data-task-detail-ref
+        >
+          {task.ref}
+        </span>
+        <div className="flex min-w-0 flex-wrap justify-end gap-[0.35rem]">
           <TaskStateBadges task={task} />
           <PriorityBadge priority={task.priority ?? DEFAULT_TASK_PRIORITY} />
           <TypeBadge type={task.task_type} />
@@ -40,12 +45,15 @@ export function TaskDetailHeader({
           ariaLabel="Task title"
           placeholder="Untitled task"
           disabled={titlePending}
+          className="px-2 py-[0.3rem] text-[length:var(--text-xl)] font-[var(--font-weight-semibold)] tracking-[-0.01em]"
           onCommit={(value) =>
             edit.commitField({ task, field: "title", value })
           }
         />
       ) : (
-        <h2 className="activity-task-detail-header__title">{task.title}</h2>
+        <h2 className="m-0 text-[length:var(--text-xl)] font-[var(--font-weight-semibold)] leading-[1.2] tracking-[-0.01em] text-[var(--text-primary)] [overflow-wrap:anywhere]">
+          {task.title}
+        </h2>
       )}
     </header>
   );

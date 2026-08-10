@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
+  StatusBadge,
   StepDisplay,
   StepStatusIcon,
   type StepData,
@@ -75,5 +76,23 @@ describe("StepDisplay", () => {
     expect(
       screen.getAllByRole("img", { name: "Step status: completed" }),
     ).toHaveLength(1);
+  });
+
+  it("uses a native button for the expandable step header", () => {
+    render(<StepDisplay step={STEP} index={0} />);
+
+    expect(screen.getByRole("button", { name: /build/ }).tagName).toBe("BUTTON");
+  });
+});
+
+describe("StatusBadge", () => {
+  it("uses the shared status-chip geometry", () => {
+    render(<StatusBadge status="completed" />);
+
+    expect(screen.getByText("Completed")).toHaveClass(
+      "inline-flex",
+      "items-center",
+      "rounded-full",
+    );
   });
 });

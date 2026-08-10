@@ -40,17 +40,16 @@ describe("persistence helpers", () => {
     expect(WIKI_TAB_KEYS.lastPageWiki).toBe("gobby:wiki-tab:last-page:wiki");
     expect(WIKI_TAB_KEYS.lastPageCode).toBe("gobby:wiki-tab:last-page:code");
     expect(WIKI_TAB_KEYS.graph).toBe("gobby:wiki-tab:graph");
-    expect(WIKI_TAB_KEYS.askHistory).toBe("gobby:wiki-tab:ask-history");
   });
 
   it("round-trips mode and defaults to wiki on missing or invalid values", () => {
     expect(loadStoredMode()).toBe("wiki");
-    storeMode("ask");
-    expect(window.localStorage.getItem(WIKI_TAB_KEYS.mode)).toBe("ask");
-    expect(loadStoredMode()).toBe("ask");
+    storeMode("code");
+    expect(window.localStorage.getItem(WIKI_TAB_KEYS.mode)).toBe("code");
+    expect(loadStoredMode()).toBe("code");
     window.localStorage.setItem(WIKI_TAB_KEYS.mode, "bogus");
     expect(loadStoredMode()).toBe("wiki");
-    window.localStorage.setItem(WIKI_TAB_KEYS.mode, "research");
+    window.localStorage.setItem(WIKI_TAB_KEYS.mode, "ask");
     expect(loadStoredMode()).toBe("wiki");
   });
 

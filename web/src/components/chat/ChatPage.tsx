@@ -1,5 +1,3 @@
-import "./styles.css";
-
 import { useEffect, useRef } from "react";
 
 import { useIsMobile } from "../../hooks/useIsMobile";

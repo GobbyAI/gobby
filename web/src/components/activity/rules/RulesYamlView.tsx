@@ -23,10 +23,10 @@ export function RulesYamlView({
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
       {bundled && (
-        <div className="rules-locked-name">
-          <span className="rules-locked-name__label">Name</span>
-          <span className="rules-locked-name__value">{detail.name}</span>
-          <span className="rules-locked-name__hint">
+        <div className="grid min-w-0 gap-1">
+          <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">Name</span>
+          <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] text-[var(--text-primary)] [overflow-wrap:anywhere]">{detail.name}</span>
+          <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
             Bundled template rule names are read-only
           </span>
         </div>

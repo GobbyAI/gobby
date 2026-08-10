@@ -1,6 +1,6 @@
-import { useId } from 'react'
 import type { ReactNode } from 'react'
 import { Button } from '../../ui/Button'
+import { FormField } from '../../ui/FormField'
 
 export interface TypedListFieldProps<T> {
   label: string
@@ -37,8 +37,6 @@ export function TypedListField<T>({
   addLabel = 'Add item',
   itemLabel,
 }: TypedListFieldProps<T>) {
-  const labelId = useId()
-
   function updateItem(index: number, next: T) {
     onChange(value.map((item, itemIndex) => (itemIndex === index ? next : item)))
   }
@@ -52,49 +50,48 @@ export function TypedListField<T>({
   }
 
   return (
-    <div className="settings-field settings-typed-list" role="group" aria-labelledby={labelId}>
-      <span id={labelId} className="settings-field__label">
-        {label}
-      </span>
-      {value.length > 0 ? (
-        <ul className="settings-typed-list__items">
-          {value.map((item, index) => (
-            <li key={index} className="settings-typed-list__item">
-              <div className="settings-typed-list__item-head">
-                <span className="settings-typed-list__item-title">
-                  {itemLabel ? itemLabel(item, index) : `${ariaLabel} ${index + 1}`}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="settings-typed-list__remove"
-                  disabled={disabled}
-                  aria-label={`Remove ${ariaLabel} ${index + 1}`}
-                  onClick={() => removeItem(index)}
+    <FormField label={label} group>
+      {() => (
+        <>
+          {value.length > 0 ? (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {value.map((item, index) => (
+                <li
+                  key={index}
+                  className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
                 >
-                  Remove
-                </Button>
-              </div>
-              <div className="settings-typed-list__item-body">
-                {renderItem(item, (next) => updateItem(index, next), index)}
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="settings-field__empty">No items.</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-muted-foreground">
+                      {itemLabel ? itemLabel(item, index) : `${ariaLabel} ${index + 1}`}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="shrink-0"
+                      disabled={disabled}
+                      aria-label={`Remove ${ariaLabel} ${index + 1}`}
+                      onClick={() => removeItem(index)}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    {renderItem(item, (next) => updateItem(index, next), index)}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No items.</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" disabled={disabled} onClick={addItem}>
+              {addLabel}
+            </Button>
+          </div>
+        </>
       )}
-      <div className="settings-field__actions">
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled}
-          onClick={addItem}
-        >
-          {addLabel}
-        </Button>
-      </div>
-    </div>
+    </FormField>
   )
 }

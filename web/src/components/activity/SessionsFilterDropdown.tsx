@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { DropdownCaret } from "../ui/DropdownCaret";
+import { Input } from "../ui/Input";
 import { ActivityFilterFooter } from "./ActivityFilterFooter";
-import { FilterCheckboxRow, FilterSection } from "./FilterPrimitives";
+import {
+  FilterCheckboxRow,
+  FilterDropdownShell,
+  FilterFieldRow,
+  FilterSection,
+} from "./FilterPrimitives";
 import { SegmentedControl } from "../ui/SegmentedControl";
-import { inputFocusCls } from "../shared/focusStyles";
 import { getProviderDisplayName } from "../../lib/providerModels";
 import { useDialogFocus } from "../../hooks/useDialogFocus";
 import { useIsMobile } from "../../hooks/useIsMobile";
@@ -159,151 +168,146 @@ export function SessionsFilterDropdown({
   // Filter trigger. Both share the same internal 2-column body so the visual
   // treatment is identical — only positioning changes.
   const panelClass = isMobile
-    ? "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[100] w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col"
-    : "absolute top-1 right-2 z-[100] w-80 max-h-[60vh] overflow-y-auto border border-border rounded-md shadow-xl flex flex-col";
+    ? "fixed left-1/2 top-1/2 w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto"
+    : "absolute top-1 right-2 w-80 max-h-[60vh] overflow-y-auto";
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-[99]"
-        onClick={onClose}
-        aria-hidden="true"
-        data-testid="sessions-filter-overlay"
-      />
-      <div
-        ref={panelRef}
-        className={panelClass}
-        style={{ background: "var(--bg-secondary)" }}
-        role="dialog"
-        aria-label="Session filters"
-        aria-modal={isMobile || undefined}
-      >
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] divide-x divide-border">
-          {/* Left column: Mode + Provider */}
-          <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <FilterSection label="Mode">
-              {MODE_OPTIONS.map((option) => (
-                <FilterCheckboxRow
-                  key={option.value}
-                  label={option.label}
-                  checked={isInclusiveSetChecked(filters.modes, option.value)}
-                  onToggle={() => handleModeToggle(option.value)}
-                />
-              ))}
-            </FilterSection>
-
-            <FilterSection label="Attention">
+    <FilterDropdownShell
+      panelRef={panelRef}
+      onClose={onClose}
+      overlayTestId="sessions-filter-overlay"
+      ariaLabel="Session filters"
+      ariaModal={isMobile || undefined}
+      className={panelClass}
+    >
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] divide-x divide-border">
+        {/* Left column: Mode + Provider */}
+        <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+          <FilterSection label="Mode">
+            {MODE_OPTIONS.map((option) => (
               <FilterCheckboxRow
-                label="Blocked"
-                checked={filters.blockedOnly}
-                onToggle={() => update({ blockedOnly: !filters.blockedOnly })}
+                key={option.value}
+                label={option.label}
+                checked={isInclusiveSetChecked(filters.modes, option.value)}
+                onToggle={() => handleModeToggle(option.value)}
               />
-            </FilterSection>
+            ))}
+          </FilterSection>
 
-            <FilterSection label="Provider">
-              {sortedProviderOptions.length === 0 ? (
-                <EmptyHint>No providers available</EmptyHint>
-              ) : (
-                sortedProviderOptions.map((provider) => (
-                  <FilterCheckboxRow
-                    key={provider}
-                    label={getProviderDisplayName(provider) || provider}
-                    checked={isInclusiveSetChecked(filters.providers, provider)}
-                    onToggle={() => handleProviderToggle(provider)}
-                  />
-                ))
-              )}
-            </FilterSection>
-          </div>
+          <FilterSection label="Attention">
+            <FilterCheckboxRow
+              label="Blocked"
+              checked={filters.blockedOnly}
+              onToggle={() => update({ blockedOnly: !filters.blockedOnly })}
+            />
+          </FilterSection>
 
-          {/* Right column: Session ref + Task ref + Date range */}
-          <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
-            <FilterSection label="Session ref">
-              <RefRangeInputs
-                minValue={filters.sessionRefMin}
-                maxValue={filters.sessionRefMax}
-                onChangeMin={(value) => update({ sessionRefMin: value })}
-                onChangeMax={(value) => update({ sessionRefMax: value })}
-                ariaLabelPrefix="Session ref"
-              />
-            </FilterSection>
-
-            <FilterSection label="Task ref">
-              <div className="flex flex-col gap-0.5 px-2 py-1">
-                {TASK_REF_ROLES.map((role) => (
-                  <label
-                    key={role.value}
-                    className="flex min-w-0 items-center gap-1.5 text-[length:var(--text-md)] text-muted-foreground cursor-pointer pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-                  >
-                    <input
-                      type="checkbox"
-                      className="w-3 h-3"
-                      checked={filters.taskRefRoles.has(role.value)}
-                      onChange={() => handleTaskRefRoleToggle(role.value)}
-                    />
-                    <span>{role.label}</span>
-                  </label>
-                ))}
-              </div>
-              <RefRangeInputs
-                minValue={filters.taskRefMin}
-                maxValue={filters.taskRefMax}
-                onChangeMin={(value) => update({ taskRefMin: value })}
-                onChangeMax={(value) => update({ taskRefMax: value })}
-                ariaLabelPrefix="Task ref"
-              />
-            </FilterSection>
-
-            <FilterSection label="Date range">
-              <div className="px-2 py-1">
-                <SegmentedControl<DatePreset>
-                  value={filters.datePreset === "custom" ? "all" : filters.datePreset}
-                  onChange={handleDatePresetChange}
-                  options={DATE_PRESET_OPTIONS}
-                  ariaLabel="Date preset"
+          <FilterSection label="Provider">
+            {sortedProviderOptions.length === 0 ? (
+              <EmptyHint>No providers available</EmptyHint>
+            ) : (
+              sortedProviderOptions.map((provider) => (
+                <FilterCheckboxRow
+                  key={provider}
+                  label={getProviderDisplayName(provider) || provider}
+                  checked={isInclusiveSetChecked(filters.providers, provider)}
+                  onToggle={() => handleProviderToggle(provider)}
                 />
-              </div>
-              <button
-                type="button"
-                className="px-2 py-1 text-[length:var(--text-md)] text-muted-foreground hover:text-foreground text-left"
-                onClick={handleCustomDateToggle}
-                aria-expanded={showCustomDate}
-              >
-                {showCustomDate ? "▾" : "▸"} Custom range
-              </button>
-              {showCustomDate && (
-                <div className="flex flex-col gap-1 px-2 py-1">
-                  <input
-                    type="date"
-                    className={`w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground ${inputFocusCls}`}
-                    value={filters.dateCustomFrom ?? ""}
-                    onChange={(e) =>
-                      update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
-                    }
-                    aria-label="Custom date from"
-                  />
-                  <input
-                    type="date"
-                    className={`w-full px-1.5 py-0.5 text-[length:var(--text-md)] bg-transparent border border-border rounded text-foreground ${inputFocusCls}`}
-                    value={filters.dateCustomTo ?? ""}
-                    onChange={(e) =>
-                      update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
-                    }
-                    aria-label="Custom date to"
-                  />
-                </div>
-              )}
-            </FilterSection>
-          </div>
+              ))
+            )}
+          </FilterSection>
         </div>
 
-        <ActivityFilterFooter
-          onReset={handleReset}
-          onApply={onClose}
-          resetDisabled={activeCount === 0}
-        />
+        {/* Right column: Session ref + Task ref + Date range */}
+        <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+          <FilterSection label="Session ref">
+            <RefRangeInputs
+              minValue={filters.sessionRefMin}
+              maxValue={filters.sessionRefMax}
+              onChangeMin={(value) => update({ sessionRefMin: value })}
+              onChangeMax={(value) => update({ sessionRefMax: value })}
+              ariaLabelPrefix="Session ref"
+            />
+          </FilterSection>
+
+          <FilterSection label="Task ref">
+            <div className="flex flex-col gap-0.5 px-2 py-1">
+              {TASK_REF_ROLES.map((role) => (
+                <FilterCheckboxRow
+                  key={role.value}
+                  label={role.label}
+                  checked={filters.taskRefRoles.has(role.value)}
+                  onToggle={() => handleTaskRefRoleToggle(role.value)}
+                />
+              ))}
+            </div>
+            <RefRangeInputs
+              minValue={filters.taskRefMin}
+              maxValue={filters.taskRefMax}
+              onChangeMin={(value) => update({ taskRefMin: value })}
+              onChangeMax={(value) => update({ taskRefMax: value })}
+              ariaLabelPrefix="Task ref"
+            />
+          </FilterSection>
+
+          <FilterSection label="Date range">
+            <div className="px-2 py-1">
+              <SegmentedControl<DatePreset>
+                value={filters.datePreset === "custom" ? "all" : filters.datePreset}
+                onChange={handleDatePresetChange}
+                options={DATE_PRESET_OPTIONS}
+                ariaLabel="Date preset"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              dense
+              className={cn(
+                "w-full justify-start px-2 text-left text-[length:var(--text-md)] font-normal text-muted-foreground",
+                coarseHitAreaCls,
+              )}
+              onClick={handleCustomDateToggle}
+              aria-expanded={showCustomDate}
+            >
+              <DropdownCaret open={showCustomDate} />
+              Custom range
+            </Button>
+            {showCustomDate && (
+              <FilterFieldRow className="flex flex-col gap-1">
+                <Input
+                  type="date"
+                  wrapperClassName="w-full"
+                  className="h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)]"
+                  value={filters.dateCustomFrom ?? ""}
+                  onChange={(e) =>
+                    update({ dateCustomFrom: e.target.value || null, datePreset: "custom" })
+                  }
+                  aria-label="Custom date from"
+                />
+                <Input
+                  type="date"
+                  wrapperClassName="w-full"
+                  className="h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)]"
+                  value={filters.dateCustomTo ?? ""}
+                  onChange={(e) =>
+                    update({ dateCustomTo: e.target.value || null, datePreset: "custom" })
+                  }
+                  aria-label="Custom date to"
+                />
+              </FilterFieldRow>
+            )}
+          </FilterSection>
+        </div>
       </div>
-    </>
+
+      <ActivityFilterFooter
+        onReset={handleReset}
+        onApply={onClose}
+        resetDisabled={activeCount === 0}
+      />
+    </FilterDropdownShell>
   );
 }
 
@@ -325,42 +329,43 @@ function RefRangeInputs({
   ariaLabelPrefix: string;
 }) {
   const isInvalid = minValue !== null && maxValue !== null && minValue > maxValue;
-  const inputClassName = `w-[4.5rem] px-1.5 py-0.5 text-[length:var(--text-md)] font-mono bg-transparent border rounded text-foreground ${inputFocusCls} ${
-    isInvalid
-      ? "border-[var(--color-error)]"
-      : "border-border"
-  }`;
+  const inputClassName =
+    "h-7 w-full px-1.5 py-0.5 text-[length:var(--text-md)] font-mono";
 
   return (
-    <div className="px-2 py-1">
+    <FilterFieldRow>
       <div className="flex items-center gap-1">
-        <input
+        <Input
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           className={inputClassName}
+          wrapperClassName="w-[4.5rem] shrink-0"
           placeholder="from"
           value={minValue !== null ? String(minValue) : ""}
           onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
           aria-label={`${ariaLabelPrefix} minimum`}
           aria-invalid={isInvalid}
+          error={isInvalid}
         />
-        <span className="text-[length:var(--text-md)] text-muted-foreground">→</span>
-        <input
+        <span className="text-[length:var(--text-md)] text-muted-foreground">to</span>
+        <Input
           type="text"
           inputMode="numeric"
           pattern="[0-9]*"
           className={inputClassName}
+          wrapperClassName="w-[4.5rem] shrink-0"
           placeholder="to"
           value={maxValue !== null ? String(maxValue) : ""}
           onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
           aria-label={`${ariaLabelPrefix} maximum`}
           aria-invalid={isInvalid}
+          error={isInvalid}
         />
       </div>
       {isInvalid && (
         <div className="mt-1 text-[length:var(--text-md)] text-[var(--color-error)]">Min must be &lt;= Max</div>
       )}
-    </div>
+    </FilterFieldRow>
   );
 }

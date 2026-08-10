@@ -6,6 +6,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { fetchBacklinks, type WikiBacklink, type WikiFetchScope } from "./WikiTabData";
 import type { WikiGraphPayload, WikiNodeIndex } from "./WikiTabModel";
 
@@ -90,15 +92,17 @@ export function WikiBacklinks({
 
   return (
     <section aria-label="Linked mentions" className="mt-6 border-t border-border pt-3">
-      <button
+      <Button
         type="button"
         aria-expanded={expanded}
-        className="flex w-full items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-muted-foreground hover:text-foreground"
+        variant="ghost"
+        size="sm"
+        className={`${coarseHitAreaCls} w-full justify-start gap-1 px-0 text-left text-xs uppercase tracking-wide`}
         onClick={toggle}
       >
         <span aria-hidden="true">{expanded ? "▾" : "▸"}</span>
         Linked mentions
-      </button>
+      </Button>
 
       {expanded ? (
         <div className="mt-2 flex flex-col gap-3">
@@ -117,13 +121,15 @@ export function WikiBacklinks({
               <ul className="flex list-none flex-col gap-0.5">
                 {state.backlinks.map((backlink) => (
                   <li key={backlink.sourcePath}>
-                    <button
+                    <Button
                       type="button"
-                      className="w-full rounded-md px-1.5 py-1 text-left text-sm text-foreground hover:bg-muted"
+                      variant="ghost"
+                      size="sm"
+                      className={`${coarseHitAreaCls} w-full justify-start px-1.5 text-left text-sm text-foreground`}
                       onClick={() => onOpen(backlink.sourcePath)}
                     >
                       {titleFor(backlink.sourcePath)}
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -140,13 +146,15 @@ export function WikiBacklinks({
               <ul className="mt-1 flex list-none flex-col gap-0.5">
                 {unresolvedMentions.map((node) => (
                   <li key={node.id}>
-                    <button
+                    <Button
                       type="button"
-                      className="w-full rounded-md px-1.5 py-1 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                      variant="ghost"
+                      size="sm"
+                      className={`${coarseHitAreaCls} w-full justify-start px-1.5 text-left text-sm`}
                       onClick={() => node.path && onOpen(node.path)}
                     >
                       {node.title ?? node.path}
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>

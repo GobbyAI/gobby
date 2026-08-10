@@ -20,7 +20,7 @@ function renderForm(onClose = vi.fn()) {
     />,
   )
   const dialog = screen.getByRole('dialog')
-  return { onClose, dialog, backdrop: dialog.parentElement as HTMLElement }
+  return { onClose, dialog, backdrop: dialog.previousElementSibling as HTMLElement }
 }
 
 describe('TaskCreateForm dismissal', () => {
@@ -28,14 +28,14 @@ describe('TaskCreateForm dismissal', () => {
     confirmMock.mockReset()
   })
 
-  it.each(['Escape', 'backdrop'])('dismisses a clean form via %s without confirmation', (method) => {
+  it.each(['Escape', 'backdrop'])('dismisses a clean form via %s without confirmation', async (method) => {
     const { onClose, dialog, backdrop } = renderForm()
 
     if (method === 'Escape') fireEvent.keyDown(dialog, { key: 'Escape' })
-    else fireEvent.click(backdrop)
+    else await userEvent.click(backdrop)
 
     expect(confirmMock).not.toHaveBeenCalled()
-    expect(onClose).toHaveBeenCalledOnce()
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
 
   it.each(['Escape', 'backdrop'])('keeps a dirty form open when %s discard is cancelled', async (method) => {
@@ -44,7 +44,7 @@ describe('TaskCreateForm dismissal', () => {
     await userEvent.type(screen.getByLabelText(/Title/), 'Keep this draft')
 
     if (method === 'Escape') fireEvent.keyDown(dialog, { key: 'Escape' })
-    else fireEvent.click(backdrop)
+    else await userEvent.click(backdrop)
 
     await waitFor(() => expect(confirmMock).toHaveBeenCalledOnce())
     expect(confirmMock).toHaveBeenCalledWith({

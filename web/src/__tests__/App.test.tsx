@@ -7,6 +7,14 @@ import { useSessionCatalog } from "../hooks/useSessionCatalog";
 import { useAuth } from "../hooks/useAuth";
 
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
+const settingsOverlayRenderSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('../components/settings/SettingsOverlay', () => ({
+  default: () => {
+    settingsOverlayRenderSpy();
+    return <div role="dialog" aria-label="Settings overlay" data-testid="settings-overlay" />;
+  },
+}));
 
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
@@ -322,6 +330,30 @@ describe("App wiring", () => {
       expect(mockSetProjectIdRef).toHaveBeenCalledWith("repo-project");
       expect(mockSendProjectChange).toHaveBeenCalledWith("repo-project");
     });
+  });
+
+  it("opens SettingsOverlay exactly once and leaves the legacy settings branch unreachable", async () => {
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(chatPagePropsSpy).toHaveBeenCalled();
+    });
+    const props = chatPagePropsSpy.mock.calls[
+      chatPagePropsSpy.mock.calls.length - 1
+    ]?.[0] as {
+      paletteActions?: Array<{ id: string; onSelect: () => void }>;
+    };
+
+    act(() => {
+      props.paletteActions?.find((action) => action.id === "settings")?.onSelect();
+    });
+
+    expect(await screen.findByTestId("settings-overlay")).toBeInTheDocument();
+    expect(screen.getAllByTestId("settings-overlay")).toHaveLength(1);
+    expect(settingsOverlayRenderSpy).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("button", { name: "Reset to Defaults" })).toBeNull();
   });
 
   it("clears a requested activity tab before switching projects", async () => {
@@ -805,7 +837,8 @@ describe("App wiring", () => {
       });
 
       const logoutButton = await screen.findByRole("button", { name: "Log out" });
-      expect(logoutButton).toHaveClass("app-logout-btn");
+      expect(logoutButton).toHaveClass("w-8", "shrink-0", "pointer-coarse:min-w-11");
+      expect(logoutButton).not.toHaveClass("app-logout-btn", "pointer-coarse:min-h-11");
       expect(document.querySelector('[aria-label="Toggle navigation menu"]')).toBeNull();
 
       await act(async () => {

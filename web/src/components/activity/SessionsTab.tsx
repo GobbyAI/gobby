@@ -4,6 +4,9 @@ import { useSessionDetail } from "../../hooks/useSessionDetail";
 import { useSessionAttention } from "../../hooks/useSessionAttention";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import {
   countActiveFilters,
   defaultSessionsFilters,
@@ -100,13 +103,19 @@ function FilterEmptyState({
       body={hasActiveFilters && activeFilterCount > 0 ? message : hint}
       footer={
         hasActiveFilters && activeFilterCount > 0 ? (
-          <button
+          <Button
             type="button"
-            className="text-xs text-accent hover:underline"
+            variant="ghost"
+            size="sm"
+            dense
+            className={cn(
+              "text-xs text-accent hover:bg-transparent hover:underline",
+              coarseHitAreaCls,
+            )}
             onClick={onClear}
           >
             Clear filters
-          </button>
+          </Button>
         ) : null
       }
     />

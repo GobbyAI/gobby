@@ -11,6 +11,7 @@ import {
   TaskTextAreaField,
 } from "../TaskFieldEditors";
 import type { TaskInlineEditApi } from "./taskDetailFormat";
+import { markdownBodyClassName } from "../../shared/MarkdownBody";
 
 /**
  * D5 §3 — the editable core. PATCH-family fields only (category, priority,
@@ -26,9 +27,13 @@ const PRIORITY_SELECT_OPTIONS = TASK_PRIORITY_OPTIONS.map(option => ({
 
 function StaticBlock({ label, value }: { label: string; value: string }) {
   return (
-    <div className="activity-task-detail-core-block">
-      <div className="activity-task-detail-core-block__label">{label}</div>
-      <div className="activity-task-detail-markdown message-content">
+    <div className="flex flex-col gap-[0.3rem]">
+      <div className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+        {label}
+      </div>
+      <div
+        className={`message-content text-[length:var(--text-base)] leading-[1.6] text-[var(--text-secondary)] ${markdownBodyClassName}`}
+      >
         {value}
       </div>
     </div>
@@ -51,14 +56,24 @@ export function TaskDetailEditableCore({
     const hasBody = Boolean(description) || Boolean(validationCriteria);
     if (!hasBody) return null;
     return (
-      <section className="activity-task-detail-core">
-        <h3 className="activity-task-detail-kv__title">Details</h3>
+      <section
+        className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-4 pt-[0.55rem]"
+        data-task-detail-core
+      >
+        <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+          Details
+        </h3>
         {labels.length > 0 && (
-          <div className="activity-task-detail-core-row">
-            <span className="activity-task-detail-core-row__label">Labels</span>
-            <div className="activity-task-detail-pillrow">
+          <div className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem]">
+            <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+              Labels
+            </span>
+            <div className="flex flex-wrap gap-[0.4rem]">
               {labels.map((label) => (
-                <span key={label} className="activity-task-detail-label">
+                <span
+                  key={label}
+                  className="inline-flex h-5 items-center whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)]"
+                >
                   {label}
                 </span>
               ))}
@@ -76,11 +91,18 @@ export function TaskDetailEditableCore({
   }
 
   return (
-    <section className="activity-task-detail-core">
-      <h3 className="activity-task-detail-kv__title">Details</h3>
+    <section
+      className="flex flex-col gap-[0.7rem] border-b border-border bg-[var(--bg-primary)] px-4 pb-4 pt-[0.55rem]"
+      data-task-detail-core
+    >
+      <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+        Details
+      </h3>
 
-      <div className="activity-task-detail-core-row">
-        <span className="activity-task-detail-core-row__label">Category</span>
+      <div className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem]">
+        <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+          Category
+        </span>
         <TaskSelectField
           value={task.category ?? ""}
           ariaLabel="Category"
@@ -92,8 +114,10 @@ export function TaskDetailEditableCore({
         />
       </div>
 
-      <div className="activity-task-detail-core-row">
-        <span className="activity-task-detail-core-row__label">Priority</span>
+      <div className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem]">
+        <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+          Priority
+        </span>
         <TaskSelectField
           value={String(task.priority ?? DEFAULT_TASK_PRIORITY)}
           ariaLabel="Priority"
@@ -111,13 +135,18 @@ export function TaskDetailEditableCore({
         />
       </div>
       {priorityError && (
-        <div className="activity-task-detail-edit-error" role="alert">
+        <div
+          className="flex items-start gap-2 border-b border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] bg-[var(--color-error-soft)] px-4 py-[0.55rem] text-[length:var(--text-sm)] text-[var(--color-error)] [&_span]:min-w-0 [&_span]:flex-auto"
+          role="alert"
+        >
           <span>{priorityError}</span>
         </div>
       )}
 
-      <div className="activity-task-detail-core-row">
-        <span className="activity-task-detail-core-row__label">Labels</span>
+      <div className="grid grid-cols-[minmax(0,6.5rem)_minmax(0,1fr)] items-center gap-[0.85rem]">
+        <span className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
+          Labels
+        </span>
         <TaskTagsField
           value={labels}
           ariaLabel="Labels"
@@ -128,8 +157,8 @@ export function TaskDetailEditableCore({
         />
       </div>
 
-      <div className="activity-task-detail-core-block">
-        <div className="activity-task-detail-core-block__label">
+      <div className="flex flex-col gap-[0.3rem]">
+        <div className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
           Description
         </div>
         <TaskTextAreaField
@@ -144,8 +173,8 @@ export function TaskDetailEditableCore({
         />
       </div>
 
-      <div className="activity-task-detail-core-block">
-        <div className="activity-task-detail-core-block__label">
+      <div className="flex flex-col gap-[0.3rem]">
+        <div className="text-[length:var(--text-sm)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">
           Validation criteria
         </div>
         <TaskTextAreaField

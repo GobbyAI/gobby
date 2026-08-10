@@ -5,6 +5,7 @@ import type { ToolCall, ToolResult } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 import { JsonBlock } from './JsonBlock'
 import { RichContentBlocks } from './RichContentBlocks'
 import {
@@ -638,10 +639,13 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
             {q.options.map((opt, oi) => {
               const isSelected = (selectedOptions[qi] || []).includes(opt.label)
               return (
-                <button
+                <Button
                   key={oi}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   className={cn(
-                    'rounded-md border px-3 py-1.5 text-sm transition-colors text-left',
+                    'justify-start whitespace-normal rounded-md border px-3 py-1.5 text-left text-sm font-normal transition-colors',
                     isSelected ? 'border-accent bg-accent/20 text-foreground' : 'border-border hover:bg-muted text-muted-foreground'
                   )}
                   onClick={() => handleOptionClick(qi, opt.label, q.multiSelect)}
@@ -649,10 +653,13 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
                 >
                   <div className="font-medium">{opt.label}</div>
                   {opt.description && <div className="text-xs opacity-75">{opt.description}</div>}
-                </button>
+                </Button>
               )
             })}
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
               className={cn(
                 'rounded-md border px-3 py-1.5 text-sm transition-colors',
                 (selectedOptions[qi] || []).includes('__other__') ? 'border-accent bg-accent/20 text-foreground' : 'border-border hover:bg-muted text-muted-foreground'
@@ -661,11 +668,12 @@ function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: 
               disabled={submitted}
             >
               Other
-            </button>
+            </Button>
           </div>
           {(selectedOptions[qi] || []).includes('__other__') && (
-            <input
-              className="mt-2 w-full rounded-md border border-border bg-transparent px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
+            <Input
+              wrapperClassName="mt-2"
+              className="h-auto w-full rounded-md border border-border bg-transparent px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
               type="text"
               placeholder="Type your answer..."
               value={otherTexts[qi] || ''}

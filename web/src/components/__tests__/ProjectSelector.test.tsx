@@ -32,15 +32,21 @@ describe('ProjectSelector', () => {
     expect(within(group).getByRole('radio', { name: 'gobby' })).toBeInTheDocument()
   })
 
-  it('opts the app header selector out of coarse pointer touch targets', () => {
+  it('keeps the segmented options touch-sized while the compact trigger stays dense', () => {
     renderSelector()
 
     const group = screen.getByRole('radiogroup', { name: 'Project scope' })
-    expect(group).not.toHaveClass('pointer-coarse:min-h-11')
+    expect(group).toHaveClass('pointer-coarse:min-h-11')
     for (const radio of within(group).getAllByRole('radio')) {
-      expect(radio).not.toHaveClass('pointer-coarse:min-h-11')
-      expect(radio).not.toHaveClass('pointer-coarse:min-w-11')
+      expect(radio).toHaveClass('pointer-coarse:min-h-11', 'pointer-coarse:min-w-11')
     }
+
+    const compactTrigger = screen.getByRole('button', { name: 'Project scope: gobby' })
+    expect(compactTrigger).toHaveClass('min-h-7')
+    expect(compactTrigger).not.toHaveClass(
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    )
   })
 
   it('opens the one-item mobile project selector with Personal in the list', () => {

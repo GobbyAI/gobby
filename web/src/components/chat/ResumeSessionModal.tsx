@@ -5,6 +5,8 @@ import { formatRelativeTime } from "../../utils/formatTime";
 import { getSessionTitleText } from "../../lib/sessionTitle";
 import { getSourceColorVar, SOURCE_LABELS } from "../shared/sourceTheme";
 import { Heading } from '../shared/Heading'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 
 interface ResumeSessionModalProps {
   isOpen: boolean;
@@ -111,8 +113,9 @@ export function ResumeSessionModal({
             Pick a session to resume in web chat with full conversation context.
           </DialogDescription>
           <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-            <input
+            <Input
               type="text"
+              wrapperClassName="flex-1"
               placeholder="Search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -128,7 +131,7 @@ export function ResumeSessionModal({
                 outline: "none",
               }}
             />
-            <label
+            <div
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -140,14 +143,17 @@ export function ResumeSessionModal({
                 userSelect: "none",
               }}
             >
-              <input
+              <Input
+                id="resume-session-subagents"
                 type="checkbox"
+                wrapperClassName="w-auto shrink-0"
+                className="h-4 w-4 shrink-0 rounded border-border p-0 accent-accent"
                 checked={showSubagents}
                 onChange={(e) => setShowSubagents(e.target.checked)}
                 style={{ accentColor: "var(--accent)" }}
               />
-              Subagents
-            </label>
+              <label htmlFor="resume-session-subagents">Subagents</label>
+            </div>
           </div>
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
@@ -161,8 +167,10 @@ export function ResumeSessionModal({
             </p>
           ) : (
             filteredSessions.map((session) => (
-              <button
+              <Button
                 key={session.id}
+                type="button"
+                variant="ghost"
                 onClick={() => {
                   onResume(session);
                   onClose();
@@ -214,7 +222,7 @@ export function ResumeSessionModal({
                     )}
                   </div>
                 </div>
-              </button>
+              </Button>
             ))
           )}
         </div>

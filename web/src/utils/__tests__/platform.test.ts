@@ -1,8 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const defaultUA = navigator.userAgent
 const defaultTouchPoints = navigator.maxTouchPoints
 const defaultInnerWidth = window.innerWidth
+const defaultInnerHeight = window.innerHeight
+
+function viewportMatches(query: string): boolean {
+  const maxWidth = query.match(/\(max-width:\s*(\d+)px\)/)
+  const maxHeight = query.match(/\(max-height:\s*(\d+)px\)/)
+  return (
+    (maxWidth !== null && window.innerWidth <= Number(maxWidth[1]))
+    || (maxHeight !== null && window.innerHeight <= Number(maxHeight[1]))
+  )
+}
 
 beforeEach(() => {
   vi.resetModules()
@@ -10,12 +20,24 @@ beforeEach(() => {
   Object.defineProperty(navigator, 'userAgent', { value: defaultUA, configurable: true })
   Object.defineProperty(navigator, 'maxTouchPoints', { value: defaultTouchPoints, configurable: true })
   Object.defineProperty(window, 'innerWidth', { value: defaultInnerWidth, configurable: true })
+  Object.defineProperty(window, 'innerHeight', { value: defaultInnerHeight, configurable: true })
+  document.documentElement.style.setProperty('--breakpoint-mobile-max-width', '767px')
+  document.documentElement.style.setProperty('--breakpoint-mobile-max-height', '500px')
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn((query: string) => ({ matches: viewportMatches(query) })),
+  })
 })
 
-describe('IS_MOBILE', () => {
+afterEach(() => {
+  document.documentElement.style.removeProperty('--breakpoint-mobile-max-width')
+  document.documentElement.style.removeProperty('--breakpoint-mobile-max-height')
+})
+
+describe('IS_MOBILE_DEVICE', () => {
   it('returns false in default jsdom (no touch, desktop UA)', async () => {
-    const { IS_MOBILE } = await import('../platform')
-    expect(IS_MOBILE).toBe(false)
+    const { IS_MOBILE_DEVICE } = await import('../platform')
+    expect(IS_MOBILE_DEVICE).toBe(false)
   })
 
   it('returns true for touch + mobile UA', async () => {
@@ -24,15 +46,15 @@ describe('IS_MOBILE', () => {
       value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
       configurable: true,
     })
-    const { IS_MOBILE } = await import('../platform')
-    expect(IS_MOBILE).toBe(true)
+    const { IS_MOBILE_DEVICE } = await import('../platform')
+    expect(IS_MOBILE_DEVICE).toBe(true)
   })
 
   it('returns true for touch + narrow viewport', async () => {
     Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
     Object.defineProperty(window, 'innerWidth', { value: 375, configurable: true })
-    const { IS_MOBILE } = await import('../platform')
-    expect(IS_MOBILE).toBe(true)
+    const { IS_MOBILE_DEVICE } = await import('../platform')
+    expect(IS_MOBILE_DEVICE).toBe(true)
   })
 
   it('returns false for touch without mobile UA or narrow viewport', async () => {
@@ -42,15 +64,15 @@ describe('IS_MOBILE', () => {
       configurable: true,
     })
     Object.defineProperty(window, 'innerWidth', { value: 1920, configurable: true })
-    const { IS_MOBILE } = await import('../platform')
-    expect(IS_MOBILE).toBe(false)
+    const { IS_MOBILE_DEVICE } = await import('../platform')
+    expect(IS_MOBILE_DEVICE).toBe(false)
   })
 })
 
-describe('IS_IOS', () => {
+describe('IS_IOS_DEVICE', () => {
   it('returns false for desktop UA', async () => {
-    const { IS_IOS } = await import('../platform')
-    expect(IS_IOS).toBe(false)
+    const { IS_IOS_DEVICE } = await import('../platform')
+    expect(IS_IOS_DEVICE).toBe(false)
   })
 
   it('returns true for iPhone UA', async () => {
@@ -58,8 +80,8 @@ describe('IS_IOS', () => {
       value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)',
       configurable: true,
     })
-    const { IS_IOS } = await import('../platform')
-    expect(IS_IOS).toBe(true)
+    const { IS_IOS_DEVICE } = await import('../platform')
+    expect(IS_IOS_DEVICE).toBe(true)
   })
 
   it('returns true for iPad UA', async () => {
@@ -67,8 +89,8 @@ describe('IS_IOS', () => {
       value: 'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)',
       configurable: true,
     })
-    const { IS_IOS } = await import('../platform')
-    expect(IS_IOS).toBe(true)
+    const { IS_IOS_DEVICE } = await import('../platform')
+    expect(IS_IOS_DEVICE).toBe(true)
   })
 
   it('returns true for iPadOS (Macintosh UA + touch)', async () => {
@@ -77,8 +99,8 @@ describe('IS_IOS', () => {
       configurable: true,
     })
     Object.defineProperty(navigator, 'maxTouchPoints', { value: 5, configurable: true })
-    const { IS_IOS } = await import('../platform')
-    expect(IS_IOS).toBe(true)
+    const { IS_IOS_DEVICE } = await import('../platform')
+    expect(IS_IOS_DEVICE).toBe(true)
   })
 })
 

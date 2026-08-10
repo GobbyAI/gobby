@@ -1,4 +1,5 @@
 import { Component, type ReactNode } from "react";
+import { Button } from "../ui/Button";
 
 export class AppErrorBoundary extends Component<
   { children: ReactNode; activeTab: string; onReturnToChat: () => void },
@@ -84,7 +85,9 @@ export class AppErrorBoundary extends Component<
             </code>
           )}
           <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem" }}>
-            <button
+            <Button
+              type="button"
+              variant="secondary"
               onClick={() => this.setState({ hasError: false, error: null })}
               style={{
                 padding: "0.4rem 1rem",
@@ -97,8 +100,10 @@ export class AppErrorBoundary extends Component<
               }}
             >
               Try Again
-            </button>
-            <button
+            </Button>
+            <Button
+              type="button"
+              variant="primary"
               onClick={() => {
                 this.setState({ hasError: false, error: null });
                 this.props.onReturnToChat();
@@ -114,7 +119,7 @@ export class AppErrorBoundary extends Component<
               }}
             >
               Return to Chat
-            </button>
+            </Button>
           </div>
         </main>
       );

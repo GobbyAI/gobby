@@ -61,8 +61,8 @@ export function McpServerFields({
 
   if (!draft) {
     return (
-      <div className="activity-mcp-detail">
-        <div className="activity-mcp-detail-body activity-mcp-detail-body--empty">
+      <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">
+        <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]">
           Select an MCP server.
         </div>
       </div>
@@ -73,7 +73,7 @@ export function McpServerFields({
   const title = mode === "create" ? "New MCP server" : draft.name || "MCP server";
 
   return (
-    <div className="activity-mcp-detail">
+    <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">
       <DetailPaneHeader
         title={title}
         dirty={draftState.dirty}
@@ -82,7 +82,7 @@ export function McpServerFields({
         onSave={() => void draftState.save()}
         onDiscard={handleDiscard}
       />
-      <div className="activity-mcp-detail-body">
+      <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-primary)]">
         <div className="flex flex-col gap-4">
           <TextField
             label="Name"

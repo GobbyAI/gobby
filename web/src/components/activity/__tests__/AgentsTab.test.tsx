@@ -162,6 +162,22 @@ describe("AgentsTab", () => {
     mockFetch.restore();
   });
 
+  it("renders list and detail metadata through shared chips", async () => {
+    const user = userEvent.setup();
+    const mockFetch = installFetch();
+
+    render(<AgentsTab projectId="project-1" />);
+
+    const row = await screen.findByRole("listitem", { name: /reviewer/i });
+    expect(within(row).getByText("claude")).toHaveClass("inline-flex");
+    expect(within(row).getByText("Installed")).toHaveClass("inline-flex");
+
+    await user.click(within(row).getByRole("button", { name: "Select reviewer" }));
+    expect(await screen.findByText("installed")).toHaveClass("inline-flex");
+
+    mockFetch.restore();
+  });
+
   it("runs the row action for duplicating agents", async () => {
     const user = userEvent.setup();
     const mockFetch = installFetch();

@@ -34,6 +34,10 @@ export function useChatInputAttachments({
   }, [imagesDisabled])
 
   useEffect(() => {
+    // Re-arm on mount: StrictMode runs this cleanup once at startup on the
+    // SAME ref, so a cleanup-only `mountedRef.current = false` would leave
+    // attachment uploads permanently inert in dev.
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
     }

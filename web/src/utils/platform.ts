@@ -1,3 +1,5 @@
+import { mobileTierQuery } from '../hooks/useIsMobile'
+
 /**
  * Cached platform detection and WebGL capability probe.
  * All values computed once on module load.
@@ -5,17 +7,21 @@
 
 const ua = typeof navigator !== 'undefined' ? navigator.userAgent : ''
 
-/** Device has a touch screen and a mobile-sized viewport or mobile UA. */
-export const IS_MOBILE: boolean = (() => {
+/** Device has touch capability plus either a mobile UA or mobile-tier viewport. */
+export const IS_MOBILE_DEVICE: boolean = (() => {
   if (typeof navigator === 'undefined') return false
   const hasTouch = navigator.maxTouchPoints > 1
   const mobileUA = /Android|iPhone|iPad|iPod/i.test(ua)
-  const narrowViewport = typeof window !== 'undefined' && window.innerWidth < 768
-  return hasTouch && (mobileUA || narrowViewport)
+  const mobileTierViewport = (
+    typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia(mobileTierQuery()).matches
+  )
+  return hasTouch && (mobileUA || mobileTierViewport)
 })()
 
 /** Running on iOS (iPhone, iPad, iPod) including iPadOS (reports as MacIntel + touch). */
-export const IS_IOS: boolean = (() => {
+export const IS_IOS_DEVICE: boolean = (() => {
   if (typeof navigator === 'undefined') return false
   if (/iPhone|iPad|iPod/.test(ua)) return true
   // iPadOS: Safari reports "Macintosh" UA but has touch

@@ -116,7 +116,7 @@ function ClientPreferences({ clientSettings }: { clientSettings?: UseSettingsRet
   if (!clientSettings) {
     return (
       <Subsection title="Voice & chat preferences">
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Voice and chat preferences are unavailable — the settings provider is not mounted.
         </p>
       </Subsection>
@@ -358,7 +358,7 @@ function AudioBindingEditor({
   const patch = (partial: Partial<AudioBinding>) => onChange({ ...value, ...partial })
 
   return (
-    <div className="settings-endpoint-editor">
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       <TextField
         label="Provider id"
         ariaLabel={`Audio provider id (${name})`}

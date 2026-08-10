@@ -41,33 +41,41 @@ function acpBlock(
   };
 }
 
-function chipClasses(entry: WatchingSessionEntry): string[] {
+function chipLabels(entry: WatchingSessionEntry): (string | null)[] {
   const { container } = render(renderBadges(entry));
-  return Array.from(container.querySelectorAll<HTMLElement>(".chip")).map(
-    (chip) => chip.className,
-  );
+  return Array.from(container.children).map((chip) => chip.textContent);
 }
 
 describe("renderBadges kind chip", () => {
   it("renders an ACP chip in place of the web/tmux chip for ACP rows", () => {
-    const chips = chipClasses(makeEntry({ acp: acpBlock() }));
+    const labels = chipLabels(makeEntry({ acp: acpBlock() }));
 
-    expect(chips[0]).toBe("chip chip--acp");
-    expect(chips).not.toContain("chip chip--web");
-    expect(chips).not.toContain("chip chip--tmux");
+    expect(labels[0]).toBe("ACP");
+    expect(labels).not.toContain("web");
+    expect(labels).not.toContain("tmux");
   });
 
   it("delegates to the web chip when no acp block is present", () => {
-    const chips = chipClasses(makeEntry({ acp: null }));
+    const labels = chipLabels(makeEntry({ acp: null }));
 
-    expect(chips[0]).toBe("chip chip--web");
-    expect(chips).not.toContain("chip chip--acp");
+    expect(labels[0]).toBe("web");
+    expect(labels).not.toContain("ACP");
   });
 
   it("delegates to the tmux chip for terminal sessions", () => {
-    const chips = chipClasses(makeEntry({ sessionType: "terminal" }));
+    const labels = chipLabels(makeEntry({ sessionType: "terminal" }));
 
-    expect(chips[0]).toBe("chip chip--tmux");
+    expect(labels[0]).toBe("tmux");
+  });
+
+  it("renders every kind and mode chip through the identity Chip treatment", () => {
+    const { container } = render(
+      renderBadges(makeEntry({ sandboxEnabled: true })),
+    );
+
+    for (const chip of Array.from(container.children)) {
+      expect(chip).toHaveClass("rounded-full", "uppercase", "font-mono");
+    }
   });
 
   it("keeps the kind chip leading even when mode chips sort before it", () => {
@@ -75,7 +83,7 @@ describe("renderBadges kind chip", () => {
     // the "web" kind label, so a sort that swept the kind chip in would push it
     // off the front. Asserting "web" stays first proves it renders outside the
     // alphabetical sort.
-    const chips = chipClasses(
+    const labels = chipLabels(
       makeEntry({
         sandboxEnabled: true,
         isLocal: true,
@@ -83,14 +91,11 @@ describe("renderBadges kind chip", () => {
       }),
     );
 
-    expect(chips[0]).toBe("chip chip--web");
-    expect(chips).toContain("chip chip--auto");
-    expect(chips).toContain("chip chip--local");
-    expect(chips).toContain("chip chip--sandbox");
+    expect(labels).toEqual(["web", "auto", "LOCAL", "SB"]);
   });
 
   it("renders the ACP chip leading ahead of sorted mode chips", () => {
-    const chips = chipClasses(
+    const labels = chipLabels(
       makeEntry({
         acp: acpBlock({ resume: true }),
         sandboxEnabled: true,
@@ -98,14 +103,13 @@ describe("renderBadges kind chip", () => {
       }),
     );
 
-    expect(chips[0]).toBe("chip chip--acp");
+    expect(labels[0]).toBe("ACP");
     // Remaining chips stay alphabetically sorted: LOCAL before SB.
-    const rest = chips.slice(1);
-    expect(rest).toEqual(["chip chip--local", "chip chip--sandbox"]);
+    expect(labels.slice(1)).toEqual(["LOCAL", "SB"]);
   });
 });
 
 // Type-level guard: the Badge contract the chips are built from is exported and
 // shaped as expected, so downstream gating helpers (task #17400) can reuse it.
-const _badgeShape: Badge = { label: "ACP", className: "chip chip--acp" };
+const _badgeShape: Badge = { label: "ACP" };
 void _badgeShape;

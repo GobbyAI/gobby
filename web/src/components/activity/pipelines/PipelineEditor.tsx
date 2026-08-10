@@ -1,22 +1,12 @@
 import { forwardRef, useCallback, useImperativeHandle, useMemo, useState } from 'react'
 import { useConfirmDialog } from '../../../hooks/useConfirmDialog'
 import { cn } from '../../../lib/utils'
-import {
-  BADGE_CLS,
-  BACK_CLS,
-  BTN_CLS,
-  BTN_PRIMARY_CLS,
-  DESCRIPTION_CLS,
-  EDITOR_CLS,
-  EDITOR_SIDEBAR_CLS,
-  LABEL_CLS,
-  META_CLS,
-  NAME_CLS,
-  SAVE_ERROR_CLS,
-  TOOLBAR_CLS,
-  TOOLBAR_LEFT_CLS,
-  TOOLBAR_RIGHT_CLS,
-} from './PipelineEditor.styles'
+import { Button } from '../../ui/Button'
+import { Chip } from '../../ui/Chip'
+import { FormField } from '../../ui/FormField'
+import { Input } from '../../ui/Input'
+import { Textarea } from '../../ui/Textarea'
+import { coarseHitAreaCls } from '../../ui/controlStyles'
 import type {
   PipelineEditorHandle,
   PipelineEditorProps,
@@ -187,17 +177,28 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
     )
 
     return (
-      <div className={cn(EDITOR_CLS, inSidebar && EDITOR_SIDEBAR_CLS)}>
+      <div
+        className={cn(
+          'flex h-full flex-1 flex-col overflow-hidden',
+          inSidebar && '!h-auto !overflow-visible',
+        )}
+      >
         {ConfirmDialogElement}
         {!inSidebar && (
-          <div className={TOOLBAR_CLS}>
-            <div className={TOOLBAR_LEFT_CLS}>
-              <button type="button" className={BACK_CLS} onClick={handleBack}>
+          <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-[var(--bg-secondary)] px-4 py-2.5">
+            <div className="flex items-center gap-2.5">
+              <Button
+                type="button"
+                size="sm"
+                className={cn(coarseHitAreaCls, 'text-base')}
+                onClick={handleBack}
+              >
                 &larr;
-              </button>
-              <input
-                className={NAME_CLS}
+              </Button>
+              <Input
                 type="text"
+                wrapperClassName="w-[240px]"
+                className="h-8 border-transparent bg-transparent px-2.5 py-1 text-base font-semibold hover:bg-[var(--bg-tertiary)] focus-visible:bg-[var(--bg-primary)]"
                 value={name}
                 onChange={(e) => {
                   setName(e.target.value)
@@ -205,43 +206,62 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
                 }}
                 placeholder="Pipeline name"
               />
-              <span className={BADGE_CLS}>pipeline</span>
+              <Chip tone="accent" uppercase>
+                pipeline
+              </Chip>
             </div>
-            <div className={TOOLBAR_RIGHT_CLS}>
-              <button type="button" className={BTN_CLS} onClick={onExport}>
-                Export YAML
-              </button>
-              <button
+            <div className="flex items-center gap-2">
+              <Button
                 type="button"
-                className={cn(BTN_CLS, BTN_PRIMARY_CLS)}
+                size="sm"
+                className={coarseHitAreaCls}
+                onClick={onExport}
+              >
+                Export YAML
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
+                className={coarseHitAreaCls}
                 onClick={handleSave}
                 disabled={saving}
               >
                 {saving ? 'Saving...' : 'Save'}
-              </button>
+              </Button>
             </div>
           </div>
         )}
 
         {saveError && (
-          <div className={SAVE_ERROR_CLS} role="alert">
+          <div
+            className="mx-3 mb-1 rounded-md bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)] px-3 py-2 text-sm text-[var(--color-error)]"
+            role="alert"
+          >
             {saveError}
           </div>
         )}
 
-        <label className={META_CLS}>
-          <span className={LABEL_CLS}>Description</span>
-          <textarea
-            className={DESCRIPTION_CLS}
-            value={description}
-            onChange={(e) => {
-              setDescription(e.target.value)
-              markDirty()
-            }}
-            placeholder="Pipeline description..."
-            rows={2}
-          />
-        </label>
+        <FormField
+          label="Description"
+          className="shrink-0 gap-1 border-b border-border px-4 py-3 [&>label:first-child]:text-xs [&>label:first-child]:font-semibold [&>label:first-child]:uppercase [&>label:first-child]:tracking-[0.5px]"
+        >
+          {({ id, describedBy, invalid }) => (
+            <Textarea
+              id={id}
+              aria-describedby={describedBy}
+              error={invalid}
+              className="min-h-10 resize-y px-2.5 py-2 font-[inherit] text-md"
+              value={description}
+              onChange={(e) => {
+                setDescription(e.target.value)
+                markDirty()
+              }}
+              placeholder="Pipeline description..."
+              rows={2}
+            />
+          )}
+        </FormField>
 
         <PipelineStepList
           steps={steps}

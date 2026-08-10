@@ -14,14 +14,23 @@ export const ActivityPanelEmpty = memo(function ActivityPanelEmpty({
   footer,
 }: ActivityPanelEmptyProps) {
   return (
-    <div className="activity-tab-empty">
+    <div className="activity-tab-empty flex h-full flex-col items-center justify-center gap-3 p-8 text-center text-[length:var(--text-base)] font-[var(--font-weight-normal)] text-[var(--text-muted)]">
       {icon && (
-        <div className="activity-tab-empty__icon" aria-hidden="true">
+        <div
+          className="activity-tab-empty__icon inline-flex items-center justify-center opacity-[0.35]"
+          aria-hidden="true"
+        >
           {icon}
         </div>
       )}
-      {heading && <div className="activity-tab-empty__heading">{heading}</div>}
-      <p className="activity-tab-empty__body">{body}</p>
+      {heading && (
+        <div className="activity-tab-empty__heading text-[length:var(--text-xl)] font-[var(--font-weight-normal)] text-[var(--text-secondary)]">
+          {heading}
+        </div>
+      )}
+      <p className="activity-tab-empty__body max-w-[26rem] text-[length:var(--text-base)] font-[var(--font-weight-normal)] text-[var(--text-muted)]">
+        {body}
+      </p>
       {footer}
     </div>
   )

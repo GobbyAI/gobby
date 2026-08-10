@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '../ui/Dialog'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
+import { SegmentedControl } from '../ui/SegmentedControl'
 
 interface AgentPickerDropdownProps {
   definitions: AgentDefInfo[]
@@ -14,33 +16,6 @@ interface AgentPickerDropdownProps {
   onSelect: (agentName: string) => void
   onClose: () => void
 }
-
-const SCOPE_TOGGLE_CLS = 'flex gap-0.5 border-b border-[var(--border)] px-2 py-1.5'
-
-const SCOPE_BTN_BASE_CLS =
-  'flex-1 cursor-pointer rounded border-0 bg-transparent px-2 py-1 text-xs text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-secondary)] pointer-coarse:min-h-11'
-
-const SCOPE_BTN_ACTIVE_CLS =
-  'bg-[var(--accent)] text-[var(--accent-foreground)] hover:bg-[var(--accent)] hover:text-[var(--accent-foreground)]'
-
-const LIST_CLS = 'max-h-60 overflow-y-auto py-1'
-
-const EMPTY_CLS = 'px-4 py-3 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]'
-
-const ITEM_BASE_CLS =
-  'flex w-full cursor-pointer flex-col border-0 bg-transparent px-3 py-2 text-left text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
-
-const ITEM_ACTIVE_CLS =
-  'bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]'
-
-const ITEM_MAIN_CLS = 'flex items-center gap-2'
-
-const ITEM_NAME_CLS = 'text-[length:var(--text-md)] font-medium'
-
-const ITEM_CHECK_CLS = 'ml-auto text-xs text-[var(--accent)]'
-
-const ITEM_DESC_CLS =
-  'mt-0.5 ml-[1.375rem] overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-[1.3] text-[var(--text-muted)]'
 
 export function AgentPickerDropdown({
   globalDefs,
@@ -60,59 +35,70 @@ export function AgentPickerDropdown({
       <DialogContent className="max-w-sm p-0 gap-0 overflow-hidden" onOpenAutoFocus={(e) => e.preventDefault()}>
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <DialogTitle className="text-sm font-semibold">Select Persona</DialogTitle>
-          <button
+          <Button
             type="button"
-            className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            variant="ghost"
+            size="icon"
+            dense
+            className="min-h-0 w-auto p-1 rounded text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+            aria-label="Close persona picker"
             onClick={onClose}
           >
             <CloseIcon />
-          </button>
+          </Button>
         </div>
         <DialogDescription className="sr-only">Choose a persona for this conversation</DialogDescription>
         {showScopeToggle && (
-          <div className={SCOPE_TOGGLE_CLS}>
-            <button
-              type="button"
-              className={cn(SCOPE_BTN_BASE_CLS, scope === 'global' && SCOPE_BTN_ACTIVE_CLS)}
-              onClick={() => setScope('global')}
-            >
-              Global
-            </button>
-            <button
-              type="button"
-              className={cn(SCOPE_BTN_BASE_CLS, scope === 'project' && SCOPE_BTN_ACTIVE_CLS)}
-              onClick={() => setScope('project')}
-            >
-              Project
-            </button>
+          <div className="border-b border-[var(--border)] px-2 py-1.5">
+            <SegmentedControl
+              value={scope}
+              onChange={setScope}
+              options={[
+                { value: 'global', label: 'Global' },
+                { value: 'project', label: 'Project' },
+              ]}
+              ariaLabel="Persona scope"
+              controlHeight="sm"
+              className="w-full"
+            />
           </div>
         )}
-        <div className={LIST_CLS}>
+        <div className="max-h-60 overflow-y-auto py-1">
           {visibleDefs.length === 0 && (
-            <div className={EMPTY_CLS}>No agents</div>
+            <div className="px-4 py-3 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]">
+              No agents
+            </div>
           )}
           {visibleDefs.map((d) => {
             const name = d.definition.name
             const isActive = name === activeAgent
             return (
-              <button
+              <Button
                 key={`${d.source}-${name}`}
                 type="button"
-                className={cn(ITEM_BASE_CLS, isActive && ITEM_ACTIVE_CLS)}
+                variant="ghost"
+                dense
+                className={cn(
+                  'flex min-h-0 w-full cursor-pointer flex-col items-stretch justify-start whitespace-normal rounded-none border-0 bg-transparent px-3 py-2 text-left font-normal text-[var(--text-primary)] transition-colors duration-150 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11',
+                  isActive &&
+                    'bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)]',
+                )}
                 onClick={() => {
                   onSelect(name)
                   onClose()
                 }}
               >
-                <div className={ITEM_MAIN_CLS}>
+                <div className="flex items-center gap-2">
                   <AgentIcon />
-                  <span className={ITEM_NAME_CLS}>{name}</span>
-                  {isActive && <span className={ITEM_CHECK_CLS}>&#10003;</span>}
+                  <span className="text-[length:var(--text-md)] font-medium">{name}</span>
+                  {isActive && <span className="ml-auto text-xs text-[var(--accent)]">&#10003;</span>}
                 </div>
                 {d.definition.description && (
-                  <div className={ITEM_DESC_CLS}>{d.definition.description}</div>
+                  <div className="mt-0.5 ml-[1.375rem] overflow-hidden text-ellipsis whitespace-nowrap text-xs leading-[1.3] text-[var(--text-muted)]">
+                    {d.definition.description}
+                  </div>
                 )}
-              </button>
+              </Button>
             )
           })}
         </div>

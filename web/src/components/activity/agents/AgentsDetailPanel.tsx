@@ -10,6 +10,7 @@ import { AgentSkillsEditor } from "../../agents/AgentSkillsEditor";
 import { AgentStepsEditor } from "../../agents/AgentStepsEditor";
 import { AgentToolBlocksEditor } from "../../agents/AgentToolBlocksEditor";
 import { AgentVariablesEditor } from "../../agents/AgentVariablesEditor";
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import {
   DetailPaneHeader,
@@ -129,7 +130,7 @@ export function AgentsDetailPanel({
         onDiscard={draftState.discard}
         actions={
           !creating && agent ? (
-            <span className="activity-chip">{agent.source}</span>
+            <Chip>{agent.source}</Chip>
           ) : null
         }
       />

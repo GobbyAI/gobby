@@ -6,7 +6,8 @@
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 
-import { inputFocusCls } from "../../shared/focusStyles";
+import { Card } from "../../ui/Card";
+import { Input } from "../../ui/Input";
 import { fetchSearch, type WikiFetchScope } from "./WikiTabData";
 import type { WikiNodeIndex, WikiPageMeta } from "./WikiTabModel";
 
@@ -148,13 +149,13 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
         if (event.button === 0) onClose()
       }}
     >
-      <div
+      <Card
         role="dialog"
         aria-label="Quick open"
-        className="w-full max-w-md rounded-lg border border-border bg-background shadow-lg"
+        className="w-full max-w-md shadow-lg"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <input
+        <Input
           ref={inputRef}
           role="combobox"
           aria-expanded={matches.length > 0}
@@ -165,7 +166,7 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           aria-label="Quick open"
           value={query}
           placeholder="Jump to a page…"
-          className={`w-full rounded-t-lg border-b border-border bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
+          className="h-auto rounded-t-lg rounded-b-none border-x-0 border-t-0 px-3 py-2 text-sm"
           onChange={(event) => {
             setQuery(event.target.value);
             setActiveIndex(0);
@@ -176,33 +177,32 @@ export function WikiQuickOpen({ scope, pages, nodeIndex, onOpen, onClose }: Wiki
           id="wiki-quick-open-results"
           role="listbox"
           aria-label="Matching pages"
-          className="max-h-72 list-none overflow-y-auto p-1"
+          className="flex max-h-72 list-none flex-col gap-1 overflow-y-auto p-1"
         >
           {trimmed && matches.length === 0 ? (
             <li className="px-2 py-1.5 text-xs text-muted-foreground">No matching pages</li>
           ) : null}
           {matches.map((match, index) => (
-            <li
-              key={match.path}
-              id={`wiki-quick-open-option-${index}`}
-              role="option"
-              aria-selected={index === clampedIndex}
-              className={`flex cursor-pointer items-baseline gap-2 rounded-md px-2 py-1.5 text-sm ${
-                index === clampedIndex ? "bg-muted text-foreground" : "text-foreground"
-              } hover:bg-muted`}
-              onMouseEnter={() => setActiveIndex(index)}
-              onMouseDown={(event) => {
-                if (event.button === 0) open(match.path)
-              }}
-            >
-              <span className="truncate">{match.title}</span>
-              <span className="ml-auto truncate pl-2 font-mono text-2xs text-muted-foreground">
-                {match.path}
-              </span>
-            </li>
+            <Card key={match.path} asChild>
+              <li
+                id={`wiki-quick-open-option-${index}`}
+                role="option"
+                aria-selected={index === clampedIndex}
+                className="flex cursor-pointer items-baseline gap-2 bg-background px-2 py-1.5 text-sm text-foreground aria-selected:bg-muted hover:bg-muted"
+                onMouseEnter={() => setActiveIndex(index)}
+                onMouseDown={(event) => {
+                  if (event.button === 0) open(match.path)
+                }}
+              >
+                <span className="truncate">{match.title}</span>
+                <span className="ml-auto truncate pl-2 font-mono text-2xs text-muted-foreground">
+                  {match.path}
+                </span>
+              </li>
+            </Card>
           ))}
         </ul>
-      </div>
+      </Card>
     </div>
   );
 }

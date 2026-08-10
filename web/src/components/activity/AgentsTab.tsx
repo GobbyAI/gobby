@@ -190,6 +190,9 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
           size="sm"
           className="activity-panel-action-btn ml-auto"
           onClick={handleCreate}
+          // The visible label collapses to icon-only in narrow panels; the
+          // aria-label keeps the accessible name stable at every width.
+          aria-label="New agent"
         >
           <PlusIcon />
           <span className="activity-panel-action-btn__label">Agent</span>

@@ -73,7 +73,7 @@ describe("TasksTab", () => {
     expect(taskRequest).not.toMatch(/[?&]stage=/);
 
     const tasksPane = screen.getByTestId("task-tree");
-    expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
+    expect(tasksPane).toHaveClass("h-full", "min-h-0", "overflow-y-auto");
     expect(tasksPane.firstElementChild).toHaveAttribute("role", "treeitem");
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
     expect(screen.queryByLabelText("Task view")).toBeNull();
@@ -500,7 +500,7 @@ describe("TasksTab", () => {
     });
 
     const titles = screen.getAllByRole("treeitem").map((node) => {
-      const titleNode = node.querySelector(".activity-task-row-title");
+      const titleNode = node.querySelector("[data-task-row-title]");
       return titleNode?.textContent ?? node.textContent;
     });
 
@@ -814,7 +814,7 @@ describe("TasksTab", () => {
     )) as HTMLInputElement;
     expect(title.value).toBe("Detail pane task");
     expect(
-      document.querySelector(".activity-task-detail-header__ref")?.textContent,
+      document.querySelector("[data-task-detail-ref]")?.textContent,
     ).toBe("#510");
 
     // Owner shown exactly once (the status line), never doubled.

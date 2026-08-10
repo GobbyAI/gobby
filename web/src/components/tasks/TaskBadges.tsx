@@ -1,8 +1,6 @@
 // Shared badge components for the task system.
 // Reusable across the task tree, board cards, and the detail panel.
 
-import './task-execution.css'
-
 import type { TaskStateLike } from '../../lib/taskState'
 import {
   getTaskDisplayState,
@@ -17,7 +15,8 @@ import {
 } from '../../lib/taskState'
 import { ActivityRowStatusDot } from '../activity/ActivityRowStatusDot'
 import { taskPriorityLabel } from '../../lib/taskOptions'
-import { cn } from '../../lib/utils'
+import { Chip } from '../ui/Chip'
+import { type ChipTone } from '../ui/chipVariants'
 import {
   PRIORITY_GLYPH_PATHS,
   normalizePriorityGlyphLevel,
@@ -48,15 +47,48 @@ const PRIORITY_STYLES: Record<
   4: { bg: "color-mix(in srgb, var(--text-muted) 15%, transparent)", color: "var(--text-muted)" },
 };
 
-const TASK_BADGE_CLS =
-  'inline-flex items-center justify-center h-5 px-1.5 rounded-full text-[length:var(--text-2xs)] font-semibold leading-none whitespace-nowrap'
-const TASK_BADGE_DOT_CLS = 'inline-block w-[7px] h-[7px] rounded-full shrink-0'
-const TASK_BADGE_BLOCKED_CLS =
-  'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]'
-
 function chipToken(value: string | number): string {
   return String(value).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
 }
+
+// =============================================================================
+// Tone maps — the .chip--state/--priority/--type modifier ladder as Chip tones
+// =============================================================================
+
+const STATE_TONES: Record<string, ChipTone> = {
+  open: 'info',
+  ready: 'info',
+  claimed: 'info',
+  review: 'info',
+  needs_review: 'info',
+  'needs-review': 'info',
+  review_approved: 'info',
+  in_progress: 'warning',
+  'in-progress': 'warning',
+  closed: 'accent',
+  done: 'accent',
+  merge_ready: 'accent',
+  'merge-ready': 'accent',
+  blocked: 'error',
+  escalated: 'error',
+};
+
+const PRIORITY_TONES: Record<PriorityGlyphLevel, ChipTone> = {
+  0: 'error',
+  1: 'warning',
+  2: 'warning',
+  3: 'accent',
+  4: 'neutral',
+};
+
+const TYPE_TONES: Record<string, ChipTone> = {
+  task: 'info',
+  bug: 'error',
+  feature: 'accent',
+  epic: 'info',
+  chore: 'neutral',
+  refactor: 'neutral',
+};
 
 // =============================================================================
 // StatusBadge
@@ -64,9 +96,9 @@ function chipToken(value: string | number): string {
 
 export function StatusBadge({ status }: { status: string }) {
   return (
-    <span className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(status)}`)}>
+    <Chip tone={STATE_TONES[chipToken(status)] ?? 'neutral'}>
       {status.replace(/_/g, " ")}
-    </span>
+    </Chip>
   );
 }
 
@@ -107,12 +139,9 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
   return (
     <>
       {tokens.map(token => (
-        <span
-          key={token.key}
-          className={cn(TASK_BADGE_CLS, `chip chip--state-${chipToken(token.key)}`)}
-        >
+        <Chip key={token.key} tone={STATE_TONES[chipToken(token.key)] ?? 'neutral'}>
           {token.label}
-        </span>
+        </Chip>
       ))}
     </>
   )
@@ -125,11 +154,7 @@ export function TaskStateBadges({ task }: { task: TaskStateLike }) {
 export function PriorityBadge({ priority }: { priority: number }) {
   const normalizedPriority = normalizePriorityGlyphLevel(priority);
   const label = taskPriorityLabel(normalizedPriority) ?? "Medium";
-  return (
-    <span className={cn(TASK_BADGE_CLS, `chip chip--priority-${chipToken(normalizedPriority)}`)}>
-      {label}
-    </span>
-  );
+  return <Chip tone={PRIORITY_TONES[normalizedPriority]}>{label}</Chip>;
 }
 
 // =============================================================================
@@ -143,7 +168,7 @@ export function PriorityGlyph({ priority }: { priority: number }) {
   const filled = p <= 1;
   return (
     <span
-      className="priority-glyph"
+      className="inline-flex h-4 w-[0.85rem] items-center justify-center"
       style={{ color: style.color }}
       title={`${label} priority`}
       aria-label={`${label} priority`}
@@ -168,11 +193,7 @@ export function PriorityGlyph({ priority }: { priority: number }) {
 // =============================================================================
 
 export function TypeBadge({ type }: { type: string }) {
-  return (
-    <span className={cn(TASK_BADGE_CLS, `chip chip--type-${chipToken(type)}`)}>
-      {type}
-    </span>
-  );
+  return <Chip tone={TYPE_TONES[chipToken(type)] ?? 'neutral'}>{type}</Chip>;
 }
 
 // =============================================================================
@@ -200,7 +221,7 @@ function LockIcon() {
 export function BlockedIndicator({ count }: { count?: number }) {
   return (
     <span
-      className={TASK_BADGE_BLOCKED_CLS}
+      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[length:var(--text-2xs)] font-medium text-[var(--color-error)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]"
       title={`Blocked by ${count ?? "?"} task(s)`}
       aria-label={`Blocked by ${count ?? "unknown"} task(s)`}
     >
@@ -214,10 +235,4 @@ export function BlockedIndicator({ count }: { count?: number }) {
 // Re-export color constants for use in other components
 // =============================================================================
 
-export {
-  STATUS_COLORS,
-  PRIORITY_STYLES,
-  TASK_BADGE_BLOCKED_CLS,
-  TASK_BADGE_CLS,
-  TASK_BADGE_DOT_CLS,
-};
+export { STATUS_COLORS, PRIORITY_STYLES };

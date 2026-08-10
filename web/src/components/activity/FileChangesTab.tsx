@@ -4,6 +4,8 @@ import { DiffBlock } from '../shared/DiffBlock'
 import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
 import type { ChangedFile } from '../../hooks/useFileChanges'
 import { ActivityPanelEmpty, ChangesEmptyIcon } from './ActivityPanelEmpty'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface FileChangesTabProps {
   changedFiles: ChangedFile[]
@@ -18,13 +20,13 @@ const MAX_DIFF_LINES = 2000
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; className: string }> = {
-    E: { label: 'E', className: 'file-status-modified' },
-    W: { label: 'W', className: 'file-status-added' },
-    D: { label: 'D', className: 'file-status-deleted' },
+    E: { label: 'E', className: 'bg-[color-mix(in_srgb,var(--color-warning-foreground)_20%,transparent)] text-[var(--color-warning-foreground)]' },
+    W: { label: 'W', className: 'bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)] text-[var(--color-success-foreground)]' },
+    D: { label: 'D', className: 'bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)]' },
   }
-  const info = map[status] || { label: status, className: 'file-status-untracked' }
+  const info = map[status] || { label: status, className: 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]' }
   return (
-    <span className={`file-status-badge ${info.className}`}>
+    <span className={`inline-flex size-5 shrink-0 items-center justify-center rounded font-mono text-[length:var(--text-2xs)] font-bold ${info.className}`}>
       {info.label}
     </span>
   )
@@ -114,13 +116,15 @@ export const FileChangesTab = memo(function FileChangesTab({
         body={error}
         footer={
           onRetry ? (
-            <button
+            <Button
               type="button"
+              variant="secondary"
+              size="sm"
               onClick={onRetry}
-              className="mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors"
+              className={`mt-3 rounded border border-border px-3 py-1 text-xs text-muted-foreground hover:bg-muted transition-colors ${coarseHitAreaCls}`}
             >
               Retry
-            </button>
+            </Button>
           ) : undefined
         }
       />
@@ -156,11 +160,13 @@ export const FileChangesTab = memo(function FileChangesTab({
         {changedFiles.map((file) => {
           const isSelected = file.path === selectedPath
           return (
-            <button
+            <Button
               key={file.path}
+              type="button"
+              variant="ghost"
               onClick={() => handleSelect(file.path)}
               aria-pressed={isSelected}
-              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''}`}
+              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''} ${coarseHitAreaCls}`}
             >
               {statusBadge(file.status)}
               <div className="flex-1 min-w-0 flex items-baseline gap-1">
@@ -171,7 +177,7 @@ export const FileChangesTab = memo(function FileChangesTab({
                   {fileDir(file.path)}
                 </span>
               </div>
-            </button>
+            </Button>
           )
         })}
       </div>

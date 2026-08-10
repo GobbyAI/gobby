@@ -1,9 +1,18 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fireEvent } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { ToolCall } from '../../../types/chat'
 import { classifyTool } from '../../../types/chat'
 import { renderWithProviders, screen } from '../../../test/helpers'
+import { MarkdownBody } from '../../shared/MarkdownBody'
 import { ToolCallCards } from '../ToolCallCard'
+
+const cwd = process.cwd()
+
+function readSource(rel: string): string {
+  return readFileSync(join(cwd, rel), 'utf8')
+}
 
 function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string }): ToolCall {
   return {
@@ -191,5 +200,73 @@ describe('ToolCallCard interactions', () => {
     expect(screen.getByText('Read').parentElement).toHaveClass('border-accent')
     expect(screen.getByText('Edit').parentElement).toHaveClass('border-accent')
     expect(screen.queryByText('Render error')).not.toBeInTheDocument()
+  })
+})
+
+describe('MarkdownBody typography ownership', () => {
+  it('stays wrapper-neutral while every message-content host adopts the shared utility', () => {
+    const { container } = renderWithProviders(
+      <MarkdownBody content={'First paragraph\n\nSecond paragraph'} id="fragment-contract" />,
+    )
+
+    expect(Array.from(container.children, (child) => child.tagName)).toEqual(['P', 'P'])
+
+    const sharedSource = readSource('src/components/shared/MarkdownBody.tsx')
+    expect(sharedSource).toContain('export const markdownBodyClassName')
+    expect(sharedSource).toContain("'max-w-[70ch]'")
+    expect(sharedSource).toContain("'[&_h1]:text-[length:var(--text-3xl)]'")
+
+    const hosts = [
+      'src/components/chat/MessageItem.tsx',
+      'src/components/FilesPage.tsx',
+      'src/components/activity/FilesTab.tsx',
+      'src/components/activity/PlanReviewCard.tsx',
+      'src/components/activity/SessionsTabDetail.tsx',
+      'src/components/activity/TasksTabDetailPanel.tsx',
+      'src/components/activity/skills/SkillContentView.tsx',
+      'src/components/activity/taskdetail/TaskDetailEditableCore.tsx',
+      'src/components/activity/wiki/WikiPageReader.tsx',
+    ]
+    for (const host of hosts) {
+      expect(readSource(host), host).toContain('markdownBodyClassName')
+    }
+  })
+
+  it('leaves ToolCallCard and RichContentBlocks direct consumers unchanged', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'direct-markdown',
+            tool_name: 'ExitPlanMode',
+            arguments: { plan: '# Direct consumer heading' },
+          }),
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /ExitPlanMode/ }))
+    const heading = screen.getByRole('heading', { name: 'Direct consumer heading' })
+    expect(heading.tagName).toBe('H1')
+    expect(heading.parentElement).not.toHaveAttribute('class')
+    expect(container.querySelector('.message-content')).toBeNull()
+
+    const directConsumers = {
+      'src/components/chat/ToolCallCard.tsx': [
+        '<MarkdownBody id={`tool-plan-${callId}`} content={args.plan} />',
+        '<MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />',
+      ],
+      'src/components/chat/RichContentBlocks.tsx': [
+        'return <MarkdownBody id={id} content={block.content} />',
+      ],
+      'src/components/chat/Markdown.tsx': [
+        "export { MarkdownBody as Markdown } from '../shared/MarkdownBody'",
+      ],
+    }
+    for (const [path, pins] of Object.entries(directConsumers)) {
+      const source = readSource(path)
+      expect(source, path).not.toContain('markdownBodyClassName')
+      for (const pin of pins) expect(source, path).toContain(pin)
+    }
   })
 })

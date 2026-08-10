@@ -89,7 +89,7 @@ function MessageListSurface({ messages }: { messages: ChatMessage[] }) {
   return (
     <div
       data-testid="surface-message-list"
-      className="chat-scaled flex-1 min-h-0 overflow-x-hidden"
+      className="flex-1 min-h-0 overflow-x-hidden"
     >
       {messages.map((message) => (
         <MessageItem key={message.id} message={message} />
@@ -104,7 +104,7 @@ function SessionsTabSurface({ messages }: { messages: ChatMessage[] }) {
   return (
     <div
       data-testid="surface-sessions-tab"
-      className="flex-1 overflow-y-auto chat-scaled"
+      className="flex-1 overflow-y-auto"
     >
       {messages.map((message) => (
         <MessageItem key={message.id} message={message} />

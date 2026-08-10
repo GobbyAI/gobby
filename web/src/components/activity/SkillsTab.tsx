@@ -3,11 +3,17 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import {
+  InlineFilterFieldRow,
+  InlineFilterPanel,
+} from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
-import "./skills/SkillsTab.css";
+import { SelectField } from "./fields";
 import {
   deleteSkill,
   downloadSkillExport,
@@ -324,7 +330,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
   );
 
   return (
-    <div className="skills-tab relative flex h-full flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {segment === "installed" && searchOpen && (
         <ActivityToolbarSearchRow
           value={filters.search}
@@ -335,57 +341,51 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
         />
       )}
       {segment === "installed" && showFilters && (
-        <div className="activity-filter-panel">
-          <label className="activity-filter-panel__field">
-            <span>Source</span>
-            <select
-              aria-label="Skill source"
+        <InlineFilterPanel aria-label="Skill filters">
+          <InlineFilterFieldRow>
+            <SelectField
+              label="Source"
+              ariaLabel="Skill source"
               name="skill-source"
               value={filters.source}
-              onChange={(event) =>
+              onChange={(source) =>
                 setFilters((current) => ({
                   ...current,
-                  source: event.target.value as SkillFilters["source"],
+                  source: source as SkillFilters["source"],
                 }))
               }
-            >
-              {SKILL_SOURCE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="activity-filter-panel__field">
-            <span>Category</span>
-            <select
-              aria-label="Skill category"
+              options={[...SKILL_SOURCE_OPTIONS]}
+            />
+          </InlineFilterFieldRow>
+          <InlineFilterFieldRow>
+            <SelectField
+              label="Category"
+              ariaLabel="Skill category"
               name="skill-category"
               value={filters.category}
-              onChange={(event) =>
-                setFilters((current) => ({ ...current, category: event.target.value }))
+              onChange={(category) =>
+                setFilters((current) => ({ ...current, category }))
               }
-            >
-              <option value="all">All categories</option>
-              {categoryOptions.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+              options={[
+                { value: "all", label: "All categories" },
+                ...categoryOptions.map((category) => ({ value: category, label: category })),
+              ]}
+            />
+          </InlineFilterFieldRow>
+        </InlineFilterPanel>
       )}
 
       {error && (
-        <button
+        <Button
           type="button"
-          className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+          variant="destructive"
+          size="sm"
+          className={`w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm text-error ${coarseHitAreaCls}`}
           onClick={() => setError(null)}
           aria-label={`Dismiss error: ${error}`}
         >
           {error}
-        </button>
+        </Button>
       )}
 
       {segment === "hub" ? (

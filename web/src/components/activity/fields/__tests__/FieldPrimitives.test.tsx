@@ -223,7 +223,12 @@ describe("draft field primitives (#17014)", () => {
     expect(input).toHaveAttribute("type", "number");
     expect(input).toHaveAttribute("min", "1");
     expect(input).toHaveAttribute("max", "3600");
-    expect(input).toHaveClass("min-h-11");
+    // ui/Input ladder box; the 44px coarse target is the wrapper's invisible
+    // hit-area expansion, not a control min-height (#19918).
+    expect(input).toHaveClass("h-9");
+    expect(input.closest("label")!.className).toContain(
+      "pointer-coarse:before:min-h-11",
+    );
     expect(input).toHaveValue(600);
 
     fireEvent.change(input, { target: { value: "120" } });

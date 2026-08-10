@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { CodeMirrorEditor } from '../../shared/CodeMirrorEditor'
 import { DetailActionButton, SelectField } from '../../activity/fields'
+import { Button } from '../../ui/Button'
+import { Input } from '../../ui/Input'
 import type { FieldOption } from '../../activity/fields'
 import { Subsection } from './configFields'
 import { SettingsSection } from './SettingsSection'
@@ -119,7 +121,9 @@ function PromptOverridesGroup({
         title="Prompt overrides"
         hint="Customize the bundled prompt bodies the daemon ships with."
       >
-        <p className="settings-section__pending">Prompt editing is unavailable.</p>
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
+          Prompt editing is unavailable.
+        </p>
       </Subsection>
     )
   }
@@ -219,15 +223,19 @@ function PromptOverridesGroup({
       hint="Override the markdown body of any bundled prompt. Saved per prompt; reverting restores the shipped default."
     >
       {detail ? (
-        <div className="settings-prompt-editor">
-          <div className="settings-prompt-editor__head">
-            <div className="settings-field__text">
-              <span className="settings-prompt-editor__title">{detail.path}</span>
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex min-w-0 flex-col gap-1">
+              <span className="min-w-0 break-all text-base font-medium leading-[1.6] text-foreground">
+                {detail.path}
+              </span>
               {detail.description ? (
-                <span className="settings-field__hint">{detail.description}</span>
+                <span className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
+                  {detail.description}
+                </span>
               ) : null}
             </div>
-            <div className="settings-field__actions">
+            <div className="flex flex-wrap gap-2">
               <DetailActionButton
                 label="Back to prompt list"
                 variant="ghost"
@@ -253,12 +261,12 @@ function PromptOverridesGroup({
               />
             </div>
           </div>
-          <div className="settings-code-surface">
+          <div className="min-h-72 overflow-hidden rounded-lg border border-border bg-surface-secondary [&_.codemirror-container]:h-full">
             <CodeMirrorEditor
               content={editContent}
               language="markdown"
               ariaLabel="Prompt override content"
-              editorId="settings-prompt-editor"
+              editorId="prompt-override-editor"
               onChange={setEditContent}
               onSave={() => {
                 void handleSave()
@@ -266,7 +274,10 @@ function PromptOverridesGroup({
             />
           </div>
           {error ? (
-            <p className="settings-field__hint" role="alert">
+            <p
+              className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+              role="alert"
+            >
               {error}
             </p>
           ) : null}
@@ -281,37 +292,44 @@ function PromptOverridesGroup({
             onChange={setCategory}
           />
           {filtered.length === 0 ? (
-            <p className="settings-field__empty">No prompts in this category.</p>
+            <p className="text-sm leading-[1.4] text-foreground-muted">
+              No prompts in this category.
+            </p>
           ) : (
-            <ul className="settings-typed-list__items">
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
               {filtered.map((prompt) => (
                 <li key={prompt.path}>
-                  <button
+                  <Button
                     type="button"
-                    className="settings-prompt-row"
+                    variant="ghost"
+                    dense
+                    className="w-full cursor-pointer flex-col items-stretch justify-start whitespace-normal py-3 text-left font-normal"
                     aria-label={`Edit prompt ${prompt.path}`}
                     onClick={() => {
                       void openPrompt(prompt.path)
                     }}
                   >
-                    <span className="settings-prompt-row__path">
+                    <span className="break-all text-base font-medium leading-none text-foreground">
                       {prompt.path}
                     </span>
                     {prompt.description ? (
-                      <span className="settings-field__hint">
+                      <span className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
                         {prompt.description}
                       </span>
                     ) : null}
-                    <span className="settings-prompt-row__badge">
+                    <span className="self-start rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm leading-none text-muted-foreground">
                       {prompt.has_override ? 'Overridden' : 'Bundled'}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
           {error ? (
-            <p className="settings-field__hint" role="alert">
+            <p
+              className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+              role="alert"
+            >
               {error}
             </p>
           ) : null}
@@ -352,7 +370,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
         title="Full configuration template"
         hint="Edit the whole defaults-plus-overrides document as YAML."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           The template editor is unavailable.
         </p>
       </Subsection>
@@ -378,7 +396,10 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
       hint="Edit the whole defaults-plus-overrides document as YAML. Saving writes every change at once and requires a daemon restart to apply."
     >
       {showRestart ? (
-        <div className="settings-restart-banner" role="status">
+        <div
+          className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-muted px-3.5 py-2.5 text-sm leading-[1.4] text-muted-foreground"
+          role="status"
+        >
           <span>
             Saved to the database. Restart the daemon to apply the changes.
           </span>
@@ -391,7 +412,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
           />
         </div>
       ) : null}
-      <div className="settings-code-surface">
+      <div className="min-h-72 overflow-hidden rounded-lg border border-border bg-surface-secondary [&_.codemirror-container]:h-full">
         <CodeMirrorEditor
           content={draft}
           language="yaml"
@@ -404,16 +425,23 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
         />
       </div>
       {errors.map((message, index) => (
-        <p key={index} className="settings-field__hint" role="alert">
+        <p
+          key={index}
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {message}
         </p>
       ))}
       {restartError ? (
-        <p className="settings-field__hint" role="alert">
+        <p
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {restartError}
         </p>
       ) : null}
-      <div className="settings-field__actions">
+      <div className="flex flex-wrap gap-2">
         <DetailActionButton
           label={saving ? 'Saving…' : 'Save template'}
           variant="accent"
@@ -445,7 +473,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
         title="Backup & restore"
         hint="Export or import the full configuration bundle."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Backup and restore is unavailable.
         </p>
       </Subsection>
@@ -515,7 +543,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
       title="Backup & restore"
       hint="Export the config store, secret metadata, and prompt overrides as a JSON bundle, or import a bundle to restore them. Importing overwrites matching keys."
     >
-      <div className="settings-field__actions">
+      <div className="flex flex-wrap gap-2">
         <DetailActionButton
           label="Export configuration"
           variant="secondary"
@@ -531,11 +559,12 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
           disabled={busy}
         />
       </div>
-      <input
+      <Input
         ref={fileInputRef}
         type="file"
         accept=".json,application/json"
         aria-label="Import configuration file"
+        wrapperClassName="sr-only"
         className="sr-only"
         onChange={(event) => {
           void handleFileChange(event)
@@ -543,7 +572,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
       />
       {status ? (
         <p
-          className="settings-field__hint"
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
           role={status.ok ? 'status' : 'alert'}
         >
           {status.message}

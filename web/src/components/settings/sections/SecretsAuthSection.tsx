@@ -144,7 +144,7 @@ function SecretStoreGroup({
         title="Secret store"
         hint="Reusable $secret: references for MCP headers and environment variables."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           The secret store is unavailable.
         </p>
       </Subsection>
@@ -224,22 +224,28 @@ function SecretStoreGroup({
       hint="Reusable $secret:NAME references for MCP headers and environment variables. The daemon resolves them at connection time; agents never see raw values. Saved immediately, separate from the config draft above."
     >
       <div
-        className="settings-field settings-typed-list"
+        className="flex flex-col gap-2"
         role="group"
         aria-labelledby={labelId}
       >
-        <span id={labelId} className="settings-field__label">
+        <span
+          id={labelId}
+          className="text-base font-medium leading-[1.3] text-foreground"
+        >
           Stored secrets
         </span>
         {secrets.length > 0 ? (
-          <ul className="settings-typed-list__items">
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
             {secrets.map((secret) => (
-              <li key={secret.id} className="settings-typed-list__item">
-                <div className="settings-typed-list__item-head">
-                  <span className="settings-typed-list__item-title">
+              <li
+                key={secret.id}
+                className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium leading-[1.6] text-muted-foreground">
                     <code>{secret.name}</code>
                   </span>
-                  <div className="settings-field__actions">
+                  <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="ghost"
@@ -264,7 +270,7 @@ function SecretStoreGroup({
                     </Button>
                   </div>
                 </div>
-                <p className="settings-field__hint">
+                <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
                   {secret.category}
                   {secret.description ? ` · ${secret.description}` : ''} · value
                   hidden
@@ -273,14 +279,14 @@ function SecretStoreGroup({
             ))}
           </ul>
         ) : (
-          <p className="settings-field__empty">
+          <p className="text-sm leading-[1.4] text-foreground-muted">
             No secrets stored yet. Add API keys and sensitive values here.
           </p>
         )}
       </div>
 
       {open ? (
-        <div className="settings-typed-list__item">
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3">
           <TextField
             label="Name"
             ariaLabel="Secret name"
@@ -313,7 +319,7 @@ function SecretStoreGroup({
             disabled={busy}
             onChange={setDescription}
           />
-          <div className="settings-field__actions">
+          <div className="flex flex-wrap gap-2">
             <DetailActionButton
               label="Cancel"
               variant="ghost"
@@ -337,7 +343,7 @@ function SecretStoreGroup({
           </div>
         </div>
       ) : (
-        <div className="settings-field__actions">
+        <div className="flex flex-wrap gap-2">
           <DetailActionButton
             label="Add secret"
             variant="secondary"
@@ -348,7 +354,10 @@ function SecretStoreGroup({
       )}
 
       {error ? (
-        <p className="settings-field__hint" role="alert">
+        <p
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}

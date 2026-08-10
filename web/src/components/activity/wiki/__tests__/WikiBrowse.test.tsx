@@ -383,7 +383,9 @@ describe("Quick-open and history (3.1.4)", () => {
 
     const dialog = await screen.findByRole("dialog", { name: /quick open/i });
     await user.type(within(dialog).getByRole("combobox"), "gwi");
-    await user.click(await within(dialog).findByRole("option", { name: /gwiki/i }));
+    const resultCard = await within(dialog).findByRole("option", { name: /gwiki/i });
+    expect(resultCard).toHaveClass("border-border", "bg-background");
+    await user.click(resultCard);
 
     await waitFor(() =>
       expect(readRequests(fetchMock)).toContain("knowledge/concepts/gwiki.md"),
