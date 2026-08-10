@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -26,6 +26,10 @@ PROJECT_PURGE_CONCURRENCY = 4
 
 class ProjectPurgeError(RuntimeError):
     """A retryable purge phase failed."""
+
+
+class ProjectPurgeVectorStoreUnavailable(ProjectPurgeError):
+    """Qdrant is configured but no runtime vector store could be resolved."""
 
 
 @dataclass(frozen=True)
@@ -138,7 +142,7 @@ class ProjectPurgeService:
         gwiki_barrier: GwikiDrainBarrier,
         wiki_gateway: WikiGateway,
         code_gateway: CodeGateway,
-        vector_cleaner: VectorCleaner,
+        vector_cleaner: Callable[[], VectorCleaner],
         graph_cleaner: GraphCleaner,
         drain_timeout: float = 120.0,
         command_timeout: float = 120.0,
@@ -178,13 +182,17 @@ class ProjectPurgeService:
         await self._drain_cron_runs(job_ids)
         await asyncio.to_thread(self.cron.delete_project_jobs, job_ids)
 
+        # Resolve the cleaner per run so the purge always targets the current
+        # runtime epoch's vector store; resolution failure fails the purge and
+        # the cron retries instead of silently orphaning vectors.
+        vector_cleaner = self.vector_cleaner()
         async with self.fence.exclusive(project_id, timeout=self.drain_timeout):
             async with self.gwiki_barrier.drain(project_id, timeout=self.drain_timeout):
                 pass
             memory_ids = await asyncio.to_thread(self._memory_ids, project_id)
             await self._purge_wiki(project_id)
             await self._invalidate_code(project_id)
-            await self.vector_cleaner.clear_project(project_id, memory_ids)
+            await vector_cleaner.clear_project(project_id, memory_ids)
             await self.graph_cleaner.clear_project_graph_strict(project_id)
             await asyncio.to_thread(self._delete_hub_rows, project_id)
         return PurgeOutcome.purged(project_id)

@@ -363,6 +363,7 @@ class TestInitSubsystems:
                 self,
                 *,
                 services: object,
+                startup_config: object,
                 port: int,
                 test_mode: bool,
                 codex_client: object | None,
@@ -370,6 +371,7 @@ class TestInitSubsystems:
             ) -> None:
                 http_init.update(
                     services=services,
+                    startup_config=startup_config,
                     port=port,
                     test_mode=test_mode,
                     codex_client=codex_client,
@@ -402,7 +404,7 @@ class TestInitSubsystems:
             pass
 
         runner = RunnerStub()
-        runner.config = config
+        runner.startup_config = config
         runner.bootstrap_config = config
         runner.codex_client = None
         text_generation_service = build_daemon_text_generation_service(
@@ -2186,7 +2188,7 @@ class TestRunGobbyFunction:
         db_executor = MagicMock()
 
         def init_storage(runner: GobbyRunner, *_args: object) -> None:
-            runner.config = DaemonConfig()
+            runner.startup_config = DaemonConfig()
             runner.database = database
             runner.db_executor = db_executor
 
@@ -3108,6 +3110,91 @@ class TestAgentEventBroadcastingCallback:
             rb._agent_event_callback = old_callback
 
 
+class TestRuntimeServiceIdentityAfterRebuild:
+    """Resolver-converted consumers observe rebuilt runtime services."""
+
+    def test_session_lifecycle_manager_observes_rebuilt_services(self) -> None:
+        from gobby.sessions.lifecycle import SessionLifecycleManager
+
+        services: dict[str, object] = {}
+        capture = static_runtime_capture(DaemonConfig(), services=services)
+        with patch("gobby.sessions.lifecycle.SessionManager"):
+            manager = SessionLifecycleManager(db=MagicMock(), capture_bundle=capture)
+
+        assert manager.memory_manager is None
+        assert manager.llm_service is None
+
+        first_memory = SimpleNamespace(memory_manager=object())
+        first_ai = SimpleNamespace(llm_service=object())
+        services["memory_services"] = first_memory
+        services["ai_services"] = first_ai
+        assert manager.memory_manager is first_memory.memory_manager
+        assert manager.llm_service is first_ai.llm_service
+
+        rebuilt_memory = SimpleNamespace(memory_manager=object())
+        rebuilt_ai = SimpleNamespace(llm_service=object())
+        services["memory_services"] = rebuilt_memory
+        services["ai_services"] = rebuilt_ai
+        assert manager.memory_manager is rebuilt_memory.memory_manager
+        assert manager.llm_service is rebuilt_ai.llm_service
+
+
+class TestMessageProcessorPreparedService:
+    """Lifecycle contract for the rebuilt message-processor subscriber."""
+
+    @pytest.mark.asyncio
+    async def test_activate_rewires_refs_and_schedules_start(self) -> None:
+        from gobby.runner_init.services import _build_message_processor
+
+        config = MagicMock()
+        config.message_tracking.enabled = True
+        config.message_tracking.poll_interval = 5.0
+        hook_manager = MagicMock()
+        processor = MagicMock()
+        processor.start = AsyncMock()
+        processor.stop = AsyncMock()
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            db_executor=SimpleNamespace(run=AsyncMock()),
+            websocket_server=MagicMock(),
+            http_server=SimpleNamespace(_hook_manager=hook_manager),
+            message_processor=None,
+        )
+        loop = asyncio.get_running_loop()
+
+        with patch(
+            "gobby.runner_init.services.SessionMessageProcessor",
+            return_value=processor,
+        ):
+            prepared = _build_message_processor(runner, config, loop)
+
+        assert prepared is not None
+        assert prepared.value is processor
+        processor.start.assert_not_called()
+
+        prepared.activate()
+        await asyncio.sleep(0)
+
+        assert runner.message_processor is processor
+        assert processor.session_manager is runner.session_manager
+        assert processor.websocket_server is runner.websocket_server
+        processor.set_hook_manager.assert_called_once_with(hook_manager)
+        processor.start.assert_awaited_once()
+
+        await asyncio.to_thread(prepared.dispose)
+        processor.stop.assert_awaited_once()
+
+    def test_disabled_tracking_builds_no_service(self) -> None:
+        from gobby.runner_init.services import _build_message_processor
+
+        config = MagicMock()
+        config.message_tracking.enabled = False
+        runner = SimpleNamespace()
+
+        assert _build_message_processor(runner, config, MagicMock()) is None
+
+
 class TestMessageProcessorWebSocketIntegration:
     """Tests for message processor and WebSocket server integration."""
 
@@ -3116,6 +3203,10 @@ class TestMessageProcessorWebSocketIntegration:
         mock_config_with_websocket.message_tracking = MagicMock()
         mock_config_with_websocket.message_tracking.enabled = True
         mock_config_with_websocket.message_tracking.poll_interval = 5.0
+        # Preset before create_base_patches: the safe defaults disable
+        # communications, and this test asserts the enabled wiring path.
+        mock_config_with_websocket.communications = MagicMock()
+        mock_config_with_websocket.communications.enabled = True
 
         mock_ws_server = AsyncMock()
         mock_ws_server.start = AsyncMock()
@@ -4179,7 +4270,9 @@ class TestAgentRestartRecoveryHelpers:
                 increment,
             ),
         ):
-            resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(runner)
+            resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(
+                cast(Any, runner)
+            )
 
         assert resumed == 1
         assert [c.args[0].id for c in resume.await_args_list] == [

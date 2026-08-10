@@ -1,6 +1,5 @@
 """Tests for tool-result offload configuration and schema."""
 
-
 import pytest
 from pydantic import ValidationError
 

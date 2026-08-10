@@ -36,12 +36,10 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
         events.append("delete-child")
 
     run_storage = RunStorage()
-    runner = SimpleNamespace(run_storage=run_storage)
-    handler = SimpleNamespace(
-        agent_lifecycle_monitor=None,
-        task_manager=object(),
-    )
+    runner = SimpleNamespace(run_storage=run_storage, agent_lifecycle_monitor=None)
+    handler = SimpleNamespace()
     completion_registry = object()
+    task_manager = object()
     with (
         patch(
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
@@ -58,6 +56,7 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
             SimpleNamespace(),
             completion_registry=completion_registry,
             cleanup_isolation=False,
+            task_manager=task_manager,
         )
 
     assert events == ["terminalize", "cleanup-isolation", "delete-child"]
@@ -67,7 +66,7 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
         "terminal_reason": "spawn_rollback",
         "lifecycle_monitor": None,
         "completion_registry": completion_registry,
-        "task_manager": handler.task_manager,
+        "task_manager": task_manager,
         "message": "spawn failed",
     }
 
@@ -97,6 +96,7 @@ async def _start_run_or_cleanup(runner: SimpleNamespace) -> dict[str, object] | 
         MagicMock(),
         completion_registry=None,
         cleanup_isolation=True,
+        task_manager=None,
         child_session_id="child-1",
     )
 
@@ -145,6 +145,7 @@ async def test_lost_cas_with_non_running_run_cleans_up_and_reports_error() -> No
     assert cleanup.await_args.kwargs == {
         "completion_registry": None,
         "cleanup_isolation": True,
+        "task_manager": None,
         "child_session_id": "child-1",
     }
 

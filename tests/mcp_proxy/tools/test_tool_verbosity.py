@@ -31,7 +31,7 @@ async def test_memory_verbosity_reduction() -> None:
     mock_manager.search_memories = AsyncMock(return_value=[])
     mock_manager.content_exists = MagicMock(return_value=False)
 
-    registry = create_memory_registry(mock_manager)
+    registry = create_memory_registry(lambda: mock_manager)
 
     # Test create_memory
     result = await registry.call("create_memory", {"content": "test"})

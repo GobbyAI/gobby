@@ -61,9 +61,9 @@ def _memory_owned_by_current_project(memory: Any) -> bool:
 
 
 def create_memory_registry(
-    memory_manager: MemoryManager,
-    llm_service: LLMService | None = None,
-    memory_backup_manager: Any | None = None,
+    memory_manager_resolver: Callable[[], MemoryManager | None],
+    llm_service_resolver: Callable[[], LLMService | None] | None = None,
+    memory_backup_manager_resolver: Callable[[], Any | None] | None = None,
     session_manager: Any | None = None,
     config: DaemonConfig | None = None,
     dream_coordinator_resolver: Callable[[], MemoryDreamCoordinator | None] | None = None,
@@ -72,9 +72,10 @@ def create_memory_registry(
     Create a memory tool registry with all memory-related tools.
 
     Args:
-        memory_manager: MemoryManager instance
-        llm_service: LLM service for AI-powered extraction (optional)
-        memory_backup_manager: MemoryBackupManager for backup/restore (optional)
+        memory_manager_resolver: per-call resolver for the current MemoryManager
+        llm_service_resolver: per-call resolver for the current LLM service (optional)
+        memory_backup_manager_resolver: per-call resolver for the current
+            MemoryBackupManager (optional)
         session_manager: SessionManager for session lookups (optional)
         config: DaemonConfig carrying digest feature routing config (optional)
         dream_coordinator_resolver: resolves the daemon-owned dream coordinator
@@ -87,6 +88,20 @@ def create_memory_registry(
         name="gobby-memory",
         description="Memory management - create_memory, search_memories, delete_memory, get_related_memories",
     )
+
+    def _memory_manager() -> MemoryManager:
+        manager = memory_manager_resolver()
+        if manager is None:
+            raise RuntimeError("Memory services are unavailable in the current runtime epoch")
+        return manager
+
+    def _llm_service() -> LLMService | None:
+        return llm_service_resolver() if llm_service_resolver is not None else None
+
+    def _memory_backup_manager() -> Any | None:
+        return (
+            memory_backup_manager_resolver() if memory_backup_manager_resolver is not None else None
+        )
 
     @registry.tool(
         name="create_memory",
@@ -139,12 +154,12 @@ def create_memory_registry(
                     from gobby.storage.session_resolution import resolve_session_reference
 
                     resolved_session_id = resolve_session_reference(
-                        memory_manager.db, session_id, project_id
+                        _memory_manager().db, session_id, project_id
                     )
                 except Exception as e:
                     logger.warning("Could not resolve session_id '%s': %s", session_id, e)
 
-            memory = await memory_manager.create_memory(
+            memory = await _memory_manager().create_memory(
                 content=content,
                 memory_type=canonical_memory_type,
                 project_id=project_id,
@@ -158,7 +173,7 @@ def create_memory_registry(
             # Search for similar existing memories to surface potential duplicates
             similar_existing: list[dict[str, Any]] = []
             try:
-                similar = await memory_manager.search_memories(
+                similar = await _memory_manager().search_memories(
                     query=content,
                     project_id=project_id,
                     limit=4,  # fetch 4 since the new memory itself may appear
@@ -235,7 +250,7 @@ def create_memory_registry(
 
             # Fetch extra candidates so we can report diagnostics when
             # nothing passes the threshold.
-            candidates = await memory_manager.search_memories(
+            candidates = await _memory_manager().search_memories(
                 query=query,
                 project_id=current_project_id,
                 limit=limit * 2 if effective_min_score > 0 else limit,
@@ -306,7 +321,7 @@ def create_memory_registry(
             memory_id: The ID of the memory to delete
         """
         try:
-            success = await memory_manager.delete_memory_scoped(
+            success = await _memory_manager().delete_memory_scoped(
                 memory_id,
                 get_current_project_id() or PERSONAL_PROJECT_ID,
             )
@@ -332,11 +347,11 @@ def create_memory_registry(
             memory_id: The ID of the memory to restore
         """
         try:
-            memory = memory_manager.get_memory(memory_id, visibility="all")
+            memory = _memory_manager().get_memory(memory_id, visibility="all")
             if memory is None or not _memory_owned_by_current_project(memory):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            await asyncio.to_thread(memory_manager.restore_memory, memory_id)
-            await memory_manager.restore_memory_indices(
+            await asyncio.to_thread(_memory_manager().restore_memory, memory_id)
+            await _memory_manager().restore_memory_indices(
                 memory.id,
                 memory.content,
                 memory.project_id,
@@ -359,10 +374,10 @@ def create_memory_registry(
             memory_id: The ID of the memory to promote
         """
         try:
-            existing = memory_manager.get_memory(memory_id, visibility="all")
+            existing = _memory_manager().get_memory(memory_id, visibility="all")
             if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await memory_manager.promote_memory(memory_id)
+            memory = await _memory_manager().promote_memory(memory_id)
             return {
                 "success": True,
                 "memory": {
@@ -381,10 +396,10 @@ def create_memory_registry(
     )
     async def demote_memory_from_global(memory_id: str) -> dict[str, Any]:
         try:
-            existing = memory_manager.get_memory(memory_id, visibility="all")
+            existing = _memory_manager().get_memory(memory_id, visibility="all")
             if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await memory_manager.demote_memory(memory_id)
+            memory = await _memory_manager().demote_memory(memory_id)
             return {"success": True, "memory": memory.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -395,10 +410,10 @@ def create_memory_registry(
     )
     async def move_memory(memory_id: str, new_project_id: str) -> dict[str, Any]:
         try:
-            existing = memory_manager.get_memory(memory_id, visibility="all")
+            existing = _memory_manager().get_memory(memory_id, visibility="all")
             if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await memory_manager.move_memory(memory_id, new_project_id)
+            memory = await _memory_manager().move_memory(memory_id, new_project_id)
             return {"success": True, "memory": memory.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -428,7 +443,7 @@ def create_memory_registry(
             canonical_memory_type = (
                 validate_memory_type(memory_type) if memory_type is not None else None
             )
-            memories = memory_manager.list_memories(
+            memories = _memory_manager().list_memories(
                 project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 memory_type=canonical_memory_type,
                 limit=limit,
@@ -467,7 +482,7 @@ def create_memory_registry(
             memory_id: The ID of the memory to retrieve
         """
         try:
-            memory = memory_manager.get_memory(memory_id, project_id=get_current_project_id())
+            memory = _memory_manager().get_memory(memory_id, project_id=get_current_project_id())
             if memory:
                 return {
                     "success": True,
@@ -510,7 +525,7 @@ def create_memory_registry(
             min_similarity: Minimum similarity threshold (0.0-1.0)
         """
         try:
-            memories = await memory_manager.get_related(
+            memories = await _memory_manager().get_related(
                 memory_id=memory_id,
                 limit=limit,
                 min_similarity=min_similarity,
@@ -552,7 +567,7 @@ def create_memory_registry(
             tags: New list of tags (optional)
         """
         try:
-            memory = await memory_manager.update_memory_scoped(
+            memory = await _memory_manager().update_memory_scoped(
                 memory_id=memory_id,
                 project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 content=content,
@@ -579,7 +594,7 @@ def create_memory_registry(
         Get statistics about stored memories.
         """
         try:
-            stats = await memory_manager.get_stats(project_id=get_current_project_id())
+            stats = await _memory_manager().get_stats(project_id=get_current_project_id())
             return {"success": True, "stats": stats}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -600,7 +615,7 @@ def create_memory_registry(
             limit: Maximum number of results to return
         """
         try:
-            kg_service = memory_manager.kg_service
+            kg_service = _memory_manager().kg_service
             if not kg_service:
                 return {"success": True, "results": []}
 
@@ -628,7 +643,7 @@ def create_memory_registry(
             project_id: Optional project ID. Defaults to the current project.
         """
         try:
-            kg_service = memory_manager.kg_service
+            kg_service = _memory_manager().kg_service
             if not kg_service:
                 return {"success": False, "error": "Knowledge graph service not available"}
 
@@ -672,7 +687,7 @@ def create_memory_registry(
             project_id: Optional project ID. Defaults to the current project.
         """
         try:
-            kg_service = memory_manager.kg_service
+            kg_service = _memory_manager().kg_service
             if not kg_service:
                 return {"success": False, "error": "Knowledge graph service not available"}
 
@@ -703,11 +718,11 @@ def create_memory_registry(
             limit: Maximum number of memories to process (default 500)
         """
         try:
-            memories = memory_manager.list_memories(project_id=project_id, limit=limit)
+            memories = _memory_manager().list_memories(project_id=project_id, limit=limit)
             total_created = 0
             for i, memory in enumerate(memories):
                 try:
-                    created = await memory_manager.rebuild_crossrefs_for_memory(memory)
+                    created = await _memory_manager().rebuild_crossrefs_for_memory(memory)
                     total_created += created
                 except Exception as e:
                     logger.warning("Crossref failed for %s: %s", memory.id, e)
@@ -740,7 +755,7 @@ def create_memory_registry(
             limit: Max memories to process (default 500)
         """
         try:
-            result = await memory_manager.rebuild_knowledge_graph(
+            result = await _memory_manager().rebuild_knowledge_graph(
                 project_id=project_id,
                 limit=limit,
             )
@@ -757,7 +772,7 @@ def create_memory_registry(
         Regenerate embeddings for all stored memories.
         """
         try:
-            return await memory_manager.reindex_embeddings()
+            return await _memory_manager().reindex_embeddings()
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -769,10 +784,11 @@ def create_memory_registry(
     )
     async def restore_memories() -> dict[str, Any]:
         """Non-destructively restore memories from the configured JSONL backup."""
-        if not memory_backup_manager:
+        backup_manager = _memory_backup_manager()
+        if not backup_manager:
             return {"success": False, "error": "Memory backup manager not available"}
         try:
-            count = await memory_backup_manager.restore()
+            count = await backup_manager.restore()
             return {"success": True, "restored": count}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -783,11 +799,12 @@ def create_memory_registry(
     )
     async def backup_memories() -> dict[str, Any]:
         """Write a deterministic JSONL backup from the hub database."""
-        if not memory_backup_manager:
+        backup_manager = _memory_backup_manager()
+        if not backup_manager:
             return {"success": False, "error": "Memory backup manager not available"}
         try:
             project_id = get_current_project_id()
-            count = await memory_backup_manager.backup(project_id=project_id)
+            count = await backup_manager.backup(project_id=project_id)
             return {"success": True, "backed_up": count}
         except Exception as e:
             return {"success": False, "error": str(e)}
@@ -823,11 +840,11 @@ def create_memory_registry(
             return {"success": False, "error": "session_id is required"}
         try:
             result = await _build_turn_and_digest(
-                memory_manager=memory_manager,
+                memory_manager=_memory_manager(),
                 session_manager=session_manager,
                 session_id=session_id,
                 prompt_text=prompt_text,
-                llm_service=llm_service,
+                llm_service=_llm_service(),
                 config=config,
                 prior_turn_only=prior_turn_only,
             )
@@ -841,8 +858,8 @@ def create_memory_registry(
 
     register_memory_recall_tool(
         registry,
-        memory_manager,
-        llm_service=llm_service,
+        memory_manager_resolver,
+        llm_service_resolver=_llm_service,
         config=config.memory_recall if config is not None else None,
     )
     register_memory_dream_tools(

@@ -6,6 +6,7 @@ This module contains MCP tools for setting and retrieving handoff context.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.wait_tools import clamp_wait_tool_timeout
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
 def register_handoff_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager | None,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
     session_summary_config: SessionSummaryConfig | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
@@ -34,7 +35,7 @@ def register_handoff_tools(
     Args:
         registry: The InternalToolRegistry to register tools with
         session_manager: SessionManager instance for session operations
-        llm_service: LLM service for generating full summaries (optional)
+        llm_service_resolver: per-call resolver for the current LLM service (optional)
         transcript_processor: Transcript processor for parsing transcripts (optional)
         session_summary_config: Feature config for session summary generation (optional)
         inter_session_message_manager: For sending P2P messages between sessions (optional)
@@ -161,7 +162,7 @@ def register_handoff_tools(
         summary_result = await generate_session_summaries(
             session_id=session.id,
             session_manager=session_manager,
-            llm_service=llm_service,
+            llm_service=llm_service_resolver() if llm_service_resolver is not None else None,
             session_summary_config=session_summary_config,
             db=getattr(session_manager, "db", None),
             write_file=write_file,

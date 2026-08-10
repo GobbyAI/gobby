@@ -79,9 +79,13 @@ class TranscriptProcessingMixin:
     """Transcript-processing behavior shared by the session lifecycle manager."""
 
     db: HubDatabase
-    llm_service: Any | None
     session_manager: SessionManager
     token_event_store: TokenEventStore
+
+    @property
+    def llm_service(self) -> Any | None:
+        """Provided by the host; the lifecycle manager resolves it per use."""
+        raise NotImplementedError
 
     async def _process_pending_transcripts(self, active: DaemonConfig) -> int:
         """Process transcripts for expired sessions.

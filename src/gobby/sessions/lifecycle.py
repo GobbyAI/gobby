@@ -44,15 +44,11 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         self,
         db: HubDatabase,
         capture_bundle: Callable[[], RuntimeActiveBundle],
-        memory_manager: Any | None = None,
-        llm_service: Any | None = None,
     ):
         self.db = db
         self._capture_bundle = capture_bundle
         self.session_manager = SessionManager(db)
         self.token_event_store = TokenEventStore(db)
-        self.memory_manager = memory_manager
-        self.llm_service = llm_service
 
         self._running = False
         self._expire_task: asyncio.Task[None] | None = None
@@ -61,6 +57,18 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
     def _capture_active(self) -> DaemonConfig:
         return self._capture_bundle().snapshot.active
+
+    @property
+    def memory_manager(self) -> Any | None:
+        """Resolve the current runtime epoch's memory manager per use."""
+        service = self._capture_bundle().services.get("memory_services")
+        return getattr(service, "memory_manager", None)
+
+    @property
+    def llm_service(self) -> Any | None:
+        """Resolve the current runtime epoch's LLM service per use."""
+        service = self._capture_bundle().services.get("ai_services")
+        return getattr(service, "llm_service", None)
 
     async def _run_memory_db(
         self,

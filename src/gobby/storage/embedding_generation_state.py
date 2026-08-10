@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -33,6 +33,31 @@ _LEDGER_LOCK_ID = 1
 # (the production 30s TTL uses the full 3.0s margin).
 _LEASE_DEADLINE_MARGIN_SECONDS = 3.0
 _LEASE_DEADLINE_MARGIN_FRACTION = 0.1
+
+
+def managed_projection_targets(
+    managed: Mapping[str, object],
+    source_kind: str,
+    primary: str,
+) -> tuple[str, ...]:
+    """Resolve projection targets from an in-memory managed config mapping.
+
+    Mirrors ``EmbeddingGenerationState.projection_targets`` without a database
+    read: the journal entry is a plain physical-names mapping, the completed
+    entry is a record carrying a ``physical_names`` attribute."""
+    if source_kind not in _SOURCE_KINDS:
+        raise ValueError(f"Unsupported embedding projection source kind: {source_kind}")
+    collection_kind = _SOURCE_COLLECTIONS[source_kind]
+    targets = [primary]
+    for key in (EMBEDDING_SWITCH_JOURNAL_KEY, EMBEDDING_SWITCH_COMPLETED_KEY):
+        entry = managed.get(key)
+        names = getattr(entry, "physical_names", entry if isinstance(entry, Mapping) else None)
+        if not isinstance(names, Mapping):
+            continue
+        target = names.get(collection_kind)
+        if isinstance(target, str) and target and target not in targets:
+            targets.append(target)
+    return tuple(targets)
 
 
 class EmbeddingGenerationError(RuntimeError):
@@ -415,4 +440,5 @@ __all__ = [
     "EmbeddingGenerationState",
     "EmbeddingServingLease",
     "ProjectionChange",
+    "managed_projection_targets",
 ]

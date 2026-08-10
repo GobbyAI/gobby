@@ -341,7 +341,7 @@ def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     db: HubDatabase,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     session_summary_config: Any | None = None,
     compact_handoff_config: Any | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
@@ -573,7 +573,7 @@ def register_terminal_tools(
             session,
             session_manager,
             db,
-            llm_service,
+            llm_service_resolver() if llm_service_resolver is not None else None,
             operation_session_summary_config,
         )
         if not refresh_result.get("success"):
@@ -663,7 +663,7 @@ def register_terminal_tools(
                 resolved_session_id,
                 session_manager,
                 db,
-                llm_service,
+                llm_service_resolver() if llm_service_resolver is not None else None,
                 operation_session_summary_config,
                 operation_compact_handoff_config,
             )

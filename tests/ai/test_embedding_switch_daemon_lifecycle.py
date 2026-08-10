@@ -45,6 +45,7 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationNotCaughtUp,
     EmbeddingGenerationState,
     ProjectionChange,
+    managed_projection_targets,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
@@ -332,6 +333,36 @@ async def test_managed_revision_converges_across_runtimes(temp_db: HubDatabase) 
         )
     finally:
         await asyncio.gather(*(runtime.close() for runtime in runtimes))
+
+
+@pytest.mark.asyncio
+async def test_fresh_runtime_start_surfaces_journal_projection_targets(
+    temp_db: HubDatabase,
+) -> None:
+    """A daemon starting mid-switch must project into the journal's physical
+    collections from its in-memory managed mapping alone."""
+    store = ConfigStore(temp_db)
+    journal = _managed_journal()
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+
+    runtime = ConfigRuntime(
+        ConfigRepository(temp_db),
+        managed_resolver=managed_embedding_projection,
+    )
+    try:
+        await runtime.start()
+        managed = runtime.capture().managed
+        assert managed[EMBEDDING_SWITCH_JOURNAL_KEY] == journal.physical_names
+        assert managed_projection_targets(managed, "memory", "memories") == (
+            "memories",
+            "memories@4096-run",
+        )
+        assert managed_projection_targets(managed, "tool", "tool_embeddings") == (
+            "tool_embeddings",
+            "tool_embeddings@4096-run",
+        )
+    finally:
+        await runtime.close()
 
 
 @pytest.mark.asyncio

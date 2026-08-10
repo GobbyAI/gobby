@@ -244,8 +244,10 @@ def test_nested_lock_target_acquires_both_lookup_branch(
     postgres_db_factory: Callable[[], PostgresHubDatabase],
 ) -> None:
     db = postgres_db_factory()
-    web_lock = WebChatSessionBootstrap("ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat")
-    registration_lock = SessionRegistration("ext", "21000000-0000-4000-8000-000000000003", "codex", "web_chat")
+    web_lock = WebChatSessionBootstrap(
+        "ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat"
+    )
+    registration_lock = SessionRegistration("ext", "codex", "web_chat")
     try:
         with db.transaction_immediate(web_lock) as outer:
             with db.transaction_immediate(registration_lock) as inner:
@@ -255,16 +257,18 @@ def test_nested_lock_target_acquires_both_lookup_branch(
 
 
 def test_session_registration_lock_key_excludes_project_identity() -> None:
-    registration_lock = SessionRegistration("ext", "21000000-0000-4000-8000-000000000003", "codex", "terminal")
+    registration_lock = SessionRegistration("ext", "codex", "terminal")
 
-    assert advisory_lock_keys(registration_lock) == ("session_register:ext|machine|codex|terminal",)
+    assert advisory_lock_keys(registration_lock) == ("session_register:ext|codex|terminal",)
 
 
 def test_nested_lock_target_acquires_both_recovery_branch(
     postgres_db_factory: Callable[[], PostgresHubDatabase],
 ) -> None:
     db = postgres_db_factory()
-    web_lock = WebChatSessionBootstrap("ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat")
+    web_lock = WebChatSessionBootstrap(
+        "ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat"
+    )
     recovery_lock = SessionRecoveryByProject(project_id="project")
     try:
         with db.transaction_immediate(web_lock) as outer:
@@ -278,7 +282,9 @@ def test_nested_lock_target_out_of_order_priority_raises(
     postgres_db_factory: Callable[[], PostgresHubDatabase],
 ) -> None:
     db = postgres_db_factory()
-    web_lock = WebChatSessionBootstrap("ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat")
+    web_lock = WebChatSessionBootstrap(
+        "ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat"
+    )
     second_web_lock = WebChatSessionBootstrap(
         "other-ext", "21000000-0000-4000-8000-000000000003", "codex", "project", "web_chat"
     )

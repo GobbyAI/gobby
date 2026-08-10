@@ -68,7 +68,7 @@ def _register_tools(
     register_handoff_tools(
         registry,
         session_manager,
-        llm_service=llm_service,
+        llm_service_resolver=lambda: llm_service,
         transcript_processor=transcript_processor,
         inter_session_message_manager=inter_session_message_manager,
     )

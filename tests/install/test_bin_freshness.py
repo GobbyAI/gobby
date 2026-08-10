@@ -853,6 +853,8 @@ class TestGithubReleaseClient:
         assert calls == [
             "https://api.github.com/repos/GobbyAI/gobby/releases?per_page=100",
         ]
+
+
 TEST_MACHINE_ID = "8fa1247f-e924-4bd7-a54e-b9dd5704304a"
 
 

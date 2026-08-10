@@ -43,13 +43,13 @@ logger = logging.getLogger("gobby.mcp.registries")
 def setup_internal_registries(
     _config: DaemonConfig | None,
     _session_manager: SessionManager | None = None,
-    memory_manager: MemoryManager | None = None,
+    memory_manager_resolver: Callable[[], MemoryManager | None] | None = None,
     task_manager: LocalTaskManager | None = None,
     db: HubDatabase | None = None,
-    task_validator: TaskValidator | None = None,
+    task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
     session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
-    llm_service: LLMService | None = None,
+    llm_service_resolver: Callable[[], LLMService | None] | None = None,
     agent_runner: AgentRunner | None = None,
     worktree_storage: LocalWorktreeManager | None = None,
     worktree_delete_executor: WorktreeDeleteExecutor | None = None,
@@ -65,12 +65,12 @@ def setup_internal_registries(
     pipeline_execution_manager: LocalPipelineExecutionManager | None = None,
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
-    memory_backup_manager: Any | None = None,
+    memory_backup_manager_resolver: Callable[[], Any | None] | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     wake_dispatcher: WakeDispatcher | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
     cron_scheduler: Any | None = None,
-    mcp_manager: Any | None = None,
+    mcp_manager_resolver: Callable[[], Any | None] | None = None,
     transcript_reader: Any | None = None,
     communications_manager: Any | None = None,
     web_chat_session_registry: Any | None = None,
@@ -83,16 +83,21 @@ def setup_internal_registries(
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
 
+    Runtime-replaceable services (memory manager, task validator, LLM service,
+    memory backup manager, external MCP manager) are passed as resolver
+    callables so tool calls observe the current runtime epoch. Registry
+    creation gates on a single resolve at setup time.
+
     Args:
         _config: Daemon configuration (reserved for future use)
         _session_manager: Session manager (reserved for future use)
-        memory_manager: Memory manager for memory operations
+        memory_manager_resolver: per-call resolver for the current MemoryManager
         task_manager: Task storage manager
         db: Active hub database connection for registries that need storage
-        task_validator: Task validator for validation
+        task_validator_resolver: per-call resolver for the current TaskValidator
         session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
-        llm_service: LLM service for AI-powered operations
+        llm_service_resolver: per-call resolver for the current LLM service
         agent_runner: Agent runner for spawning subagents
         worktree_storage: Worktree storage manager for worktree operations
         git_manager: Git manager for git worktree operations
@@ -114,13 +119,18 @@ def setup_internal_registries(
         InternalRegistryManager containing all registries
     """
     manager = InternalRegistryManager()
+    # One setup-time resolve gates registry creation; tool calls re-resolve.
+    initial_memory_manager = (
+        memory_manager_resolver() if memory_manager_resolver is not None else None
+    )
     review_learning_service = None
-    if memory_manager is not None and task_manager is not None:
+    if initial_memory_manager is not None and task_manager is not None:
         from gobby.review_learning.service import ReviewLearningService
 
         review_learning_service = ReviewLearningService(
-            memory_manager=memory_manager,
+            memory_manager=initial_memory_manager,
             task_manager=task_manager,
+            memory_manager_resolver=memory_manager_resolver,
         )
 
     # Initialize tasks registry if enabled and task_manager is available
@@ -140,7 +150,7 @@ def setup_internal_registries(
 
             tasks_registry = create_task_registry(
                 task_manager=task_manager,
-                task_validator=task_validator,
+                task_validator_resolver=task_validator_resolver,
                 config=_config,
                 project_id=project_id,
                 review_learning_service=review_learning_service,
@@ -153,11 +163,11 @@ def setup_internal_registries(
 
             ops_registry = create_task_ops_registry(
                 task_manager=task_manager,
-                task_validator=task_validator,
+                task_validator_resolver=task_validator_resolver,
                 config=_config,
-                llm_service=llm_service,
+                llm_service_resolver=llm_service_resolver,
                 completion_registry=completion_registry,
-                mcp_manager=mcp_manager,
+                mcp_manager_resolver=mcp_manager_resolver,
                 review_learning_service=review_learning_service,
             )
             manager.add_registry(ops_registry)
@@ -200,7 +210,7 @@ def setup_internal_registries(
 
         session_messages_registry = create_session_messages_registry(
             session_manager=session_manager,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             config=_config,
             config_service_getter=config_service_getter,
             db=db,
@@ -212,14 +222,14 @@ def setup_internal_registries(
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")
 
-    # Initialize memory registry if memory_manager is available
-    if memory_manager is not None:
+    # Initialize memory registry if a memory manager is available at setup time
+    if initial_memory_manager is not None and memory_manager_resolver is not None:
         from gobby.mcp_proxy.tools.memory import create_memory_registry
 
         memory_registry = create_memory_registry(
-            memory_manager=memory_manager,
-            llm_service=llm_service,
-            memory_backup_manager=memory_backup_manager,
+            memory_manager_resolver=memory_manager_resolver,
+            llm_service_resolver=llm_service_resolver,
+            memory_backup_manager_resolver=memory_backup_manager_resolver,
             session_manager=session_manager,
             config=_config,
             dream_coordinator_resolver=dream_coordinator_resolver,
@@ -242,7 +252,7 @@ def setup_internal_registries(
         session_manager=session_manager,
         db=getattr(session_manager, "db", None) if session_manager else None,
         internal_manager=manager,
-        mcp_manager=mcp_manager,
+        mcp_manager_resolver=mcp_manager_resolver,
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,
@@ -297,7 +307,7 @@ def setup_internal_registries(
             clone_manager=clone_git_manager,
             db=db,
             workflow_loader=workflow_loader,
-            mcp_inventory=workflow_mcp_inventory(manager, mcp_manager),
+            mcp_inventory=workflow_mcp_inventory(manager, mcp_manager_resolver),
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,
             daemon_config=_config,

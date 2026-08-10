@@ -101,8 +101,10 @@ class HookManager:
             ensure_project_in_db=lambda context: self._ensure_project_in_db(context),
         )
 
-        # Store LLM service
+        # Store the creation-time LLM service and the runtime used to resolve
+        # the current epoch's replacement per event.
         self._llm_service = llm_service
+        self._config_runtime = config_runtime
 
         # Track sessions that have received full metadata injection
         # Key: "{platform_session_id}:{source}" - cleared on daemon restart
@@ -713,6 +715,20 @@ class HookManager:
         """Filter already-suggested skills and low-relevance results."""
         return self._create_rule_evaluator().dedup_skill_results(result, session_id)
 
+    def _current_llm_service(self) -> Any | None:
+        """Resolve the current runtime epoch's LLM service, per event."""
+        capture = getattr(self._config_runtime, "capture", None)
+        if callable(capture):
+            try:
+                bundle = capture()
+            except Exception:
+                self.logger.debug("Hook LLM resolution fell back to creation-time service")
+            else:
+                resolved = getattr(bundle.services.get("ai_services"), "llm_service", None)
+                if resolved is not None:
+                    return resolved
+        return self._llm_service
+
     def _dispatch_session_summaries(
         self,
         session_id: str,
@@ -723,7 +739,7 @@ class HookManager:
         """Fire session summary generation."""
         dispatcher = SessionSummaryDispatcher(
             session_manager=self._session_manager,
-            llm_service=self._llm_service,
+            llm_service=self._current_llm_service(),
             session_summary_config=getattr(self._config, "session_summary", None),
             database=self._database,
             loop=self._loop,

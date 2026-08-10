@@ -48,9 +48,9 @@ def test_elicit_presents_decision_record_as_plain_conversation_text() -> None:
     assert "Success criterion: zero lost writes." in result.loaded.combined_text
 
     repository_root = Path(__file__).resolve().parents[2]
-    skill_text = (
-        repository_root / "src/gobby/install/shared/skills/elicit/SKILL.md"
-    ).read_text(encoding="utf-8")
+    skill_text = (repository_root / "src/gobby/install/shared/skills/elicit/SKILL.md").read_text(
+        encoding="utf-8"
+    )
     assert "plain conversation text" in skill_text
     assert "never solely inside" in skill_text
 

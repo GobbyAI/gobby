@@ -193,6 +193,7 @@ class HTTPServer:
         """Initialize MCP proxy, internal registries, and semantic search."""
         from gobby.mcp_proxy.manager import MCPClientManager
         from gobby.runner_init.services import AIServiceBundle, MemoryServiceBundle
+        from gobby.tasks.validation import TaskValidator
 
         runtime_bundle = self.capture_runtime_bundle()
         config = runtime_bundle.snapshot.active if runtime_bundle else self.startup_config
@@ -203,29 +204,38 @@ class HTTPServer:
             service = runtime_bundle.services.get(name)
             return None if isinstance(service, UnavailableService) else service
 
-        ai_services = captured_service("ai_services")
+        # Per-call resolvers observe the current runtime epoch (request-pinned
+        # via the capture middleware) and fall back to startup container values.
+        def resolve_mcp_manager() -> MCPClientManager | None:
+            service = self._runtime_service("mcp_manager")
+            return service if isinstance(service, MCPClientManager) else services.mcp_manager
+
+        def resolve_llm_service() -> Any | None:
+            service = self._runtime_service("ai_services")
+            if isinstance(service, AIServiceBundle):
+                return service.llm_service
+            return services.llm_service
+
+        def resolve_memory_manager() -> Any | None:
+            service = self._runtime_service("memory_services")
+            if isinstance(service, MemoryServiceBundle):
+                return service.memory_manager
+            return services.memory_manager
+
+        def resolve_memory_backup_manager() -> Any | None:
+            service = self._runtime_service("memory_services")
+            if isinstance(service, MemoryServiceBundle):
+                return service.memory_backup_manager
+            return services.memory_backup_manager
+
+        def resolve_task_validator() -> TaskValidator | None:
+            service = self._runtime_service("task_validator")
+            return service if isinstance(service, TaskValidator) else services.task_validator
+
         memory_services = captured_service("memory_services")
-        runtime_mcp_manager = captured_service("mcp_manager")
-        mcp_manager = (
-            runtime_mcp_manager
-            if isinstance(runtime_mcp_manager, MCPClientManager)
-            else services.mcp_manager
-        )
-        llm_service = (
-            ai_services.llm_service
-            if isinstance(ai_services, AIServiceBundle)
-            else services.llm_service
-        )
-        memory_manager = (
-            memory_services.memory_manager
-            if isinstance(memory_services, MemoryServiceBundle)
-            else services.memory_manager
-        )
-        memory_backup_manager = (
-            memory_services.memory_backup_manager
-            if isinstance(memory_services, MemoryServiceBundle)
-            else services.memory_backup_manager
-        )
+        mcp_manager = resolve_mcp_manager()
+        llm_service = resolve_llm_service()
+        memory_manager = resolve_memory_manager()
         vector_store = (
             memory_services.vector_store
             if isinstance(memory_services, MemoryServiceBundle)
@@ -279,25 +289,18 @@ class HTTPServer:
 
         # Setup internal registries (gobby-tasks, gobby-memory, gobby-workflows, etc.)
         from gobby.servers.routes.configuration_context import ConfigurationRouteContext
-        from gobby.tasks.validation import TaskValidator
 
         config_route_context = ConfigurationRouteContext(self)
-        runtime_task_validator = captured_service("task_validator")
-        task_validator = (
-            runtime_task_validator
-            if isinstance(runtime_task_validator, TaskValidator)
-            else services.task_validator
-        )
         self._internal_manager = setup_internal_registries(
             _config=config,
             _session_manager=None,  # Not needed for internal registries
-            memory_manager=memory_manager,
+            memory_manager_resolver=resolve_memory_manager,
             task_manager=services.task_manager,
             db=services.mcp_db_manager.db if services.mcp_db_manager else None,
-            task_validator=task_validator,
+            task_validator_resolver=resolve_task_validator,
             session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
-            llm_service=llm_service,
+            llm_service_resolver=resolve_llm_service,
             agent_runner=services.agent_runner,
             worktree_storage=services.worktree_storage,
             worktree_delete_executor=services.worktree_delete_executor,
@@ -313,12 +316,12 @@ class HTTPServer:
             pipeline_execution_manager=services.pipeline_execution_manager,
             hook_manager_resolver=lambda: self._hook_manager,
             config_service_getter=config_route_context.get_config_service,
-            memory_backup_manager=memory_backup_manager,
+            memory_backup_manager_resolver=resolve_memory_backup_manager,
             completion_registry=services.completion_registry,
             wake_dispatcher=services.wake_dispatcher,
             agent_lifecycle_monitor=services.agent_lifecycle_monitor,
             cron_scheduler=services.cron_scheduler,
-            mcp_manager=mcp_manager,
+            mcp_manager_resolver=resolve_mcp_manager,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,
             web_chat_session_registry=services.web_chat_session_registry,

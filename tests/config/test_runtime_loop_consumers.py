@@ -8,18 +8,17 @@ from typing import Any, cast
 
 import pytest
 
+import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.runner import GobbyRunner
-from gobby.scheduler.scheduler import CronScheduler
 from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
 from gobby.runner_service_readiness import require_managed_services_ready
+from gobby.scheduler.scheduler import CronScheduler
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.system_automation import SystemAutomationLoop
-import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
-
 
 _LIFECYCLE_MODULES = (
     "src/gobby/runner_init/orchestration.py",
@@ -147,12 +146,12 @@ async def test_lifecycle_consumer_observes_live_change(
     monkeypatch.setattr("gobby.code_index.bm25_health.repair_bm25_indexes", repair)
     runner = SimpleNamespace(config_runtime=runtime)
 
-    assert await lifecycle_subsystems._repair_code_index_bm25(
-        cast(GobbyRunner, runner), None
-    ) is True
-    assert await lifecycle_subsystems._repair_code_index_bm25(
-        cast(GobbyRunner, runner), None
-    ) is True
+    assert (
+        await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
+    )
+    assert (
+        await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
+    )
 
     assert repairs == [("postgresql://runtime/revision-2", 41)]
     assert runtime.capture_count == 2
@@ -196,9 +195,9 @@ async def test_lifecycle_consumer_retains_restart_value(
         _runner: object,
         *,
         qdrant_url: str,
-        falkor_config: object,
+        falkor_config: Any,
     ) -> None:
-        checked_values.append((qdrant_url, getattr(falkor_config, "password")))
+        checked_values.append((qdrant_url, falkor_config.password))
 
     monkeypatch.setattr(
         "gobby.runner_service_readiness._check_managed_services_ready_once",
@@ -238,8 +237,8 @@ async def test_cron_iteration_uses_one_runtime_bundle(
     observed_intervals: list[int] = []
     slept: list[float] = []
 
-    async def check_due_jobs(config: object) -> None:
-        observed_intervals.append(getattr(config, "check_interval_seconds"))
+    async def check_due_jobs(config: Any) -> None:
+        observed_intervals.append(config.check_interval_seconds)
         scheduler._running = False
 
     async def sleep(seconds: float) -> None:

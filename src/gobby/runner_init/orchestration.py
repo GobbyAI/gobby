@@ -323,8 +323,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.lifecycle_manager = SessionLifecycleManager(
         db=runner.database,
         capture_bundle=runner.config_runtime.capture,
-        memory_manager=runner.memory_manager,
-        llm_service=runner.llm_service,
     )
 
     # Single daemon-owned admission/launch owner for memory dream runs; cron,
@@ -343,6 +341,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                     llm_service=runner.llm_service,
                     daemon_config=config,
                     current_project_id=runner.project_id,
+                    capture_bundle=runner.config_runtime.capture,
                 )
             )
         except Exception:
@@ -429,30 +428,32 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             from gobby.code_index.gcode_gateway import GcodeGateway
             from gobby.config.persistence import is_falkordb_enabled
             from gobby.gwiki_gateway import GwikiGateway
-            from gobby.memory.vectorstore import VectorStore
             from gobby.projects.gwiki_lock import GwikiProjectDrainBarrier
             from gobby.projects.purge import (
                 NoopProjectGraphCleaner,
                 NoopProjectVectorCleaner,
                 ProjectPurgeService,
+                ProjectPurgeVectorStoreUnavailable,
                 register_project_purge_cron,
             )
             from gobby.projects.vector_cleanup import ProjectVectorCleaner
             from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-            cleanup_vector_store = runner.vector_store
-            qdrant_config = getattr(config.databases, "qdrant", None)
-            if cleanup_vector_store is None and qdrant_config is not None:
-                cleanup_vector_store = VectorStore(
-                    url=qdrant_config.url,
-                    api_key=qdrant_config.api_key,
-                    embedding_dim=config.embeddings.dim,
-                )
-            vector_cleaner = (
-                ProjectVectorCleaner(cleanup_vector_store)
-                if cleanup_vector_store is not None
-                else NoopProjectVectorCleaner()
-            )
+            def resolve_vector_cleaner() -> ProjectVectorCleaner | NoopProjectVectorCleaner:
+                """Resolve the purge vector cleaner from the current runtime epoch."""
+                bundle = runner.config_runtime.capture()
+                memory = bundle.services.get("memory_services")
+                vector_store = getattr(memory, "vector_store", None)
+                if vector_store is not None:
+                    return ProjectVectorCleaner(vector_store)
+                active = bundle.snapshot.active
+                if getattr(active.databases, "qdrant", None) is not None:
+                    raise ProjectPurgeVectorStoreUnavailable(
+                        "Qdrant is configured but the runtime memory bundle is "
+                        "unavailable; failing the purge so the cron retries"
+                    )
+                return NoopProjectVectorCleaner()
+
             kg_service = (
                 runner.memory_manager.kg_service if runner.memory_manager is not None else None
             )
@@ -467,7 +468,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 gwiki_barrier=GwikiProjectDrainBarrier(runner.database),
                 wiki_gateway=GwikiGateway(),
                 code_gateway=GcodeGateway(),
-                vector_cleaner=vector_cleaner,
+                vector_cleaner=resolve_vector_cleaner,
                 graph_cleaner=graph_cleaner,
             )
             register_project_purge_cron(

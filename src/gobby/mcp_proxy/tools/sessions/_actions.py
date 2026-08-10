@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.workflows.git_utils import get_dirty_files
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 def register_action_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
     config: Any | None = None,
     db: Any | None = None,
@@ -33,7 +34,7 @@ def register_action_tools(
     Args:
         registry: The session tool registry
         session_manager: SessionManager for session lookups
-        llm_service: LLM service for handoff generation
+        llm_service_resolver: per-call resolver for the current LLM service
         transcript_processor: Transcript processor for handoff generation
         config: DaemonConfig for settings
         db: Database for dependency injection

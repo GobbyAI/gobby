@@ -35,6 +35,7 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationLeaseRenewTransient,
     EmbeddingGenerationState,
     EmbeddingServingLease,
+    managed_projection_targets,
 )
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -291,7 +292,7 @@ async def _register_stateful_services(runner: GobbyRunner) -> None:
         ServiceSubscriber(
             name="message_processor",
             keys=live_subscriber_keys("message_processor"),
-            builder=lambda change: _build_message_processor(runner, change.desired),
+            builder=lambda change: _build_message_processor(runner, change.desired, loop),
         ),
         ServiceSubscriber(
             name="task_validator",
@@ -367,6 +368,9 @@ def _build_memory_services(
         embedding_dim=emb_cfg.dim,
         generation_state=generation_state,
         serving_guard=lease_handle.assert_serving,
+        projection_targets_provider=lambda source_kind, primary: managed_projection_targets(
+            runner.config_runtime.capture().managed, source_kind, primary
+        ),
     )
     vector_store = cast(
         VectorStore,
@@ -470,7 +474,7 @@ def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord 
         return None
 
 
-_pending_rebuild_reconciles: set[asyncio.Task[None]] = set()
+_background_runtime_tasks: set[asyncio.Task[None]] = set()
 
 
 def _request_memory_services_rebuild(
@@ -491,8 +495,8 @@ def _request_memory_services_rebuild(
             logger.exception("Embedding lease rebuild reconcile failed")
 
     task = loop.create_task(_reconcile())
-    _pending_rebuild_reconciles.add(task)
-    task.add_done_callback(_pending_rebuild_reconciles.discard)
+    _background_runtime_tasks.add(task)
+    task.add_done_callback(_background_runtime_tasks.discard)
 
 
 def _managed_embedding_collection(managed: Mapping[str, object], kind: str) -> str:
@@ -536,15 +540,36 @@ def _build_mcp_manager(
 def _build_message_processor(
     runner: GobbyRunner,
     config: DaemonConfig,
-) -> SessionMessageProcessor | None:
+    loop: asyncio.AbstractEventLoop,
+) -> PreparedService | None:
     if not config.message_tracking.enabled:
         return None
-    return SessionMessageProcessor(
+    processor = SessionMessageProcessor(
         db=runner.database,
         poll_interval=config.message_tracking.poll_interval,
         session_manager=runner.session_manager,
         run_db=runner.db_executor.run,
     )
+
+    def activate() -> None:
+        # Rewire live-server references so a rebuilt processor keeps streaming
+        # (startup activation runs before the servers exist; those refs are
+        # attached later by server init and the app lifespan instead).
+        processor.session_manager = runner.session_manager
+        processor.websocket_server = getattr(runner, "websocket_server", None)
+        http_server = getattr(runner, "http_server", None)
+        hook_manager = getattr(http_server, "_hook_manager", None)
+        if hook_manager is not None:
+            processor.set_hook_manager(hook_manager)
+        runner.message_processor = processor
+        task = loop.create_task(processor.start())
+        _background_runtime_tasks.add(task)
+        task.add_done_callback(_background_runtime_tasks.discard)
+
+    def dispose() -> None:
+        _dispose_async(loop, processor.stop)
+
+    return PreparedService(processor, dispose, activate)
 
 
 def _build_task_validator(runner: GobbyRunner, config: DaemonConfig) -> TaskValidator | None:
@@ -689,11 +714,16 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
                 embedding_dim=emb_cfg.dim,
+                generation_state=EmbeddingGenerationState(runner.database),
             )
             runner.vector_store = cast(
                 VectorStore,
                 ProjectFencedVectorStore(raw_vector_store, runner.project_write_fence),
             )
+            # The synchronous path serves without a generation lease or ack:
+            # projection dual-writes still flow via generation_state, but GC
+            # cannot see this daemon, so surface the gap explicitly.
+            mark_service_degraded(runner, "embedding_serving_lease")
             embed_fn: Callable[..., Any] | None = None
             if embeddings_enabled:
                 embedding_service = EmbeddingService(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -23,20 +23,30 @@ MAX_DIRECT_MCP_SERIALIZED_CHARS = 11_900
 
 def register_memory_recall_tool(
     registry: InternalToolRegistry,
-    memory_manager: MemoryManager,
+    memory_manager_resolver: Callable[[], MemoryManager | None],
     *,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     config: MemoryRecallConfig | None = None,
 ) -> None:
     """Register inline recall and overflow-only retrieval."""
     recall_config = config or MemoryRecallConfig()
-    queue = MemoryRecallDeliveryQueue(memory_manager.db)
-    runner = MemoryRecallRunner(
-        db=memory_manager.db,
-        memory_manager=memory_manager,
-        llm_service=llm_service,
-        config=recall_config,
-    )
+    registration_manager = memory_manager_resolver()
+    if registration_manager is None:
+        raise RuntimeError("Memory recall tools require an available memory manager")
+    # The hub database handle is stable across runtime epochs; only the
+    # manager and LLM service are re-resolved per call.
+    queue = MemoryRecallDeliveryQueue(registration_manager.db)
+
+    def _current_runner() -> MemoryRecallRunner | None:
+        manager = memory_manager_resolver()
+        if manager is None:
+            return None
+        return MemoryRecallRunner(
+            db=manager.db,
+            memory_manager=manager,
+            llm_service=llm_service_resolver() if llm_service_resolver is not None else None,
+            config=recall_config,
+        )
 
     @registry.tool(
         name="recall_memories_for_prompt",
@@ -74,6 +84,9 @@ def register_memory_recall_tool(
             "parent_turn_seq": normalized_parent_turn_seq,
             "is_spawned_agent": is_spawned_agent,
         }
+        runner = _current_runner()
+        if runner is None:
+            return {"success": False, "error": "Memory services are unavailable."}
         result = await runner.run(event, session_id, variables)
         if result is None:
             return {"success": True, "skipped": True, "memories": []}

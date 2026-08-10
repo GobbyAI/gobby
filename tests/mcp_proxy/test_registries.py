@@ -54,7 +54,7 @@ def test_setup_with_all_managers_none() -> None:
 
     manager = setup_internal_registries(
         _config=mock_config,
-        memory_manager=None,
+        memory_manager_resolver=None,
         task_manager=None,
         session_manager=None,
         metrics_manager=None,
@@ -85,7 +85,7 @@ def test_setup_with_memory_manager_only() -> None:
 
     manager = setup_internal_registries(
         _config=mock_config,
-        memory_manager=memory_manager,
+        memory_manager_resolver=lambda: memory_manager,
     )
 
     registries = manager.get_all_registries()

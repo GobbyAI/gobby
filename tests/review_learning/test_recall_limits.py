@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.review_learning import create_review_learning_registr
 from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
+    _LEGACY_SCAN_LIMIT,
     MAX_RECALL_FINDINGS,
     MAX_RECALL_FLAT_MATCHES,
     ReviewLearningMemoryManager,
@@ -51,22 +52,14 @@ class _RecallMemoryManager:
 
 
 class _CandidateMemoryManager:
-    def __init__(
-        self,
-        *,
-        tagged_batches: list[list[_Memory]],
-        legacy: list[_Memory],
-    ) -> None:
+    def __init__(self, memories: list[_Memory]) -> None:
         self.db = cast(HubDatabase, object())
-        self.tagged_batches = iter(tagged_batches)
-        self.legacy = legacy
+        self.memories = memories
         self.list_calls: list[dict[str, Any]] = []
 
     async def alist_memories(self, **kwargs: Any) -> list[_Memory]:
         self.list_calls.append(kwargs)
-        if len(kwargs["tags_all"]) == 3:
-            return next(self.tagged_batches)
-        return self.legacy
+        return self.memories
 
 
 def _memory_manager() -> tuple[_RecallMemoryManager, ReviewLearningMemoryManager]:
@@ -75,13 +68,14 @@ def _memory_manager() -> tuple[_RecallMemoryManager, ReviewLearningMemoryManager
 
 
 @pytest.mark.asyncio
-async def test_candidate_lessons_skip_legacy_scan_when_tagged_candidates_satisfy_limit() -> None:
-    first = _Memory(id="first", content="first", tags=[])
-    second = _Memory(id="second", content="second", tags=[])
-    manager = _CandidateMemoryManager(
-        tagged_batches=[[first], [first, second]],
-        legacy=[],
+async def test_candidate_lessons_use_one_bounded_scan_and_rank_tagged_first() -> None:
+    tagged = _Memory(
+        id="tagged",
+        content="tagged",
+        tags=["review-lesson", path_tag("src/second.py")],
     )
+    untagged = _Memory(id="untagged", content="untagged", tags=["review-lesson"])
+    manager = _CandidateMemoryManager([untagged, tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
         cast(PromotionTaskManager, object()),
@@ -93,19 +87,22 @@ async def test_candidate_lessons_skip_legacy_scan_when_tagged_candidates_satisfy
         limit=2,
     )
 
-    assert [memory.id for memory, _ in candidates] == ["first", "second"]
-    assert len(manager.list_calls) == 2
-    assert all(len(call["tags_all"]) == 3 for call in manager.list_calls)
+    assert [(memory.id, path) for memory, path in candidates] == [
+        ("tagged", "src/second.py"),
+        ("untagged", None),
+    ]
+    assert len(manager.list_calls) == 1
+    call = manager.list_calls[0]
+    assert call["tags_all"] == ["review-lesson", "confirmed"]
+    assert call["limit"] == _LEGACY_SCAN_LIMIT
+    assert call["include_global"] is False
 
 
 @pytest.mark.asyncio
-async def test_candidate_lessons_scan_legacy_when_tagged_candidates_are_insufficient() -> None:
-    tagged = _Memory(id="tagged", content="tagged", tags=[])
-    legacy = _Memory(id="legacy", content="legacy", tags=[])
-    manager = _CandidateMemoryManager(
-        tagged_batches=[[tagged]],
-        legacy=[legacy],
-    )
+async def test_candidate_lessons_deduplicate_by_memory_id() -> None:
+    first = _Memory(id="lesson", content="lesson", tags=[path_tag("src/tagged.py")])
+    duplicate = _Memory(id="lesson", content="lesson", tags=[path_tag("src/tagged.py")])
+    manager = _CandidateMemoryManager([first, duplicate])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
         cast(PromotionTaskManager, object()),
@@ -117,35 +114,27 @@ async def test_candidate_lessons_scan_legacy_when_tagged_candidates_are_insuffic
         limit=2,
     )
 
-    assert [(memory.id, path) for memory, path in candidates] == [
-        ("tagged", "src/tagged.py"),
-        ("legacy", None),
-    ]
-    assert len(manager.list_calls) == 2
-    assert len(manager.list_calls[-1]["tags_all"]) == 2
+    assert [(memory.id, path) for memory, path in candidates] == [("lesson", "src/tagged.py")]
+    assert len(manager.list_calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_candidate_lessons_skip_empty_path_tags() -> None:
-    tagged = _Memory(id="tagged", content="tagged", tags=[])
-    manager = _CandidateMemoryManager(
-        tagged_batches=[[tagged]],
-        legacy=[],
-    )
+    tagged = _Memory(id="tagged", content="tagged", tags=[path_tag("src/tagged.py")])
+    manager = _CandidateMemoryManager([tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
         cast(PromotionTaskManager, object()),
     )
 
-    await service._candidate_lesson_memories(
+    candidates = await service._candidate_lesson_memories(
         project_id="project",
         touched_paths=["", "../outside.py", "src/tagged.py"],
         limit=2,
     )
 
-    assert len(manager.list_calls) == 2
-    assert manager.list_calls[0]["tags_all"][-1] == path_tag("src/tagged.py")
-    assert len(manager.list_calls[-1]["tags_all"]) == 2
+    assert [(memory.id, path) for memory, path in candidates] == [("tagged", "src/tagged.py")]
+    assert len(manager.list_calls) == 1
 
 
 @pytest.mark.asyncio

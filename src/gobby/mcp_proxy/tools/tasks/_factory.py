@@ -4,6 +4,7 @@ Orchestrates the creation of all task tool sub-registries and merges them
 into a unified registry.
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
 
 def create_task_registry(
     task_manager: LocalTaskManager,
-    task_validator: TaskValidator | None = None,
+    task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
     config: "DaemonConfig | None" = None,
     project_id: str | None = None,
     review_learning_service: "ReviewLearningService | None" = None,
@@ -41,7 +42,7 @@ def create_task_registry(
 
     Args:
         task_manager: LocalTaskManager instance
-        task_validator: TaskValidator instance (optional)
+        task_validator_resolver: per-call resolver for the current TaskValidator (optional)
         config: DaemonConfig instance (optional)
         project_id: Default project ID (optional)
 
@@ -51,7 +52,7 @@ def create_task_registry(
     # Create the shared context
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator=task_validator,
+        task_validator_resolver=task_validator_resolver,
         config=config,
         review_learning_service=review_learning_service,
     )

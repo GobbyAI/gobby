@@ -639,7 +639,7 @@ class EmbeddingSwitchRunner:
                 config,
                 db=self.db,
                 project_id=project.id,
-                mcp_manager=mcp_manager,
+                mcp_manager_resolver=lambda: mcp_manager,
             )
             try:
                 async with self._writer(project.id):

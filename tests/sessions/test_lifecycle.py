@@ -44,6 +44,22 @@ class EmptyTokenEventStore:
         return False
 
 
+def _set_llm_service(manager: SessionLifecycleManager, llm: Any) -> Any:
+    """Swap the ai_services entry in the manager's captured runtime bundle."""
+    services = manager._capture_bundle().services
+    assert isinstance(services, dict)
+    if llm is None:
+        services.pop("ai_services", None)
+    else:
+        services["ai_services"] = SimpleNamespace(llm_service=llm)
+    return llm
+
+
+def _memory_services(memory_manager: Any) -> dict[str, object]:
+    """Build a runtime-services mapping exposing one memory manager."""
+    return {"memory_services": SimpleNamespace(memory_manager=memory_manager)}
+
+
 @pytest.fixture
 def mock_db() -> MagicMock:
     return MagicMock()
@@ -290,7 +306,7 @@ class TestSessionLifecycleManager:
         session.model = None
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
         manager.session_manager.get.return_value = session
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         messages = []
         for content in ("First", "Second", "Third"):
@@ -546,7 +562,7 @@ class TestSessionLifecycleManager:
         manager.session_manager.get_pending_transcript_sessions.return_value = [s1, s2]
 
         # Enable llm_service so the summary-gating logic activates
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         # s1 has no summary (will be deferred), s2 has summary (will be processed)
         s1_refreshed = MagicMock()
@@ -605,7 +621,7 @@ class TestSessionLifecycleManager:
         session.source = "claude"
         session.digest_markdown = digest
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         refreshed = MagicMock()
         refreshed.turn_count = 3
@@ -649,7 +665,7 @@ class TestSessionLifecycleManager:
         session.source = "claude"
         session.digest_markdown = digest
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         refreshed = MagicMock()
         refreshed.turn_count = 3
@@ -695,7 +711,7 @@ class TestSessionLifecycleManager:
         session.source = "claude"
         session.digest_markdown = digest
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         refreshed = MagicMock()
         refreshed.turn_count = 3
@@ -734,7 +750,7 @@ class TestSessionLifecycleManager:
         session.source = "claude"
         session.digest_markdown = None
         manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
 
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
@@ -796,7 +812,8 @@ class TestSessionLifecycleManager:
         memory_manager = MemoryManagerStub()
         with patch(_SESSION_MANAGER_PATCH):
             manager = SessionLifecycleManager(
-                mock_db, static_session_capture(mock_config), memory_manager=memory_manager
+                mock_db,
+                static_session_capture(mock_config, services=_memory_services(memory_manager)),
             )
 
         with patch(
@@ -873,8 +890,11 @@ class TestSessionLifecycleManager:
         with patch(_SESSION_MANAGER_PATCH):
             manager = SessionLifecycleManager(
                 mock_db,
-                static_session_capture(mock_config, kg_queue=queue_config),
-                memory_manager=memory_manager,
+                static_session_capture(
+                    mock_config,
+                    kg_queue=queue_config,
+                    services=_memory_services(memory_manager),
+                ),
             )
 
         assert await manager._process_pending_graph_memories(queue_config) == 0
@@ -1056,7 +1076,7 @@ class TestGenerateArtifactsIfNeeded:
     @pytest.mark.asyncio
     async def test_no_llm_service(self, manager: SessionLifecycleManager) -> None:
         """Skips when llm_service is None."""
-        manager.llm_service = None
+        _set_llm_service(manager, None)
         await manager._generate_artifacts_if_needed(
             "sess-1", manager._capture_active().session_summary
         )
@@ -1066,7 +1086,7 @@ class TestGenerateArtifactsIfNeeded:
     @pytest.mark.asyncio
     async def test_session_not_found(self, manager: SessionLifecycleManager) -> None:
         """Skips when session not found."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         manager.session_manager.get.return_value = None
         await manager._generate_artifacts_if_needed(
             "sess-1", manager._capture_active().session_summary
@@ -1078,7 +1098,7 @@ class TestGenerateArtifactsIfNeeded:
         self, manager: SessionLifecycleManager
     ) -> None:
         """Skips when the session has a valid summary AND the flat wiki file exists."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "## Current State\nexisting summary"
         manager.session_manager.get.return_value = session
@@ -1108,7 +1128,7 @@ class TestGenerateArtifactsIfNeeded:
         self, manager: SessionLifecycleManager
     ) -> None:
         """Provider failure sentinels are retried instead of treated as summaries."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "Session summary generation failed: provider unavailable"
         session.digest_markdown = "### Turn 1\nDigest source"
@@ -1131,7 +1151,7 @@ class TestGenerateArtifactsIfNeeded:
     @pytest.mark.asyncio
     async def test_session_no_transcript_path(self, manager: SessionLifecycleManager) -> None:
         """Skips when session has no transcript_path."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = None
         session.transcript_path = None
@@ -1144,7 +1164,7 @@ class TestGenerateArtifactsIfNeeded:
     @pytest.mark.asyncio
     async def test_summary_generation_exception(self, manager: SessionLifecycleManager) -> None:
         """Catches summary generation errors."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = None
         session.transcript_path = "/path/to/transcript.jsonl"
@@ -1164,7 +1184,7 @@ class TestGenerateArtifactsIfNeeded:
     @pytest.mark.asyncio
     async def test_summary_generation_success(self, manager: SessionLifecycleManager) -> None:
         """Successful summary generation."""
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = None
         session.transcript_path = "/path/to/transcript.jsonl"
@@ -1190,7 +1210,7 @@ class TestGenerateArtifactsIfNeeded:
         though the summary is already valid, so the summary flow no-ops the
         summary and restores the missing mirror file.
         """
-        manager.llm_service = MagicMock()
+        _set_llm_service(manager, MagicMock())
         session = MagicMock()
         session.summary_markdown = "## Current State\nvalid summary"
         session.digest_markdown = "### Turn 1\na\n### Turn 2\nb\n### Turn 3\nc"
@@ -1265,8 +1285,11 @@ class TestPurgeDreamHiddenMemories:
         with patch(_SESSION_MANAGER_PATCH):
             return SessionLifecycleManager(
                 mock_db,
-                static_session_capture(mock_config, dream=dream_config),
-                memory_manager=memory_manager,
+                static_session_capture(
+                    mock_config,
+                    dream=dream_config,
+                    services=_memory_services(memory_manager),
+                ),
             )
 
     @pytest.mark.asyncio

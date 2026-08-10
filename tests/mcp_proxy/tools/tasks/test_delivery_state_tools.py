@@ -50,7 +50,7 @@ class FakeGitHub:
 def _registry_with_github(temp_db: Any, github: FakeGitHub) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
-        mcp_manager=cast(Any, github),
+        mcp_manager_resolver=lambda: cast(Any, github),
     )
 
 

@@ -105,10 +105,15 @@ def test_list_sessions_filters_by_machine_id(mock_session_manager) -> None:
     mock_session_manager.list.return_value = []
 
     runner = CliRunner()
-    result = runner.invoke(sessions, ["list", "--machine-id", "21000000-0000-4000-8000-00000000000a"])
+    result = runner.invoke(
+        sessions, ["list", "--machine-id", "21000000-0000-4000-8000-00000000000a"]
+    )
 
     assert result.exit_code == 0
-    assert mock_session_manager.list.call_args.kwargs["machine_id"] == "21000000-0000-4000-8000-00000000000a"
+    assert (
+        mock_session_manager.list.call_args.kwargs["machine_id"]
+        == "21000000-0000-4000-8000-00000000000a"
+    )
 
 
 def test_show_session_found(mock_session_manager) -> None:

@@ -428,15 +428,32 @@ def verify_completed_switch(
 
 
 def managed_embedding_projection(snapshot: EmbeddingSwitchSnapshot) -> dict[str, object]:
-    """Resolve the verified managed projection from one config snapshot."""
+    """Resolve the verified managed projection from one config snapshot.
+
+    Also surfaces an in-flight switch journal's physical collection names so
+    in-memory consumers (VectorStore projection targets) can dual-project
+    without a per-operation database read. A malformed journal is skipped —
+    the journal is transient scratch state, so it never blocks reconciles."""
+    managed: dict[str, object] = {}
+    raw_journal = snapshot.overrides.get(EMBEDDING_SWITCH_JOURNAL_KEY)
+    if isinstance(raw_journal, Mapping):
+        physical_names = raw_journal.get("physical_names")
+        if isinstance(physical_names, Mapping):
+            names = {
+                str(kind): name
+                for kind, name in physical_names.items()
+                if isinstance(name, str) and name
+            }
+            if names:
+                managed[EMBEDDING_SWITCH_JOURNAL_KEY] = names
     raw = snapshot.overrides.get(EMBEDDING_SWITCH_COMPLETED_KEY)
     if raw is None:
-        return {}
+        return managed
     if not isinstance(raw, Mapping):
         raise SwitchJournalStateError("Completed embedding switch record is invalid")
     record = CompletedSwitchRecord.from_dict(raw)
-    verified = _verify_completed_record_rows(snapshot, record)
-    return {EMBEDDING_SWITCH_COMPLETED_KEY: verified}
+    managed[EMBEDDING_SWITCH_COMPLETED_KEY] = _verify_completed_record_rows(snapshot, record)
+    return managed
 
 
 _COMPLETED_RECORD_ROW_KEYS = (

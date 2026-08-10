@@ -26,7 +26,7 @@ class SetupInternalRegistries(Protocol):
         *,
         _config: Any,
         session_manager: Any,
-        memory_manager: Any,
+        memory_manager_resolver: Any,
     ) -> Any: ...
 
 
@@ -91,11 +91,10 @@ def create_stdio_mcp_server(
         runtime.close()
 
     session_manager = None
-    memory_manager = None
     _ = effective_deps.setup_internal_registries(
         _config=config,
         session_manager=session_manager,
-        memory_manager=memory_manager,
+        memory_manager_resolver=None,
     )
 
     proxy = effective_deps.proxy_factory(config.daemon_port)

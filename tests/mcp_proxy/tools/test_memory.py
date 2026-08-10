@@ -56,7 +56,7 @@ class MockMemory:
 @pytest.mark.asyncio
 async def test_create_memory_supersedes_guard_bypass(mock_memory_manager: MagicMock) -> None:
     superseded_id = str(uuid.uuid4())
-    registry = create_memory_registry(mock_memory_manager)
+    registry = create_memory_registry(lambda: mock_memory_manager)
     ephemeral = {
         "content": "Gobby build #epic E2E docs test #14353 completed.",
         "memory_type": "implementation_note",
@@ -120,7 +120,7 @@ class TestRemovedMediaIngestionTools:
         self,
         mock_memory_manager: MagicMock,
     ) -> None:
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         tool_names = {
             tool["name"] if isinstance(tool, dict) else tool.name for tool in registry.list_tools()
         }
@@ -135,7 +135,7 @@ class TestRemovedMediaIngestionTools:
 class TestRestoreMemories:
     @pytest.mark.asyncio
     async def test_no_backup_manager(self, mock_memory_manager: MagicMock) -> None:
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("restore_memories", {})
         assert result["success"] is False
         assert "not available" in result["error"]
@@ -147,7 +147,7 @@ class TestRestoreMemories:
         mock_backup_manager: MagicMock,
     ) -> None:
         registry = create_memory_registry(
-            mock_memory_manager, memory_backup_manager=mock_backup_manager
+            lambda: mock_memory_manager, memory_backup_manager_resolver=lambda: mock_backup_manager
         )
         result = await registry.call("restore_memories", {})
 
@@ -163,7 +163,7 @@ class TestRestoreMemories:
     ) -> None:
         mock_backup_manager.restore.side_effect = RuntimeError("Restore crashed")
         registry = create_memory_registry(
-            mock_memory_manager, memory_backup_manager=mock_backup_manager
+            lambda: mock_memory_manager, memory_backup_manager_resolver=lambda: mock_backup_manager
         )
         result = await registry.call("restore_memories", {})
 
@@ -174,7 +174,7 @@ class TestRestoreMemories:
 class TestBackupMemories:
     @pytest.mark.asyncio
     async def test_no_backup_manager(self, mock_memory_manager: MagicMock) -> None:
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("backup_memories", {})
         assert result["success"] is False
 
@@ -185,7 +185,7 @@ class TestBackupMemories:
         mock_backup_manager: MagicMock,
     ) -> None:
         registry = create_memory_registry(
-            mock_memory_manager, memory_backup_manager=mock_backup_manager
+            lambda: mock_memory_manager, memory_backup_manager_resolver=lambda: mock_backup_manager
         )
         result = await registry.call("backup_memories", {})
 
@@ -201,7 +201,7 @@ class TestBackupMemories:
     ) -> None:
         mock_backup_manager.backup.side_effect = RuntimeError("Backup failed")
         registry = create_memory_registry(
-            mock_memory_manager, memory_backup_manager=mock_backup_manager
+            lambda: mock_memory_manager, memory_backup_manager_resolver=lambda: mock_backup_manager
         )
         result = await registry.call("backup_memories", {})
 
@@ -218,7 +218,7 @@ class TestBuildTurnAndDigest:
     @pytest.mark.asyncio
     async def test_no_session_id(self, mock_memory_manager: MagicMock) -> None:
         """Returns error when session_id is empty."""
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("build_turn_and_digest", {"session_id": ""})
         assert result["success"] is False
         assert "required" in result["error"]
@@ -236,7 +236,7 @@ class TestBuildTurnAndDigest:
             return_value={"turn_number": 1, "title": "Test"},
         ):
             registry = create_memory_registry(
-                mock_memory_manager, session_manager=mock_session_manager
+                lambda: mock_memory_manager, session_manager=mock_session_manager
             )
             result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
 
@@ -256,7 +256,7 @@ class TestBuildTurnAndDigest:
             return_value=None,
         ) as build_digest:
             registry = create_memory_registry(
-                mock_memory_manager,
+                lambda: mock_memory_manager,
                 session_manager=mock_session_manager,
             )
             await registry.call(
@@ -282,7 +282,7 @@ class TestBuildTurnAndDigest:
             return_value={"error": "memory.turn_record returned invalid JSON contract"},
         ):
             registry = create_memory_registry(
-                mock_memory_manager, session_manager=mock_session_manager
+                lambda: mock_memory_manager, session_manager=mock_session_manager
             )
             result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
 
@@ -302,7 +302,7 @@ class TestBuildTurnAndDigest:
             return_value=None,
         ):
             registry = create_memory_registry(
-                mock_memory_manager, session_manager=mock_session_manager
+                lambda: mock_memory_manager, session_manager=mock_session_manager
             )
             result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
 
@@ -322,7 +322,7 @@ class TestBuildTurnAndDigest:
             side_effect=RuntimeError("LLM failed"),
         ):
             registry = create_memory_registry(
-                mock_memory_manager, session_manager=mock_session_manager
+                lambda: mock_memory_manager, session_manager=mock_session_manager
             )
             result = await registry.call("build_turn_and_digest", {"session_id": "sess-123"})
 
@@ -345,7 +345,7 @@ class TestRebuildCrossrefs:
         ]
         mock_memory_manager.rebuild_crossrefs_for_memory.return_value = 1
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_crossrefs", {})
 
         assert result["success"] is True
@@ -364,7 +364,7 @@ class TestRebuildCrossrefs:
             1,
         ]
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_crossrefs", {})
 
         assert result["success"] is True
@@ -374,7 +374,7 @@ class TestRebuildCrossrefs:
     async def test_list_error(self, mock_memory_manager: MagicMock) -> None:
         """Returns error when list_memories fails."""
         mock_memory_manager.list_memories.side_effect = Exception("DB error")
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_crossrefs", {})
 
         assert result["success"] is False
@@ -397,7 +397,7 @@ class TestRebuildKnowledgeGraph:
                 "error": "KnowledgeGraphService not initialized",
             }
         )
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})
 
         assert result["success"] is False
@@ -415,7 +415,7 @@ class TestRebuildKnowledgeGraph:
             }
         )
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})
 
         assert result["success"] is True
@@ -434,7 +434,7 @@ class TestRebuildKnowledgeGraph:
             }
         )
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("rebuild_knowledge_graph", {})
 
         assert result["success"] is True
@@ -455,7 +455,7 @@ class TestReindexEmbeddings:
             "success": True,
             "count": 10,
         }
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("reindex_embeddings", {})
 
         assert result["success"] is True
@@ -465,7 +465,7 @@ class TestReindexEmbeddings:
     async def test_error(self, mock_memory_manager: MagicMock) -> None:
         """Returns error on exception."""
         mock_memory_manager.reindex_embeddings.side_effect = Exception("Embedding error")
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("reindex_embeddings", {})
 
         assert result["success"] is False
@@ -482,7 +482,7 @@ class TestSearchKnowledgeGraph:
     async def test_no_kg_service(self, mock_memory_manager: MagicMock) -> None:
         """Returns empty results when KG service not available."""
         mock_memory_manager.kg_service = None
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("search_knowledge_graph", {"query": "test"})
 
         assert result["success"] is True
@@ -495,7 +495,7 @@ class TestSearchKnowledgeGraph:
         mock_kg.search_graph = AsyncMock(return_value=[{"entity": "Python"}])
         mock_memory_manager.kg_service = mock_kg
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": "project-a", "name": "Project A"}
             result = await registry.call("search_knowledge_graph", {"query": "Python", "limit": 5})
@@ -516,7 +516,7 @@ class TestSearchKnowledgeGraph:
         mock_kg.search_graph = AsyncMock(side_effect=Exception("KG down"))
         mock_memory_manager.kg_service = mock_kg
 
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         result = await registry.call("search_knowledge_graph", {"query": "test"})
 
         assert result["success"] is False
@@ -540,7 +540,7 @@ def _dream_registry(
     mock_memory_manager: MagicMock, coordinator: MemoryDreamCoordinator | MagicMock | None
 ) -> InternalToolRegistry:
     return create_memory_registry(
-        mock_memory_manager,
+        lambda: mock_memory_manager,
         dream_coordinator_resolver=lambda: coordinator,
     )
 

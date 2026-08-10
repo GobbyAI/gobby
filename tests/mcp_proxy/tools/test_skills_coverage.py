@@ -56,6 +56,24 @@ def _make_skill(
     return skill
 
 
+def _make_snapshot(skill: MagicMock) -> dict[str, Any]:
+    """Manifest snapshot as returned by LocalSkillManager.get_skill_with_manifest."""
+    return {
+        "skill": skill,
+        "files": [],
+        "total_files": 0,
+        "remaining_file_count": 0,
+        "omitted_oversized_path_count": 0,
+        "scripts": {
+            "total_files": 0,
+            "total_bytes": 0,
+            "per_top_level_dir": {},
+            "remaining_directory_count": 0,
+            "remaining_file_count": 0,
+        },
+    }
+
+
 @pytest.fixture
 def mock_db() -> MagicMock:
     return MagicMock()
@@ -173,7 +191,7 @@ class TestGetSkill:
     async def test_get_skill_by_name(self, mock_db):
         skill = _make_skill()
         registry = _create_registry(mock_db)
-        registry._mock_storage.get_by_name.return_value = skill
+        registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
 
         result = await registry.call("get_skill", {"name": "test-skill"})
         assert result["success"] is True
@@ -183,7 +201,7 @@ class TestGetSkill:
     async def test_get_skill_by_id(self, mock_db):
         skill = _make_skill()
         registry = _create_registry(mock_db)
-        registry._mock_storage.get_skill.return_value = skill
+        registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
 
         result = await registry.call("get_skill", {"skill_id": "skill-1"})
         assert result["success"] is True
@@ -192,8 +210,7 @@ class TestGetSkill:
     @pytest.mark.asyncio
     async def test_get_skill_not_found(self, mock_db):
         registry = _create_registry(mock_db)
-        registry._mock_storage.get_skill.side_effect = ValueError("not found")
-        registry._mock_storage.get_by_name.return_value = None
+        registry._mock_storage.get_skill_with_manifest.return_value = None
 
         result = await registry.call("get_skill", {"name": "nope"})
         assert result["success"] is False
@@ -203,7 +220,7 @@ class TestGetSkill:
     async def test_get_skill_records_usage(self, mock_db):
         skill = _make_skill()
         registry = _create_registry(mock_db)
-        registry._mock_storage.get_by_name.return_value = skill
+        registry._mock_storage.get_skill_with_manifest.return_value = _make_snapshot(skill)
         registry._mock_sm.resolve_session_reference.return_value = "sess-uuid"
 
         result = await registry.call("get_skill", {"name": "test-skill", "session_id": "#1"})
@@ -213,8 +230,7 @@ class TestGetSkill:
     @pytest.mark.asyncio
     async def test_get_skill_exception(self, mock_db):
         registry = _create_registry(mock_db)
-        registry._mock_storage.get_skill.side_effect = RuntimeError("db crash")
-        registry._mock_storage.get_by_name.side_effect = RuntimeError("db crash")
+        registry._mock_storage.get_skill_with_manifest.side_effect = RuntimeError("db crash")
 
         result = await registry.call("get_skill", {"name": "x"})
         assert result["success"] is False

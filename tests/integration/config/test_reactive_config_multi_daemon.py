@@ -112,6 +112,38 @@ def test_managed_switch_converges_across_daemons(two_daemons: TwoDaemonCluster) 
     assert record["physical_names"] == journal["physical_names"]
 
 
+def test_managed_mapping_propagates_across_daemons(two_daemons: TwoDaemonCluster) -> None:
+    journal = two_daemons.first.switch_start()
+    journal_target = cast(dict[str, str], journal["physical_names"])["memories"]
+    journal_revision = two_daemons.first.current_revision()
+    two_daemons.first.wait_for_revision(journal_revision)
+    two_daemons.second.wait_for_revision(journal_revision)
+
+    assert two_daemons.first.managed_targets("memory", "memories") == [
+        "memories",
+        journal_target,
+    ]
+    assert two_daemons.second.managed_targets("memory", "memories") == [
+        "memories",
+        journal_target,
+    ]
+
+    record = two_daemons.first.switch_complete()
+    committed_revision = cast(int, record["committed_revision"])
+    completed_target = cast(dict[str, str], record["physical_names"])["memories"]
+    two_daemons.first.wait_for_revision(committed_revision)
+    two_daemons.second.wait_for_revision(committed_revision)
+
+    assert two_daemons.first.managed_targets("memory", "memories") == [
+        "memories",
+        completed_target,
+    ]
+    assert two_daemons.second.managed_targets("memory", "memories") == [
+        "memories",
+        completed_target,
+    ]
+
+
 def test_remote_secret_rotation_with_shared_kek(two_daemons: TwoDaemonCluster) -> None:
     revision = two_daemons.first.patch(
         expected_revision=0,

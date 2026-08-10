@@ -80,9 +80,9 @@ def memory_registry(
     from gobby.mcp_proxy.tools.memory import create_memory_registry
 
     return create_memory_registry(
-        memory_manager=mock_memory_manager,
-        llm_service=mock_llm_service,
-        memory_backup_manager=mock_memory_backup_manager,
+        memory_manager_resolver=lambda: mock_memory_manager,
+        llm_service_resolver=lambda: mock_llm_service,
+        memory_backup_manager_resolver=lambda: mock_memory_backup_manager,
         session_manager=mock_session_manager,
     )
 
@@ -107,7 +107,7 @@ def session_registry(
 
     return create_session_messages_registry(
         session_manager=mock_session_manager,
-        llm_service=mock_llm_service,
+        llm_service_resolver=lambda: mock_llm_service,
         transcript_processor=mock_transcript_processor,
     )
 
@@ -132,7 +132,9 @@ class TestMemoryRestore:
     async def test_error_when_no_backup_manager(self, mock_memory_manager) -> None:
         from gobby.mcp_proxy.tools.memory import create_memory_registry
 
-        registry = create_memory_registry(mock_memory_manager, memory_backup_manager=None)
+        registry = create_memory_registry(
+            lambda: mock_memory_manager, memory_backup_manager_resolver=None
+        )
         result = await registry.call("restore_memories", {})
         assert result["success"] is False
         assert "error" in result

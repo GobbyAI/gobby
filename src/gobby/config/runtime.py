@@ -5,16 +5,31 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Protocol, TypeVar, cast
+from typing import TypeVar, cast
 
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
+from gobby.config.runtime_contracts import (
+    ConfigNotificationSource,
+    ConfigRuntimeError,
+    ConfigSnapshotRepository,
+    ConfigSubscriber,
+    ConstructorLaneSaturatedError,
+    PreparedSubscriber,
+    PreparedValue,
+    RegistrySpec,
+    RuntimeActiveBundle,
+    RuntimeRegistry,
+    SecretIdentityMismatchError,
+    StoredConfigSnapshot,
+    StoredSecretBinding,
+)
 from gobby.config.runtime_models import (
     ApplyFailure,
     ConfigChange,
@@ -24,112 +39,31 @@ from gobby.config.runtime_models import (
 )
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
+__all__ = [
+    "ApplyFailure",
+    "ConfigChange",
+    "ConfigNotificationSource",
+    "ConfigRuntime",
+    "ConfigRuntimeError",
+    "ConfigSnapshot",
+    "ConfigSnapshotRepository",
+    "ConfigSubscriber",
+    "ConstructorLaneSaturatedError",
+    "PreparedSubscriber",
+    "PreparedValue",
+    "RegistrySpec",
+    "RuntimeActiveBundle",
+    "RuntimeRegistry",
+    "RuntimeSecretBinding",
+    "SecretIdentityMismatchError",
+    "StoredConfigSnapshot",
+    "StoredSecretBinding",
+    "UnavailableService",
+]
+
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
-
-class StoredSecretBinding(Protocol):
-    @property
-    def reference(self) -> str: ...
-
-    @property
-    def plaintext(self) -> str | None: ...
-
-
-class StoredConfigSnapshot(Protocol):
-    @property
-    def revision(self) -> int: ...
-
-    @property
-    def values(self) -> Mapping[str, object]: ...
-
-    @property
-    def overrides(self) -> Mapping[str, object]: ...
-
-    @property
-    def row_revisions(self) -> Mapping[str, int]: ...
-
-    @property
-    def secret_bindings(self) -> Mapping[str, StoredSecretBinding]: ...
-
-
-class ConfigSnapshotRepository(Protocol):
-    def read(self, *, resolve_secrets: bool = True) -> StoredConfigSnapshot: ...
-
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig: ...
-
-
-class RegistrySpec(Protocol):
-    @property
-    def activation(self) -> ActivationPolicy: ...
-
-
-class RuntimeRegistry(Protocol):
-    def resolve(self, key: str) -> RegistrySpec: ...
-
-
-class PreparedSubscriber(Protocol):
-    """Prepared replacement whose reference swap cannot fail."""
-
-    value: object
-
-    def dispose(self) -> None: ...
-
-
-class ConfigSubscriber(Protocol):
-    """One replaceable service driven by a set of live configuration keys."""
-
-    name: str
-    keys: frozenset[str]
-    required: bool
-    prepare_timeout: float
-    dispose_timeout: float
-
-    def prepare(self, change: ConfigChange) -> PreparedSubscriber: ...
-
-
-class ConfigNotificationSource(Protocol):
-    async def connect(self) -> None: ...
-
-    def revisions(self) -> AsyncIterator[int]: ...
-
-    async def close(self) -> None: ...
-
-
-class ConfigRuntimeError(RuntimeError):
-    """Base error for runtime activation failures."""
-
-
-class SecretIdentityMismatchError(ConfigRuntimeError):
-    """Raised when a remote daemon has a different KEK/DEK identity."""
-
-
-class ConstructorLaneSaturatedError(ConfigRuntimeError):
-    """Raised when bounded constructor capacity is exhausted."""
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeActiveBundle:
-    """Atomically published snapshot and replaceable service references."""
-
-    snapshot: ConfigSnapshot
-    services: MappingProxyType[str, object]
-    _handles: MappingProxyType[str, PreparedSubscriber] = field(
-        repr=False, compare=False, default_factory=lambda: MappingProxyType({})
-    )
-    managed: MappingProxyType[str, object] = field(default_factory=lambda: MappingProxyType({}))
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedValue:
-    """Simple prepared replacement for subscribers without custom cleanup."""
-
-    value: object
-    disposer: Callable[[], None] = field(repr=False, compare=False, default=lambda: None)
-
-    def dispose(self) -> None:
-        self.disposer()
 
 
 @dataclass(frozen=True, slots=True)
@@ -512,6 +446,7 @@ class ConfigRuntime:
                 else:
                     active_bindings.pop(key, None)
                 failed.pop(key, None)
+            replaced_subscribers: set[str] = set()
             for subscriber in self._subscribers:
                 replacement = prepared.get(subscriber.name)
                 if replacement is None:
@@ -521,6 +456,15 @@ class ConfigRuntime:
                     old_handles.append((previous, subscriber))
                 handles[subscriber.name] = replacement
                 services[subscriber.name] = replacement.value
+                replaced_subscribers.add(subscriber.name)
+            if replaced_subscribers:
+                # A successful replacement supersedes every failure the same
+                # subscriber recorded earlier, whichever keys carried it.
+                failed = {
+                    key: failure
+                    for key, failure in failed.items()
+                    if failure.subscriber not in replaced_subscribers
+                }
         else:
             apply_failure = self._apply_failure(
                 failure.subscriber,

@@ -68,6 +68,7 @@ class VectorStore:
         embedding_dim: int = 768,
         serving_guard: Callable[[], None] | None = None,
         generation_state: EmbeddingGenerationState | None = None,
+        projection_targets_provider: Callable[[str, str], tuple[str, ...]] | None = None,
     ) -> None:
         self._path = path
         self._url = url
@@ -76,6 +77,7 @@ class VectorStore:
         self._embedding_dim = embedding_dim
         self._serving_guard = serving_guard
         self._generation_state = generation_state
+        self._projection_targets_provider = projection_targets_provider
         self._client: QdrantClientLike | None = None
         self._retired_clients: list[QdrantClientLike] = []
         self._init_lock = asyncio.Lock()
@@ -98,12 +100,18 @@ class VectorStore:
         """Return the default collection name configured for this store."""
         return self._client_ops.collection_name
 
-    def _projection_targets(self, collection_name: str | None) -> tuple[str, ...]:
+    async def _projection_targets(self, collection_name: str | None) -> tuple[str, ...]:
         primary = collection_name or self._collection_name
         source_kind = _COLLECTION_SOURCE_KINDS.get(primary.split("@", 1)[0])
-        if self._generation_state is None or source_kind is None:
+        if source_kind is None:
             return (primary,)
-        return self._generation_state.projection_targets(source_kind, primary)
+        if self._projection_targets_provider is not None:
+            return self._projection_targets_provider(source_kind, primary)
+        if self._generation_state is None:
+            return (primary,)
+        return await asyncio.to_thread(
+            self._generation_state.projection_targets, source_kind, primary
+        )
 
     def status_snapshot(self) -> dict[str, Any]:
         """Return structured collection lifecycle and recovery state."""
@@ -187,7 +195,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update a single point."""
-        for target in self._projection_targets(collection_name):
+        for target in await self._projection_targets(collection_name):
             await self._queries.upsert(memory_id, embedding, payload, target)
 
     async def search(
@@ -248,7 +256,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Update payload fields on a point without re-embedding."""
-        for target in self._projection_targets(collection_name):
+        for target in await self._projection_targets(collection_name):
             await self._queries.set_payload(memory_id, payload, target)
 
     async def delete(
@@ -258,7 +266,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Delete a point by memory ID or filter."""
-        for target in self._projection_targets(collection_name):
+        for target in await self._projection_targets(collection_name):
             await self._queries.delete(memory_id, filters, target)
 
     async def delete_many(
@@ -267,7 +275,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Delete multiple points by memory ID in a single batch call."""
-        for target in self._projection_targets(collection_name):
+        for target in await self._projection_targets(collection_name):
             await self._queries.delete_many(memory_ids, target)
 
     async def batch_upsert(
@@ -276,7 +284,7 @@ class VectorStore:
         collection_name: str | None = None,
     ) -> None:
         """Insert or update multiple points at once."""
-        for target in self._projection_targets(collection_name):
+        for target in await self._projection_targets(collection_name):
             await self._queries.batch_upsert(items, target)
 
     async def get_collection_dimension(self, collection_name: str | None = None) -> int | None:

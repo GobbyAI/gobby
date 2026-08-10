@@ -29,7 +29,7 @@ __all__ = ["create_session_messages_registry"]
 
 def create_session_messages_registry(
     session_manager: SessionManager | None = None,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
     config: Any | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
@@ -44,7 +44,7 @@ def create_session_messages_registry(
 
     Args:
         session_manager: SessionManager instance for session CRUD
-        llm_service: LLM service for handoff generation (optional)
+        llm_service_resolver: per-call resolver for the current LLM service (optional)
         transcript_processor: Transcript processor for handoff generation (optional)
         config: DaemonConfig for settings (optional)
         db: Database for dependency injection (optional)
@@ -77,7 +77,7 @@ def create_session_messages_registry(
         register_handoff_tools(
             registry,
             session_manager,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
             session_summary_config=session_summary_config,
             inter_session_message_manager=inter_session_message_manager,
@@ -103,7 +103,7 @@ def create_session_messages_registry(
         register_action_tools(
             registry,
             session_manager=session_manager,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
             config=config,
             db=db,
@@ -120,7 +120,7 @@ def create_session_messages_registry(
             registry,
             session_manager,
             db,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             session_summary_config=session_summary_config,
             compact_handoff_config=compact_handoff_config,
             config_service_getter=config_service_getter,

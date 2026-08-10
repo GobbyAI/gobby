@@ -46,7 +46,9 @@ class _ScopeSweep:
 class _AggregateDreamHost(Protocol):
     """Service dependencies and monkeypatch seams used by the aggregate runner."""
 
-    memory_manager: MemoryDreamManagerProtocol
+    @property
+    def memory_manager(self) -> MemoryDreamManagerProtocol: ...
+
     dream_config: MemoryDreamConfig
     store: MemoryDreamStore
 

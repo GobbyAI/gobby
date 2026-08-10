@@ -39,6 +39,7 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationState,
     EmbeddingServingLease,
     ProjectionChange,
+    managed_projection_targets,
 )
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.secrets import POSTURE_SCRYPT_PASSPHRASE, SecretStore
@@ -333,6 +334,16 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
             cast(str, request["source_kind"]),
             cast(str, request["primary"]),
         )
+    if operation == "managed_targets":
+        return list(
+            managed_projection_targets(
+                state.runtime.capture().managed,
+                cast(str, request["source_kind"]),
+                cast(str, request["primary"]),
+            )
+        )
+    if operation == "current_revision":
+        return await asyncio.to_thread(state.repository.current_revision)
     if operation == "lease_activate":
         generation = EmbeddingGenerationState(state.db)
         watermark = await asyncio.to_thread(generation.watermark)
@@ -544,6 +555,15 @@ class DaemonWorker:
 
     def switch_status(self) -> dict[str, object] | None:
         return cast(dict[str, object] | None, self._request_value("switch_status"))
+
+    def managed_targets(self, source_kind: str, primary: str) -> list[str]:
+        return cast(
+            list[str],
+            self._request_value("managed_targets", source_kind=source_kind, primary=primary),
+        )
+
+    def current_revision(self) -> int:
+        return cast(int, self._request_value("current_revision"))
 
     def switch_phase(self, phase: str) -> dict[str, object]:
         return cast(

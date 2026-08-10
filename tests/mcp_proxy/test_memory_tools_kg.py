@@ -31,7 +31,7 @@ def _make_registry(
         falkordb_host=falkordb_host,
         falkordb_password="password" if falkordb_host else None,
     )
-    registry = create_memory_registry(manager)
+    registry = create_memory_registry(lambda: manager)
 
     return registry, manager
 

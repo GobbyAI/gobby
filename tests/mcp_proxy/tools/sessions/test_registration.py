@@ -10,7 +10,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
-from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.utils.session_context import session_context_for_test
@@ -118,12 +117,17 @@ class TestRegisterSession:
         assert r1["session_id"] == r2["session_id"]
         assert session_manager.register.call_count == 2
 
-    def test_uuid_ingress_reuses_persisted_null_machine_session(
+    def test_uuid_ingress_reuses_persisted_machine_neutral_registration(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
-        machine_id = "20000000-0000-4000-8000-000000000001"
+        # register() resolves absent machine identity to the local machine and
+        # rejects explicit foreign machine ids (#19649), so an explicit local
+        # machine id must reuse the earlier machine-neutral registration.
+        from gobby.utils.machine_id import get_machine_id
+
+        machine_id = get_machine_id()
         external_id = "mcp-machine-attribution-transition"
         project_id = str(sample_project["id"])
         canonical = session_manager.register(
@@ -132,7 +136,6 @@ class TestRegisterSession:
             source="agent-sdk",
             project_id=project_id,
         )
-        LocalMachineManager(session_manager.db).upsert_seen(machine_id)
         registry = _make_registry(session_manager=session_manager)
         register = registry.get_tool("register_session")
         assert register is not None

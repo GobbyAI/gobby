@@ -656,6 +656,48 @@ async def test_failed_live_record_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_successful_rebuild_drops_failures_recorded_under_other_keys() -> None:
+    """A successful subscriber replacement supersedes its earlier failures even
+    when the originally failing key is not part of the new change set."""
+    repository = FakeRepository(
+        [
+            stored_snapshot(0),
+            stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}),
+            stored_snapshot(
+                2,
+                ui_enabled=True,
+                test_mode=True,
+                changed={"ui.enabled": 1, "test_mode": 2},
+            ),
+        ]
+    )
+    fail = True
+
+    def prepare(revision: int) -> Prepared:
+        if fail and revision:
+            raise RuntimeError(f"failed revision {revision}")
+        return Prepared(revision)
+
+    runtime = ConfigRuntime(
+        repository,
+        # Keep every stored key LIVE (an empty restart set falls back to the
+        # fake's default, which would restart-gate test_mode).
+        registry=FakeRegistry(restart_keys={"unused.key"}),
+        subscribers=[FakeSubscriber("ui", {"ui.enabled", "test_mode"}, prepare)],
+    )
+    await runtime.start()
+    repository.index = 1
+    await runtime.reconcile_revision(1)
+    assert "ui.enabled" in runtime.snapshot.failed_live_keys
+
+    fail = False
+    repository.index = 2
+    await runtime.reconcile_revision(2)
+    assert runtime.snapshot.failed_live_keys == {}
+    await runtime.close()
+
+
+@pytest.mark.asyncio
 async def test_lane_saturation_preserves_bounds() -> None:
     repository = FakeRepository(
         [

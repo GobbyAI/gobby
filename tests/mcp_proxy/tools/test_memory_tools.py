@@ -97,7 +97,7 @@ def mock_memory_manager() -> MagicMock:
 @pytest.fixture
 def memory_registry(mock_memory_manager: MagicMock) -> InternalToolRegistry:
     """Create a memory registry with mocked dependencies."""
-    return create_memory_registry(mock_memory_manager)
+    return create_memory_registry(lambda: mock_memory_manager)
 
 
 class TestGetCurrentProjectId:
@@ -199,7 +199,7 @@ class TestCreateMemory:
         self,
         mock_memory_manager,
     ) -> None:
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
         proposal = (
             "SessionStart should persist a durable completion marker. If any invariant is "
             "missing, call an idempotent ensure_session_activation(session_id) helper that "
@@ -419,7 +419,9 @@ class TestSearchMemories:
         """Manual search should not apply config.min_recall_score implicitly."""
         mock_memory_manager.config.min_recall_score = 0.9
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="21000000-0000-4000-8000-000000000005", content="Memory 1", similarity=0.65),
+            MockMemory(
+                id="21000000-0000-4000-8000-000000000005", content="Memory 1", similarity=0.65
+            ),
         ]
 
         with patch(
@@ -901,14 +903,14 @@ class TestRegistryCreation:
 
     def test_creates_registry(self, mock_memory_manager) -> None:
         """Test registry is created with correct name."""
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
 
         assert registry.name == "gobby-memory"
         assert "memory management" in registry.description.lower()
 
     def test_all_tools_registered(self, mock_memory_manager) -> None:
         """Test all expected tools are registered."""
-        registry = create_memory_registry(mock_memory_manager)
+        registry = create_memory_registry(lambda: mock_memory_manager)
 
         expected_tools = [
             "create_memory",
@@ -938,7 +940,9 @@ class TestRegistryCreation:
     def test_registry_with_llm_service(self, mock_memory_manager) -> None:
         """Test registry creation with LLM service (optional parameter)."""
         mock_llm = MagicMock()
-        registry = create_memory_registry(mock_memory_manager, llm_service=mock_llm)
+        registry = create_memory_registry(
+            lambda: mock_memory_manager, llm_service_resolver=lambda: mock_llm
+        )
 
         # Should still work even though llm_service isn't used in current implementation
         assert registry is not None

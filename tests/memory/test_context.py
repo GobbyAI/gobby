@@ -60,11 +60,16 @@ class TestFormatMemoryMetadataSuffix:
 
     def test_memory_id_only(self) -> None:
         """Formats memory ID metadata."""
-        assert format_memory_metadata_suffix("21000000-0000-4000-8000-000000000005") == " (memory_id: m1)"
+        assert (
+            format_memory_metadata_suffix("21000000-0000-4000-8000-000000000005")
+            == " (memory_id: m1)"
+        )
 
     def test_memory_id_with_search_metadata(self) -> None:
         """Formats memory ID with search score and source."""
-        result = format_memory_metadata_suffix("21000000-0000-4000-8000-000000000005", score=0.92634, via="keyword")
+        result = format_memory_metadata_suffix(
+            "21000000-0000-4000-8000-000000000005", score=0.92634, via="keyword"
+        )
 
         assert result == " (memory_id: m1, score: 0.9263, via: keyword)"
 

@@ -16,14 +16,10 @@ _COMPOSE_PATHS = (
 
 
 def _runtime_requirement(name: str) -> Requirement:
-    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
-        "project"
-    ]
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
     dependencies = project["dependencies"]
     return next(
-        requirement
-        for value in dependencies
-        if (requirement := Requirement(value)).name == name
+        requirement for value in dependencies if (requirement := Requirement(value)).name == name
     )
 
 
