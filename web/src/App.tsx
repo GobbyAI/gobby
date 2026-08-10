@@ -472,7 +472,10 @@ export default function App() {
         activeTab="header"
         onReturnToChat={() => setActiveTab("chat")}
       >
-        <header className="relative z-[100] flex items-center justify-between gap-3 border-b border-border px-4 py-3 [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:px-3 [@media(max-width:768px)]:py-2.5">
+        <header
+          data-testid="app-header"
+          className="relative z-[100] flex items-center justify-between gap-3 border-b border-border px-4 py-3 [@media(max-width:768px)]:gap-2 [@media(max-width:768px)]:px-3 [@media(max-width:768px)]:py-2.5"
+        >
           <div className="flex min-w-0 items-center gap-1.5">
             <GobbyLogo
               className="[--app-brand-logo-size:2.75rem] [@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]"

@@ -1611,7 +1611,7 @@ function tabSeed(tab: string, layout: "split" | "panel" | "chat" = "split") {
  * it and selects the tab on every tier. Dispatch races React's listener
  * registration, so retry until the panel content appears. */
 async function showActivityTab(page: Page, tab: string): Promise<void> {
-  await expect(page.locator("header.app-header")).toBeVisible();
+  await expect(page.getByTestId("app-header")).toBeVisible();
   await expect(async () => {
     await page.evaluate((tabId) => {
       window.dispatchEvent(
