@@ -15,6 +15,7 @@ from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from tests._timing import wait_for_async_condition
+from tests.config_runtime_helpers import static_cron_capture
 
 if TYPE_CHECKING:
     from gobby.config.cron import CronConfig
@@ -56,7 +57,7 @@ def scheduler(
     return CronScheduler(
         storage=cron_storage,
         executor=executor,
-        config=cron_config,
+        capture_bundle=static_cron_capture(cron_config),
     )
 
 

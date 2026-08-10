@@ -12,6 +12,7 @@ from gobby.cli.services import is_qdrant_healthy
 from gobby.memory.falkor_client import FalkorClient, FalkorConnectionError, FalkorQueryError
 
 if TYPE_CHECKING:
+    from gobby.config.persistence import FalkorConfig
     from gobby.runner import GobbyRunner
 
 
@@ -27,6 +28,7 @@ async def _check_managed_services_ready_once(
     runner: GobbyRunner,
     *,
     qdrant_url: str,
+    falkor_config: FalkorConfig,
 ) -> None:
     try:
         postgres_row = await asyncio.to_thread(
@@ -49,7 +51,7 @@ async def _check_managed_services_ready_once(
     if not qdrant_healthy:
         raise ManagedServiceReadinessError(f"Qdrant is not healthy at {qdrant_url}")
 
-    falkor = runner.config.databases.falkordb
+    falkor = falkor_config
     client = FalkorClient(
         host=falkor.host,
         port=falkor.port,
@@ -83,13 +85,14 @@ async def _check_managed_services_ready_once(
 
 async def require_managed_services_ready(runner: GobbyRunner) -> None:
     """Require PostgreSQL, Qdrant, and FalkorDB before the HTTP server binds."""
-    if getattr(runner.config, "test_mode", False) is True:
+    config = runner.config_runtime.capture().snapshot.active
+    if config.test_mode is True:
         return
 
-    qdrant_url = runner.config.databases.qdrant.url
+    qdrant_url = config.databases.qdrant.url
     if not qdrant_url:
         raise ManagedServiceReadinessError("Qdrant configuration is missing; run `gobby install`")
-    falkor = runner.config.databases.falkordb
+    falkor = config.databases.falkordb
     if not falkor.password:
         raise ManagedServiceReadinessError("FalkorDB credentials are missing; run `gobby install`")
 
@@ -97,7 +100,11 @@ async def require_managed_services_ready(runner: GobbyRunner) -> None:
     deadline = loop.time() + MANAGED_SERVICE_READINESS_TIMEOUT_SECONDS
     while True:
         try:
-            await _check_managed_services_ready_once(runner, qdrant_url=qdrant_url)
+            await _check_managed_services_ready_once(
+                runner,
+                qdrant_url=qdrant_url,
+                falkor_config=falkor,
+            )
             return
         except ManagedServiceReadinessError as exc:
             remaining = deadline - loop.time()

@@ -12,6 +12,7 @@ from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.runner_maintenance_helpers import _run_db
 
 if TYPE_CHECKING:
+    from gobby.config.runtime import RuntimeActiveBundle
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger("gobby.runner_maintenance")
@@ -31,39 +32,45 @@ async def _sleep_until_next_bin_freshness_cycle(
 
 async def bin_freshness_loop(
     db: HubDatabase,
-    config: BinFreshnessConfig,
     is_shutdown_requested: Callable[[], bool],
     *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     update_once: Callable[[HubDatabase, BinFreshnessConfig], list[Any]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     jitter: Callable[[float], float] | None = None,
 ) -> None:
     """Background loop for GitHub-backed managed native binary updates."""
-    if not config.enabled:
-        return
-
     from gobby.install.bin_freshness_updater import update_all_managed_bins
 
     updater = update_once or update_all_managed_bins
     jitter_fn = jitter or (lambda upper: _JITTER_RANDOM.uniform(0, upper))
 
+    initial_delay_pending = True
     try:
-        await _sleep_until_next_bin_freshness_cycle(
-            config.initial_delay_seconds,
-            is_shutdown_requested=is_shutdown_requested,
-            sleep=sleep,
-        )
         while not is_shutdown_requested():
+            config = capture_bundle().snapshot.active.bin_freshness
+            if not isinstance(config, BinFreshnessConfig):
+                raise TypeError("Runtime bin freshness configuration is invalid")
+            if config.enabled and initial_delay_pending:
+                await _sleep_until_next_bin_freshness_cycle(
+                    config.initial_delay_seconds,
+                    is_shutdown_requested=is_shutdown_requested,
+                    sleep=sleep,
+                )
+                initial_delay_pending = False
             try:
-                await _run_db(run_db, updater, db, config)
+                if config.enabled and not is_shutdown_requested():
+                    await _run_db(run_db, updater, db, config)
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.error("Error in bin freshness loop: %s", e)
 
-            interval = config.interval_seconds
-            if config.jitter_seconds > 0:
+            interval = (
+                config.interval_seconds if config.enabled else min(config.interval_seconds, 60.0)
+            )
+            if config.enabled and config.jitter_seconds > 0:
                 interval += jitter_fn(config.jitter_seconds)
             try:
                 await _sleep_until_next_bin_freshness_cycle(

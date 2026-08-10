@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.persistence import MemoryConfig
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -16,15 +17,10 @@ pytestmark = pytest.mark.unit
 
 
 def _runner(*, memory_manager: object | None, memory_config: MemoryConfig | None) -> Any:
-    config = SimpleNamespace(
-        telemetry=SimpleNamespace(trace_retention_days=7),
+    config = DaemonConfig(
         bin_freshness=BinFreshnessConfig(enabled=False),
-        logging=object(),
-        chat=None,
-        get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
+        memory=memory_config or MemoryConfig(),
     )
-    if memory_config is not None:
-        config.memory = memory_config
     return SimpleNamespace(
         metrics_manager=object(),
         metrics_event_store=object(),
@@ -34,7 +30,9 @@ def _runner(*, memory_manager: object | None, memory_config: MemoryConfig | None
         pipeline_execution_manager=None,
         degraded_services=set(),
         _shutdown_requested=False,
-        config=config,
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=config))
+        ),
     )
 
 
@@ -76,30 +74,30 @@ def _start(runner: Any, **loop_overrides: Any) -> None:
 def test_enabled_monitor_starts_with_database_and_memory_config() -> None:
     memory_config = MemoryConfig(recall_drift_monitor_enabled=True)
     runner = _runner(memory_manager=object(), memory_config=memory_config)
-    drift_args: list[tuple[Any, ...]] = []
+    drift_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
     async def noop() -> None:
         return None
 
     def recall_drift_monitor_loop(*args: Any, **kwargs: Any) -> Any:
-        drift_args.append(args)
+        drift_calls.append((args, kwargs))
         return noop()
 
     _start(runner, recall_drift_monitor_loop=recall_drift_monitor_loop)
 
     assert runner._recall_drift_task is not None
-    db_arg, config_arg = drift_args[0][0], drift_args[0][1]
-    assert db_arg is runner.database
-    assert config_arg is memory_config
+    args, kwargs = drift_calls[0]
+    assert args[0] is runner.database
+    assert kwargs["capture_bundle"]().snapshot.active.memory == memory_config
 
 
-def test_disabled_flag_skips_monitor() -> None:
+def test_disabled_flag_keeps_monitor_registered_for_live_enable() -> None:
     memory_config = MemoryConfig(recall_drift_monitor_enabled=False)
     runner = _runner(memory_manager=object(), memory_config=memory_config)
 
     _start(runner)
 
-    assert runner._recall_drift_task is None
+    assert runner._recall_drift_task is not None
 
 
 def test_missing_memory_manager_skips_monitor() -> None:

@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from gobby.config.app import DaemonConfig
 from gobby.config.logging import LoggingSettings
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -24,6 +25,7 @@ from gobby.runner_maintenance_resources import (
 )
 from gobby.servers.routes.admin import create_admin_router
 from gobby.utils.status import format_status_message
+from tests.config_runtime_helpers import static_runtime_capture
 
 pytestmark = pytest.mark.unit
 
@@ -176,7 +178,6 @@ def test_start_periodic_tasks_registers_resource_monitor(
 ) -> None:
     from gobby.config.bin_freshness import BinFreshnessConfig
 
-    telemetry = SimpleNamespace(trace_retention_days=7)
     logging_config = LoggingSettings(dir="/tmp/gobby-resource-monitor-test")
     mcp_proxy = MagicMock()
     mcp_proxy.get_server_config.side_effect = lambda name: (
@@ -192,21 +193,24 @@ def test_start_periodic_tasks_registers_resource_monitor(
         pipeline_execution_manager=None,
         degraded_services=set(),
         _shutdown_requested=False,
-        config=SimpleNamespace(
-            telemetry=telemetry,
-            logging=logging_config,
-            bin_freshness=BinFreshnessConfig(enabled=False),
-            chat=None,
-            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(
+                snapshot=SimpleNamespace(
+                    active=DaemonConfig(
+                        logging=logging_config,
+                        bin_freshness=BinFreshnessConfig(enabled=False),
+                    )
+                )
+            )
         ),
     )
-    monitor_args: list[tuple[Any, ...]] = []
+    monitor_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
     async def noop(*args: object, **kwargs: object) -> None:
         return None
 
     def resource_monitor_loop(*args: Any, **kwargs: Any) -> Any:
-        monitor_args.append(args)
+        monitor_calls.append((args, kwargs))
         return noop()
 
     def fake_create_task(coro: Any, *, name: str | None = None) -> MagicMock:
@@ -223,8 +227,9 @@ def test_start_periodic_tasks_registers_resource_monitor(
     assert runner._resource_monitor_task is not None
     assert (runner._external_issue_sync_task is not None) is coordinator_started
     assert (runner.external_issue_sync_coordinator is not None) is coordinator_started
-    assert monitor_args[0][0] is logging_config
-    set_runtime_output_over_limit = monitor_args[0][2]
+    monitor_args, monitor_kwargs = monitor_calls[0]
+    assert monitor_kwargs["capture_bundle"]().snapshot.active.logging == logging_config
+    set_runtime_output_over_limit = monitor_args[1]
     set_runtime_output_over_limit(True)
     assert runner.degraded_services == {"runtime_output_over_limit"}
     set_runtime_output_over_limit(False)
@@ -263,9 +268,9 @@ def test_runtime_limit_degradation_is_visible_in_health_endpoint_and_recovers(
 
         asyncio.run(
             resource_monitor_loop(
-                logging_config,
                 is_shutdown_requested,
                 set_runtime_output_over_limit,
+                capture_bundle=static_runtime_capture(DaemonConfig(logging=logging_config)),
                 interval_seconds=0,
             )
         )

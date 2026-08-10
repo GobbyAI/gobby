@@ -4,17 +4,20 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
 from gobby.runner_maintenance import purge_deleted_skills_loop
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillFile
+from gobby.utils.machine_id import require_machine_id
+from tests.config_runtime_helpers import static_runtime_capture
 
 
 @pytest.mark.asyncio
@@ -50,12 +53,12 @@ async def test_purge_deleted_skills_removes_only_expired_rows(
         )
         assert manager.delete_skill(skill.id) is True
 
-    session = SessionManager(temp_db).register(
-        external_id="skill-retention-test",
-        machine_id="test-machine",
-        source="codex",
-        project_id=None,
-    )
+        session = SessionManager(temp_db).register(
+            external_id="skill-retention-test",
+            machine_id=require_machine_id(),
+            source="codex",
+            project_id=None,
+        )
     now = datetime.now(UTC)
     with temp_db.transaction() as conn:
         conn.execute(
@@ -80,7 +83,9 @@ async def test_purge_deleted_skills_removes_only_expired_rows(
     await purge_deleted_skills_loop(
         temp_db,
         lambda: next(shutdown),
-        retention_days=30,
+        capture_bundle=static_runtime_capture(
+            DaemonConfig(skills={"soft_delete_retention_days": 30})
+        ),
         run_db=run_db,
         startup_delay_seconds=0,
         sleep=sleep,
@@ -115,12 +120,14 @@ async def test_periodic_start_uses_configured_skill_retention() -> None:
         return None
 
     async def capture_skill_purge(*_args: Any, **kwargs: Any) -> None:
-        retention_days.append(kwargs["retention_days"])
+        active = kwargs["capture_bundle"]().snapshot.active
+        retention_days.append(active.skills.soft_delete_retention_days)
 
     loops = dict.fromkeys(_default_loops(), complete_loop)
     loops["purge_deleted_skills_loop"] = capture_skill_purge
+    active_config = DaemonConfig(skills={"soft_delete_retention_days": 14})
     runner = SimpleNamespace(
-        config=DaemonConfig(skills={"soft_delete_retention_days": 14}),
+        config_runtime=SimpleNamespace(capture=static_runtime_capture(active_config)),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
@@ -132,7 +139,7 @@ async def test_periodic_start_uses_configured_skill_retention() -> None:
         _shutdown_requested=False,
     )
 
-    start_periodic_tasks(runner, tracker=None, **loops)
+    start_periodic_tasks(cast(GobbyRunner, runner), tracker=None, **loops)
     await asyncio.gather(
         *(task for task in vars(runner).values() if isinstance(task, asyncio.Task))
     )

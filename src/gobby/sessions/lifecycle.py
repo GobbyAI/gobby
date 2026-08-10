@@ -15,6 +15,10 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypeVar, cast
 
+from gobby.config.app import DaemonConfig
+from gobby.config.features import KnowledgeGraphQueueConfig
+from gobby.config.persistence import MemoryDreamConfig
+from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
 from gobby.storage.hub.protocol import HubDatabase
@@ -39,27 +43,24 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
     def __init__(
         self,
         db: HubDatabase,
-        config: SessionLifecycleConfig,
+        capture_bundle: Callable[[], RuntimeActiveBundle],
         memory_manager: Any | None = None,
         llm_service: Any | None = None,
-        session_summary_config: Any | None = None,
-        kg_queue_config: Any | None = None,
-        memory_dream_config: Any | None = None,
     ):
         self.db = db
-        self.config = config
+        self._capture_bundle = capture_bundle
         self.session_manager = SessionManager(db)
         self.token_event_store = TokenEventStore(db)
         self.memory_manager = memory_manager
         self.llm_service = llm_service
-        self.session_summary_config = session_summary_config
-        self._kg_queue_config = kg_queue_config
-        self._memory_dream_config = memory_dream_config
 
         self._running = False
         self._expire_task: asyncio.Task[None] | None = None
         self._process_task: asyncio.Task[None] | None = None
         self._kg_queue_task: asyncio.Task[None] | None = None
+
+    def _capture_active(self) -> DaemonConfig:
+        return self._capture_bundle().snapshot.active
 
     async def _run_memory_db(
         self,
@@ -102,15 +103,13 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 name="session-lifecycle-kg-queue",
             )
 
-        kg_interval = (
-            getattr(self._kg_queue_config, "interval_minutes", 30) if self._kg_queue_config else 30
-        )
+        active = self._capture_active()
         logger.info(
             "SessionLifecycleManager started "
             "(expire every %sm, process every %sm, kg_queue every %sm)",
-            self.config.expire_check_interval_minutes,
-            self.config.transcript_processing_interval_minutes,
-            kg_interval,
+            active.session_lifecycle.expire_check_interval_minutes,
+            active.session_lifecycle.transcript_processing_interval_minutes,
+            active.knowledge_graph_queue.interval_minutes,
         )
 
     async def stop(self, drain_timeout: float = 1.0) -> None:
@@ -150,11 +149,10 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
     async def _expire_loop(self) -> None:
         """Background loop for expiring stale sessions."""
-        interval_seconds = self.config.expire_check_interval_minutes * 60
-
         while self._running:
+            active = self._capture_active()
             try:
-                await self._expire_stale_sessions()
+                await self._expire_stale_sessions(active.session_lifecycle)
             except Exception as e:
                 logger.error("Error in expire loop: %s", e)
 
@@ -164,52 +162,46 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 logger.error("Error purging soft-deleted definitions: %s", e)
 
             try:
-                await self._purge_dream_hidden_memories()
+                await self._purge_dream_hidden_memories(active.memory.dream)
             except Exception as e:
                 logger.error("Error purging dream-hidden memories: %s", e)
 
             try:
-                await asyncio.sleep(interval_seconds)
+                await asyncio.sleep(active.session_lifecycle.expire_check_interval_minutes * 60)
             except asyncio.CancelledError:
                 break
 
     async def _process_loop(self) -> None:
         """Background loop for processing pending transcripts."""
-        interval_seconds = self.config.transcript_processing_interval_minutes * 60
-
         while self._running:
+            active = self._capture_active()
             try:
-                await self._process_pending_transcripts()
+                await self._process_pending_transcripts(active)
             except Exception as e:
                 logger.error("Error in process loop: %s", e)
 
             try:
-                await asyncio.sleep(interval_seconds)
+                await asyncio.sleep(
+                    active.session_lifecycle.transcript_processing_interval_minutes * 60
+                )
             except asyncio.CancelledError:
                 break
 
     async def _kg_queue_loop(self) -> None:
         """Background loop for processing pending KG graph memories."""
-        interval_minutes = (
-            getattr(self._kg_queue_config, "interval_minutes", 30) if self._kg_queue_config else 30
-        )
-        batch_size = (
-            getattr(self._kg_queue_config, "batch_size", 20) if self._kg_queue_config else 20
-        )
-        interval_seconds = interval_minutes * 60
-
         while self._running:
+            config = self._capture_active().knowledge_graph_queue
             try:
-                await self._process_pending_graph_memories(batch_size)
+                await self._process_pending_graph_memories(config)
             except Exception as e:
                 logger.error("Error in KG queue loop: %s", e)
 
             try:
-                await asyncio.sleep(interval_seconds)
+                await asyncio.sleep(config.interval_minutes * 60)
             except asyncio.CancelledError:
                 break
 
-    async def _process_pending_graph_memories(self, batch_size: int = 20) -> int:
+    async def _process_pending_graph_memories(self, config: KnowledgeGraphQueueConfig) -> int:
         """Process queued memories for KG extraction.
 
         Runs on a slow cadence (default 30 min). Processes memories
@@ -224,17 +216,13 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
         pending = await self._run_memory_db(
             self.memory_manager.get_pending_graph_memories,
-            limit=batch_size,
+            limit=config.batch_size,
         )
         if not pending:
             return 0
 
         processed = 0
-        max_deterministic_attempts = (
-            getattr(self._kg_queue_config, "max_deterministic_attempts", 3)
-            if self._kg_queue_config
-            else 3
-        )
+        max_deterministic_attempts = config.max_deterministic_attempts
         for memory in pending:
             try:
                 result = await kg_service.add_to_graph(
@@ -286,12 +274,12 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
         return processed
 
-    async def _expire_stale_sessions(self) -> int:
+    async def _expire_stale_sessions(self, config: SessionLifecycleConfig) -> int:
         """Run the full session expiry pipeline, including zero-message cleanup."""
         # First, pause active sessions that have been idle too long
         # This catches orphaned sessions that never got AFTER_AGENT hook
         paused = self.session_manager.pause_inactive_active_sessions(
-            timeout_minutes=self.config.active_session_pause_minutes
+            timeout_minutes=config.active_session_pause_minutes
         )
 
         # Expire orphaned handoff_ready sessions (in-place compact restarts
@@ -307,7 +295,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
 
         # Then expire sessions that have been paused/active for too long
         expired = self.session_manager.expire_stale_sessions(
-            timeout_hours=self.config.stale_session_timeout_hours
+            timeout_hours=config.stale_session_timeout_hours
         )
 
         # Zero-message sessions created by spurious SESSION_START events can be
@@ -358,7 +346,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         except Exception as e:
             logger.error("Failed to purge soft-deleted definitions: %s", e)
 
-    async def _purge_dream_hidden_memories(self) -> None:
+    async def _purge_dream_hidden_memories(self, config: MemoryDreamConfig) -> None:
         """Hard-purge aged dream-hidden memories and prune dream run/snapshot history.
 
         Runs independently of ``dream.enabled`` so rows that dream soft-hid while it
@@ -368,16 +356,13 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         Stale run/snapshot history is pruned by ``run_retention_days`` (snapshots
         cascade with their run).
         """
-        config = self._memory_dream_config
         manager = self.memory_manager
-        if config is None:
-            return
 
         purge_hidden = getattr(manager, "purge_dream_hidden", None)
         if callable(purge_hidden):
             for action, grace_days in (
-                ("delete", getattr(config, "purge_delete_after_days", 30)),
-                ("review", getattr(config, "purge_review_after_days", 90)),
+                ("delete", config.purge_delete_after_days),
+                ("review", config.purge_review_after_days),
             ):
                 try:
                     result = purge_hidden(action, grace_days)
@@ -386,11 +371,10 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                 except Exception as e:
                     logger.error("Failed to purge dream-hidden %s memories: %s", action, e)
 
-        retention_days = getattr(config, "run_retention_days", 30)
         try:
             from gobby.memory.dream.storage import MemoryDreamStore
 
             store = MemoryDreamStore(self.db)
-            await self._run_memory_db(store.prune_runs, retention_days)
+            await self._run_memory_db(store.prune_runs, config.run_retention_days)
         except Exception as e:
             logger.error("Failed to prune dream run history: %s", e)

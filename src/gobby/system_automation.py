@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol
 
@@ -12,19 +13,17 @@ from gobby.build.claim_recovery import recover_safe_build_claims
 from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.build.project_state import is_project_automation_enabled
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import RuntimeActiveBundle
 from gobby.dispatch.dispatcher import (
     run_heartbeat,
     sweep_orphan_no_run_dispatch_mutexes,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 logger = logging.getLogger(__name__)
 
-AUTOMATION_ENABLED_KEY = "system_loops.automation.enabled"
-AUTOMATION_INTERVAL_KEY = "system_loops.automation.interval_seconds"
 DEFAULT_DIRECT_TICK_BURST = 3
 AUTOMATION_TICK_TIMEOUT_SECONDS = 120.0
 PROJECT_DISPATCH_TIMEOUT_SECONDS = 120.0
@@ -125,16 +124,14 @@ class SystemAutomationLoop:
         self,
         *,
         db: HubDatabase,
-        config: DaemonConfig,
+        capture_bundle: Callable[[], RuntimeActiveBundle],
         services: object | None = None,
-        config_store: ConfigStore | None = None,
         pipeline_heartbeat: PipelineHeartbeatService | None = None,
         run_db: Any | None = None,
     ) -> None:
         self.db = db
-        self.config = config
+        self._capture_bundle = capture_bundle
         self.services = services
-        self.config_store = config_store
         self.pipeline_heartbeat = pipeline_heartbeat
         self._db_runner = run_db or getattr(services, "run_db", None)
         self._running = False
@@ -149,7 +146,7 @@ class SystemAutomationLoop:
         self._tick_lock = asyncio.Lock()
         self._tick_count = 0
         self._dispatch_count = 0
-        self._last_settings = self._settings_from_config()
+        self._last_settings = AutomationLoopSettings()
         self._last_tick: AutomationTickSummary | None = None
         self._last_tick_at: str | None = None
         self._last_success_at: str | None = None
@@ -161,7 +158,7 @@ class SystemAutomationLoop:
             return
         self._event_loop = asyncio.get_running_loop()
         self._running = True
-        self._last_settings = await self.resolve_settings()
+        self._last_settings = self.resolve_settings()
         self._loop_task = asyncio.create_task(
             self._run_loop(),
             name="system-automation-loop",
@@ -235,8 +232,15 @@ class SystemAutomationLoop:
 
     async def run_once(self, *, reason: str = "interval") -> AutomationTickSummary:
         """Run one automation tick now."""
+        return await self._run_once_with_settings(self.resolve_settings(), reason=reason)
+
+    async def _run_once_with_settings(
+        self,
+        settings: AutomationLoopSettings,
+        *,
+        reason: str,
+    ) -> AutomationTickSummary:
         started = time.perf_counter()
-        settings = await self.resolve_settings()
         self._last_settings = settings
         if not settings.enabled:
             summary = AutomationTickSummary(reason=reason, error="automation_disabled")
@@ -308,7 +312,7 @@ class SystemAutomationLoop:
         explicit_task_ids: tuple[str, ...] | None = None,
     ) -> DispatcherTickSummary:
         """Run a bounded project heartbeat burst without cron bookkeeping."""
-        settings = await self.resolve_settings()
+        settings = self.resolve_settings()
         self._last_settings = settings
         if not settings.enabled:
             return DispatcherTickSummary(reason="automation_disabled")
@@ -383,29 +387,9 @@ class SystemAutomationLoop:
         )
         return summary
 
-    async def resolve_settings(self) -> AutomationLoopSettings:
-        """Resolve current settings from config_store, falling back to daemon config."""
-        settings = self._settings_from_config()
-        if self.config_store is None:
-            return settings
-
-        enabled = await self._read_config_store_value(AUTOMATION_ENABLED_KEY)
-        interval = await self._read_config_store_value(AUTOMATION_INTERVAL_KEY)
-        if enabled is not None:
-            settings = AutomationLoopSettings(
-                enabled=bool(enabled),
-                interval_seconds=settings.interval_seconds,
-            )
-        if interval is not None:
-            interval_seconds = _coerce_positive_int(interval)
-            if interval_seconds is None:
-                logger.warning("Ignoring invalid automation loop interval: %r", interval)
-            else:
-                settings = AutomationLoopSettings(
-                    enabled=settings.enabled,
-                    interval_seconds=interval_seconds,
-                )
-        return settings
+    def resolve_settings(self) -> AutomationLoopSettings:
+        """Resolve settings from one runtime-active bundle."""
+        return self._settings_from_config(self._capture_bundle().snapshot.active)
 
     def status_snapshot(self) -> dict[str, Any]:
         """Return lightweight service status for admin status endpoints."""
@@ -427,10 +411,10 @@ class SystemAutomationLoop:
 
     async def _run_loop(self) -> None:
         while self._running:
-            settings = await self.resolve_settings()
+            settings = self.resolve_settings()
             self._last_settings = settings
             if settings.enabled:
-                await self.run_once(reason="interval")
+                await self._run_once_with_settings(settings, reason="interval")
             try:
                 await asyncio.sleep(settings.interval_seconds)
             except asyncio.CancelledError:
@@ -753,24 +737,14 @@ class SystemAutomationLoop:
             )
         )
 
-    async def _read_config_store_value(self, key: str) -> object | None:
-        config_store = self.config_store
-        if config_store is None:
-            return None
-        try:
-            value: object = await self._run_db_call(config_store.get, key)
-            return value
-        except Exception:
-            logger.warning("Failed to read automation config key %s", key, exc_info=True)
-            return None
-
     async def _run_db_call(self, func: Any, *args: Any, **kwargs: Any) -> Any:
         if self._db_runner is not None:
             return await self._db_runner(func, *args, **kwargs)
         return await asyncio.to_thread(func, *args, **kwargs)
 
-    def _settings_from_config(self) -> AutomationLoopSettings:
-        automation = self.config.system_loops.automation
+    @staticmethod
+    def _settings_from_config(config: DaemonConfig) -> AutomationLoopSettings:
+        automation = config.system_loops.automation
         return AutomationLoopSettings(
             enabled=automation.enabled,
             interval_seconds=automation.interval_seconds,
@@ -783,21 +757,6 @@ class SystemAutomationLoop:
         self._tick_count += 1
         self._last_tick = summary
         self._last_tick_at = datetime.now(UTC).isoformat()
-
-
-def _coerce_positive_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return max(1, int(value))
-    if isinstance(value, int):
-        return max(1, value)
-    if isinstance(value, float):
-        return max(1, int(value))
-    if isinstance(value, (str, bytes, bytearray)):
-        try:
-            return max(1, int(value))
-        except ValueError:
-            return None
-    return None
 
 
 def _tick_payload(summary: AutomationTickSummary) -> dict[str, Any]:

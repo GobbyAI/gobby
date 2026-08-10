@@ -16,6 +16,7 @@ from gobby.runner_init.services import mark_service_degraded
 from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
 
@@ -143,7 +144,7 @@ def _reconcile_codewiki_dormant_state(runner: GobbyRunner) -> None:
         )
 
 
-def init_orchestration(runner: GobbyRunner) -> None:
+def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
     runner.project_purge_service = None
     runner.embedding_switch_coordinator = None
@@ -179,7 +180,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
     ism_manager = InterSessionMessageManager(runner.database)
     agent_run_manager = LocalAgentRunManager(runner.database)
-    configure_tmux(runner.config.tmux)
+    configure_tmux(config.tmux)
 
     def publish_attention_event(payload: dict[str, object]) -> None:
         loop = runner.main_loop
@@ -299,7 +300,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             clone_storage=runner.clone_storage,
             completion_registry=runner.completion_registry,
             task_manager=runner.task_manager,
-            tmux_config=runner.config.tmux if hasattr(runner.config, "tmux") else None,
+            tmux_config=config.tmux if hasattr(config, "tmux") else None,
             checkpoint_storage=LocalCheckpointManager(runner.database),
             worktree_storage=runner.worktree_storage,
             stuck_detector=StuckDetector(
@@ -319,18 +320,15 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
     runner.lifecycle_manager = SessionLifecycleManager(
         db=runner.database,
-        config=runner.config.session_lifecycle,
+        capture_bundle=runner.config_runtime.capture,
         memory_manager=runner.memory_manager,
         llm_service=runner.llm_service,
-        session_summary_config=runner.config.session_summary,
-        kg_queue_config=runner.config.knowledge_graph_queue,
-        memory_dream_config=getattr(getattr(runner.config, "memory", None), "dream", None),
     )
 
     # Single daemon-owned admission/launch owner for memory dream runs; cron,
     # HTTP routes, and MCP tools all resolve this instance.
     runner.memory_dream_coordinator = None
-    memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
+    memory_dream_config = getattr(getattr(config, "memory", None), "dream", None)
     if memory_dream_config is not None and runner.memory_manager is not None:
         try:
             from gobby.memory.dream.coordinator import MemoryDreamCoordinator
@@ -341,7 +339,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     memory_manager=runner.memory_manager,
                     dream_config=memory_dream_config,
                     llm_service=runner.llm_service,
-                    daemon_config=runner.config,
+                    daemon_config=config,
                     current_project_id=runner.project_id,
                 )
             )
@@ -379,7 +377,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 agent_runner=runner.agent_runner,
                 pipeline_executor=runner.pipeline_executor,
                 services=runner,
-                config=runner.config.cron,
+                config=config.cron,
                 run_db=runner.db_executor.run,
             )
         except Exception:
@@ -394,9 +392,8 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
             runner.system_automation_loop = SystemAutomationLoop(
                 db=runner.database,
-                config=runner.config,
+                capture_bundle=runner.config_runtime.capture,
                 services=runner,
-                config_store=runner.config_store,
                 pipeline_heartbeat=pipeline_heartbeat,
                 run_db=runner.db_executor.run,
             )
@@ -442,12 +439,12 @@ def init_orchestration(runner: GobbyRunner) -> None:
             from gobby.storage.projects import GLOBAL_PROJECT_ID
 
             cleanup_vector_store = runner.vector_store
-            qdrant_config = getattr(runner.config.databases, "qdrant", None)
+            qdrant_config = getattr(config.databases, "qdrant", None)
             if cleanup_vector_store is None and qdrant_config is not None:
                 cleanup_vector_store = VectorStore(
                     url=qdrant_config.url,
                     api_key=qdrant_config.api_key,
-                    embedding_dim=runner.config.embeddings.dim,
+                    embedding_dim=config.embeddings.dim,
                 )
             vector_cleaner = (
                 ProjectVectorCleaner(cleanup_vector_store)
@@ -457,7 +454,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             kg_service = (
                 runner.memory_manager.kg_service if runner.memory_manager is not None else None
             )
-            if kg_service is None and is_falkordb_enabled(runner.config.databases):
+            if kg_service is None and is_falkordb_enabled(config.databases):
                 raise RuntimeError("FalkorDB is configured but graph cleanup is unavailable")
             graph_cleaner = kg_service or NoopProjectGraphCleaner()
             runner.project_purge_service = ProjectPurgeService(
@@ -541,7 +538,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     cron_storage=runner.cron_storage,
                     cron_executor=cron_executor,
                     reindexer=runner.code_index_nightly_reindexer,
-                    config=runner.config.code_index,
+                    config=config.code_index,
                     project_id=runner.project_id,
                 )
                 logger.debug("Code index nightly full reindex cron handler registered")
@@ -553,7 +550,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     e,
                 )
 
-        elif getattr(runner.config.code_index, "enabled", False):
+        elif getattr(config.code_index, "enabled", False):
             mark_service_degraded(runner, "code_index_maintenance")
             logger.warning(
                 "Skipping code index maintenance registration; code indexer is unavailable"
@@ -565,7 +562,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             runner.cron_scheduler = CronScheduler(
                 storage=runner.cron_storage,
                 executor=cron_executor,
-                config=runner.config.cron,
+                capture_bundle=runner.config_runtime.capture,
                 run_db=runner.db_executor.run,
             )
             logger.debug("CronScheduler initialized")
@@ -596,14 +593,14 @@ def init_orchestration(runner: GobbyRunner) -> None:
             logger.exception("Failed to reconcile orphaned memory dream runs")
 
     runner.communications_manager = None
-    if hasattr(runner.config, "communications") and runner.config.communications.enabled:
+    if hasattr(config, "communications") and config.communications.enabled:
         try:
             from gobby.communications.manager import CommunicationsManager
             from gobby.storage.communications import LocalCommunicationsStore
 
             comms_store = LocalCommunicationsStore(runner.database)
             runner.communications_manager = CommunicationsManager(
-                config=runner.config.communications,
+                config=config.communications,
                 store=comms_store,
                 secret_store=runner.secret_store,
                 session_store=runner.session_manager,

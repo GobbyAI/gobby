@@ -11,10 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import psycopg
 import pytest
 
+from gobby.config.features import KnowledgeGraphQueueConfig
+from gobby.config.persistence import MemoryDreamConfig
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcript_index import load_index_sidecar
 from gobby.storage.session_models import Session
+from tests.config_runtime_helpers import static_session_capture
 
 pytestmark = pytest.mark.unit
 T = TypeVar("T")
@@ -47,20 +50,20 @@ def mock_db() -> MagicMock:
 
 
 @pytest.fixture
-def mock_config() -> MagicMock:
-    config = MagicMock(spec=SessionLifecycleConfig)
-    config.expire_check_interval_minutes = 1
-    config.transcript_processing_interval_minutes = 1
-    config.active_session_pause_minutes = 30
-    config.stale_session_timeout_hours = 24
-    config.transcript_processing_batch_size = 10
-    return config
+def mock_config() -> SessionLifecycleConfig:
+    return SessionLifecycleConfig(
+        expire_check_interval_minutes=1,
+        transcript_processing_interval_minutes=1,
+        active_session_pause_minutes=30,
+        stale_session_timeout_hours=24,
+        transcript_processing_batch_size=10,
+    )
 
 
 @pytest.fixture
-def manager(mock_db: MagicMock, mock_config: MagicMock) -> SessionLifecycleManager:
+def manager(mock_db: MagicMock, mock_config: SessionLifecycleConfig) -> SessionLifecycleManager:
     with patch(_SESSION_MANAGER_PATCH):
-        return SessionLifecycleManager(mock_db, mock_config)
+        return SessionLifecycleManager(mock_db, static_session_capture(mock_config))
 
 
 class TestSessionLifecycleManager:
@@ -142,11 +145,11 @@ class TestSessionLifecycleManager:
         manager.session_manager.prune_stale_compact_workflow_instances.return_value = 7
         manager.session_manager.cleanup_expired_session_state.return_value = None
 
-        count = await manager._expire_stale_sessions()
+        count = await manager._expire_stale_sessions(manager._capture_active().session_lifecycle)
 
         assert count == 15
         manager.session_manager.pause_inactive_active_sessions.assert_called_once_with(
-            timeout_minutes=manager.config.active_session_pause_minutes
+            timeout_minutes=manager._capture_active().session_lifecycle.active_session_pause_minutes
         )
         manager.session_manager.expire_orphaned_handoff_sessions.assert_called_once_with(
             timeout_minutes=30
@@ -156,7 +159,7 @@ class TestSessionLifecycleManager:
         )
         manager.session_manager.cleanup_expired_session_state.assert_called_once_with()
         manager.session_manager.expire_stale_sessions.assert_called_once_with(
-            timeout_hours=manager.config.stale_session_timeout_hours
+            timeout_hours=manager._capture_active().session_lifecycle.stale_session_timeout_hours
         )
         manager.session_manager.expire_empty_sessions.assert_called_once_with(timeout_hours=2)
         manager.session_manager.prune_empty_sessions.assert_called_once_with(min_age_hours=1)
@@ -223,7 +226,7 @@ class TestSessionLifecycleManager:
         """Test processing when no sessions pending."""
         manager.session_manager.get_pending_transcript_sessions.return_value = []
 
-        processed = await manager._process_pending_transcripts()
+        processed = await manager._process_pending_transcripts(manager._capture_active())
 
         assert processed == 0
         manager.session_manager.mark_transcript_processed.assert_not_called()
@@ -257,7 +260,7 @@ class TestSessionLifecycleManager:
         with patch.object(
             manager, "_process_session_transcript", new_callable=AsyncMock
         ) as mock_process:
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
             assert processed == 1
             mock_process.assert_awaited_once_with("s1", session.transcript_path)
@@ -318,7 +321,7 @@ class TestSessionLifecycleManager:
         ):
             mock_parser.return_value.parse_lines.return_value = messages
 
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
         manager.session_manager.update_stats.assert_called_once_with(
             "s1",
@@ -328,7 +331,7 @@ class TestSessionLifecycleManager:
             last_assistant_content="Third",
         )
         assert session.turn_count == 3
-        mock_generate.assert_awaited_once_with("s1")
+        mock_generate.assert_awaited_once_with("s1", manager._capture_active().session_summary)
         assert processed == 1
 
     @pytest.mark.asyncio
@@ -354,7 +357,7 @@ class TestSessionLifecycleManager:
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_sum,
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
             assert processed == 1
             mock_sum.assert_not_awaited()
@@ -383,7 +386,7 @@ class TestSessionLifecycleManager:
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_sum,
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
             assert processed == 1
             mock_sum.assert_not_awaited()
@@ -524,7 +527,7 @@ class TestSessionLifecycleManager:
 
         # Should propagate or handle? _process_pending_transcripts does NOT catch its own top-level errors (the loop does)
         with pytest.raises(Exception, match="DB Error"):
-            await manager._process_pending_transcripts()
+            await manager._process_pending_transcripts(manager._capture_active())
 
     @pytest.mark.asyncio
     async def test_process_pending_transcripts_individual_error(
@@ -576,7 +579,7 @@ class TestSessionLifecycleManager:
         ):
             mock_proc.side_effect = [Exception("Fail"), None]
 
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
             # s1 deferred (no summary), s2 processed (has summary)
             assert processed == 1
@@ -621,9 +624,11 @@ class TestSessionLifecycleManager:
                 "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_awaited_once_with("s1")  # did NOT short-circuit
+        mock_gen.assert_awaited_once_with(
+            "s1", manager._capture_active().session_summary
+        )  # did NOT short-circuit
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert manager.session_manager.get.call_args.args == ("s1",)
         assert session.digest_markdown == digest
@@ -664,9 +669,9 @@ class TestSessionLifecycleManager:
                 return_value=False,
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_awaited_once_with("s1")
+        mock_gen.assert_awaited_once_with("s1", manager._capture_active().session_summary)
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert manager.session_manager.get.call_args.args == ("s1",)
         assert processed == 1
@@ -706,9 +711,11 @@ class TestSessionLifecycleManager:
                 "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=False
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
-        mock_gen.assert_awaited_once_with("s1")  # synthesis was attempted...
+        mock_gen.assert_awaited_once_with(
+            "s1", manager._capture_active().session_summary
+        )  # synthesis was attempted...
         manager.session_manager.mark_transcript_processed.assert_not_called()  # ...but deferred
         assert manager.session_manager.get.call_args.args == ("s1",)
         assert refreshed.summary_markdown is None
@@ -735,7 +742,7 @@ class TestSessionLifecycleManager:
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
         mock_gen.assert_not_awaited()  # short-circuited — nothing to synthesize
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
@@ -745,7 +752,7 @@ class TestSessionLifecycleManager:
 
     @pytest.mark.asyncio
     async def test_pending_graph_memory_db_work_uses_memory_run_db(
-        self, mock_db: MagicMock, mock_config: MagicMock
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
     ) -> None:
         """Queued graph memory DB work uses the bounded memory DB executor."""
 
@@ -788,12 +795,16 @@ class TestSessionLifecycleManager:
 
         memory_manager = MemoryManagerStub()
         with patch(_SESSION_MANAGER_PATCH):
-            manager = SessionLifecycleManager(mock_db, mock_config, memory_manager=memory_manager)
+            manager = SessionLifecycleManager(
+                mock_db, static_session_capture(mock_config), memory_manager=memory_manager
+            )
 
         with patch(
             "gobby.sessions.lifecycle.asyncio.to_thread", new_callable=AsyncMock
         ) as to_thread:
-            processed = await manager._process_pending_graph_memories(batch_size=3)
+            processed = await manager._process_pending_graph_memories(
+                KnowledgeGraphQueueConfig(batch_size=3)
+            )
 
         assert processed == 1
         assert memory_manager.marked == ["mem-1"]
@@ -815,7 +826,7 @@ class TestSessionLifecycleManager:
     async def test_pending_graph_failure_policy_is_persisted(
         self,
         mock_db: MagicMock,
-        mock_config: MagicMock,
+        mock_config: SessionLifecycleConfig,
         result_or_error: str | Exception,
         deterministic: bool,
     ) -> None:
@@ -858,16 +869,15 @@ class TestSessionLifecycleManager:
                 return "pending"
 
         memory_manager = MemoryManagerStub()
-        queue_config = SimpleNamespace(max_deterministic_attempts=4)
+        queue_config = KnowledgeGraphQueueConfig(max_deterministic_attempts=4)
         with patch(_SESSION_MANAGER_PATCH):
             manager = SessionLifecycleManager(
                 mock_db,
-                mock_config,
+                static_session_capture(mock_config, kg_queue=queue_config),
                 memory_manager=memory_manager,
-                kg_queue_config=queue_config,
             )
 
-        assert await manager._process_pending_graph_memories() == 0
+        assert await manager._process_pending_graph_memories(queue_config) == 0
         assert memory_manager.failures == [("mem-failure", deterministic, 4)]
 
 
@@ -893,7 +903,9 @@ class TestBackgroundLoops:
             await manager._expire_loop()
 
             manager._expire_stale_sessions.assert_awaited_once()
-            mock_sleep.assert_awaited_once_with(manager.config.expire_check_interval_minutes * 60)
+            mock_sleep.assert_awaited_once_with(
+                manager._capture_active().session_lifecycle.expire_check_interval_minutes * 60
+            )
             assert manager._running is False
 
     @pytest.mark.asyncio
@@ -914,7 +926,8 @@ class TestBackgroundLoops:
 
             manager._process_pending_transcripts.assert_awaited_once()
             mock_sleep.assert_awaited_once_with(
-                manager.config.transcript_processing_interval_minutes * 60
+                manager._capture_active().session_lifecycle.transcript_processing_interval_minutes
+                * 60
             )
             assert manager._running is False
 
@@ -1029,7 +1042,9 @@ class TestPromptFileCleanup:
         manager.session_manager.prune_empty_sessions.return_value = 0
 
         with patch.object(manager, "_cleanup_prompt_files") as mock_cleanup:
-            expired_count = await manager._expire_stale_sessions()
+            expired_count = await manager._expire_stale_sessions(
+                manager._capture_active().session_lifecycle
+            )
 
         assert expired_count == 0
         mock_cleanup.assert_called_once()
@@ -1042,7 +1057,9 @@ class TestGenerateArtifactsIfNeeded:
     async def test_no_llm_service(self, manager: SessionLifecycleManager) -> None:
         """Skips when llm_service is None."""
         manager.llm_service = None
-        await manager._generate_artifacts_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed(
+            "sess-1", manager._capture_active().session_summary
+        )
         manager.session_manager.get.assert_not_called()
         assert manager.session_manager.get.call_count == 0
 
@@ -1051,7 +1068,9 @@ class TestGenerateArtifactsIfNeeded:
         """Skips when session not found."""
         manager.llm_service = MagicMock()
         manager.session_manager.get.return_value = None
-        await manager._generate_artifacts_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed(
+            "sess-1", manager._capture_active().session_summary
+        )
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -1076,7 +1095,9 @@ class TestGenerateArtifactsIfNeeded:
                 new_callable=AsyncMock,
             ) as mock_gen,
         ):
-            await manager._generate_artifacts_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
 
         mock_gen.assert_not_awaited()
         assert manager.session_manager.get.call_args.args == ("sess-1",)
@@ -1098,7 +1119,9 @@ class TestGenerateArtifactsIfNeeded:
             "gobby.sessions.summarize.generate_session_summaries",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await manager._generate_artifacts_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
@@ -1113,7 +1136,9 @@ class TestGenerateArtifactsIfNeeded:
         session.summary_markdown = None
         session.transcript_path = None
         manager.session_manager.get.return_value = session
-        await manager._generate_artifacts_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed(
+            "sess-1", manager._capture_active().session_summary
+        )
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -1131,7 +1156,9 @@ class TestGenerateArtifactsIfNeeded:
             side_effect=RuntimeError("Summary error"),
         ):
             # Should not raise
-            await manager._generate_artifacts_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -1147,7 +1174,9 @@ class TestGenerateArtifactsIfNeeded:
             "gobby.sessions.summarize.generate_session_summaries",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await manager._generate_artifacts_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
             mock_gen.assert_awaited_once()
             assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
@@ -1181,7 +1210,9 @@ class TestGenerateArtifactsIfNeeded:
                 new_callable=AsyncMock,
             ) as mock_gen,
         ):
-            await manager._generate_artifacts_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed(
+                "sess-1", manager._capture_active().session_summary
+            )
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
@@ -1213,7 +1244,7 @@ class TestPurgeDreamHiddenMemories:
     """Tests for _purge_dream_hidden_memories (dream GC grace purge + retention)."""
 
     @staticmethod
-    def _dream_config(**overrides: Any) -> SimpleNamespace:
+    def _dream_config(**overrides: Any) -> MemoryDreamConfig:
         base = {
             "enabled": True,
             "purge_delete_after_days": 30,
@@ -1221,27 +1252,26 @@ class TestPurgeDreamHiddenMemories:
             "run_retention_days": 45,
         }
         base.update(overrides)
-        return SimpleNamespace(**base)
+        return MemoryDreamConfig(**base)
 
     def _manager(
         self,
         mock_db: MagicMock,
-        mock_config: MagicMock,
+        mock_config: SessionLifecycleConfig,
         *,
         memory_manager: Any,
-        dream_config: Any,
+        dream_config: MemoryDreamConfig,
     ) -> SessionLifecycleManager:
         with patch(_SESSION_MANAGER_PATCH):
             return SessionLifecycleManager(
                 mock_db,
-                mock_config,
+                static_session_capture(mock_config, dream=dream_config),
                 memory_manager=memory_manager,
-                memory_dream_config=dream_config,
             )
 
     @pytest.mark.asyncio
     async def test_purges_both_actions_then_prunes_runs(
-        self, mock_db: MagicMock, mock_config: MagicMock
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
     ) -> None:
         """Both grace windows purge with reconcile, then run history is pruned."""
         purge = AsyncMock()
@@ -1249,13 +1279,14 @@ class TestPurgeDreamHiddenMemories:
         manager = self._manager(
             mock_db, mock_config, memory_manager=memory_manager, dream_config=self._dream_config()
         )
+        dream_config = manager._capture_active().memory.dream
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=2)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store) as store_cls:
-            await manager._purge_dream_hidden_memories()
+            await manager._purge_dream_hidden_memories(dream_config)
 
-        assert manager._memory_dream_config.purge_delete_after_days == 30
-        assert manager._memory_dream_config.purge_review_after_days == 90
+        assert dream_config.purge_delete_after_days == 30
+        assert dream_config.purge_review_after_days == 90
         # Each action class purges with its own grace window.
         assert purge.await_args_list == [call("delete", 30), call("review", 90)]
         # Run/snapshot history pruned by run_retention_days against the same db.
@@ -1263,24 +1294,27 @@ class TestPurgeDreamHiddenMemories:
         store.prune_runs.assert_called_once_with(45)
 
     @pytest.mark.asyncio
-    async def test_noop_without_dream_config(
-        self, mock_db: MagicMock, mock_config: MagicMock
+    async def test_without_memory_purge_handler_still_prunes_runs(
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
     ) -> None:
-        """No config means nothing to purge (memory disabled / unconfigured)."""
-        purge = AsyncMock()
-        memory_manager = SimpleNamespace(purge_dream_hidden=purge)
+        """Run-history pruning does not require a memory purge handler."""
+        memory_manager = SimpleNamespace()
         manager = self._manager(
-            mock_db, mock_config, memory_manager=memory_manager, dream_config=None
+            mock_db,
+            mock_config,
+            memory_manager=memory_manager,
+            dream_config=self._dream_config(),
         )
-        with patch("gobby.memory.dream.storage.MemoryDreamStore") as store_cls:
-            await manager._purge_dream_hidden_memories()
-        assert manager._memory_dream_config is None
-        purge.assert_not_awaited()
-        store_cls.assert_not_called()
+        dream_config = manager._capture_active().memory.dream
+        pruned_days: list[int] = []
+        store = SimpleNamespace(prune_runs=pruned_days.append)
+        with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
+            await manager._purge_dream_hidden_memories(dream_config)
+        assert pruned_days == [45]
 
     @pytest.mark.asyncio
     async def test_runs_independently_of_dream_enabled(
-        self, mock_db: MagicMock, mock_config: MagicMock
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
     ) -> None:
         """Purge reclaims rows even after dream is switched off."""
         purge = AsyncMock()
@@ -1291,17 +1325,18 @@ class TestPurgeDreamHiddenMemories:
             memory_manager=memory_manager,
             dream_config=self._dream_config(enabled=False),
         )
+        dream_config = manager._capture_active().memory.dream
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=0)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
-            await manager._purge_dream_hidden_memories()
-        assert manager._memory_dream_config.enabled is False
+            await manager._purge_dream_hidden_memories(dream_config)
+        assert dream_config.enabled is False
         assert purge.await_count == 2  # delete + review still purged
         store.prune_runs.assert_called_once_with(45)
 
     @pytest.mark.asyncio
     async def test_purge_failure_does_not_block_run_pruning(
-        self, mock_db: MagicMock, mock_config: MagicMock
+        self, mock_db: MagicMock, mock_config: SessionLifecycleConfig
     ) -> None:
         """A purge error for one action is logged; pruning still runs."""
         purge = AsyncMock(side_effect=Exception("qdrant down"))
@@ -1309,11 +1344,12 @@ class TestPurgeDreamHiddenMemories:
         manager = self._manager(
             mock_db, mock_config, memory_manager=memory_manager, dream_config=self._dream_config()
         )
+        dream_config = manager._capture_active().memory.dream
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=0)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
-            await manager._purge_dream_hidden_memories()  # must not raise
-        assert manager._memory_dream_config.run_retention_days == 45
+            await manager._purge_dream_hidden_memories(dream_config)  # must not raise
+        assert dream_config.run_retention_days == 45
         assert purge.await_count == 2
         store.prune_runs.assert_called_once_with(45)
 
@@ -1776,7 +1812,7 @@ class TestProcessPendingTranscriptsArchive:
                 return_value="/archive/path.gz",
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
         assert processed == 1
 
@@ -1798,7 +1834,7 @@ class TestProcessPendingTranscriptsArchive:
                 return_value=None,
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
         assert processed == 1
 
@@ -1820,7 +1856,7 @@ class TestProcessPendingTranscriptsArchive:
                 side_effect=Exception("Backup failed"),
             ),
         ):
-            processed = await manager._process_pending_transcripts()
+            processed = await manager._process_pending_transcripts(manager._capture_active())
 
         assert processed == 1
         manager.session_manager.mark_transcript_processed.assert_called_once()

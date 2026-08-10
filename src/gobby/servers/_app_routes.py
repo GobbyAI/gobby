@@ -95,6 +95,4 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_wiki_code_router(server))
     app.include_router(create_wiki_router(server))
 
-    comms_config = getattr(server.services.config, "communications", None)
-    if comms_config and comms_config.enabled:
-        app.include_router(create_communications_router(server))
+    app.include_router(create_communications_router(server))

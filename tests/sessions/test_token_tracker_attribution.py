@@ -14,6 +14,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEventStore
+from tests.config_runtime_helpers import static_session_capture
 
 pytestmark = pytest.mark.unit
 
@@ -59,7 +60,10 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         repo_path=str(tmp_path),
     )
     session_manager = SessionManager(temp_db)
-    lifecycle = SessionLifecycleManager(temp_db, SessionLifecycleConfig())
+    lifecycle = SessionLifecycleManager(
+        temp_db,
+        static_session_capture(SessionLifecycleConfig()),
+    )
 
     codex_path = tmp_path / "codex.jsonl"
     codex_path.write_text("{}\n")

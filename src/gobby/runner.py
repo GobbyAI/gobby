@@ -101,6 +101,7 @@ class GobbyRunner:
     # Phase 1: storage & config (init_storage_and_config)
     _config_file: str | None
     config: DaemonConfig
+    startup_config: DaemonConfig
     bootstrap_config: BootstrapConfig
     verbose: bool
     machine_id: str | None
@@ -229,7 +230,8 @@ class GobbyRunner:
         try:
             self._initialize_storage(config_path, verbose)
             startup_snapshot = await self.config_runtime.start()
-            self.config = startup_snapshot.active
+            self.startup_config = startup_snapshot.active
+            self.config = self.startup_config
             await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)
@@ -251,6 +253,7 @@ class GobbyRunner:
         from gobby.runner_init import init_storage_and_config
 
         init_storage_and_config(self, config_path, verbose)
+        self.startup_config = self.config
 
     def _initialize_post_database_services(self) -> None:
         from gobby.runner_init import (
@@ -262,7 +265,7 @@ class GobbyRunner:
 
         init_runtime_capacity(self)
         init_services(self)
-        init_orchestration(self)
+        init_orchestration(self, self.startup_config)
         init_servers(self)
 
     async def _initialize_runtime_services(self) -> None:
@@ -275,7 +278,7 @@ class GobbyRunner:
 
         init_runtime_capacity(self)
         await init_stateful_services(self)
-        init_orchestration(self)
+        init_orchestration(self, self.startup_config)
         init_servers(self)
 
     async def run(self, *, ownership_resolution: PidOwnershipResolution) -> None:

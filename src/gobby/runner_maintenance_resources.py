@@ -12,13 +12,16 @@ import asyncio
 import logging
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from gobby.config.logging import (
     RUNTIME_LOG_FILENAME,
-    LoggingSettings,
     resolved_log_path,
     resolved_logs_dir,
 )
+
+if TYPE_CHECKING:
+    from gobby.config.runtime import RuntimeActiveBundle
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +123,10 @@ def run_resource_check(
 
 
 async def resource_monitor_loop(
-    logging_config: LoggingSettings,
     is_shutdown_requested: Callable[[], bool],
     set_runtime_output_over_limit: Callable[[bool], None],
+    *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     interval_seconds: float = DEFAULT_RESOURCE_MONITOR_INTERVAL_SECONDS,
 ) -> None:
     """Background resource monitor (#18196).
@@ -131,13 +135,14 @@ async def resource_monitor_loop(
     of file-backed memory in ~8h) and reports when the raw runtime output file
     exceeds its configured cap.
     """
-    runtime_log = resolved_log_path(logging_config, RUNTIME_LOG_FILENAME)
-    growth_warn_mb = logging_config.growth_warn_mb_per_interval
-    runtime_max_mb = logging_config.runtime_max_size_mb
-    logs_dir = resolved_logs_dir(logging_config)
     previous: LogFileSizes | None = None
 
     while not is_shutdown_requested():
+        logging_config = capture_bundle().snapshot.active.logging
+        runtime_log = resolved_log_path(logging_config, RUNTIME_LOG_FILENAME)
+        growth_warn_mb = logging_config.growth_warn_mb_per_interval
+        runtime_max_mb = logging_config.runtime_max_size_mb
+        logs_dir = resolved_logs_dir(logging_config)
         try:
             previous = run_resource_check(
                 logs_dir,

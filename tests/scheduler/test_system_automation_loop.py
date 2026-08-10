@@ -17,11 +17,11 @@ from gobby.build.dispatch_tick import DispatcherTickSummary
 from gobby.config.app import DaemonConfig, load_config
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.system_automation import SystemAutomationLoop
 from tests._timing import wait_for_async_condition
+from tests.config_runtime_helpers import static_cron_capture, static_runtime_capture
 
 pytestmark = pytest.mark.unit
 
@@ -48,7 +48,7 @@ async def test_pipeline_maintenance_uses_single_stale_task_scan(temp_db: HubData
     heartbeat = Heartbeat()
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         pipeline_heartbeat=heartbeat,
         run_db=_run_inline,
     )
@@ -99,24 +99,26 @@ def test_config_store_overrides_system_automation_config(tmp_path) -> None:
     assert config.system_loops.automation.interval_seconds == 7
 
 
-@pytest.mark.asyncio
-async def test_config_store_overrides_runtime_loop_settings(temp_db: HubDatabase) -> None:
-    store = ConfigStore(temp_db)
+def test_runtime_bundle_updates_loop_settings(temp_db: HubDatabase) -> None:
+    bundles = iter(
+        [
+            static_runtime_capture(DaemonConfig())(),
+            static_runtime_capture(
+                DaemonConfig(system_loops={"automation": {"enabled": False, "interval_seconds": 5}})
+            )(),
+        ]
+    )
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
-        config_store=store,
+        capture_bundle=lambda: next(bundles),
         run_db=_run_inline,
     )
 
-    settings = await loop.resolve_settings()
+    settings = loop.resolve_settings()
     assert settings.enabled is True
     assert settings.interval_seconds == 60
 
-    store.set("system_loops.automation.enabled", False)
-    store.set("system_loops.automation.interval_seconds", 5)
-
-    settings = await loop.resolve_settings()
+    settings = loop.resolve_settings()
     assert settings.enabled is False
     assert settings.interval_seconds == 5
 
@@ -125,7 +127,7 @@ async def test_config_store_overrides_runtime_loop_settings(temp_db: HubDatabase
 async def test_idle_automation_tick_creates_zero_cron_runs(temp_db: HubDatabase) -> None:
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         run_db=_run_inline,
     )
 
@@ -156,7 +158,7 @@ async def test_eligible_project_work_calls_run_heartbeat(
 
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -240,7 +242,7 @@ async def test_automation_tick_timeout_records_failure_and_releases_lock(
     monkeypatch.setattr("gobby.system_automation.AUTOMATION_TICK_TIMEOUT_SECONDS", 0.01)
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -277,7 +279,7 @@ async def test_project_dispatch_timeout_returns_summary(
     monkeypatch.setattr("gobby.system_automation.recover_safe_build_claims", lambda *_: None)
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -327,7 +329,7 @@ async def test_multiple_projects_fan_out_independently(
 
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -349,7 +351,9 @@ async def test_dispatch_projects_isolates_project_failure(
     failed_project = "11111111-1111-4111-8111-111111110001"
     successful_project = "11111111-1111-4111-8111-111111110002"
     completed: list[str] = []
-    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+    loop = SystemAutomationLoop(
+        db=temp_db, capture_bundle=static_runtime_capture(DaemonConfig()), run_db=_run_inline
+    )
 
     async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
         project_id = str(kwargs["project_id"])
@@ -373,7 +377,9 @@ async def test_dispatch_projects_isolates_project_failure(
 @pytest.mark.asyncio
 async def test_dispatch_projects_propagates_project_cancellation(temp_db: HubDatabase) -> None:
     project_id = "11111111-1111-4111-8111-111111110001"
-    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+    loop = SystemAutomationLoop(
+        db=temp_db, capture_bundle=static_runtime_capture(DaemonConfig()), run_db=_run_inline
+    )
 
     async def dispatch_project_once(**_kwargs: Any) -> DispatcherTickSummary:
         raise asyncio.CancelledError
@@ -394,7 +400,9 @@ async def test_overlapping_interval_dispatches_serialize_and_run_followup(
     active = 0
     max_active = 0
     reasons: list[str] = []
-    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+    loop = SystemAutomationLoop(
+        db=temp_db, capture_bundle=static_runtime_capture(DaemonConfig()), run_db=_run_inline
+    )
 
     async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
         nonlocal active, max_active
@@ -442,7 +450,9 @@ async def test_interval_dispatches_for_different_projects_run_concurrently(
     release = asyncio.Event()
     active = 0
     max_active = 0
-    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+    loop = SystemAutomationLoop(
+        db=temp_db, capture_bundle=static_runtime_capture(DaemonConfig()), run_db=_run_inline
+    )
 
     async def dispatch_project_once(**kwargs: Any) -> DispatcherTickSummary:
         nonlocal active, max_active
@@ -477,7 +487,9 @@ async def test_cancelled_interval_dispatch_cancels_owned_project_task(
     project_id = "11111111-1111-4111-8111-111111110001"
     started = asyncio.Event()
     cancelled = asyncio.Event()
-    loop = SystemAutomationLoop(db=temp_db, config=DaemonConfig(), run_db=_run_inline)
+    loop = SystemAutomationLoop(
+        db=temp_db, capture_bundle=static_runtime_capture(DaemonConfig()), run_db=_run_inline
+    )
 
     async def dispatch_project_once(**_kwargs: Any) -> DispatcherTickSummary:
         started.set()
@@ -564,7 +576,7 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
 
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -613,7 +625,7 @@ async def test_queued_targeted_dispatches_merge_task_scope(
 
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -666,7 +678,7 @@ async def test_project_dispatch_entrypoints_ignore_requests_after_stop(
     event_loop.is_closed.return_value = False
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -696,7 +708,7 @@ async def test_queued_project_dispatch_callback_does_no_work_after_stop(
     event_loop.call_soon_threadsafe.side_effect = capture_callback
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
         run_db=_run_inline,
     )
@@ -739,10 +751,10 @@ async def test_user_cron_jobs_still_create_cron_runs(temp_db: HubDatabase) -> No
     scheduler = CronScheduler(
         storage=storage,
         executor=CronExecutor(storage),
-        config=DaemonConfig().cron,
+        capture_bundle=static_cron_capture(DaemonConfig().cron),
     )
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     if scheduler._active_tasks:
         await asyncio.gather(*list(scheduler._active_tasks), return_exceptions=True)
 
