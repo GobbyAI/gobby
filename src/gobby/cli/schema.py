@@ -19,7 +19,6 @@ from gobby.cli.hub_backup._manifest import (
 )
 from gobby.cli.hub_backup._stores import collect_postgres_identity
 from gobby.cli.hub_maintenance import CampaignExecutor, register_campaign_executor
-from gobby.config.app import load_config
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.runtime import apply_destructive_batch
@@ -100,18 +99,15 @@ def apply_schema(
     max_age_hours: float,
 ) -> None:
     """Apply pending migrations, stopping at destructive work by default."""
-    if not destructive:
-        from gobby.cli.runtime import get_cli_runtime
+    from gobby.cli.runtime import get_cli_runtime
 
-        get_cli_runtime(ctx).require_database()
+    runtime = get_cli_runtime(ctx)
+    if not destructive:
+        runtime.require_database()
         click.echo(f"Schema is at version {latest_schema_version()}")
         return
 
-    config_file = ctx.find_root().params.get("config")
-    config = load_config(
-        config_file if isinstance(config_file, str) else None,
-        resolve_database_url=True,
-    )
+    config = runtime.require_config(apply_migrations=False)
     if config.database_url is None:
         raise click.ClickException("Hub database URL is unavailable")
     epoch = discover_active_maintenance_epoch(config.database_url)
@@ -196,7 +192,9 @@ def _file_sha256(path: Path) -> str:
 
 class _SchemaApplyExecutor(CampaignExecutor):
     def apply(self, epoch: MaintenanceEpoch, batch: DestructiveBatch) -> None:
-        config = load_config(resolve_database_url=True)
+        from gobby.cli.runtime import get_cli_runtime
+
+        config = get_cli_runtime().require_config(apply_migrations=False)
         if config.database_url is None:
             raise SchemaGateError("Hub database URL is unavailable")
         _apply_verified_batch(
@@ -208,7 +206,9 @@ class _SchemaApplyExecutor(CampaignExecutor):
         )
 
     def verify(self, epoch: MaintenanceEpoch, batch: DestructiveBatch) -> None:
-        config = load_config(resolve_database_url=True)
+        from gobby.cli.runtime import get_cli_runtime
+
+        config = get_cli_runtime().require_config(apply_migrations=False)
         if config.database_url is None:
             raise SchemaGateError("Hub database URL is unavailable")
         _identity, current_head = collect_postgres_identity(

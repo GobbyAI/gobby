@@ -12,9 +12,9 @@ from gobby.cli._plan_validation_output import (
     emit_plan_validation_messages,
     raise_plan_validation_failed,
 )
+from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.config.app import load_config
 from gobby.llm import LLMService
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.sessions import SessionManager
@@ -26,7 +26,7 @@ from gobby.utils.session_context import get_current_session_id
 
 def _build_expansion_service() -> ExpansionService:
     task_manager = get_task_manager()
-    config = load_config()
+    config = get_cli_runtime().require_config()
     llm_service = LLMService(config)
     return ExpansionService(task_manager=task_manager, llm_service=llm_service, config=config)
 

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from gobby.autonomous.progress_tracker import ProgressTracker
 from gobby.autonomous.stop_registry import StopRegistry
 from gobby.autonomous.stuck_detector import StuckDetector
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import load_bootstrap
 from gobby.config.tasks import DEFAULT_WORKFLOW_TIMEOUT_SECONDS
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.health_monitor import HealthMonitor
@@ -162,12 +164,10 @@ class HookManagerFactory:
         Returns:
             HookManagerComponents with all wired subsystem instances
         """
-        # Load configuration if not provided
-        if not config:
+        # Capture one typed configuration snapshot for the full construction operation.
+        if config is None:
             try:
-                from gobby.config.app import load_config
-
-                config = load_config()
+                config = cls._resolve_config(config, config_runtime)
             except Exception as e:
                 hook_logger.exception(
                     "Failed to load config in HookManager, using defaults: %s",
@@ -298,6 +298,16 @@ class HookManagerFactory:
             health_monitor=health_monitor,
             event_handlers=event_handlers,
         )
+
+    @staticmethod
+    def _resolve_config(config: Any | None, config_runtime: ConfigRuntimeReader | None) -> Any:
+        """Resolve hook configuration from one runtime snapshot or bootstrap inputs."""
+        if config is not None:
+            return config
+        if config_runtime is not None:
+            return config_runtime.snapshot.active
+        bootstrap = load_bootstrap(resolve_database_url=True)
+        return DaemonConfig(**bootstrap.to_config_dict())
 
     @staticmethod
     def _build_sync_call_tool(
@@ -484,15 +494,14 @@ class HookManagerFactory:
 
             return PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
 
-        from gobby.config.app import load_config
         from gobby.storage.hub.postgres import PostgresHubDatabase
 
-        resolved_config = load_config(resolve_database_url=True)
-        if not resolved_config.database_url:
+        bootstrap = load_bootstrap(resolve_database_url=True)
+        if not bootstrap.database_url:
             raise RuntimeError("PostgreSQL database URL is not configured")
         return PostgresHubDatabase(
-            resolved_config.database_url,
-            pool_config=resolved_config.postgres_pool,
+            bootstrap.database_url,
+            pool_config=bootstrap.postgres_pool,
         )
 
     @staticmethod

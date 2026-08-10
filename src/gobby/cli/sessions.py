@@ -576,11 +576,11 @@ def create_handoff(
     # Generate full summary via shared function
     full_markdown = None
     try:
-        from gobby.config.app import load_config
+        from gobby.cli.runtime import get_cli_runtime
         from gobby.llm.factory import create_llm_service
         from gobby.sessions.summarize import generate_session_summaries
 
-        config = load_config()
+        config = get_cli_runtime().require_config()
         llm_service = create_llm_service(config)
 
         with session_manager_context() as summary_manager:
@@ -765,10 +765,10 @@ def backfill_context_windows(dry_run: bool) -> None:
     under-sized window (e.g. a 1M-context Opus stored at 200k) upward,
     recomputing the usage ratio. Larger windows are never shrunk.
     """
-    from gobby.config.app import load_config
+    from gobby.cli.runtime import get_cli_runtime
     from gobby.sessions.context_usage import backfill_session_context_windows
 
-    overrides = load_config().context_window_overrides
+    overrides = get_cli_runtime().require_config().context_window_overrides
     with session_manager_context() as manager:
         result = backfill_session_context_windows(
             manager.db,

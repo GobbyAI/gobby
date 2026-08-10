@@ -1,3 +1,6 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -592,6 +595,8 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         parent_session_id=None,
     )
     mock_session_manager.get.side_effect = [session, updated_session]
+    runtime = MagicMock()
+    runtime.require_config.return_value = MagicMock()
 
     # Setup Mocks
     with (
@@ -600,6 +605,8 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         patch("gobby.sessions.analyzer.TranscriptAnalyzer") as mock_analyzer,
         patch("subprocess.run"),
         patch("gobby.cli.sessions.require_cli_database"),
+        patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
+        patch("gobby.llm.factory.create_llm_service", return_value=MagicMock()),
         patch("gobby.storage.projects.LocalProjectManager"),
         patch(
             "gobby.sessions.summarize.generate_session_summaries",
@@ -718,29 +725,45 @@ def test_create_handoff_notes_persist_to_db_and_file(
     assert expected_notes_section in files[0].read_text()
 
 
-def test_backfill_context_windows_override() -> None:
+def test_backfill_context_windows_override(monkeypatch: pytest.MonkeyPatch) -> None:
     manager = SimpleNamespace(db=object())
     backfill_result = SimpleNamespace(updated=1, scanned=2, skipped=1)
-    with (
-        patch("gobby.cli.sessions.session_manager_context") as manager_context,
-        patch(
-            "gobby.config.app.load_config",
-            return_value=SimpleNamespace(context_window_overrides={"future-model": 444_000}),
-        ),
-        patch(
-            "gobby.sessions.context_usage.backfill_session_context_windows",
-            return_value=backfill_result,
-        ) as backfill,
-    ):
-        manager_context.return_value.__enter__.return_value = manager
-        result = CliRunner().invoke(sessions, ["backfill-context-windows", "--dry-run"])
+    runtime_config = SimpleNamespace(context_window_overrides={"future-model": 444_000})
+    runtime_reads: list[None] = []
+    observed: list[tuple[object, bool, dict[str, int]]] = []
+
+    @contextmanager
+    def manager_context() -> Iterator[SimpleNamespace]:
+        yield manager
+
+    def get_runtime() -> SimpleNamespace:
+        runtime_reads.append(None)
+        return SimpleNamespace(require_config=lambda: runtime_config)
+
+    def backfill(
+        database: object,
+        *,
+        dry_run: bool,
+        overrides: dict[str, int],
+    ) -> SimpleNamespace:
+        observed.append((database, dry_run, overrides))
+        return backfill_result
+
+    monkeypatch.setattr(
+        import_module("gobby.cli.sessions"), "session_manager_context", manager_context
+    )
+    monkeypatch.setattr(import_module("gobby.cli.runtime"), "get_cli_runtime", get_runtime)
+    monkeypatch.setattr(
+        import_module("gobby.sessions.context_usage"),
+        "backfill_session_context_windows",
+        backfill,
+    )
+
+    result = CliRunner().invoke(sessions, ["backfill-context-windows", "--dry-run"])
 
     assert result.exit_code == 0
-    backfill.assert_called_once_with(
-        manager.db,
-        dry_run=True,
-        overrides={"future-model": 444_000},
-    )
+    assert len(runtime_reads) == 1
+    assert observed == [(manager.db, True, {"future-model": 444_000})]
 
 
 @pytest.fixture(autouse=True)

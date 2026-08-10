@@ -202,6 +202,7 @@ def setup_internal_registries(
             session_manager=session_manager,
             llm_service=llm_service,
             config=_config,
+            config_service_getter=config_service_getter,
             db=db,
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,

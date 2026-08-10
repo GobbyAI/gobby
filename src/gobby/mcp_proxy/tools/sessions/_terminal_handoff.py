@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.sessions._terminal_transcripts import _read_transcript_tail_lines
 
 if TYPE_CHECKING:
+    from gobby.config.values import ConfigValuesService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
@@ -29,15 +31,20 @@ def _has_summary_refresh_source(session: Any) -> bool:
     return isinstance(transcript_path, str) and bool(transcript_path.strip())
 
 
-def _compact_handoff_refresh_timeout_seconds() -> float:
-    try:
-        from gobby.config.app import load_config
-    except ImportError as exc:
-        logger.debug("Using default compact handoff refresh timeout: %s", exc)
-        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
+def _capture_handoff_configs(
+    config_service_getter: Callable[[], ConfigValuesService] | None,
+    *,
+    session_summary_config: Any | None,
+    compact_handoff_config: Any | None,
+) -> tuple[Any | None, Any | None]:
+    """Capture one active configuration revision for a compact operation."""
+    if config_service_getter is None:
+        return session_summary_config, compact_handoff_config
+    active = config_service_getter().runtime.snapshot.active
+    return active.session_summary, active.compact_handoff
 
-    config = load_config()
-    compact_handoff = getattr(config, "compact_handoff", None)
+
+def _compact_handoff_refresh_timeout_seconds(compact_handoff: Any | None = None) -> float:
     value = getattr(
         compact_handoff,
         "refresh_timeout_seconds",
@@ -202,10 +209,11 @@ async def _run_compact_handoff_background_refresh(
     db: HubDatabase,
     llm_service: Any | None,
     session_summary_config: Any | None,
+    compact_handoff_config: Any | None = None,
 ) -> None:
     from gobby.sessions.summarize import generate_session_summaries
 
-    timeout_seconds = _compact_handoff_refresh_timeout_seconds()
+    timeout_seconds = _compact_handoff_refresh_timeout_seconds(compact_handoff_config)
     try:
         result = await asyncio.wait_for(
             generate_session_summaries(
@@ -251,6 +259,7 @@ def _schedule_compact_handoff_background_refresh(
     db: HubDatabase,
     llm_service: Any | None,
     session_summary_config: Any | None,
+    compact_handoff_config: Any | None = None,
 ) -> bool:
     coro = _run_compact_handoff_background_refresh(
         session_id,
@@ -258,6 +267,7 @@ def _schedule_compact_handoff_background_refresh(
         db,
         llm_service,
         session_summary_config,
+        compact_handoff_config,
     )
     try:
         asyncio.create_task(coro, name=f"compact-handoff-refresh-{session_id[:8]}")
