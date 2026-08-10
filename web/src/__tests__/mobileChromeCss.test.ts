@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { compile } from '@tailwindcss/node'
 import postcss, { type Root, type Rule } from 'postcss'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
@@ -86,6 +87,12 @@ function expressionTextParts(expression: ts.Expression): string[] {
       ...expressionTextParts(expression.whenFalse),
     ]
   }
+  if (ts.isBinaryExpression(expression)) {
+    return [
+      ...expressionTextParts(expression.left),
+      ...expressionTextParts(expression.right),
+    ]
+  }
   if (ts.isParenthesizedExpression(expression)) {
     return expressionTextParts(expression.expression)
   }
@@ -142,6 +149,70 @@ function expectStringAttribute(source: string, attrName: string, value: string):
 
 function parseCss(rel: string): Root {
   return postcss.parse(readCssSource(rel), { from: rel })
+}
+
+async function injectUtilityStyles(
+  candidates: readonly string[],
+  includeCoarsePointer = false,
+): Promise<HTMLStyleElement> {
+  const tailwind = await compile('@import "tailwindcss";', {
+    base: join(resolveWebPackageRoot(), 'src'),
+    onDependency() {},
+  })
+  const root = postcss.parse(tailwind.build([...new Set(candidates)]))
+  const rules: string[] = []
+  let spacing: string | undefined
+
+  root.walkDecls('--spacing', declaration => {
+    spacing ??= declaration.value
+  })
+  root.walkRules(rule => {
+    let conditional = false
+    for (
+      let parent = rule.parent;
+      parent && parent.type !== 'root';
+      parent = parent.parent
+    ) {
+      if (parent.type === 'atrule' && parent.name !== 'layer') conditional = true
+    }
+    if (conditional) return
+    const declarations = (rule.nodes ?? [])
+      .filter(node => node.type === 'decl')
+      .map(String)
+      .join('; ')
+    if (declarations) rules.push(`${rule.selector} { ${declarations} }`)
+  })
+  if (includeCoarsePointer) {
+    root.walkAtRules('media', rule => {
+      if (!/pointer\s*:\s*coarse/.test(rule.params)) return
+      if (rule.parent?.type === 'rule') {
+        rules.push(rule.parent.clone({ nodes: rule.nodes }).toString())
+      } else {
+        for (const nestedRule of rule.nodes ?? []) rules.push(nestedRule.toString())
+      }
+    })
+  }
+
+  expect(spacing).toBeDefined()
+  document.documentElement.style.setProperty('--spacing', spacing!)
+  const style = document.createElement('style')
+  style.textContent = rules.join('\n')
+  document.head.append(style)
+  return style
+}
+
+function cssLengthToPixels(value: string): number {
+  if (!value || value === 'auto') return 0
+  const number = Number.parseFloat(value)
+  if (value.endsWith('px')) return number
+  if (value.endsWith('rem')) return number * 16
+
+  const spacingMultiple = value.match(
+    /^calc\(var\(--spacing\)\s*\*\s*([\d.]+)\)$/,
+  )?.[1]
+  if (!spacingMultiple) return 0
+  const spacing = getComputedStyle(document.documentElement).getPropertyValue('--spacing')
+  return cssLengthToPixels(spacing) * Number(spacingMultiple)
 }
 
 function hasMediaAncestor(rule: Rule, media: string): boolean {
@@ -244,15 +315,15 @@ describe('mobile chrome CSS', () => {
     }
   })
 
-  it('loads the app shell after segmented controls and omits the retired settings sheet', () => {
+  it('loads the app shell without the retired primitive and settings sheets', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
-    const segmentedControlIndex = imports.indexOf('./styles/segmented-control.css')
-    const appShellIndex = imports.indexOf('./styles/app-shell.css')
 
-    expect(segmentedControlIndex).toBeGreaterThanOrEqual(0)
-    expect(appShellIndex).toBeGreaterThanOrEqual(0)
-    expect(segmentedControlIndex).toBeLessThan(appShellIndex)
+    expect(imports).toContain('./styles/app-shell.css')
+    for (const sheet of ['segmented-control.css', 'dropdown-caret.css']) {
+      expect(existsSync(join(resolveWebPackageRoot(), 'src/styles', sheet))).toBe(false)
+      expect(imports).not.toContain(`./styles/${sheet}`)
+    }
     expect(imports).not.toContain('./styles/settings.css')
   })
 
@@ -345,7 +416,8 @@ describe('mobile chrome CSS', () => {
   it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', () => {
     const appSource = readSource('src/App.tsx')
     const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')
-    const segmentedControlCss = parseCss('src/styles/segmented-control.css')
+    const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const activityActionsSource = readSource('src/components/activity/ActivityActionsContext.tsx')
     const shellCss = parseCss('src/styles/app-shell.css')
 
     expectClassToken(appSource, 'app-header')
@@ -378,13 +450,24 @@ describe('mobile chrome CSS', () => {
       height: 'var(--control-row-height)',
       'min-height': 'var(--control-row-height)',
     })
-    expectDeclarations(segmentedControlCss, '.segmented-control', {
-      '--segmented-option-px': '0.75rem',
-      'font-size': 'var(--text-base)',
-    })
-    expectDeclarations(segmentedControlCss, '.segmented-control__option', {
-      'padding-inline': 'var(--segmented-option-px)',
-    })
+    for (const token of [
+      '[--segmented-option-px:0.75rem]',
+      'text-[length:var(--text-base)]',
+      'max-[768px]:[--segmented-option-px:0.55rem]',
+      'max-[768px]:text-[length:var(--text-sm)]',
+      'px-[var(--segmented-option-px)]',
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    ]) {
+      expectClassToken(segmentedControlSource, token)
+    }
+    expect(segmentedControlSource).toContain(
+      "controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'",
+    )
+    expect(segmentedControlSource).toContain('style={{ height: heightVar }}')
+    expect(activityActionsSource).toContain(
+      '@max-[479px]/activity-panel:[&>.segmented-control__option]:[--segmented-option-px:0.5rem]',
+    )
     expectDeclarations(shellCss, '.app-header-actions', {
       '--control-row-height': 'var(--status-bar-control-height)',
       'flex-wrap': 'nowrap',
@@ -410,6 +493,69 @@ describe('mobile chrome CSS', () => {
       { 'min-width': '2.75rem', 'min-height': '2.75rem' },
       '(pointer: coarse)',
     )
+  })
+
+  it('keeps segmented-control and dropdown-caret computed geometry pixel-neutral', async () => {
+    const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const dropdownCaretSource = readSource('src/components/ui/DropdownCaret.tsx')
+    const rootTokens = [
+      'inline-flex',
+      '[--segmented-option-px:0.75rem]',
+      'text-[length:var(--text-base)]',
+      'pointer-coarse:min-h-11',
+    ] as const
+    const optionTokens = [
+      'px-[var(--segmented-option-px)]',
+      'pointer-coarse:min-h-11',
+      'pointer-coarse:min-w-11',
+    ] as const
+    const caretTokens = ['inline-flex', 'items-center', 'justify-center', 'shrink-0', 'opacity-70']
+
+    for (const token of [...rootTokens, ...optionTokens]) {
+      expectClassToken(segmentedControlSource, token)
+    }
+    for (const token of [...caretTokens, 'size-3']) {
+      expectClassToken(dropdownCaretSource, token)
+    }
+
+    document.body.innerHTML = `
+      <div data-segmented-root class="${rootTokens.join(' ')}">
+        <button data-segmented-option class="${optionTokens.join(' ')}">One</button>
+      </div>
+      <span data-caret class="${caretTokens.join(' ')}"><svg class="size-3"></svg></span>
+    `
+    const candidates = [...rootTokens, ...optionTokens, ...caretTokens, 'size-3']
+    const fineStyle = await injectUtilityStyles(candidates)
+    const rootStyle = getComputedStyle(document.querySelector('[data-segmented-root]')!)
+    const optionStyle = getComputedStyle(document.querySelector('[data-segmented-option]')!)
+    const caretStyle = getComputedStyle(document.querySelector('[data-caret]')!)
+    const caretSvgStyle = getComputedStyle(document.querySelector('[data-caret] svg')!)
+
+    expect(rootStyle.getPropertyValue('--segmented-option-px').trim()).toBe('0.75rem')
+    expect(rootStyle.fontSize).toBe('var(--text-base)')
+    expect(optionStyle.paddingInline).toBe('var(--segmented-option-px)')
+    expect(cssLengthToPixels(optionStyle.minWidth)).toBe(0)
+    expect(cssLengthToPixels(optionStyle.minHeight)).toBe(0)
+    expect(caretStyle.display).toBe('inline-flex')
+    expect(caretStyle.alignItems).toBe('center')
+    expect(caretStyle.justifyContent).toBe('center')
+    expect(caretStyle.flexShrink).toBe('0')
+    const caretOpacity = Number.parseFloat(caretStyle.opacity)
+    expect(caretStyle.opacity.endsWith('%') ? caretOpacity / 100 : caretOpacity).toBe(0.7)
+    expect(cssLengthToPixels(caretSvgStyle.width)).toBe(12)
+    expect(cssLengthToPixels(caretSvgStyle.height)).toBe(12)
+
+    fineStyle.remove()
+    const coarseStyle = await injectUtilityStyles(candidates, true)
+    const coarseRoot = getComputedStyle(document.querySelector('[data-segmented-root]')!)
+    const coarseOption = getComputedStyle(document.querySelector('[data-segmented-option]')!)
+    expect(cssLengthToPixels(coarseRoot.minHeight)).toBeGreaterThanOrEqual(44)
+    expect(cssLengthToPixels(coarseOption.minWidth)).toBeGreaterThanOrEqual(44)
+    expect(cssLengthToPixels(coarseOption.minHeight)).toBeGreaterThanOrEqual(44)
+
+    coarseStyle.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
   })
 
   it('keeps activity panel filter toolbars to one compact row', () => {

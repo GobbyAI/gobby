@@ -86,7 +86,8 @@ export function SegmentedControl<T extends string>({
       style={{ height: heightVar }}
       className={cn(
         'segmented-control',
-        'inline-flex items-stretch rounded-md border border-border',
+        'inline-flex items-stretch rounded-md border border-border [--segmented-option-px:0.75rem] text-[length:var(--text-base)]',
+        'max-[768px]:[--segmented-option-px:0.55rem] max-[768px]:text-[length:var(--text-sm)]',
         coarseTouchTarget && 'pointer-coarse:min-h-11',
         trackBg,
         className,
@@ -118,7 +119,7 @@ export function SegmentedControl<T extends string>({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
               'segmented-control__option',
-              'inline-flex items-center justify-center',
+              'inline-flex items-center justify-center px-[var(--segmented-option-px)]',
               coarseTouchTarget && 'pointer-coarse:min-h-11 pointer-coarse:min-w-11',
               'transition-colors motion-reduce:transition-none',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
