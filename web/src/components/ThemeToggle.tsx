@@ -1,7 +1,9 @@
 import { LightbulbIcon, MoonIcon } from "./icons";
+import { cn } from "../lib/utils";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { Theme } from "../hooks/useSettings";
 import { Button } from "./ui/Button";
+import { coarseHitAreaCls } from "./ui/controlStyles";
 
 interface ThemeToggleProps {
   /** Current theme setting ('dark' | 'light' | 'system'). */
@@ -35,7 +37,7 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
       variant="accent"
       size="icon"
       dense
-      className="shrink-0 pointer-coarse:min-w-11"
+      className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
       disabled={disabled}
       aria-label={label}
       title={label}

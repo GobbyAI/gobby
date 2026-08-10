@@ -1,7 +1,9 @@
 import { createElement, useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDownIcon, CloseIcon } from '../icons'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { ActivityFilterDropdown } from '../activity/ActivityFilterDropdown'
 import {
   getSettingsSection,
@@ -149,7 +151,7 @@ export function SettingsOverlay({
         type="button"
         variant="ghost"
         dense
-        className="absolute inset-0 m-0 cursor-pointer animate-settings-overlay-fade"
+        className="absolute inset-0 m-0 cursor-pointer bg-[var(--surface-scrim)] hover:bg-[var(--surface-scrim)] animate-settings-overlay-fade"
         data-testid="settings-overlay-backdrop"
         aria-label="Close settings"
         tabIndex={-1}
@@ -186,7 +188,10 @@ export function SettingsOverlay({
               variant="ghost"
               size="sm"
               dense
-              className="min-w-56 cursor-pointer py-1.5 [font-family:inherit] [&_svg]:shrink-0 [&_svg]:text-[var(--text-muted)] aria-expanded:[&_svg]:text-accent [@media(max-width:768px)]:w-full"
+              className={cn(
+                'min-w-56 cursor-pointer py-1.5 [font-family:inherit] [&_svg]:shrink-0 [&_svg]:text-[var(--text-muted)] aria-expanded:bg-[var(--accent-tint)] aria-expanded:text-accent aria-expanded:[&_svg]:text-accent [@media(max-width:768px)]:w-full',
+                coarseHitAreaCls,
+              )}
               aria-haspopup="listbox"
               aria-expanded={sectionMenuOpen}
               onClick={() => setSectionMenuOpen((open) => !open)}

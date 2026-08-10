@@ -39,16 +39,10 @@ export interface CodeBlockProps {
    * Per-element style override for the inner `<code>` tag. Mirrors
    * `react-syntax-highlighter`'s `codeTagProps`. NOTE: the library
    * REPLACES its default (language className + theme code style) with
-   * this value; callers that only need a different font should use
-   * `codeFontFamily`, which keeps the default and overrides the font.
+   * this value. The theme already renders code in `var(--font-mono)`
+   * (`CODE_CHROME_TYPOGRAPHY`), so no font-only override exists.
    */
   codeTagProps?: React.HTMLProps<HTMLElement>
-  /**
-   * Font stack for the `<code>` tag, layered over the theme's code style
-   * without discarding it. Markdown fences pass `var(--font-mono)` so the
-   * app's mono stack wins over the Prism theme font.
-   */
-  codeFontFamily?: string
   /**
    * Defer SyntaxHighlighter mount until the block scrolls into view.
    * Used by chat-side code blocks for off-screen performance.
@@ -77,7 +71,6 @@ export function CodeBlock({
   wrapLongLines,
   customStyle,
   codeTagProps,
-  codeFontFamily,
   lazy = false,
   className,
 }: CodeBlockProps) {
@@ -133,20 +126,6 @@ export function CodeBlock({
   }
 
   const themeStyles = getCodeBlockTheme(resolvedTheme)
-  // The library replaces its default codeTagProps (language className +
-  // theme code style) when the prop is present, so a font-only override
-  // must rebuild that default around the new font.
-  const resolvedCodeTagProps =
-    codeTagProps ??
-    (codeFontFamily
-      ? {
-          className: `language-${language || 'text'}`,
-          style: {
-            ...(themeStyles['code[class*="language-"]'] as React.CSSProperties),
-            fontFamily: codeFontFamily,
-          },
-        }
-      : undefined)
 
   const wrapper = (
     <SyntaxHighlighter
@@ -160,7 +139,7 @@ export function CodeBlock({
       wrapLines={wrapLines}
       wrapLongLines={wrapLongLines}
       customStyle={customStyle}
-      codeTagProps={resolvedCodeTagProps}
+      codeTagProps={codeTagProps}
     >
       {children}
     </SyntaxHighlighter>

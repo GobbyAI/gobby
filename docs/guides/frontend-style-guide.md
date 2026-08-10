@@ -508,6 +508,49 @@ Floors only shrink: when a pinned exception lands (as the Ask surface removal
 did), its entries drop and the ratchet forces the tightening. The failure
 messages name the exact file and remedy.
 
+## Parity-Deferred Decisions (#20038)
+
+The styling epic's parity contract preserved shipped pixels, deferring
+pre-existing issues to task #20038. Each got an explicit decision:
+
+**Restored to intent:**
+
+- **Settings backdrop scrim** — the authored `var(--surface-scrim)`
+  background was dead in shipped builds. Restored: every other overlay
+  (Dialog, CommandPalette, image preview, agent form) already scrims, and
+  the settings dialog is modal (`aria-modal`). The hover state pins the
+  same scrim so the ghost Button's `hover:bg-muted` cannot repaint the
+  viewport.
+- **Settings section-trigger expanded accent** — the authored open state
+  (accent-tint background, accent text) mirrored the live
+  `FilterPrimitives` `aria-expanded` treatment; only the caret tint had
+  survived. Restored for pattern consistency.
+- **Code font unification** — `CODE_CHROME_TYPOGRAPHY.fontFamily`
+  hand-rolled a stack with SF Mono first, so file viewing/editing
+  diverged from markdown fences (which overrode to `var(--font-mono)`).
+  The constant now uses `var(--font-mono)` directly; the per-fence
+  override and `codeFontFamily` prop are deleted as redundant.
+- **Coarse touch targets** — the settings section trigger, project-selector
+  compact trigger (its row's `overflow-hidden` was clipping the expansion
+  out of hit-testing), and dense header icons (44×32) now reach 44×44 via
+  the shared `coarseHitAreaCls` expansion; visual boxes stay on the
+  desktop ladder. Pinned in `coarsePointerTouchTargets.test.ts`.
+
+**Ratified as shipped:**
+
+- **Settings prompt-row chrome** — the dead per-row card (bg + border +
+  radius) stays dead: flat ghost-Button rows match "don't wrap everything
+  in cards"; hierarchy comes from spacing.
+- **Settings field-input chrome** — the dead pre-primitive local input
+  chrome stays dead: the Input primitive's `controlSurfaceCls` is the
+  canonical chrome.
+- **Login page inline styles** — layout-only locals documented in-file;
+  chrome, type, and states come from the Button/Input primitives.
+- **Composer textarea coarse floor** — the dead pre-epic
+  `pointer-coarse` min-height is superseded: the Textarea primitive's
+  wrapper already carries the 44px hit-area expansion.
+- **Files-tree 8px base indent** — deliberate density choice; unchanged.
+
 ## Icons
 
 Gobby uses inline SVG React components. Do not add an icon library.

@@ -54,7 +54,10 @@ export const CODE_CHROME_VARS = {
  * visually indistinguishable except for editing affordances.
  */
 export const CODE_CHROME_TYPOGRAPHY = {
-  fontFamily: "'SF Mono', 'Fira Code', 'JetBrains Mono', monospace",
+  // The design-system mono token (JetBrains Mono Variable first), so file
+  // viewing, editing, and markdown code fences all render the same face —
+  // a hand-rolled stack here put SF Mono first and diverged from fences.
+  fontFamily: 'var(--font-mono)',
   fontSize: 'var(--text-base)',
   padding: '1rem',
   borderRadius: '0',

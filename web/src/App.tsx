@@ -7,6 +7,8 @@ import {
   lazy,
   Suspense,
 } from "react";
+import { cn } from "./lib/utils";
+import { coarseHitAreaCls } from "./components/ui/controlStyles";
 import { useAuth } from "./hooks/useAuth";
 import { useChat } from "./hooks/useChat";
 import { useVoice } from "./hooks/useVoice";
@@ -513,7 +515,7 @@ export default function App() {
               variant="accent"
               size="icon"
               dense
-              className="shrink-0 pointer-coarse:min-w-11"
+              className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
               onClick={() => settingsOverlay.open()}
               aria-label="Open settings"
               aria-haspopup="dialog"
@@ -528,7 +530,7 @@ export default function App() {
                 variant="accent"
                 size="icon"
                 dense
-                className="shrink-0 pointer-coarse:min-w-11"
+                className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
                 onClick={() => logout()}
                 aria-label="Log out"
                 title="Log out"

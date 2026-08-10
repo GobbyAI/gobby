@@ -361,6 +361,41 @@ describe('coarse-pointer touch targets', () => {
     expect(computedFloor(host, 'height')).toBeLessThan(44)
   })
 
+  it('floors the dense header and settings triggers through the shared hit-area expansion', () => {
+    // These controls are dense (no coarse promotion of the visual box), so
+    // the 44px floor must come from coarseHitAreaCls — whose ≥44×44 pseudo
+    // geometry the 'expands control primitives' test verifies above.
+    const headerSources = [
+      readFileSync(join(srcRoot, 'App.tsx'), 'utf8'),
+      readFileSync(join(srcRoot, 'components/ThemeToggle.tsx'), 'utf8'),
+    ]
+    for (const source of headerSources) {
+      expect(source).toContain(
+        'cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)',
+      )
+    }
+
+    const overlaySource = readFileSync(
+      join(srcRoot, 'components/settings/SettingsOverlay.tsx'),
+      'utf8',
+    )
+    expect(overlaySource).toContain('coarseHitAreaCls')
+    expect(overlaySource).toContain('aria-expanded:bg-[var(--accent-tint)]')
+
+    // The compact project trigger's row must not clip the expansion out of
+    // hit-testing: overflow-hidden on the 28px row would cap the tap target.
+    const selectorSource = readFileSync(
+      join(srcRoot, 'components/ProjectSelector.tsx'),
+      'utf8',
+    )
+    expect(selectorSource).toContain(
+      'h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex',
+    )
+    expect(selectorSource).toContain(
+      'cn("w-full rounded-[inherit] py-0 [font-family:inherit]", coarseHitAreaCls)',
+    )
+  })
+
   it('promotes every Button size to 44px on coarse pointers unless dense', async () => {
     const sizes = ['sm', 'md', 'lg', 'icon'] as const
     const denseStates = [false, true] as const

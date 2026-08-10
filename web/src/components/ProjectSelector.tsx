@@ -267,14 +267,17 @@ export function ProjectSelector({
           className="overflow-hidden"
         />
       </div>
-      <div className="hidden h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch overflow-hidden rounded-md border border-border bg-background mobile:inline-flex">
+      {/* No overflow-hidden here: it would clip the coarse-pointer ::before
+          hit-area expansion out of hit-testing, capping the tap target at the
+          28px row. The trigger rounds itself to match the border instead. */}
+      <div className="hidden h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex">
         <Button
           ref={compactTriggerRef}
           type="button"
           variant="ghost"
           size="sm"
           dense
-          className={cn("w-full py-0 [font-family:inherit]", coarseHitAreaCls)}
+          className={cn("w-full rounded-[inherit] py-0 [font-family:inherit]", coarseHitAreaCls)}
           onClick={toggleCompactMenu}
           onKeyDown={handleCompactTriggerKeyDown}
           disabled={disabled}
