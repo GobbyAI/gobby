@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol, TypedDict
 
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron_models import CronJob
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 PROJECT_PURGE_JOB_NAME = "gobby:project-purge"
@@ -220,7 +221,40 @@ class ProjectPurgeService:
         return [str(row["id"]) for row in rows]
 
     def _delete_hub_rows(self, project_id: str) -> None:
+        generation_state = EmbeddingGenerationState(self.db)
         with self.db.transaction() as transaction:
+            # Tombstone every embedded artifact before the deletes: memories go
+            # explicitly (RESTRICT), triage rows and tools go via project cascade.
+            memory_rows = transaction.execute(
+                "SELECT id FROM memories WHERE project_id = %s", (project_id,)
+            ).fetchall()
+            issue_rows = transaction.execute(
+                "SELECT project_id, repo, issue_number FROM gh_issues_triaged "
+                "WHERE project_id = %s",
+                (project_id,),
+            ).fetchall()
+            tool_rows = transaction.execute(
+                """
+                SELECT tools.id AS id
+                  FROM tools
+                  JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id
+                 WHERE mcp_servers.project_id = %s
+                """,
+                (project_id,),
+            ).fetchall()
+            for row in memory_rows:
+                generation_state.append_change(
+                    "memory", str(row["id"]), is_tombstone=True, transaction=transaction
+                )
+            for row in issue_rows:
+                source_id = f"{row['project_id']}:{row['repo']}:{row['issue_number']}"
+                generation_state.append_change(
+                    "github_issue", source_id, is_tombstone=True, transaction=transaction
+                )
+            for row in tool_rows:
+                generation_state.append_change(
+                    "tool", str(row["id"]), is_tombstone=True, transaction=transaction
+                )
             for table in ("tasks", "plans", "sessions", "memories"):
                 transaction.execute(
                     f"DELETE FROM {table} WHERE project_id = %s",  # nosec B608

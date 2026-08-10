@@ -21,6 +21,13 @@ _SOURCE_COLLECTIONS = {
     "github_issue": "gobby_github_issues",
 }
 
+# Transaction-scoped advisory lock coordinating ledger sequence visibility:
+# producers hold it SHARED across sequence allocation, the watermark read takes
+# it EXCLUSIVE, so a returned watermark can never be undercut by an in-flight
+# allocator committing later ("GOBB" = 0x474F4242).
+_LEDGER_LOCK_CLASS = 0x474F4242
+_LEDGER_LOCK_ID = 1
+
 
 class EmbeddingGenerationError(RuntimeError):
     """Base error for generation coordination failures."""
@@ -140,6 +147,10 @@ class EmbeddingGenerationState:
         source_id: str,
         is_tombstone: bool,
     ) -> int:
+        transaction.execute(
+            "SELECT pg_advisory_xact_lock_shared(%s, %s)",
+            (_LEDGER_LOCK_CLASS, _LEDGER_LOCK_ID),
+        )
         row = transaction.execute(
             """
             INSERT INTO embedding_projection_changes (source_kind, source_id, is_tombstone)
@@ -153,21 +164,29 @@ class EmbeddingGenerationState:
         return int(row["sequence"])
 
     def watermark(self) -> int:
-        row = self.db.fetchone(
-            "SELECT COALESCE(MAX(sequence), 0) AS watermark FROM embedding_projection_changes"
-        )
+        """Return a sequence bound every later-committed change strictly exceeds."""
+        with self.db.transaction() as transaction:
+            transaction.execute(
+                "SELECT pg_advisory_xact_lock(%s, %s)",
+                (_LEDGER_LOCK_CLASS, _LEDGER_LOCK_ID),
+            )
+            row = transaction.execute(
+                "SELECT COALESCE(MAX(sequence), 0) AS watermark FROM embedding_projection_changes"
+            ).fetchone()
         return 0 if row is None else int(row["watermark"])
 
-    def changes_after(self, sequence: int) -> list[ProjectionChange]:
-        rows = self.db.fetchall(
-            """
+    def changes_after(self, sequence: int, *, up_to: int | None = None) -> list[ProjectionChange]:
+        query = """
             SELECT sequence, source_kind, source_id, is_tombstone
             FROM embedding_projection_changes
             WHERE sequence > %s
-            ORDER BY sequence
-            """,
-            (sequence,),
-        )
+            """
+        params: tuple[object, ...] = (sequence,)
+        if up_to is not None:
+            query += " AND sequence <= %s"
+            params = (sequence, up_to)
+        query += " ORDER BY sequence"
+        rows = self.db.fetchall(query, params)
         return [
             ProjectionChange(
                 sequence=int(row["sequence"]),
@@ -306,9 +325,7 @@ class EmbeddingGenerationState:
             required_watermark=required_watermark,
         )
 
-    def can_collect(self, generation: str, revision: int, *, drains_complete: bool) -> bool:
-        if not drains_complete:
-            return False
+    def can_collect(self, generation: str, revision: int) -> bool:
         row = self.db.fetchone(
             """
             SELECT COUNT(*) AS incompatible
@@ -323,6 +340,28 @@ class EmbeddingGenerationState:
             (generation, revision),
         )
         return row is not None and int(row["incompatible"]) == 0
+
+    def incompatible_serving_acks(self, generation: str, revision: int) -> list[str]:
+        """Describe live acks blocking collection, for GC timeout diagnostics."""
+        rows = self.db.fetchall(
+            """
+            SELECT daemon_instance_id, generation, committed_revision, acknowledged
+            FROM embedding_generation_acks
+            WHERE lease_expires_at > CURRENT_TIMESTAMP
+              AND (
+                  generation IS DISTINCT FROM %s
+                  OR committed_revision IS DISTINCT FROM %s
+                  OR acknowledged IS NOT TRUE
+              )
+            ORDER BY daemon_instance_id
+            """,
+            (generation, revision),
+        )
+        return [
+            f"{row['daemon_instance_id']} (generation={row['generation']}, "
+            f"revision={row['committed_revision']}, acknowledged={row['acknowledged']})"
+            for row in rows
+        ]
 
     @staticmethod
     def _validate_lease_seconds(lease_seconds: float) -> None:

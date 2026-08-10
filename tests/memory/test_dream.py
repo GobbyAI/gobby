@@ -1526,6 +1526,7 @@ class _FakeDreamDB:
         self.projects: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, dict[str, Any]] = {}
         self.snapshots: list[dict[str, Any]] = []
+        self.projection_changes: list[dict[str, Any]] = []
 
     def transaction(self) -> Any:
         @contextlib.contextmanager
@@ -1533,12 +1534,14 @@ class _FakeDreamDB:
             memories = copy.deepcopy(self.memories)
             crossrefs = copy.deepcopy(self.crossrefs)
             snapshots = copy.deepcopy(self.snapshots)
+            projection_changes = copy.deepcopy(self.projection_changes)
             try:
                 yield _FencedConn(self)
             except Exception:
                 self.memories = memories
                 self.crossrefs = crossrefs
                 self.snapshots = snapshots
+                self.projection_changes = projection_changes
                 raise
 
         return _txn()
@@ -3541,6 +3544,19 @@ class _FencedConn:
             snapshot["after_data"] = params[0]
             snapshot["applied"] = True
             return _FencedCursor()
+        if normalized.startswith("SELECT pg_advisory_xact_lock"):
+            return _FencedCursor(row={"pg_advisory_xact_lock_shared": None})
+        if normalized.startswith("INSERT INTO embedding_projection_changes"):
+            events = self.db.projection_changes
+            events.append(
+                {
+                    "sequence": len(events) + 1,
+                    "source_kind": params[0],
+                    "source_id": params[1],
+                    "is_tombstone": params[2],
+                }
+            )
+            return _FencedCursor(row={"sequence": len(events)})
         raise AssertionError(f"unexpected SQL in fenced fake: {normalized[:100]}")
 
 

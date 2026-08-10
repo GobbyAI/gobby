@@ -358,7 +358,6 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
             EmbeddingGenerationState(state.db).can_collect,
             cast(str, request["generation"]),
             cast(int, request["revision"]),
-            drains_complete=cast(bool, request["drains_complete"]),
         )
     if operation == "wait_collectible":
         generation_state = EmbeddingGenerationState(state.db)
@@ -368,7 +367,6 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
                 generation_state.can_collect,
                 cast(str, request["generation"]),
                 cast(int, request["revision"]),
-                drains_complete=cast(bool, request["drains_complete"]),
             )
             if collectible:
                 return True
@@ -611,14 +609,13 @@ class DaemonWorker:
     def lease_assert(self) -> None:
         self._request_value("lease_assert")
 
-    def can_collect(self, generation: str, revision: int, *, drains_complete: bool) -> bool:
+    def can_collect(self, generation: str, revision: int) -> bool:
         return cast(
             bool,
             self._request_value(
                 "can_collect",
                 generation=generation,
                 revision=revision,
-                drains_complete=drains_complete,
             ),
         )
 
@@ -627,7 +624,6 @@ class DaemonWorker:
         generation: str,
         revision: int,
         *,
-        drains_complete: bool,
         timeout: float,
     ) -> bool:
         return cast(
@@ -636,7 +632,6 @@ class DaemonWorker:
                 "wait_collectible",
                 generation=generation,
                 revision=revision,
-                drains_complete=drains_complete,
                 timeout=timeout,
             ),
         )

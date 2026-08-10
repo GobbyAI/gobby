@@ -365,10 +365,9 @@ async def test_generation_gc_waits_for_acknowledgements(
     state.acknowledge(second, "old", 1, lease_seconds=30, acknowledged=False)
 
     state.acknowledge(first, "new", 2, lease_seconds=30)
-    assert not state.can_collect("new", 2, drains_complete=True)
+    assert not state.can_collect("new", 2)
     state.acknowledge(second, "new", 2, lease_seconds=30)
-    assert not state.can_collect("new", 2, drains_complete=False)
-    assert state.can_collect("new", 2, drains_complete=True)
+    assert state.can_collect("new", 2)
 
     prepared_lease = state.prepare_serving_lease(
         first,
@@ -549,3 +548,19 @@ async def test_background_failure_is_observed_with_run_context(
     ]
     assert len(records) == 1
     assert getattr(records[0], "run_id", None) == "run-1"
+
+
+def test_managed_projection_survives_post_switch_mutation(temp_db: HubDatabase) -> None:
+    """B1 regression: a benign config mutation after switch completion must not
+    invalidate the completed-record verification."""
+    store = ConfigStore(temp_db)
+    _journal, revision = _complete_managed_switch(store)
+
+    store.set("ui.enabled", True)
+
+    snapshot = store.read_snapshot()
+    assert snapshot.revision == revision + 1
+    projected = managed_embedding_projection(snapshot)
+    completed = projected[EMBEDDING_SWITCH_COMPLETED_KEY]
+    assert isinstance(completed, CompletedSwitchRecord)
+    assert completed.committed_revision == revision

@@ -435,8 +435,50 @@ def managed_embedding_projection(snapshot: EmbeddingSwitchSnapshot) -> dict[str,
     if not isinstance(raw, Mapping):
         raise SwitchJournalStateError("Completed embedding switch record is invalid")
     record = CompletedSwitchRecord.from_dict(raw)
-    verified = _verify_completed_record(snapshot, record, snapshot.revision)
+    verified = _verify_completed_record_rows(snapshot, record)
     return {EMBEDDING_SWITCH_COMPLETED_KEY: verified}
+
+
+_COMPLETED_RECORD_ROW_KEYS = (
+    AI_EMBEDDING_MODEL_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+)
+
+
+def _expected_completed_values(record: CompletedSwitchRecord) -> dict[str, object]:
+    return {
+        AI_EMBEDDING_MODEL_KEY: record.target_model,
+        AI_EMBEDDING_DIM_KEY: record.target_dim,
+        AI_EMBEDDING_CATALOG_KEY: record.catalog_key,
+        AI_EMBEDDING_QUERY_PREFIX_KEY: record.target_query_prefix,
+        AI_EMBEDDING_API_BASE_KEY: record.target_api_base,
+    }
+
+
+def _verify_completed_record_rows(
+    snapshot: EmbeddingSwitchSnapshot,
+    record: CompletedSwitchRecord,
+) -> CompletedSwitchRecord:
+    """Verify a completed record against any later coherent snapshot.
+
+    Sound because complete_embedding_switch writes all five structural keys and
+    the completed record in one patch_internal revision, and structural keys
+    only accept source="embedding_switch"|"install" writes — a later benign
+    config mutation advances the global revision without touching these rows.
+    """
+    committed = record.committed_revision
+    if not 0 < committed <= snapshot.revision:
+        raise SwitchJournalStateError(
+            f"Completed embedding switch revision {committed} is outside (0, {snapshot.revision}]"
+        )
+    expected = _expected_completed_values(record)
+    if any(snapshot.values.get(key) != value for key, value in expected.items()):
+        raise SwitchJournalStateError("Completed embedding switch values do not match storage")
+    if any(snapshot.row_revisions.get(key) != committed for key in _COMPLETED_RECORD_ROW_KEYS):
+        raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
+    return record
 
 
 def _verify_completed_record(
@@ -444,26 +486,15 @@ def _verify_completed_record(
     record: CompletedSwitchRecord,
     revision: int,
 ) -> CompletedSwitchRecord:
+    """Exact-revision verification for adoption-time verify_completed_switch."""
     if record.committed_revision != revision:
         raise SwitchJournalStateError(
             f"Completed embedding switch revision {record.committed_revision} does not match {revision}"
         )
-    expected = {
-        AI_EMBEDDING_MODEL_KEY: record.target_model,
-        AI_EMBEDDING_DIM_KEY: record.target_dim,
-        AI_EMBEDDING_CATALOG_KEY: record.catalog_key,
-        AI_EMBEDDING_QUERY_PREFIX_KEY: record.target_query_prefix,
-        AI_EMBEDDING_API_BASE_KEY: record.target_api_base,
-    }
+    expected = _expected_completed_values(record)
     if any(snapshot.values.get(key) != value for key, value in expected.items()):
         raise SwitchJournalStateError("Completed embedding switch values do not match storage")
-    required_rows = (
-        AI_EMBEDDING_MODEL_KEY,
-        AI_EMBEDDING_DIM_KEY,
-        AI_EMBEDDING_CATALOG_KEY,
-        EMBEDDING_SWITCH_COMPLETED_KEY,
-    )
-    if any(snapshot.row_revisions.get(key) != revision for key in required_rows):
+    if any(snapshot.row_revisions.get(key) != revision for key in _COMPLETED_RECORD_ROW_KEYS):
         raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
     return record
 

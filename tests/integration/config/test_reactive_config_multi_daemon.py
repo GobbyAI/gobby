@@ -258,7 +258,6 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
         two_daemons.second.can_collect(
             "new-generation",
             1,
-            drains_complete=True,
         )
         is False
     )
@@ -275,7 +274,6 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
         two_daemons.second.wait_until_collectible(
             "new-generation",
             1,
-            drains_complete=True,
             timeout=lease_seconds + 1.0,
         )
         is True

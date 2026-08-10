@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.json_helpers import json_dumps
 
@@ -275,16 +276,28 @@ class _DreamJournalMixin:
         # data.get() defaults the dream soft-delete columns to NULL on pre-289 snapshots.
         values = {column: data.get(column) for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
-        self.db.execute(
-            _RESTORE_MEMORY_SQL,
-            tuple(values[column] for column in _MEMORY_COLUMNS),
-        )
+        with self.db.transaction() as conn:
+            conn.execute(
+                _RESTORE_MEMORY_SQL,
+                tuple(values[column] for column in _MEMORY_COLUMNS),
+            )
+            EmbeddingGenerationState(self.db).append_change(
+                "memory",
+                str(values["id"]),
+                is_tombstone=values.get("deleted_at") is not None,
+                transaction=conn,
+            )
 
     def delete_memory_row(
         self: _DreamJournalHost,
         memory_id: str,
     ) -> None:
-        self.db.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+        with self.db.transaction() as conn:
+            cursor = conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+            if cursor.rowcount:
+                EmbeddingGenerationState(self.db).append_change(
+                    "memory", memory_id, is_tombstone=True, transaction=conn
+                )
 
 
 def _json(value: Any) -> str | None:
