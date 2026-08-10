@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
+    from gobby.config.values import ConfigValuesService
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.hooks.hook_manager import HookManager
@@ -64,6 +65,7 @@ def setup_internal_registries(
     workflow_loader: WorkflowLoader | None = None,
     pipeline_execution_manager: LocalPipelineExecutionManager | None = None,
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
+    config_service_getter: Callable[[], ConfigValuesService] | None = None,
     config_store: ConfigStore | None = None,
     config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_backup_manager: Any | None = None,
@@ -386,16 +388,11 @@ def setup_internal_registries(
         manager.add_registry(hub_registry)
         logger.debug("Hub registry initialized")
 
-    # Initialize config registry if config_store is available
-    if _config is not None and config_store is not None and config_setter is not None:
+    # Initialize config registry from the shared universal service.
+    if config_service_getter is not None:
         from gobby.mcp_proxy.tools.config import create_config_registry
 
-        config_registry = create_config_registry(
-            config=_config,
-            config_store=config_store,
-            config_setter=config_setter,
-            db=db,
-        )
+        config_registry = create_config_registry(config_service_getter)
         manager.add_registry(config_registry)
         logger.debug("Config registry initialized")
 

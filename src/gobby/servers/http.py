@@ -197,6 +197,9 @@ class HTTPServer:
             services.transcript_reader = transcript_reader
 
         # Setup internal registries (gobby-tasks, gobby-memory, gobby-workflows, etc.)
+        from gobby.servers.routes.configuration_context import ConfigurationRouteContext
+
+        config_route_context = ConfigurationRouteContext(self)
         self._internal_manager = setup_internal_registries(
             _config=services.config,
             _session_manager=None,  # Not needed for internal registries
@@ -221,6 +224,7 @@ class HTTPServer:
             workflow_loader=services.workflow_loader,
             pipeline_execution_manager=services.pipeline_execution_manager,
             hook_manager_resolver=lambda: self._hook_manager,
+            config_service_getter=config_route_context.get_config_service,
             config_store=services.config_store,
             config_setter=lambda c: setattr(services, "config", c),
             memory_backup_manager=services.memory_backup_manager,
