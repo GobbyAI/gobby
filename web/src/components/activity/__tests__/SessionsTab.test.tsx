@@ -498,6 +498,18 @@ describe("SessionsTab", () => {
     vi.restoreAllMocks();
   });
 
+  it("names the scoped project in the unfiltered empty state", async () => {
+    render(<SessionsTab sessions={[]} projectName="Personal" />);
+    expect(
+      await screen.findByText("No live sessions in Personal"),
+    ).toBeInTheDocument();
+  });
+
+  it("drops the scope suffix when no project name is provided", async () => {
+    render(<SessionsTab sessions={[]} />);
+    expect(await screen.findByText("No live sessions")).toBeInTheDocument();
+  });
+
   it("keeps registry providers on empty filtered pages and prunes stale selections", async () => {
     mockFetch.resetRoutes();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });

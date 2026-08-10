@@ -553,6 +553,11 @@ export default function App() {
         >
           <ChatPage
                 projectId={effectiveProjectId}
+                projectName={
+                  projectOptions.find(
+                    (project) => project.id === effectiveProjectId,
+                  )?.name ?? null
+                }
                 showPlanRef={showPlanRef}
                 planPendingVariant={settings.planPendingVariant}
                 chat={{

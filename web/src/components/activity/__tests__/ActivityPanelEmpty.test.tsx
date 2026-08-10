@@ -101,10 +101,9 @@ describe('ActivityPanelEmpty (#14246)', () => {
 
     it('keeps Sessions empty-state bylines punctuation-free', () => {
       const source = readSource('src/components/activity/SessionsTab.tsx')
-      expect(source).toContain('hint = "Matching sessions will appear here"')
       expect(source).toContain('? "No sessions match these filters"')
-      expect(source).not.toContain('Matching sessions will appear here.')
       expect(source).not.toContain('No sessions match these filters.')
+      expect(source).not.toContain('sessions${scopeSuffix}.')
     })
   })
 

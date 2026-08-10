@@ -140,6 +140,7 @@ interface ActivityPanelProps {
   onRetryChanges?: () => void;
   // Tasks tab
   projectId?: string | null;
+  projectName?: string | null;
   sessions?: GobbySession[];
   sessionsLoading?: boolean;
   sessionsFilters?: SessionsFilters;
@@ -261,6 +262,7 @@ export function ActivityPanel({
   changesError = null,
   onRetryChanges,
   projectId,
+  projectName,
   sessions = [],
   sessionsLoading = false,
   sessionsFilters,
@@ -363,6 +365,7 @@ export function ActivityPanel({
           <SessionsTab
             sessions={sessions}
             isLoadingSessions={sessionsLoading}
+            projectName={projectName}
             filters={sessionsFilters}
             onFiltersChange={onSessionsFiltersChange}
             onKillAgent={onKillAgent}

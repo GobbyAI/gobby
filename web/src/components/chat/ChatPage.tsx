@@ -23,6 +23,7 @@ export function ChatPage({
   conversations,
   voice,
   projectId,
+  projectName,
   showPlanRef,
   agentDefinitions = [],
   agentGlobalDefs = [],
@@ -218,6 +219,7 @@ export function ChatPage({
           changesError={fileChanges.error}
           onRetryChanges={fileChanges.refresh}
           projectId={projectId}
+          projectName={projectName}
           sessions={activitySessions ?? allProjectSessions}
           sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
           sessionsFilters={sessionsFilters}

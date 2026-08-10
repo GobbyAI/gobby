@@ -43,6 +43,7 @@ export interface ChatPageProps
   conversations: ConversationState;
   voice: VoiceProps;
   projectId?: string | null;
+  projectName?: string | null;
   showPlanRef?: MutableRefObject<(() => void) | null>;
   currentModel?: string;
   onModelChange?: (model: string) => void;
