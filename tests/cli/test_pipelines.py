@@ -405,7 +405,7 @@ class TestPipelinesRun:
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
         with (
-            patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
+            patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
             patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
             patch("gobby.cli.pipelines.get_project_path", return_value=None),
         ):

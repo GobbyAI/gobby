@@ -29,7 +29,7 @@ def _isolated_cli_runtime() -> Iterator[None]:
             return_value=MagicMock(),
         ),
         patch(
-            "gobby.cli.load_full_config_from_db",
+            "gobby.cli.runtime.CliRuntime.require_config",
             return_value=DaemonConfig(),
         ),
     ):

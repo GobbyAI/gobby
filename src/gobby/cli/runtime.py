@@ -10,16 +10,11 @@ from pathlib import Path
 import click
 
 from gobby.config.app import DaemonConfig
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.utils.project_context import get_project_context
-
-
-def _load_runtime_config(config_file: str | None, database: HubDatabase) -> DaemonConfig:
-    from gobby.cli.utils import load_full_config_from_db
-
-    return load_full_config_from_db(config_file, database=database)
 
 
 @dataclass(init=False)
@@ -27,7 +22,7 @@ class CliRuntime:
     """Own resources shared by one top-level CLI invocation."""
 
     config_file: str | None
-    config_loader: Callable[[str | None, HubDatabase], DaemonConfig] = _load_runtime_config
+    config_repository_factory: Callable[[HubDatabase], ConfigRepository] = ConfigRepository
     exit_stack: ExitStack = field(default_factory=ExitStack)
     _config: DaemonConfig | None = field(default=None, init=False, repr=False)
     _database: HubDatabase | None = field(default=None, init=False, repr=False)
@@ -37,11 +32,11 @@ class CliRuntime:
         self,
         config_file: str | None,
         config: DaemonConfig | None = None,
-        config_loader: Callable[[str | None, HubDatabase], DaemonConfig] = _load_runtime_config,
+        config_repository_factory: Callable[[HubDatabase], ConfigRepository] = ConfigRepository,
         exit_stack: ExitStack | None = None,
     ) -> None:
         self.config_file = config_file
-        self.config_loader = config_loader
+        self.config_repository_factory = config_repository_factory
         self.exit_stack = exit_stack if exit_stack is not None else ExitStack()
         self._config = config
         self._database = None
@@ -60,7 +55,9 @@ class CliRuntime:
         """Return configuration, controlling migrations on its first database open."""
         if self._config is None:
             database = self.require_database(apply_migrations=apply_migrations)
-            self._config = self.config_loader(self.config_file, database)
+            repository = self.config_repository_factory(database)
+            snapshot = repository.read(resolve_secrets=True)
+            self._config = repository.runtime_candidate(dict(snapshot.values))
         return self._config
 
     def require_database(self, *, apply_migrations: bool = True) -> HubDatabase:

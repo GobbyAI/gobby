@@ -150,7 +150,7 @@ class TestHooksListCommand:
         assert result.exit_code == 0
         assert "List supported hook event types" in result.output
 
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_list_default_output(
         self,
         mock_load_config: MagicMock,
@@ -170,7 +170,7 @@ class TestHooksListCommand:
         assert "before_tool" in result.output
         assert "after_tool" in result.output
 
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_list_json_output(
         self,
         mock_load_config: MagicMock,
@@ -200,7 +200,7 @@ class TestHooksListCommand:
         assert "after_tool" in hook_names
         assert "stop" in hook_names
 
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_list_contains_descriptions(
         self,
         mock_load_config: MagicMock,
@@ -234,7 +234,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_success(
         self,
         mock_load_config: MagicMock,
@@ -265,7 +265,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_with_source_option(
         self,
         mock_load_config: MagicMock,
@@ -295,7 +295,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_formats_agy_decision_response(
         self,
         mock_load_config: MagicMock,
@@ -320,7 +320,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_tool_event_adds_tool_name(
         self,
         mock_load_config: MagicMock,
@@ -350,7 +350,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_non_tool_event_no_tool_name(
         self,
         mock_load_config: MagicMock,
@@ -380,7 +380,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_json_output(
         self,
         mock_load_config: MagicMock,
@@ -412,7 +412,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_with_inject_context(
         self,
         mock_load_config: MagicMock,
@@ -439,7 +439,7 @@ class TestHooksTestCommand:
 
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_daemon_not_running(
         self,
         mock_load_config: MagicMock,
@@ -461,7 +461,7 @@ class TestHooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hooks_test_api_failure(
         self,
         mock_load_config: MagicMock,
@@ -511,7 +511,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_disabled(
         self,
         mock_load_config: MagicMock,
@@ -537,7 +537,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_no_endpoints(
         self,
         mock_load_config: MagicMock,
@@ -564,7 +564,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_with_endpoints(
         self,
         mock_load_config: MagicMock,
@@ -616,7 +616,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_endpoint_no_url(
         self,
         mock_load_config: MagicMock,
@@ -649,7 +649,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_json_output(
         self,
         mock_load_config: MagicMock,
@@ -684,7 +684,7 @@ class TestWebhooksListCommand:
 
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_daemon_not_running(
         self,
         mock_load_config: MagicMock,
@@ -706,7 +706,7 @@ class TestWebhooksListCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_list_api_failure(
         self,
         mock_load_config: MagicMock,
@@ -742,7 +742,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_success(
         self,
         mock_load_config: MagicMock,
@@ -779,7 +779,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_with_event_option(
         self,
         mock_load_config: MagicMock,
@@ -808,7 +808,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_success_no_response_time(
         self,
         mock_load_config: MagicMock,
@@ -834,7 +834,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_failure(
         self,
         mock_load_config: MagicMock,
@@ -863,7 +863,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_failure_with_status_code(
         self,
         mock_load_config: MagicMock,
@@ -893,7 +893,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_failure_unknown_error(
         self,
         mock_load_config: MagicMock,
@@ -918,7 +918,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_json_output(
         self,
         mock_load_config: MagicMock,
@@ -949,7 +949,7 @@ class TestWebhooksTestCommand:
 
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_daemon_not_running(
         self,
         mock_load_config: MagicMock,
@@ -971,7 +971,7 @@ class TestWebhooksTestCommand:
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")
     @patch("gobby.cli.extensions.get_daemon_client")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_webhooks_test_api_failure(
         self,
         mock_load_config: MagicMock,

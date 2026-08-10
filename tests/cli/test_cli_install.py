@@ -60,7 +60,7 @@ def test_install_auth_mode_flag(tmp_path: Path) -> None:
             return_value={"created": False, "path": tmp_path / "bootstrap.yaml"},
         ),
         patch("gobby.cli.install.update_bootstrap_yaml") as update_bootstrap,
-        patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+        patch("gobby.cli.runtime.CliRuntime.require_config", side_effect=FileNotFoundError),
         patch("gobby.cli.install.install_codex", return_value=codex_result),
     ):
         result = CliRunner().invoke(
@@ -156,7 +156,7 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
             "gobby.cli.runtime.runtime_hub_database",
             return_value=nullcontext(MagicMock()),
         ),
-        patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
+        patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
@@ -446,7 +446,7 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_qwen")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_install_qwen_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -479,7 +479,7 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_droid")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_install_droid_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -510,7 +510,7 @@ class TestInstallCommand:
 
     @patch("gobby.cli.install._ensure_daemon_config")
     @patch("gobby.cli.install.install_agy")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_install_agy_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -562,7 +562,7 @@ class TestInstallCommand:
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
             ),
-            patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+            patch("gobby.cli.runtime.CliRuntime.require_config", side_effect=FileNotFoundError),
             patch("gobby.cli.install.install_codex", return_value=codex_result) as mock_codex,
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
@@ -606,7 +606,7 @@ class TestInstallCommand:
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
             ),
-            patch("gobby.cli.install.load_full_config_from_db"),
+            patch("gobby.cli.runtime.CliRuntime.require_config"),
             patch("gobby.cli.install.ConfigStore", return_value=config_store),
             patch("gobby.cli.install.install_codex", return_value=codex_result),
         ):
@@ -652,12 +652,8 @@ class TestInstallCommand:
                 return_value={"created": False, "path": "/test/config.yaml"},
             ),
             patch(
-                "gobby.cli.install.load_full_config_from_db",
+                "gobby.cli.runtime.CliRuntime.require_database",
                 side_effect=FileNotFoundError("bootstrap unavailable"),
-            ),
-            patch(
-                "gobby.cli.runtime.runtime_hub_database",
-                return_value=nullcontext(temp_db),
             ),
             patch("gobby.cli.install.install_codex", return_value=codex_result),
         ):
@@ -702,7 +698,7 @@ class TestUninstallCommand:
         assert "--all" in result.output
         assert "--yes" in result.output or "-y" in result.output
 
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_no_hooks_found(
         self,
         mock_load_config: MagicMock,
@@ -724,7 +720,7 @@ class TestUninstallCommand:
         assert "No Gobby hooks found" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_claude_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -755,7 +751,7 @@ class TestUninstallCommand:
         mock_uninstall_claude.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -781,7 +777,7 @@ class TestUninstallCommand:
         mock_uninstall_codex.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_qwen")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_qwen_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -809,7 +805,7 @@ class TestUninstallCommand:
         mock_uninstall_qwen.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_droid")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_droid_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -834,7 +830,7 @@ class TestUninstallCommand:
         mock_uninstall_droid.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_agy")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_agy_only_flag(
         self,
         mock_load_config: MagicMock,
@@ -859,7 +855,7 @@ class TestUninstallCommand:
         mock_uninstall_agy.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_claude_failure(
         self,
         mock_load_config: MagicMock,
@@ -885,7 +881,7 @@ class TestUninstallCommand:
         assert "Some uninstallations failed" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_no_hooks_to_remove(
         self,
         mock_load_config: MagicMock,
@@ -909,7 +905,7 @@ class TestUninstallCommand:
         assert "(no hooks found to remove)" in result.output
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_no_integration_found(
         self,
         mock_load_config: MagicMock,
@@ -932,7 +928,7 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "(no hooks found to remove)" in result.output
 
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_requires_confirmation(
         self,
         mock_load_config: MagicMock,
@@ -954,7 +950,7 @@ class TestUninstallCommand:
         assert "Aborted" in result.output
 
     @patch("gobby.cli.install.uninstall_claude")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_confirms_with_yes_input(
         self,
         mock_load_config: MagicMock,
@@ -1031,7 +1027,7 @@ class TestUninstallEdgeCases:
         return CliRunner()
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_checks_home_path(
         self,
         mock_load_config: MagicMock,
@@ -1067,7 +1063,7 @@ class TestUninstallEdgeCases:
         mock_uninstall_codex.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_codex")
-    @patch("gobby.cli.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_failure(
         self,
         mock_load_config: MagicMock,

@@ -23,7 +23,6 @@ from gobby.cli.utils_config import (
     get_install_dir,
     get_resources_dir,
     init_local_storage,
-    load_full_config_from_db,
 )
 from gobby.cli.utils_process import (
     _is_process_alive,
@@ -88,7 +87,6 @@ __all__ = [
     "kill_all_gobby_daemons",
     "list_project_names",
     "load_config",
-    "load_full_config_from_db",
     "logger",
     "logging",
     "os",

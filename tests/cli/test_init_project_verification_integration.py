@@ -29,7 +29,7 @@ def test_init_succeeds_with_array_package_json(tmp_path: Path) -> None:
     project_manager.create.return_value = project
 
     with (
-        patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
+        patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
         patch("gobby.utils.project_context.get_project_context", return_value=None),
         patch("gobby.utils.git.get_github_url", return_value=None),
         patch(

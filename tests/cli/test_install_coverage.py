@@ -30,6 +30,15 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture
 def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
+    import importlib
+
+    runtime = MagicMock()
+    runtime.require_database.side_effect = RuntimeError("test hub unavailable")
+    runtime.require_config.return_value.hooks.provider_timeout = 120
+    install_module = importlib.import_module("gobby.cli.install")
+    monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
+    monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
+    monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", MagicMock())
     monkeypatch.setattr(
         "gobby.cli.installers.ide_config.find_vscode_family_ides_needing_terminal_integration",
         lambda: [],
@@ -202,7 +211,7 @@ class TestInstallCommand:
         ):
             result = runner.invoke(install, ["--config-only"], catch_exceptions=False)
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "Configuration and required infrastructure complete." in result.output
         mock_setup.assert_called_once_with(Path.cwd(), configure_ide_settings=False)
         mock_should_init.assert_not_called()
@@ -304,7 +313,7 @@ class TestInstallCommand:
             ) as personal_identity,
             patch("gobby.cli.install._should_initialize_project") as initialize_project,
             patch("gobby.cli.install._install_required_stack") as required_stack,
-            patch("gobby.cli.install.load_full_config_from_db") as load_config,
+            patch("gobby.cli.runtime.CliRuntime.require_config") as load_config,
             patch("gobby.cli.install._run_voice_install") as voice_install,
             patch("gobby.cli.install._echo_install_summary") as full_summary,
         ):
@@ -608,9 +617,10 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
+            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
         ):
             result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
-        assert result.exit_code == 0
+        assert result.exit_code == 0, result.output
         assert "No supported AI coding CLIs detected; CLI hooks will be skipped." in result.output
 
     @patch("gobby.cli.install.run_daemon_setup")

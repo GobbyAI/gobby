@@ -281,8 +281,10 @@ def test_cli_fails_for_invalid_covers_label(
 
 
 def test_cli_writes_evidence_from_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    cli_module = importlib.import_module("gobby.cli")
-    monkeypatch.setattr(cli_module, "load_full_config_from_db", lambda _config=None: None)
+    monkeypatch.setattr(
+        "gobby.cli.runtime.CliRuntime.require_config",
+        lambda _runtime: None,
+    )
     plan_path, plan_hash = _plan_file(tmp_path)
     matrix = _matrix_file(tmp_path, "covered", plan_hash=plan_hash)
     manifest = tmp_path / "out.coverage.yaml"

@@ -3,30 +3,16 @@
 from __future__ import annotations
 
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import psycopg
-
 from gobby.cli.utils_runtime import facade
-from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfigError
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.utils.daemon_client import DaemonClient
 
 logger = logging.getLogger(__name__)
-_EXPECTED_CONFIG_LOAD_ERRORS = (
-    BootstrapConfigError,
-    FileNotFoundError,
-    PermissionError,
-    OSError,
-    RuntimeError,
-    ValueError,
-    psycopg.Error,
-)
 
 
 def get_daemon_url() -> str:
@@ -47,88 +33,6 @@ def get_daemon_client(
     return DaemonClient(url=get_daemon_url(), timeout=timeout, logger=logger)
 
 
-def load_full_config_from_db(
-    config_file: str | None = None,
-    *,
-    database: HubDatabase | None = None,
-) -> DaemonConfig:
-    """Load full DaemonConfig from the active hub config_store.
-
-    Opens the PostgreSQL runtime hub, creates a ConfigStore, and calls
-    load_config with it. Use this when CLI commands need the full config
-    without a running daemon.
-
-    Args:
-        config_file: Optional path to a YAML config file. When provided, its
-            contents layer between bootstrap defaults and DB overrides
-            (DB still wins), matching the daemon's resolution order.
-        database: Optional borrowed Hub database. The caller retains ownership.
-
-    Returns:
-        Fully resolved DaemonConfig (DB > config file > bootstrap > defaults).
-    """
-    from gobby.storage.config_store import ConfigStore
-    from gobby.storage.hub.runtime import runtime_hub_database
-    from gobby.storage.secrets import SecretStore
-
-    deps = facade()
-
-    try:
-        bootstrap_config = cast(
-            DaemonConfig,
-            deps.load_config(config_file, resolve_database_url=True),
-        )
-    except _EXPECTED_CONFIG_LOAD_ERRORS as exc:
-        deps.logger.warning("Failed to load bootstrap config: %s", _redact_exception_text(exc))
-        return DaemonConfig()
-
-    if bootstrap_config.hub_backend != "postgres" or not bootstrap_config.database_url:
-        return bootstrap_config
-
-    try:
-        if database is None:
-            from gobby.cli.runtime import get_cli_runtime
-
-            try:
-                runtime = get_cli_runtime()
-            except RuntimeError:
-                runtime = None
-
-            if runtime is not None:
-                database = runtime.require_database()
-
-        if database is not None:
-            config_store = ConfigStore(database)
-            secret_store = SecretStore(database)
-            return cast(
-                DaemonConfig,
-                deps.load_config(
-                    config_file=config_file,
-                    config_store=config_store,
-                    secret_resolver=secret_store.get,
-                    resolve_database_url=True,
-                ),
-            )
-
-        with runtime_hub_database(config_file) as owned_database:
-            config_store = ConfigStore(owned_database)
-            secret_store = SecretStore(owned_database)
-            return cast(
-                DaemonConfig,
-                deps.load_config(
-                    config_file=config_file,
-                    config_store=config_store,
-                    secret_resolver=secret_store.get,
-                    resolve_database_url=True,
-                ),
-            )
-    except _EXPECTED_CONFIG_LOAD_ERRORS as exc:
-        deps.logger.warning(
-            "Failed to load config from PostgreSQL hub: %s", _redact_exception_text(exc)
-        )
-        return bootstrap_config
-
-
 def _redact_dsn(dsn: str) -> str:
     """Redact the password component from a PostgreSQL DSN for CLI output."""
     if "@" not in dsn:
@@ -142,22 +46,6 @@ def _redact_dsn(dsn: str) -> str:
     if scheme:
         return f"{scheme}://{redacted_auth}@{suffix}"
     return f"{redacted_auth}@{suffix}"
-
-
-def _redact_exception_text(exc: BaseException) -> str:
-    """Redact PostgreSQL DSNs and libpq secret-bearing params in exception messages."""
-    text = re.sub(
-        r"postgres(?:ql)?(?:\+\w+)?://[^\s'\"<>]+",
-        lambda match: _redact_dsn(match.group(0)),
-        str(exc),
-    )
-    return re.sub(
-        r"\b(password|sslcert|sslkey|sslrootcert)\s*=\s*("
-        r"'[^']*'|\"[^\"]*\"|[^\s]+)",
-        lambda match: f"{match.group(1)}=****",
-        text,
-        flags=re.IGNORECASE,
-    )
 
 
 def get_resources_dir(project_path: str | None = None) -> Path:

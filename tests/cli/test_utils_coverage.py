@@ -28,29 +28,6 @@ def test_process_start_matches_tolerates_subsecond_drift() -> None:
     assert _process_start_matches(proc, 100.0) is False
 
 
-def test_redact_exception_text_hides_dsn_and_libpq_secret_params() -> None:
-    from gobby.cli.utils_config import _redact_exception_text
-
-    message = (
-        "postgresql://user:secret@example.com/db "
-        "password='open sesame' sslcert=/tmp/client.crt sslkey=\"/tmp/client.key\" "
-        "sslrootcert=/tmp/root.crt"
-    )
-
-    redacted = _redact_exception_text(RuntimeError(message))
-
-    assert "secret" not in redacted
-    assert "open sesame" not in redacted
-    assert "/tmp/client.crt" not in redacted
-    assert "/tmp/client.key" not in redacted
-    assert "/tmp/root.crt" not in redacted
-    assert "postgresql://user:****@example.com/db" in redacted
-    assert "password=****" in redacted
-    assert "sslcert=****" in redacted
-    assert "sslkey=****" in redacted
-    assert "sslrootcert=****" in redacted
-
-
 def test_terminate_ui_process_tolerates_process_races() -> None:
     from gobby.cli.utils_ui import _terminate_ui_process
 
@@ -543,82 +520,6 @@ def test_stop_daemon_permission_error(tmp_path: Path) -> None:
         result = stop_daemon(quiet=False)
     assert result is False
     assert pid_file.exists()
-
-
-# --- load_full_config_from_db ---
-
-
-def test_load_full_config_from_db_no_db(tmp_path: Path) -> None:
-    from gobby.cli.utils import load_full_config_from_db
-
-    mock_config = MagicMock()
-    mock_config.database_url = str(tmp_path / "nonexistent.db")
-
-    with patch("gobby.cli.utils.load_config", return_value=mock_config) as mock_load:
-        result = load_full_config_from_db()
-    assert result is mock_config
-    mock_load.assert_called_once()
-
-
-def test_load_full_config_from_db_with_db(tmp_path: Path) -> None:
-    from gobby.cli.utils import load_full_config_from_db
-
-    mock_config = MagicMock()
-    mock_config.hub_backend = "postgres"
-    mock_config.database_url = "postgresql://example"
-
-    final_config = MagicMock()
-    mock_db = MagicMock()
-    runtime_cm = MagicMock()
-    runtime_cm.__enter__.return_value = mock_db
-    runtime_cm.__exit__.return_value = False
-
-    with (
-        patch("gobby.cli.utils.load_config") as mock_load,
-        patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm),
-        patch("gobby.storage.config_store.ConfigStore"),
-        patch("gobby.storage.secrets.SecretStore"),
-    ):
-        mock_load.side_effect = [mock_config, final_config]
-        result = load_full_config_from_db()
-    assert result is final_config
-    assert mock_load.call_count == 2
-
-
-@pytest.mark.no_config_protection
-def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
-    tmp_path: Path, hub_db
-) -> None:
-    """Regression for GH #10: CLI must see ui.enabled=true written to config_store."""
-    import yaml
-
-    from gobby.cli.utils import load_full_config_from_db
-    from gobby.storage.config_store import ConfigStore
-
-    ConfigStore(hub_db).set("ui.enabled", True, source="manual")
-
-    bootstrap_yaml = tmp_path / "bootstrap.yaml"
-    bootstrap_yaml.write_text(
-        yaml.safe_dump(
-            {
-                "hub_backend": "postgres",
-                "database_url": "postgresql://gobby:test@localhost:5432/gobby",
-                "daemon_port": 60887,
-                "websocket_port": 60888,
-                "ui_port": 60889,
-                "bind_host": "127.0.0.1",
-            }
-        )
-    )
-    bootstrap_yaml.chmod(0o600)
-
-    runtime_cm = MagicMock()
-    runtime_cm.__enter__.return_value = hub_db
-    runtime_cm.__exit__.return_value = False
-
-    with patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm):
-        result = load_full_config_from_db(config_file=str(bootstrap_yaml))
-    assert result.ui.enabled is True
 
 
 # ---------------------------------------------------------------------------

@@ -14,17 +14,14 @@ pytestmark = pytest.mark.unit
 
 @pytest.fixture(autouse=True)
 def _stub_cli_config_loader(monkeypatch: pytest.MonkeyPatch) -> None:
-    import gobby.cli as cli_module
-
     database = MagicMock()
     monkeypatch.setattr(
         "gobby.cli.runtime.CliRuntime.require_database",
         lambda _runtime: database,
     )
     monkeypatch.setattr(
-        cli_module,
-        "load_full_config_from_db",
-        lambda _config=None, **_kwargs: SimpleNamespace(),
+        "gobby.cli.runtime.CliRuntime.require_config",
+        lambda _runtime: SimpleNamespace(),
     )
 
 

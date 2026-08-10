@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+from gobby.cli.runtime import get_cli_runtime
+
 from ._install_embedding_prompts import (
     _infer_embedding_provider_from_url,
     _run_embedding_install,
@@ -187,9 +189,7 @@ def _prompt_hub_api_keys(
     }
 
     try:
-        from gobby.cli.utils import load_full_config_from_db
-
-        skills_cfg = load_full_config_from_db().skills
+        skills_cfg = get_cli_runtime().require_config().skills
     except Exception as e:
         click.echo(f"  Warning: Could not initialize hub key prompt: {e}")
         return result
