@@ -259,14 +259,35 @@ class LocalProjectManager:
                 return True
         return False
 
+    @staticmethod
+    def _is_under_isolation_root(repo_path: str | None) -> bool:
+        # An orphaned worktree/clone directory (dir exists, registry row gone)
+        # must not become a project's canonical repo_path, so the roots are
+        # forbidden prefixes regardless of registration state.
+        if not repo_path:
+            return False
+        try:
+            canonical_path = Path(repo_path).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return False
+        gobby_home = Path.home() / ".gobby"
+        for root in (gobby_home / "worktrees", gobby_home / "clones"):
+            if canonical_path.is_relative_to(root.resolve(strict=False)):
+                return True
+        return False
+
     def _repo_path_write_is_blocked(self, repo_path: str | None) -> bool:
-        return self._is_isolated_agent_session() or self._is_registered_isolation_path(repo_path)
+        return (
+            self._is_isolated_agent_session()
+            or self._is_under_isolation_root(repo_path)
+            or self._is_registered_isolation_path(repo_path)
+        )
 
     def _guard_repo_path_write(self, repo_path: str | None) -> None:
         if self._repo_path_write_is_blocked(repo_path):
             raise IsolatedAgentProjectPathError(
                 "project repo_path cannot be changed from an isolated agent session "
-                "or to a registered isolation path"
+                "or to an isolation path (registered or under the worktrees/clones roots)"
             )
 
     def create(
