@@ -7,7 +7,7 @@ import {
   StringListField,
   TypedListField,
 } from '../fields'
-import { enumOptionsAt, numberBoundsAt } from '../configSchema'
+import { enumOptionsAt, numberBoundsAt, resolveSchemaNode } from '../configSchema'
 import type { SettingsSectionFields } from './SettingsSection'
 import {
   asMap,
@@ -54,17 +54,88 @@ interface ConfigFieldBase {
   path: string
   label: string
   ariaLabel: string
+  managedAction?: (value: unknown) => void
+}
+
+function activationAt(fields: SettingsSectionFields, path: string): string {
+  const activation = resolveSchemaNode(fields.schema, path)?.activation
+  return typeof activation === 'string' ? activation : 'live'
+}
+
+function displayValue(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === undefined) return 'unset'
+  return JSON.stringify(value)
+}
+
+function updateConfigField(
+  fields: SettingsSectionFields,
+  path: string,
+  value: unknown,
+  managedAction?: (value: unknown) => void,
+): void {
+  if (activationAt(fields, path) === 'managed') {
+    managedAction?.(value)
+    return
+  }
+  fields.setValue(path, value)
+}
+
+function ConfigFieldState({
+  fields,
+  path,
+  children,
+}: {
+  fields: SettingsSectionFields
+  path: string
+  children: ReactNode
+}) {
+  const activation = activationAt(fields, path)
+  const pending = fields.pendingRestartKeys?.includes(path) === true
+  const failure = fields.failedLiveKeys?.[path]
+  const label = activation === 'restart_required'
+    ? 'Restart required'
+    : activation === 'managed'
+      ? 'Managed activation'
+      : 'Live activation'
+  return (
+    <div className="settings-config-field" data-activation={activation} data-config-path={path}>
+      {children}
+      <div className="settings-config-field__status">
+        <span>{label}</span>
+        {pending ? (
+          <>
+            <span>{`Desired: ${displayValue(fields.getValue(path))}`}</span>
+            <span>{`Active: ${displayValue(fields.getActiveValue?.(path))}`}</span>
+          </>
+        ) : null}
+        {failure ? (
+          <span role="status">
+            Live apply failed in {failure.subscriber} at revision {failure.revision}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 /** A boolean config row backed by a toggle. */
-export function SwitchConfigField({ fields, path, label, ariaLabel }: ConfigFieldBase) {
+export function SwitchConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  managedAction,
+}: ConfigFieldBase) {
   return (
-    <SwitchField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={fields.getValue(path) === true}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <SwitchField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={fields.getValue(path) === true}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -75,18 +146,22 @@ export function NumberConfigField({
   label,
   ariaLabel,
   step,
+  managedAction,
 }: ConfigFieldBase & { step?: number }) {
   const bounds = numberBoundsAt(fields.schema, path)
   return (
-    <NumberField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asNumber(fields.getValue(path))}
-      min={bounds.min}
-      max={bounds.max}
-      step={step}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <NumberField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asNumber(fields.getValue(path))}
+        min={bounds.min}
+        max={bounds.max}
+        step={step}
+        disabled={activationAt(fields, path) === 'managed' && !managedAction}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -101,15 +176,24 @@ export function TextConfigField({
   ariaLabel,
   placeholder,
   nullable,
+  managedAction,
 }: ConfigFieldBase & { placeholder?: string; nullable?: boolean }) {
   return (
-    <TextField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      placeholder={placeholder}
-      onChange={(value) => fields.setValue(path, nullable && value === '' ? null : value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <TextField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asString(fields.getValue(path))}
+        placeholder={placeholder}
+        disabled={activationAt(fields, path) === 'managed' && !managedAction}
+        onChange={(value) => updateConfigField(
+          fields,
+          path,
+          nullable && value === '' ? null : value,
+          managedAction,
+        )}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -127,15 +211,23 @@ export function SecretConfigField({
   ariaLabel,
   placeholder,
   nullable,
+  managedAction,
 }: ConfigFieldBase & { placeholder?: string; nullable?: boolean }) {
   return (
-    <SecretField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      placeholder={placeholder}
-      onChange={(value) => fields.setValue(path, nullable && value === '' ? null : value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <SecretField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asString(fields.getValue(path))}
+        placeholder={placeholder}
+        onChange={(value) => updateConfigField(
+          fields,
+          path,
+          nullable && value === '' ? null : value,
+          managedAction,
+        )}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -145,15 +237,18 @@ export function SchemaSelectField({
   path,
   label,
   ariaLabel,
+  managedAction,
 }: ConfigFieldBase) {
   return (
-    <BoundedSelectField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      options={enumOptionsAt(fields.schema, path)}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <BoundedSelectField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asString(fields.getValue(path))}
+        options={enumOptionsAt(fields.schema, path)}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -169,15 +264,18 @@ export function OptionsSelectField({
   label,
   ariaLabel,
   options,
+  managedAction,
 }: ConfigFieldBase & { options: FieldOption[] }) {
   return (
-    <BoundedSelectField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      options={options}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <BoundedSelectField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asString(fields.getValue(path))}
+        options={options}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -194,16 +292,24 @@ export function TextAreaConfigField({
   placeholder,
   nullable,
   rows,
+  managedAction,
 }: ConfigFieldBase & { placeholder?: string; nullable?: boolean; rows?: number }) {
   return (
-    <TextAreaField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      placeholder={placeholder}
-      rows={rows}
-      onChange={(value) => fields.setValue(path, nullable && value === '' ? null : value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <TextAreaField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asString(fields.getValue(path))}
+        placeholder={placeholder}
+        rows={rows}
+        onChange={(value) => updateConfigField(
+          fields,
+          path,
+          nullable && value === '' ? null : value,
+          managedAction,
+        )}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -219,16 +325,19 @@ export function MapConfigField({
   ariaLabel,
   addLabel,
   keyPlaceholder,
+  managedAction,
 }: ConfigFieldBase & { addLabel?: string; keyPlaceholder?: string }) {
   return (
-    <KeyValueMapField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asMap<string>(fields.getValue(path))}
-      addLabel={addLabel}
-      keyPlaceholder={keyPlaceholder}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <KeyValueMapField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asMap<string>(fields.getValue(path))}
+        addLabel={addLabel}
+        keyPlaceholder={keyPlaceholder}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -247,6 +356,7 @@ export function ListMapConfigField({
   addLabel,
   keyPlaceholder,
   itemAddLabel,
+  managedAction,
 }: ConfigFieldBase & {
   /** Label for each entry's nested string-list editor (its group name). */
   valueLabel: string
@@ -255,24 +365,26 @@ export function ListMapConfigField({
   itemAddLabel?: string
 }) {
   return (
-    <KeyValueMapField<string[]>
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asMap<string[]>(fields.getValue(path))}
-      addLabel={addLabel}
-      keyPlaceholder={keyPlaceholder}
-      createValue={() => []}
-      renderValue={(value, onValueChange, key) => (
-        <StringListField
-          label={valueLabel}
-          ariaLabel={`${ariaLabel} ${key || 'new entry'} values`}
-          value={asStringList(value)}
-          addLabel={itemAddLabel}
-          onChange={onValueChange}
-        />
-      )}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <KeyValueMapField<string[]>
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asMap<string[]>(fields.getValue(path))}
+        addLabel={addLabel}
+        keyPlaceholder={keyPlaceholder}
+        createValue={() => []}
+        renderValue={(value, onValueChange, key) => (
+          <StringListField
+            label={valueLabel}
+            ariaLabel={`${ariaLabel} ${key || 'new entry'} values`}
+            value={asStringList(value)}
+            addLabel={itemAddLabel}
+            onChange={onValueChange}
+          />
+        )}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -287,24 +399,27 @@ export function NumberListConfigField({
   label,
   ariaLabel,
   addLabel,
+  managedAction,
 }: ConfigFieldBase & { addLabel?: string }) {
   return (
-    <TypedListField<number>
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asTypedList<number>(fields.getValue(path))}
-      addLabel={addLabel}
-      createItem={() => 0}
-      onChange={(value) => fields.setValue(path, value)}
-      renderItem={(item, onItemChange, index) => (
-        <NumberField
-          label=""
-          ariaLabel={`${ariaLabel} item ${index + 1}`}
-          value={typeof item === 'number' ? item : null}
-          onChange={(next) => onItemChange(next ?? 0)}
-        />
-      )}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <TypedListField<number>
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asTypedList<number>(fields.getValue(path))}
+        addLabel={addLabel}
+        createItem={() => 0}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+        renderItem={(item, onItemChange, index) => (
+          <NumberField
+            label=""
+            ariaLabel={`${ariaLabel} item ${index + 1}`}
+            value={typeof item === 'number' ? item : null}
+            onChange={(next) => onItemChange(next ?? 0)}
+          />
+        )}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -321,25 +436,28 @@ export function NumberMapConfigField({
   ariaLabel,
   addLabel,
   keyPlaceholder,
+  managedAction,
 }: ConfigFieldBase & { addLabel?: string; keyPlaceholder?: string }) {
   return (
-    <KeyValueMapField<number>
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asMap<number>(fields.getValue(path))}
-      addLabel={addLabel}
-      keyPlaceholder={keyPlaceholder}
-      createValue={() => 0}
-      renderValue={(value, onValueChange, key) => (
-        <NumberField
-          label=""
-          ariaLabel={`${ariaLabel} ${key || 'new entry'} value`}
-          value={asNumber(value)}
-          onChange={(next) => onValueChange(next ?? 0)}
-        />
-      )}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <KeyValueMapField<number>
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asMap<number>(fields.getValue(path))}
+        addLabel={addLabel}
+        keyPlaceholder={keyPlaceholder}
+        createValue={() => 0}
+        renderValue={(value, onValueChange, key) => (
+          <NumberField
+            label=""
+            ariaLabel={`${ariaLabel} ${key || 'new entry'} value`}
+            value={asNumber(value)}
+            onChange={(next) => onValueChange(next ?? 0)}
+          />
+        )}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }
 
@@ -351,15 +469,18 @@ export function StringListConfigField({
   ariaLabel,
   addLabel,
   placeholder,
+  managedAction,
 }: ConfigFieldBase & { addLabel?: string; placeholder?: string }) {
   return (
-    <StringListField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asStringList(fields.getValue(path))}
-      addLabel={addLabel}
-      placeholder={placeholder}
-      onChange={(value) => fields.setValue(path, value)}
-    />
+    <ConfigFieldState fields={fields} path={path}>
+      <StringListField
+        label={label}
+        ariaLabel={ariaLabel}
+        value={asStringList(fields.getValue(path))}
+        addLabel={addLabel}
+        placeholder={placeholder}
+        onChange={(value) => updateConfigField(fields, path, value, managedAction)}
+      />
+    </ConfigFieldState>
   )
 }

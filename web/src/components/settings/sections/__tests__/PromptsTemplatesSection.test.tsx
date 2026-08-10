@@ -91,10 +91,8 @@ function makeContext(
     templateContent: 'defaults:\n  enabled: true\n',
     saveTemplate: vi.fn(async () => ({ ok: true })),
     exportConfig: vi.fn(async () => ({
-      exported_at: '2026-06-15T00:00:00Z',
-      config_store: { a: 1 },
-      prompts: {},
-      secrets: [],
+      revision: 7,
+      content: 'memory:\n  enabled: true\n',
     })),
     importConfig: vi.fn(async () => ({ success: true, summary: 'Imported 3 keys' })),
     ...overrides,
@@ -343,29 +341,19 @@ describe('PromptsTemplatesSection', () => {
     expect(createUrl).toHaveBeenCalled()
   })
 
-  it('imports a configuration bundle from a file and shows the result', async () => {
+  it('imports a YAML configuration document from a file and shows the result', async () => {
     const ctx = makeContext()
     renderSection(ctx)
 
-    const bundle = {
-      config_store: { x: 1 },
-      config: { y: 2 },
-      prompts: { 'agents/summary': 'body' },
-    }
-    const file = new File([JSON.stringify(bundle)], 'config.json', {
-      type: 'application/json',
+    const content = 'memory:\n  enabled: true\n'
+    const file = new File([content], 'config.yaml', {
+      type: 'application/yaml',
     })
     fireEvent.change(screen.getByLabelText('Import configuration file'), {
       target: { files: [file] },
     })
 
-    await waitFor(() =>
-      expect(ctx.importConfig).toHaveBeenCalledWith({
-        config_store: { x: 1 },
-        config: { y: 2 },
-        prompts: { 'agents/summary': 'body' },
-      }),
-    )
+    await waitFor(() => expect(ctx.importConfig).toHaveBeenCalledWith(content))
     expect(await screen.findByText(/Imported 3 keys/)).toBeInTheDocument()
   })
 

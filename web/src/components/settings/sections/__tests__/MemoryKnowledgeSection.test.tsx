@@ -202,12 +202,15 @@ function makeConfigValues(): Record<string, unknown> {
       query_synthesis_threshold: 3,
       query_max_chars: 2000,
     },
-    embeddings: {
-      model: 'text-embedding-3-small',
-      dim: 1536,
-      api_base: 'https://api.example/v1',
-      api_key: 'sk-secret',
-      query_prefix: 'query: ',
+    ai: {
+      embeddings: {
+        model: 'text-embedding-3-small',
+        dim: 1536,
+        api_base: 'https://api.example/v1',
+        api_key: 'sk-secret',
+        query_prefix: 'query: ',
+        catalog_key: 'openai/text-embedding-3-small',
+      },
     },
     databases: {
       qdrant: {
@@ -327,6 +330,9 @@ describe('MemoryKnowledgeSection', () => {
       'text-embedding-3-small',
     )
     expect(screen.getByLabelText('Embedding dimensions')).toHaveValue(1536)
+    expect(screen.getByLabelText('Embedding catalog key')).toHaveValue(
+      'openai/text-embedding-3-small',
+    )
     expect(screen.getByLabelText('Qdrant URL')).toHaveValue(
       'http://localhost:6333',
     )

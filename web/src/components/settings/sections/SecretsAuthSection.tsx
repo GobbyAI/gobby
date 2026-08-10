@@ -25,7 +25,7 @@ import type { SecretInfo } from '../../../hooks/useConfiguration'
 
 const AUTH_PATHS = ['auth.username', 'auth.password'] as const
 const SERVICE_PATHS = [
-  'embeddings.api_key',
+  'ai.embeddings.api_key',
   'databases.qdrant.api_key',
   'databases.falkordb.password',
 ] as const
@@ -79,7 +79,7 @@ function ServiceCredentialsGroup({ fields }: { fields: SettingsSectionFields }) 
     >
       <SecretConfigField
         fields={fields}
-        path="embeddings.api_key"
+        path="ai.embeddings.api_key"
         label="Embeddings API key"
         ariaLabel="Embeddings API key"
         placeholder="Inherit from the embedding provider"

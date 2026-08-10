@@ -252,11 +252,12 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | databases.falkordb.graph_search | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | databases.falkordb.graph_min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | databases.falkordb.rrf_k | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| embeddings.model | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
-| embeddings.dim | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| embeddings.api_base | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
-| embeddings.api_key | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
-| embeddings.query_prefix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
+| ai.embeddings.model | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.dim | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.api_base | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.api_key | Registry schema via /api/config/schema; save via revisioned PATCH | Settings -> secret field | live | keep | secrets-auth |  |
+| ai.embeddings.query_prefix | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.catalog_key | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed action | managed | keep | memory-knowledge |  |
 | ai.generation.timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
 | ai.generation.candidate_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
 | ai.generation.endpoints | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=object |

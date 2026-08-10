@@ -46,6 +46,8 @@ export function resolveSchemaNode(
   dottedPath: string,
 ): SchemaNode | null {
   if (!root || !dottedPath) return null
+  const direct = (root.properties as Record<string, SchemaNode> | undefined)?.[dottedPath]
+  if (direct && typeof direct === 'object') return direct
   const defs = getDefs(root)
   let current = resolveRef(root, defs)
   for (const part of dottedPath.split('.')) {

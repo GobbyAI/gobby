@@ -17,7 +17,7 @@ const SCHEMA: Record<string, unknown> = { type: 'object', properties: {} }
 function makeConfigValues(): Record<string, unknown> {
   return {
     auth: { username: 'admin', password: '********' },
-    embeddings: { api_key: '********' },
+    ai: { embeddings: { api_key: '********' } },
     databases: {
       qdrant: { api_key: '********' },
       falkordb: { password: null },
@@ -46,7 +46,7 @@ function makeContext(
     configValues: makeConfigValues(),
     secretKeys: [
       'auth.password',
-      'embeddings.api_key',
+      'ai.embeddings.api_key',
       'databases.qdrant.api_key',
       'databases.falkordb.password',
     ],
@@ -120,7 +120,7 @@ describe('SecretsAuthSection', () => {
 
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     expect(ctx.saveConfig).toHaveBeenCalledWith(
-      expect.objectContaining({ 'embeddings.api_key': 'sk-new-embeddings' }),
+      expect.objectContaining({ 'ai.embeddings.api_key': 'sk-new-embeddings' }),
     )
   })
 

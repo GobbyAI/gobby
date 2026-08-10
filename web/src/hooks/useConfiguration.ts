@@ -1,4 +1,12 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
+import {
+  configurationClient,
+  type ConfigSchema,
+  type ConfigValuesSnapshot,
+} from '../api/config'
+export type { ConfigApplyFailure } from '../api/config'
+import type { ConfigApplyFailure } from '../api/config'
+import { useWebSocketConnected, useWebSocketEvent } from './useWebSocketEvent'
 
 // =============================================================================
 // Types
@@ -32,10 +40,8 @@ export interface PromptDetail {
 }
 
 export interface ConfigExportBundle {
-  exported_at: string
-  config_store: Record<string, unknown>
-  prompts: Record<string, string>
-  secrets: SecretInfo[]
+  revision: number
+  content: string
 }
 
 export interface ApprovalRulesPayload {
@@ -44,16 +50,96 @@ export interface ApprovalRulesPayload {
   built_in_exemptions: string[]
 }
 
+function recordAt(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function isSecretInfo(value: unknown): value is SecretInfo {
+  const item = recordAt(value)
+  return typeof item?.id === 'string'
+    && typeof item.name === 'string'
+    && typeof item.category === 'string'
+    && typeof item.created_at === 'string'
+    && typeof item.updated_at === 'string'
+}
+
+function isPromptInfo(value: unknown): value is PromptInfo {
+  const item = recordAt(value)
+  return typeof item?.path === 'string'
+    && typeof item.description === 'string'
+    && typeof item.category === 'string'
+    && (item.source === 'bundled' || item.source === 'overridden')
+    && typeof item.has_override === 'boolean'
+}
+
+function numberRecord(value: unknown): Record<string, number> {
+  const source = recordAt(value)
+  if (!source) return {}
+  return Object.fromEntries(
+    Object.entries(source).filter((entry): entry is [string, number] => {
+      return typeof entry[1] === 'number'
+    }),
+  )
+}
+
 // =============================================================================
 // Hook
 // =============================================================================
 
 export function useConfiguration() {
+  const initialSnapshot = configurationClient.currentSnapshot
   // Schema + Config
-  const [schema, setSchema] = useState<Record<string, unknown> | null>(null)
-  const [configValues, setConfigValues] = useState<Record<string, unknown>>({})
+  const [schema, setSchema] = useState<ConfigSchema | null>(null)
+  const [configValues, setConfigValues] = useState<Record<string, unknown>>(
+    initialSnapshot?.desired ?? {},
+  )
+  const [activeConfigValues, setActiveConfigValues] = useState<Record<string, unknown>>(
+    initialSnapshot?.active ?? {},
+  )
   const [secretKeys, setSecretKeys] = useState<string[]>([])
+  const [revision, setRevision] = useState(initialSnapshot?.revision ?? 0)
+  const [pendingRestartKeys, setPendingRestartKeys] = useState<string[]>(
+    initialSnapshot?.pending_restart_keys ?? [],
+  )
+  const [failedLiveKeys, setFailedLiveKeys] = useState<Record<string, ConfigApplyFailure>>(
+    initialSnapshot?.failed_live_keys ?? {},
+  )
+  const [mutationError, setMutationError] = useState<{
+    message: string
+    terminal: boolean
+  } | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+
+  const applySnapshot = useCallback((snapshot: ConfigValuesSnapshot) => {
+    setConfigValues(snapshot.desired)
+    setActiveConfigValues(snapshot.active)
+    setRevision(snapshot.revision)
+    setPendingRestartKeys(snapshot.pending_restart_keys)
+    setFailedLiveKeys(snapshot.failed_live_keys)
+    setSecretKeys(
+      Object.entries(snapshot.secret_set)
+        .filter(([, state]) => state.desired)
+        .map(([key]) => key),
+    )
+  }, [])
+
+  useEffect(() => configurationClient.subscribe(applySnapshot), [applySnapshot])
+
+  useWebSocketEvent('config_event', (event) => {
+    if ('revision' in event) configurationClient.observeRevision(event.revision)
+  })
+  const websocketConnected = useWebSocketConnected()
+  const connectionSeen = useRef(websocketConnected)
+  const previousConnection = useRef(websocketConnected)
+  useEffect(() => {
+    if (websocketConnected && !previousConnection.current && connectionSeen.current) {
+      void configurationClient.fetchValues()
+    }
+    if (websocketConnected) connectionSeen.current = true
+    previousConnection.current = websocketConnected
+  }, [websocketConnected])
 
   // Rules enforcement
   const [rulesEnforcement, setRulesEnforcementState] = useState(true)
@@ -76,30 +162,13 @@ export function useConfiguration() {
   // Schema + Config
   // =========================================================================
 
-  const fetchRulesEnforcement = useCallback(async () => {
-    try {
-      const res = await fetch('/api/rules')
-      if (res.ok) {
-        const data = await res.json()
-        if (data.enforcement_enabled !== undefined) {
-          setRulesEnforcementState(data.enforcement_enabled)
-        }
-      }
-    } catch (e) {
-      console.error('Failed to fetch rules enforcement:', e)
-    }
-  }, [])
-
   const setRulesEnforcement = useCallback(async (enabled: boolean): Promise<boolean> => {
     try {
-      const res = await fetch('/api/rules', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enforcement_enabled: enabled }),
+      const result = await configurationClient.patch({
+        rules: { enforcement_enabled: enabled },
       })
-      if (res.ok) {
-        const data = await res.json()
-        setRulesEnforcementState(data.enforcement_enabled)
+      if (result.kind === 'success') {
+        setRulesEnforcementState(enabled)
         return true
       }
     } catch (e) {
@@ -110,11 +179,8 @@ export function useConfiguration() {
 
   const fetchSchema = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/schema')
-      if (res.ok) {
-        const data = await res.json()
-        setSchema(data)
-      }
+      const data = await configurationClient.fetchSchema()
+      if (data) setSchema(data)
     } catch (e) {
       console.error('Failed to fetch config schema:', e)
     }
@@ -122,25 +188,27 @@ export function useConfiguration() {
 
   const fetchConfigValues = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/values')
-      if (res.ok) {
-        const data = await res.json()
-        if (data.values && typeof data.values === 'object' && !Array.isArray(data.values)) {
-          setConfigValues(data.values)
-          setSecretKeys(data.secret_keys || [])
-        }
+      const data = await configurationClient.fetchValues()
+      if (data) applySnapshot(data)
+      const rules = recordAt(data?.desired.rules)
+      if (typeof rules?.enforcement_enabled === 'boolean') {
+        setRulesEnforcementState(rules.enforcement_enabled)
+      }
+      const approvals = recordAt(data?.desired.tool_approvals)
+      if (Array.isArray(approvals?.global_rules)) {
+        setGlobalApprovalRules(
+          approvals.global_rules.filter((value): value is string => typeof value === 'string'),
+        )
       }
     } catch (e) {
       console.error('Failed to fetch config values:', e)
     }
-  }, [])
+  }, [applySnapshot])
 
   const fetchGlobalApprovalRules = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/tool-approvals/global')
-      if (res.ok) {
-        const data: ApprovalRulesPayload = await res.json()
-        setGlobalApprovalRules(data.rules || [])
+      const data = await configurationClient.fetchApprovalRules()
+      if (data) {
         setDefaultApprovalRules(data.default_rules || [])
         setBuiltInApprovalExemptions(data.built_in_exemptions || [])
       }
@@ -151,16 +219,11 @@ export function useConfiguration() {
 
   const saveGlobalApprovalRules = useCallback(async (rules: string[]): Promise<boolean> => {
     try {
-      const res = await fetch('/api/config/tool-approvals/global', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ rules }),
+      const result = await configurationClient.patch({
+        tool_approvals: { global_rules: rules },
       })
-      if (res.ok) {
-        const data: ApprovalRulesPayload & { ok: boolean } = await res.json()
-        setGlobalApprovalRules(data.rules || [])
-        setDefaultApprovalRules(data.default_rules || [])
-        setBuiltInApprovalExemptions(data.built_in_exemptions || [])
+      if (result.kind === 'success') {
+        setGlobalApprovalRules(rules)
         return true
       }
     } catch (e) {
@@ -175,49 +238,33 @@ export function useConfiguration() {
       await Promise.all([
         fetchSchema(),
         fetchConfigValues(),
-        fetchRulesEnforcement(),
         fetchGlobalApprovalRules(),
       ])
     } finally {
       setIsLoading(false)
     }
-  }, [fetchSchema, fetchConfigValues, fetchRulesEnforcement, fetchGlobalApprovalRules])
+  }, [fetchSchema, fetchConfigValues, fetchGlobalApprovalRules])
 
-  const saveConfig = useCallback(async (values: Record<string, unknown>): Promise<{ ok: boolean; errors?: string[] }> => {
+  const saveConfig = useCallback(async (values: Record<string, unknown>): Promise<{
+    ok: boolean
+    errors?: string[]
+    conflict?: boolean
+    terminal?: boolean
+  }> => {
     try {
-      const res = await fetch('/api/config/values', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values }),
-      })
-      const data = await res.json()
-      if (res.ok) return { ok: true }
-      return { ok: false, errors: [data.detail || 'Save failed'] }
+      setMutationError(null)
+      const result = await configurationClient.patch(values)
+      if (result.kind === 'success') return { ok: true }
+      const terminal = result.kind === 'revision_exhausted'
+      setMutationError({ message: result.message, terminal })
+      return {
+        ok: false,
+        errors: [result.message],
+        conflict: result.kind === 'conflict',
+        terminal,
+      }
     } catch (e) {
       return { ok: false, errors: [String(e)] }
-    }
-  }, [])
-
-  const validateConfig = useCallback(async (values: Record<string, unknown>): Promise<string[]> => {
-    try {
-      const res = await fetch('/api/config/values/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values }),
-      })
-      const data = await res.json()
-      return data.errors || []
-    } catch (e) {
-      return [String(e)]
-    }
-  }, [])
-
-  const resetToDefaults = useCallback(async (): Promise<boolean> => {
-    try {
-      const res = await fetch('/api/config/values/reset', { method: 'POST' })
-      return res.ok
-    } catch {
-      return false
     }
   }, [])
 
@@ -227,11 +274,8 @@ export function useConfiguration() {
 
   const fetchTemplate = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/template')
-      if (res.ok) {
-        const data = await res.json()
-        setTemplateContent(data.content || '')
-      }
+      const content = await configurationClient.fetchTemplate()
+      if (content !== null) setTemplateContent(content)
     } catch (e) {
       console.error('Failed to fetch template:', e)
     }
@@ -239,14 +283,9 @@ export function useConfiguration() {
 
   const saveTemplate = useCallback(async (content: string): Promise<{ ok: boolean; errors?: string[] }> => {
     try {
-      const res = await fetch('/api/config/template', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      })
-      const data = await res.json()
-      if (res.ok) return { ok: true }
-      return { ok: false, errors: [data.detail || 'Save failed'] }
+      const result = await configurationClient.saveTemplate(content)
+      if (result.kind === 'success') return { ok: true }
+      return { ok: false, errors: [result.message] }
     } catch (e) {
       return { ok: false, errors: [String(e)] }
     }
@@ -258,11 +297,14 @@ export function useConfiguration() {
 
   const fetchSecrets = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/secrets')
-      if (res.ok) {
-        const data = await res.json()
-        setSecrets(data.secrets || [])
-        setSecretCategories(data.categories || [])
+      const data = await configurationClient.fetchSecrets()
+      if (data) {
+        setSecrets(Array.isArray(data.secrets) ? data.secrets.filter(isSecretInfo) : [])
+        setSecretCategories(
+          Array.isArray(data.categories)
+            ? data.categories.filter((value): value is string => typeof value === 'string')
+            : [],
+        )
       }
     } catch (e) {
       console.error('Failed to fetch secrets:', e)
@@ -276,12 +318,7 @@ export function useConfiguration() {
     description?: string,
   ): Promise<boolean> => {
     try {
-      const res = await fetch('/api/config/secrets', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, value, category, description }),
-      })
-      if (res.ok) {
+      if (await configurationClient.saveSecret({ name, value, category, description })) {
         await fetchSecrets()
         return true
       }
@@ -293,10 +330,7 @@ export function useConfiguration() {
 
   const deleteSecret = useCallback(async (name: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/config/secrets/${encodeURIComponent(name)}`, {
-        method: 'DELETE',
-      })
-      if (res.ok) {
+      if (await configurationClient.deleteSecret(name)) {
         setSecrets(prev => prev.filter(s => s.name !== name))
         return true
       }
@@ -312,11 +346,10 @@ export function useConfiguration() {
 
   const fetchPrompts = useCallback(async () => {
     try {
-      const res = await fetch('/api/config/prompts')
-      if (res.ok) {
-        const data = await res.json()
-        setPrompts(data.prompts || [])
-        setPromptCategories(data.categories || {})
+      const data = await configurationClient.fetchPrompts()
+      if (data) {
+        setPrompts(Array.isArray(data.prompts) ? data.prompts.filter(isPromptInfo) : [])
+        setPromptCategories(numberRecord(data.categories))
       }
     } catch (e) {
       console.error('Failed to fetch prompts:', e)
@@ -325,8 +358,8 @@ export function useConfiguration() {
 
   const getPromptDetail = useCallback(async (path: string): Promise<PromptDetail | null> => {
     try {
-      const res = await fetch(`/api/config/prompts/${encodeURIComponent(path)}`)
-      if (res.ok) return await res.json()
+      const data = await configurationClient.fetchPrompt(path)
+      if (data) return data as unknown as PromptDetail
     } catch (e) {
       console.error('Failed to get prompt detail:', e)
     }
@@ -335,12 +368,7 @@ export function useConfiguration() {
 
   const savePromptOverride = useCallback(async (path: string, content: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/config/prompts/${encodeURIComponent(path)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content }),
-      })
-      if (res.ok) {
+      if (await configurationClient.savePrompt(path, content)) {
         await fetchPrompts()
         return true
       }
@@ -352,10 +380,7 @@ export function useConfiguration() {
 
   const deletePromptOverride = useCallback(async (path: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/config/prompts/${encodeURIComponent(path)}`, {
-        method: 'DELETE',
-      })
-      if (res.ok) {
+      if (await configurationClient.deletePrompt(path)) {
         await fetchPrompts()
         return true
       }
@@ -371,38 +396,45 @@ export function useConfiguration() {
 
   const exportConfig = useCallback(async (): Promise<ConfigExportBundle | null> => {
     try {
-      const res = await fetch('/api/config/export', { method: 'POST' })
-      if (res.ok) return await res.json()
+      return await configurationClient.exportYaml()
     } catch (e) {
       console.error('Failed to export config:', e)
     }
     return null
   }, [])
 
-  const importConfig = useCallback(async (bundle: { config_store?: Record<string, unknown>; config?: Record<string, unknown>; prompts?: Record<string, string> }): Promise<{ success: boolean; summary: string }> => {
+  const importConfig = useCallback(async (content: string): Promise<{ success: boolean; summary: string }> => {
     try {
-      const res = await fetch('/api/config/import', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bundle),
-      })
-      const data = await res.json()
-      return { success: res.ok, summary: data.summary || data.detail || 'Unknown result' }
+      const result = await configurationClient.importYaml(content)
+      return {
+        success: result.kind === 'success',
+        summary: result.kind === 'success'
+          ? `Committed revision ${result.revision}`
+          : result.message,
+      }
     } catch (e) {
       return { success: false, summary: String(e) }
     }
   }, [])
 
+  const runManagedAction = useCallback(async (
+    action: string,
+    payload: Record<string, unknown>,
+  ): Promise<boolean> => configurationClient.runManagedAction(action, payload), [])
+
   return {
     // Schema + Config
     schema,
     configValues,
+    activeConfigValues,
     secretKeys,
+    revision,
+    pendingRestartKeys,
+    failedLiveKeys,
+    mutationError,
     isLoading,
     fetchConfig,
     saveConfig,
-    validateConfig,
-    resetToDefaults,
 
     // Rules enforcement
     rulesEnforcement,
@@ -436,5 +468,6 @@ export function useConfiguration() {
     // Export/Import
     exportConfig,
     importConfig,
+    runManagedAction,
   }
 }

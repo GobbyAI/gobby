@@ -5,6 +5,7 @@ import {
   type PlanPendingVariant,
 } from '../components/chat/planPendingSurface'
 import { normalizeChatMode, type ChatMode } from '../types/chat'
+import { configurationClient } from '../api/config'
 
 export type Theme = 'dark' | 'light' | 'system'
 export type VoiceInputMode = 'ptt' | 'vad'
@@ -118,8 +119,11 @@ function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settin
 
 async function fetchUISettings(): Promise<Partial<Settings> | null> {
   try {
-    const res = await fetch('/api/config/ui-settings')
-    if (res.ok) return await res.json()
+    const snapshot = await configurationClient.fetchValues()
+    const settings = snapshot?.desired.ui_settings
+    if (settings && typeof settings === 'object' && !Array.isArray(settings)) {
+      return settings as Partial<Settings>
+    }
   } catch {
     // API unavailable — fall back to localStorage only
   }
@@ -132,11 +136,7 @@ async function saveUISettings(settings: Settings): Promise<void> {
     for (const key of PERSISTABLE_KEYS) {
       body[key] = settings[key]
     }
-    await fetch('/api/config/ui-settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
+    await configurationClient.patch({ ui_settings: body })
   } catch {
     // Best-effort; localStorage is the fast cache
   }
@@ -188,6 +188,7 @@ export function useSettings() {
 
   const initialized = useRef(false)
   const pendingChanges = useRef<Partial<Settings>>({})
+  const skipNextPersistence = useRef(false)
 
   // On mount: fetch from API and merge (API wins over localStorage, while
   // explicit changes made during the fetch win over the API).
@@ -200,6 +201,7 @@ export function useSettings() {
       const changes = pendingChanges.current
       pendingChanges.current = {}
       if (!remote && Object.keys(changes).length === 0) return
+      skipNextPersistence.current = Object.keys(changes).length === 0
 
       setSettings((prev) => {
         const merged = {
@@ -251,6 +253,10 @@ export function useSettings() {
   // Persist settings on change (localStorage + API)
   useEffect(() => {
     if (!initialized.current) return
+    if (skipNextPersistence.current) {
+      skipNextPersistence.current = false
+      return
+    }
     saveToLocalStorage(settings)
     saveUISettings(settings)
   }, [settings])

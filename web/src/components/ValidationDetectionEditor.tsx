@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import { inputFocusCls } from './shared/focusStyles'
+import { configurationClient } from '../api/config'
 
 // Class tokens hoisted from the now-deleted legacy configuration-page styles
 // module. This is the only surviving consumer (reused by the settings overlay's
@@ -108,17 +109,12 @@ export function ValidationDetectionEditor({
     setPreviewError(null)
     try {
       const parsed = JSON.parse(editorJsonText) as Record<string, unknown>
-      const response = await fetch('/api/config/validation-detection/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command, config: parsed }),
-      })
-      const data = await response.json()
-      if (!response.ok) {
-        setPreviewError(data.detail || 'Preview failed')
+      const result = await configurationClient.previewValidationDetection(command, parsed)
+      if (!result.ok) {
+        setPreviewError(typeof result.body.detail === 'string' ? result.body.detail : 'Preview failed')
         return
       }
-      setPreview(data)
+      setPreview(result.body as unknown as PreviewResult)
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : String(error))
     }

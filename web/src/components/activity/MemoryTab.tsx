@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
+import { configurationClient } from "../../api/config";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
@@ -135,25 +136,21 @@ export const MemoryTab = memo(function MemoryTab({
   }, [search, searchMemories]);
 
   useEffect(() => {
-    const controller = new AbortController();
     async function fetchPurgeConfig() {
       try {
-        const response = await fetch("/api/config/values", { signal: controller.signal });
-        if (!response.ok) {
-          setError(`Failed to load memory purge settings (${response.status})`);
+        const snapshot = await configurationClient.fetchValues();
+        if (!snapshot) {
+          setError("Failed to load memory purge settings");
           return;
         }
-        const payload = await response.json();
-        setPurgeGraceDays(extractDreamPurgeGraceDays(payload.values));
-        setGraphLimits(extractGraphLimits(payload.values));
+        setPurgeGraceDays(extractDreamPurgeGraceDays(snapshot.desired));
+        setGraphLimits(extractGraphLimits(snapshot.desired));
       } catch (configError) {
-        if (configError instanceof DOMException && configError.name === "AbortError") return;
         console.warn("Failed to load memory dream purge config", configError);
         setError("Failed to load memory purge settings");
       }
     }
     void fetchPurgeConfig();
-    return () => controller.abort();
   }, []);
 
   const patchFilters = useCallback(
@@ -223,19 +220,15 @@ export const MemoryTab = memo(function MemoryTab({
   // the graph refetches immediately; a failed save just logs.
   const handleGraphLimitsChange = useCallback((next: GraphLimits) => {
     setGraphLimits(next);
-    void fetch("/api/config/values", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        values: {
-          ui: {
-            knowledge_graph_limit: next.entities,
-            knowledge_graph_relationship_limit: next.relationships,
-          },
-        },
-      }),
-    }).then((response) => {
-      if (!response.ok) console.warn("Failed to persist graph limits", response.status);
+    void configurationClient.patch({
+      ui: {
+        knowledge_graph_limit: next.entities,
+        knowledge_graph_relationship_limit: next.relationships,
+      },
+    }).then((result) => {
+      if (result.kind !== "success") {
+        console.warn("Failed to persist graph limits", result.message);
+      }
     }).catch((saveError: unknown) => {
       console.warn("Failed to persist graph limits", saveError);
     });

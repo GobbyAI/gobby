@@ -69,12 +69,8 @@ export function SettingsSectionProvider({
   // Import rewrites the config store, prompts, and config at once, so refetch
   // every surface this provider exposes once it succeeds.
   const importConfig = useCallback(
-    async (bundle: {
-      config_store?: Record<string, unknown>
-      config?: Record<string, unknown>
-      prompts?: Record<string, string>
-    }) => {
-      const result = await persistImport(bundle)
+    async (content: string) => {
+      const result = await persistImport(content)
       if (result.success) {
         await Promise.all([fetchConfig(), fetchPrompts(), fetchTemplate()])
       }
@@ -87,7 +83,11 @@ export function SettingsSectionProvider({
     () => ({
       schema: config.schema,
       configValues: config.configValues,
+      activeConfigValues: config.activeConfigValues,
       secretKeys: config.secretKeys,
+      pendingRestartKeys: config.pendingRestartKeys,
+      failedLiveKeys: config.failedLiveKeys,
+      mutationError: config.mutationError,
       isLoading: config.isLoading,
       saveConfig,
       registerDirtyGuard,
@@ -113,11 +113,16 @@ export function SettingsSectionProvider({
       saveTemplate: config.saveTemplate,
       exportConfig: config.exportConfig,
       importConfig,
+      runManagedAction: config.runManagedAction,
     }),
     [
       config.schema,
       config.configValues,
+      config.activeConfigValues,
       config.secretKeys,
+      config.pendingRestartKeys,
+      config.failedLiveKeys,
+      config.mutationError,
       config.isLoading,
       saveConfig,
       registerDirtyGuard,
@@ -143,6 +148,7 @@ export function SettingsSectionProvider({
       config.saveTemplate,
       config.exportConfig,
       importConfig,
+      config.runManagedAction,
     ],
   )
 

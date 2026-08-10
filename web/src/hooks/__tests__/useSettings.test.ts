@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { configurationClient } from '../../api/config'
 import { cacheBustedIconHref, useSettings } from '../useSettings'
 
 function iconLink() {
@@ -12,6 +13,7 @@ function appleTouchIconLink() {
 
 describe('useSettings', () => {
   beforeEach(() => {
+    configurationClient.reset()
     localStorage.clear()
     document.head.innerHTML = `
       <link rel="icon" type="image/png" href="/logo.png?v=2">
@@ -79,6 +81,51 @@ describe('useSettings', () => {
     })
   })
 
+  it('persists_settings_through_config_patch', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (input === '/api/config/values' && init?.method === 'PATCH') {
+        return new Response(JSON.stringify({
+          committed: true,
+          revision: 5,
+          changed_keys: ['ui_settings.theme'],
+          apply_status: 'applied',
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }), { status: 200 })
+      }
+      if (input === '/api/config/values') {
+        return new Response(JSON.stringify({
+          revision: 4,
+          desired: { ui_settings: { theme: 'dark', fontSize: 16 } },
+          active: { ui_settings: { theme: 'dark', fontSize: 16 } },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }), { status: 200 })
+      }
+      throw new Error(`Unexpected request: ${String(input)}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const { result } = renderHook(() => useSettings())
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => url === '/api/config/values')).toBe(true)
+    })
+
+    act(() => result.current.updateTheme('light'))
+
+    await waitFor(() => {
+      const patchCall = fetchMock.mock.calls.find(([, init]) => {
+        if (init?.method !== 'PATCH') return false
+        return JSON.parse(String(init.body)).values.ui_settings.theme === 'light'
+      })
+      expect(patchCall).toBeDefined()
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+        expected_revision: 4,
+        values: { ui_settings: { theme: 'light', fontSize: 16 } },
+      })
+    })
+  })
+
   it('normalizes an empty persisted plan pending variant', () => {
     localStorage.setItem('gobby-settings', JSON.stringify({ planPendingVariant: '' }))
     const { result } = renderHook(() => useSettings())
@@ -87,13 +134,31 @@ describe('useSettings', () => {
   })
 
   it('applies density to the document, persists it to localStorage, and never sends it to the API', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      return new Response(JSON.stringify(init?.method === 'PATCH' ? {
+        committed: true,
+        revision: 2,
+        changed_keys: [],
+        apply_status: 'applied',
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      } : {
+        revision: 1,
+        desired: { ui_settings: {} },
+        active: { ui_settings: {} },
+        secret_set: {},
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
     const { result } = renderHook(() => useSettings())
 
     await waitFor(() => {
       expect(document.documentElement).toHaveAttribute('data-density', 'comfortable')
     })
 
-    const fetchMock = vi.mocked(fetch)
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
     fetchMock.mockClear()
 
     act(() => {
@@ -108,15 +173,13 @@ describe('useSettings', () => {
       expect(stored.density).toBe('compact')
     })
 
-    // density has no backend field, so it must be excluded from the ui_settings
-    // PUT payload — sending it would be a silent no-op (dead-frontend).
-    const putCall = fetchMock.mock.calls.find(
-      ([url, init]) => url === '/api/config/ui-settings' && init?.method === 'PUT',
+    const patchCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === '/api/config/values' && init?.method === 'PATCH',
     )
-    expect(putCall).toBeDefined()
-    const body = JSON.parse((putCall?.[1]?.body as string) ?? '{}')
-    expect(body).not.toHaveProperty('density')
-    expect(body).toHaveProperty('theme')
+    expect(patchCall).toBeDefined()
+    const body = JSON.parse((patchCall?.[1]?.body as string) ?? '{}')
+    expect(body.values.ui_settings).not.toHaveProperty('density')
+    expect(body.values.ui_settings).toHaveProperty('theme')
   })
 
   it('normalizes an out-of-range persisted density to comfortable', () => {
@@ -132,10 +195,17 @@ describe('useSettings', () => {
       resolveRemote = resolve
     })
     const fetchMock = vi.fn((url: string | URL | Request, init?: RequestInit) => {
-      if (url === '/api/config/ui-settings' && init?.method === undefined) {
+      if (url === '/api/config/values' && init?.method === undefined) {
         return remoteResponse
       }
-      return Promise.resolve(new Response(null, { status: 204 }))
+      return Promise.resolve(new Response(JSON.stringify({
+        committed: true,
+        revision: 2,
+        changed_keys: ['ui_settings.theme'],
+        apply_status: 'applied',
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      }), { status: 200 }))
     })
     vi.stubGlobal('fetch', fetchMock)
 
@@ -150,7 +220,14 @@ describe('useSettings', () => {
 
     await act(async () => {
       resolveRemote(
-        new Response(JSON.stringify({ theme: 'light', fontSize: 18 }), {
+        new Response(JSON.stringify({
+          revision: 1,
+          desired: { ui_settings: { theme: 'light', fontSize: 18 } },
+          active: { ui_settings: { theme: 'light', fontSize: 18 } },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         }),
@@ -162,11 +239,11 @@ describe('useSettings', () => {
       expect(result.current.settings).toMatchObject({ theme: 'dark', fontSize: 18 })
     })
     await waitFor(() => {
-      const putCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PUT')
-      expect(putCall).toBeDefined()
-      expect(JSON.parse(putCall?.[1]?.body as string)).toMatchObject({
-        theme: 'dark',
-        fontSize: 18,
+      const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'PATCH')
+      expect(patchCall).toBeDefined()
+      expect(JSON.parse(patchCall?.[1]?.body as string)).toMatchObject({
+        expected_revision: 1,
+        values: { ui_settings: { theme: 'dark', fontSize: 18 } },
       })
     })
   })
