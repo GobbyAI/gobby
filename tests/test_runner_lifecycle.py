@@ -1460,6 +1460,21 @@ class TestShutdownDaemonServices:
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
+        deadline_expired = asyncio.Event()
+        block_cleanup = asyncio.Event()
+
+        async def wait_for_overall_deadline(*_args: object, **_kwargs: object) -> None:
+            try:
+                await block_cleanup.wait()
+            except asyncio.CancelledError:
+                deadline_expired.set()
+                raise
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_run_async_shutdown_cleanup",
+            wait_for_overall_deadline,
+        )
 
         def blocked_delete(boundary: DestructiveBoundary) -> None:
             assert boundary.begin_mutation()
@@ -1492,7 +1507,7 @@ class TestShutdownDaemonServices:
                 )
             )
             await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
-            await asyncio.sleep(0.06)
+            await asyncio.wait_for(deadline_expired.wait(), timeout=1.0)
             runner.database.close.assert_not_called()
 
             release_worker.set()
@@ -2093,7 +2108,7 @@ class TestRunGobbyFunction:
         ):
             mock_runner = AsyncMock()
             mock_runner.run = AsyncMock()
-            mock_runner_cls.return_value = mock_runner
+            mock_runner_cls.create = AsyncMock(return_value=mock_runner)
 
             ownership = FailOpenPidOwnership("test")
             await run_gobby(
@@ -2102,7 +2117,7 @@ class TestRunGobbyFunction:
                 ownership_resolution=ownership,
             )
 
-            mock_runner_cls.assert_called_once_with(
+            mock_runner_cls.create.assert_awaited_once_with(
                 config_path=Path("/tmp/config.yaml"), verbose=True
             )
             mock_runner.run.assert_called_once_with(ownership_resolution=ownership)

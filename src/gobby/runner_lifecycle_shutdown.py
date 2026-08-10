@@ -784,6 +784,9 @@ async def _run_async_shutdown_cleanup(
 
     await _settle_terminal_delivery_barrier()
     await _best_effort(shutdown_rule_allow_audit, "Rule allow audit drain")
+    config_runtime = getattr(runner, "config_runtime", None)
+    if config_runtime is not None:
+        await _best_effort(config_runtime.close, "Config runtime shutdown")
     preserved_agent_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
     if preserved_agent_pids is None:
         logger.warning(

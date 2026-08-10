@@ -18,7 +18,7 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from gobby.shutdown_intent import ShutdownIntent
 
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.code_index.nightly_reindex import CodeIndexNightlyFullReindexer
     from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
+    from gobby.config.runtime import ConfigRuntime
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
@@ -150,6 +151,7 @@ class GobbyRunner:
     database_watchdog: DatabaseSaturationWatchdog
     secret_store: SecretStore
     config_store: ConfigStore
+    config_runtime: ConfigRuntime
     session_manager: SessionManager
     task_manager: LocalTaskManager
     session_task_manager: SessionTaskManager
@@ -207,26 +209,56 @@ class GobbyRunner:
     websocket_server: WebSocketServer | None
 
     def __init__(self, config_path: Path | None = None, verbose: bool = False):
-        from gobby.runner_init import (
-            init_orchestration,
-            init_servers,
-            init_services,
-            init_storage_and_config,
-        )
-        from gobby.runner_rollback import rollback_runner_resources
+        self._prepare_base_state()
+        try:
+            self._initialize_storage(config_path, verbose)
+            self._initialize_post_database_services()
+        except BaseException:
+            from gobby.runner_rollback import rollback_runner_resources
 
+            rollback_runner_resources(self)
+            raise
+
+    @classmethod
+    async def create(cls, config_path: Path | None = None, verbose: bool = False) -> Self:
+        """Build the production runner after ConfigRuntime reaches its initial epoch."""
+        self = cls.__new__(cls)
+        self._prepare_base_state()
+        try:
+            self._initialize_storage(config_path, verbose)
+            await self.config_runtime.start()
+            self._initialize_post_database_services()
+        except BaseException:
+            runtime = getattr(self, "config_runtime", None)
+            if runtime is not None:
+                await runtime.close()
+            from gobby.runner_rollback import rollback_runner_resources
+
+            rollback_runner_resources(self)
+            raise
+        return self
+
+    def _prepare_base_state(self) -> None:
         self.degraded_services = set()
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
-        try:
-            init_storage_and_config(self, config_path, verbose)
-            init_services(self)
-            init_orchestration(self)
-            init_servers(self)
-        except BaseException:
-            rollback_runner_resources(self)
-            raise
+
+    def _initialize_storage(self, config_path: Path | None, verbose: bool) -> None:
+        from gobby.runner_init import init_storage_and_config
+
+        init_storage_and_config(self, config_path, verbose)
+
+    def _initialize_post_database_services(self) -> None:
+        from gobby.runner_init import (
+            init_orchestration,
+            init_servers,
+            init_services,
+        )
+
+        init_services(self)
+        init_orchestration(self)
+        init_servers(self)
 
     async def run(self, *, ownership_resolution: PidOwnershipResolution) -> None:
         from gobby.runner_lifecycle import run_daemon
@@ -309,7 +341,7 @@ async def run_gobby(
             if not promoted:
                 return
 
-        runner = GobbyRunner(config_path=config_path, verbose=verbose)
+        runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
         runner.daemon_lease = lease
         lease_monitor_stop = asyncio.Event()
         async with asyncio.TaskGroup() as tasks:

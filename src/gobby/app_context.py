@@ -31,6 +31,7 @@ from gobby.worktrees.executor import WorktreeDeleteExecutor, run_worktree_delete
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
+    from gobby.config.runtime import ConfigRuntime
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
@@ -112,7 +113,7 @@ class ServiceContainer:
 
     # Config
     config_store: Any | None = None  # ConfigStore
-    config_runtime: Any | None = None  # ConfigRuntime
+    config_runtime: ConfigRuntime | None = None
     config_documents_service: Any | None = None  # ConfigDocumentsService
     config_values_service: Any | None = None  # ConfigValuesService
     provider_capability_service: Any | None = None  # CapabilityRefreshCoordinator

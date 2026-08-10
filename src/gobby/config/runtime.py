@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from collections.abc import AsyncIterator, Callable, Iterable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
@@ -15,6 +15,13 @@ from typing import Protocol, TypeVar
 
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import CONFIG_REGISTRY, ActivationPolicy
+from gobby.config.runtime_models import (
+    ApplyFailure,
+    ConfigChange,
+    ConfigSnapshot,
+    RuntimeSecretBinding,
+    UnavailableService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -102,146 +109,6 @@ class ConstructorLaneSaturatedError(ConfigRuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeSecretBinding:
-    """Private last-good secret payload captured with a content fingerprint."""
-
-    reference: str
-    plaintext: str | None = field(repr=False)
-    fingerprint: str
-
-
-@dataclass(frozen=True, slots=True)
-class ApplyFailure:
-    """Local activation failure for one committed revision."""
-
-    revision: int
-    subscriber: str
-    keys: frozenset[str]
-    message: str
-
-
-@dataclass(frozen=True, slots=True, init=False)
-class ConfigSnapshot:
-    """One deeply immutable desired/active configuration epoch."""
-
-    revision: int
-    row_revisions: MappingProxyType[str, int]
-    pending_restart_keys: frozenset[str]
-    failed_live_keys: MappingProxyType[str, ApplyFailure]
-    _desired: DaemonConfig = field(repr=False, compare=False)
-    _active: DaemonConfig = field(repr=False, compare=False)
-    _desired_values: MappingProxyType[str, object] = field(repr=False, compare=False)
-    _active_values: MappingProxyType[str, object] = field(repr=False, compare=False)
-    _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
-        repr=False, compare=False
-    )
-    _active_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(repr=False, compare=False)
-
-    def __init__(
-        self,
-        *,
-        revision: int,
-        desired: DaemonConfig,
-        active: DaemonConfig,
-        row_revisions: Mapping[str, int],
-        pending_restart_keys: frozenset[str],
-        failed_live_keys: Mapping[str, ApplyFailure],
-        desired_values: Mapping[str, object] | None = None,
-        active_values: Mapping[str, object] | None = None,
-        desired_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
-        active_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
-    ) -> None:
-        object.__setattr__(self, "revision", revision)
-        object.__setattr__(self, "row_revisions", MappingProxyType(dict(row_revisions)))
-        object.__setattr__(self, "pending_restart_keys", pending_restart_keys)
-        object.__setattr__(
-            self,
-            "failed_live_keys",
-            MappingProxyType(dict(failed_live_keys)),
-        )
-        object.__setattr__(self, "_desired", desired.model_copy(deep=True))
-        object.__setattr__(self, "_active", active.model_copy(deep=True))
-        object.__setattr__(
-            self,
-            "_desired_values",
-            MappingProxyType(dict(desired_values or {})),
-        )
-        object.__setattr__(
-            self,
-            "_active_values",
-            MappingProxyType(dict(active_values or {})),
-        )
-        object.__setattr__(
-            self,
-            "_desired_bindings",
-            MappingProxyType(dict(desired_bindings or {})),
-        )
-        object.__setattr__(
-            self,
-            "_active_bindings",
-            MappingProxyType(dict(active_bindings or {})),
-        )
-
-    @property
-    def desired(self) -> DaemonConfig:
-        """Return an isolated typed desired projection."""
-        return self._desired.model_copy(deep=True)
-
-    @property
-    def active(self) -> DaemonConfig:
-        """Return an isolated typed active projection."""
-        return self._active.model_copy(deep=True)
-
-    @property
-    def desired_values(self) -> Mapping[str, object]:
-        return self._desired_values
-
-    @property
-    def active_values(self) -> Mapping[str, object]:
-        return self._active_values
-
-    def desired_secret(self, key: str) -> str | None:
-        binding = self._desired_bindings.get(key)
-        return None if binding is None else binding.plaintext
-
-    def active_secret(self, key: str) -> str | None:
-        binding = self._active_bindings.get(key)
-        return None if binding is None else binding.plaintext
-
-    def desired_secret_fingerprint(self, key: str) -> str | None:
-        binding = self._desired_bindings.get(key)
-        return None if binding is None else binding.fingerprint
-
-    def active_secret_fingerprint(self, key: str) -> str | None:
-        binding = self._active_bindings.get(key)
-        return None if binding is None else binding.fingerprint
-
-
-@dataclass(frozen=True, slots=True)
-class ConfigChange:
-    """Candidate revision supplied to prepared subscribers."""
-
-    revision: int
-    changed_keys: frozenset[str]
-    previous: ConfigSnapshot | None
-    desired: DaemonConfig
-    _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
-        repr=False, compare=False
-    )
-
-    def desired_secret(self, key: str) -> str | None:
-        binding = self._desired_bindings.get(key)
-        return None if binding is None else binding.plaintext
-
-
-@dataclass(frozen=True, slots=True)
-class UnavailableService:
-    """Explicit optional-capability slot published after initial failure."""
-
-    failure: ApplyFailure
-
-
-@dataclass(frozen=True, slots=True)
 class RuntimeActiveBundle:
     """Atomically published snapshot and replaceable service references."""
 
@@ -320,6 +187,7 @@ class ConfigRuntime:
         self._max_requested_revision = -1
         self._bundle: RuntimeActiveBundle | None = None
         self._listener_task: asyncio.Task[None] | None = None
+        self._revision_publisher: Callable[[int], Awaitable[None]] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ready = False
         self._healthy = False
@@ -347,6 +215,15 @@ class ConfigRuntime:
         if bundle is None:
             raise RuntimeError("ConfigRuntime has not started")
         return bundle
+
+    def register_revision_publisher(
+        self,
+        publisher: Callable[[int], Awaitable[None]],
+    ) -> None:
+        """Register the daemon's single post-reconciliation revision publisher."""
+        if self._revision_publisher is not None:
+            raise RuntimeError("Configuration revision publisher is already registered")
+        self._revision_publisher = publisher
 
     async def start(self) -> ConfigSnapshot:
         if self._closed:
@@ -537,6 +414,8 @@ class ConfigRuntime:
                 MappingProxyType(handles),
             )
             await self._dispose_replaced(old_handles)
+            if self._revision_publisher is not None:
+                await self._revision_publisher(snapshot.revision)
             force = False
             if self._max_requested_revision <= snapshot.revision:
                 return snapshot

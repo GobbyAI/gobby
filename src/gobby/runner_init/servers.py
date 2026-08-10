@@ -49,6 +49,14 @@ def _local_provider_metadata_exclusions() -> frozenset[str]:
     return frozenset(providers)
 
 
+def register_config_event_publisher(runner: GobbyRunner) -> None:
+    """Publish each reconciled configuration revision to WebSocket clients."""
+    websocket_server = runner.websocket_server
+    if websocket_server is None:
+        return
+    runner.config_runtime.register_revision_publisher(websocket_server.broadcast_config_event)
+
+
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
     web_chat_session_registry = WebChatSessionRegistry()
@@ -125,6 +133,7 @@ def init_servers(runner: GobbyRunner) -> None:
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
         config_store=runner.config_store,
+        config_runtime=runner.config_runtime,
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
         model_metadata_coverage_auditor=model_metadata_coverage_auditor,
@@ -278,6 +287,8 @@ def init_servers(runner: GobbyRunner) -> None:
 
         if runner.pipeline_executor:
             setup_pipeline_event_broadcasting(runner.websocket_server, runner.pipeline_executor)
+
+    register_config_event_publisher(runner)
 
     if runner.cron_scheduler and (runner.websocket_server or runner.communications_manager):
         from gobby.runner_broadcasting import setup_cron_event_broadcasting

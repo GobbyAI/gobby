@@ -118,10 +118,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.secret_store = SecretStore(runner.database)
     runner.config_store = ConfigStore(runner.database, secret_store=runner.secret_store)
+    runner.secret_store.ensure_ready()
     runner.config_store.initialize()
     from gobby.providers.capabilities.metadata_aliases import seed_model_metadata_aliases
 
-    runner.secret_store.ensure_ready()
     seed_model_metadata_aliases(runner.config_store)
     ensure_local_api_token(runner.config_store)
     runner.config = load_config(
@@ -132,6 +132,20 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     )
     _warn_missing_terminal_dependency(runner.config)
     postgres_database = cast(PostgresHubDatabase, runner.database)
+    from gobby.config.runtime import ConfigRuntime
+    from gobby.storage.config_notifications import ConfigNotificationListener
+    from gobby.storage.config_repository import ConfigRepository
+
+    config_repository = ConfigRepository(
+        runner.database,
+        secret_store=runner.secret_store,
+    )
+    runner.config_runtime = ConfigRuntime(
+        config_repository,
+        notification_source=ConfigNotificationListener(
+            postgres_database.open_runtime_async_connection,
+        ),
+    )
     database_capacity = postgres_database.server_capacity()
     runner.database_concurrency = resolve_database_concurrency(
         runner.config.database_concurrency,
