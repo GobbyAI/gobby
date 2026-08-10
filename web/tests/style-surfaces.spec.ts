@@ -2352,6 +2352,55 @@ test.describe("matrix parity review", () => {
   });
 });
 
+test.describe("settings overlay parity", () => {
+  const BEFORE_ENV = "GOBBY_CAPTURE_PARITY_BEFORE";
+  const AFTER_ENV = "GOBBY_CAPTURE_PARITY_AFTER";
+
+  test("every settings cell is pixel-identical across the labeled runs", () => {
+    const beforeLabel = process.env[BEFORE_ENV];
+    const afterLabel = process.env[AFTER_ENV];
+    test.skip(
+      !beforeLabel || !afterLabel,
+      `opt-in: set ${BEFORE_ENV} and ${AFTER_ENV} to finalized capture-run labels`,
+    );
+
+    const loadManifest = (label: string): FinalizedRunManifest => {
+      const manifestPath = path.join(
+        runDirFor(captureRootDir(), label),
+        "run-manifest.json",
+      );
+      expect(
+        fs.existsSync(manifestPath),
+        `no finalized capture run "${label}" at ${manifestPath}`,
+      ).toBe(true);
+      return JSON.parse(
+        fs.readFileSync(manifestPath, "utf8"),
+      ) as FinalizedRunManifest;
+    };
+    const before = loadManifest(beforeLabel!);
+    const after = loadManifest(afterLabel!);
+    const settingsKeys = expandCaptureCells()
+      .filter((cell) => cell.scenario.startsWith("settings-"))
+      .map((cell) => cell.key)
+      .sort();
+
+    expect(settingsKeys.length).toBeGreaterThan(0);
+    for (const key of settingsKeys) {
+      expect(before.cells[key], `before run is missing ${key}`).toBeDefined();
+      expect(after.cells[key], `after run is missing ${key}`).toBeDefined();
+    }
+
+    const differing = settingsKeys.filter(
+      (key) => before.cells[key]?.pngSha256 !== after.cells[key]?.pngSha256,
+    );
+    expect(
+      differing,
+      `${differing.length} settings cell(s) differ between "${beforeLabel}" ` +
+        `and "${afterLabel}" — fix each regression at its component utility.`,
+    ).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The capture matrix (opt-in, @style-capture project only)
 // ---------------------------------------------------------------------------

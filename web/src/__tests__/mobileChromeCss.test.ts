@@ -215,7 +215,67 @@ describe('mobile chrome CSS', () => {
       expect(existsSync(join(resolveWebPackageRoot(), 'src/styles', sheet))).toBe(false)
       expect(imports).not.toContain(`./styles/${sheet}`)
     }
+    expect(existsSync(join(resolveWebPackageRoot(), 'src/styles/settings-overlay.css'))).toBe(
+      false,
+    )
+    expect(imports).not.toContain('./styles/settings-overlay.css')
     expect(imports).not.toContain('./styles/settings.css')
+  })
+
+  it('keeps settings overlay geometry and coarse input floors pixel-neutral', async () => {
+    const overlaySource = readSource('src/components/settings/SettingsOverlay.tsx')
+    const appearanceSource = readSource(
+      'src/components/settings/sections/AppearanceSection.tsx',
+    )
+    const hubsSource = readSource('src/components/settings/sections/McpToolsSection.tsx')
+    const approvalsSource = readSource(
+      'src/components/settings/sections/ToolApprovalsSection.tsx',
+    )
+    const themeSource = readSource('src/styles/tailwind-theme.css')
+
+    for (const token of [
+      '[--control-row-height:var(--status-bar-control-height)]',
+      '[@media(max-width:768px)]:p-0',
+      '[@media(max-width:768px)]:h-full',
+      '[@media(max-width:768px)]:w-full',
+      '[@media(max-width:768px)]:rounded-none',
+      '[@media(max-width:768px)]:border-0',
+      'animate-settings-overlay-fade',
+      'animate-settings-overlay-rise',
+      'aria-expanded:[&_svg]:text-accent',
+    ]) {
+      expectClassToken(overlaySource, token)
+    }
+    expect(overlaySource).not.toContain(
+      'pointer-coarse:[--control-row-height:2.75rem]',
+    )
+    expect(themeSource).toContain(
+      '--animate-settings-overlay-fade: settings-overlay-fade 0.15s ease-out',
+    )
+    expect(themeSource).toContain(
+      '--animate-settings-overlay-rise: settings-overlay-rise 0.18s ease-out',
+    )
+    expectClassToken(appearanceSource, 'pointer-coarse:min-h-11')
+    expectClassToken(hubsSource, 'pointer-coarse:min-h-11')
+    expectClassToken(approvalsSource, 'pointer-coarse:min-h-11')
+
+    const inputTokens = ['h-9', 'pointer-coarse:min-h-11'] as const
+    const rangeTokens = ['h-auto', 'pointer-coarse:min-h-11'] as const
+    document.body.innerHTML = `
+      <input data-settings-input class="${inputTokens.join(' ')}" />
+      <input data-font-range type="range" class="${rangeTokens.join(' ')}" />
+    `
+    const style = await injectUtilityStyles([...inputTokens, ...rangeTokens], true)
+    const inputStyle = getComputedStyle(
+      document.querySelector('[data-settings-input]')!,
+    )
+    const rangeStyle = getComputedStyle(document.querySelector('[data-font-range]')!)
+    expect(cssLengthToPixels(inputStyle.minHeight)).toBe(44)
+    expect(cssLengthToPixels(rangeStyle.minHeight)).toBe(44)
+
+    style.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
   })
 
   it('retires the small activity tab sheets and every owner import', () => {

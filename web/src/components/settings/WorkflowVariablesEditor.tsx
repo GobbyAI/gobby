@@ -90,9 +90,11 @@ export function WorkflowVariablesEditor() {
   }
 
   return (
-    <div className="settings-variables">
-      <div className="settings-variables__head">
-        <span className="settings-field__label">Variable defaults</span>
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-base font-medium leading-[1.3] text-foreground">
+          Variable defaults
+        </span>
         <Button
           type="button"
           size="sm"
@@ -102,13 +104,13 @@ export function WorkflowVariablesEditor() {
           Add variable
         </Button>
       </div>
-      <p className="settings-field__hint">
+      <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
         Default session variable values. Bundled template variables ship with
         Gobby; variables you add can be toggled or deleted.
       </p>
 
       {showForm ? (
-        <div className="settings-variables__form">
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted p-3.5">
           <TextField
             label="Variable name"
             ariaLabel="Variable name"
@@ -130,7 +132,7 @@ export function WorkflowVariablesEditor() {
             placeholder="Optional"
             onChange={setDescription}
           />
-          <div className="settings-variables__form-actions">
+          <div className="flex justify-end gap-2">
             <Button
               type="button"
               variant="ghost"
@@ -151,26 +153,35 @@ export function WorkflowVariablesEditor() {
       ) : null}
 
       {error ? (
-        <p className="settings-field__hint" role="alert">
+        <p
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}
 
       {isLoading ? (
-        <p className="settings-field__empty">Loading variables…</p>
+        <p className="text-sm leading-[1.4] text-foreground-muted">
+          Loading variables…
+        </p>
       ) : error && variables.length === 0 ? null : variables.length === 0 ? (
-        <p className="settings-field__empty">No variable defaults yet.</p>
+        <p className="text-sm leading-[1.4] text-foreground-muted">
+          No variable defaults yet.
+        </p>
       ) : (
-        <ul className="settings-typed-list__items">
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {variables.map((variable) => (
             <li
               key={variable.id}
-              className="settings-typed-list__item settings-variables__row"
+              className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
             >
-              <div className="settings-typed-list__item-head">
-                <code className="settings-variables__name">{variable.name}</code>
-                <div className="settings-variables__controls">
-                  <span className="settings-variables__source">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <code className="min-w-0 break-all text-base font-medium text-foreground">
+                  {variable.name}
+                </code>
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm text-muted-foreground lowercase">
                     {variable.source}
                   </span>
                   <Switch
@@ -191,12 +202,12 @@ export function WorkflowVariablesEditor() {
                   ) : null}
                 </div>
               </div>
-              <div className="settings-variables__meta">
-                <code className="settings-variables__value">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <code className="break-all text-sm text-muted-foreground">
                   {variableDisplayValue(variable.definition_json)}
                 </code>
                 {variable.description ? (
-                  <span className="settings-variables__desc">
+                  <span className="text-sm text-foreground-muted">
                     {variable.description}
                   </span>
                 ) : null}

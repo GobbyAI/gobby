@@ -358,7 +358,7 @@ function AudioBindingEditor({
   const patch = (partial: Partial<AudioBinding>) => onChange({ ...value, ...partial })
 
   return (
-    <div className="settings-endpoint-editor">
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       <TextField
         label="Provider id"
         ariaLabel={`Audio provider id (${name})`}

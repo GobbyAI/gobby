@@ -46,18 +46,25 @@ interface AppearanceFieldProps {
 
 function AppearanceField({ label, description, htmlFor, children }: AppearanceFieldProps) {
   return (
-    <div className="settings-field settings-field--appearance">
-      <div className="settings-field__text">
+    <div className="flex flex-row flex-wrap items-center justify-between gap-4">
+      <div className="flex min-w-0 flex-col gap-1">
         {htmlFor ? (
-          <label className="settings-field__label" htmlFor={htmlFor}>
+          <label
+            className="text-base font-medium leading-[1.3] text-foreground"
+            htmlFor={htmlFor}
+          >
             {label}
           </label>
         ) : (
-          <span className="settings-field__label">{label}</span>
+          <span className="text-base font-medium leading-[1.3] text-foreground">
+            {label}
+          </span>
         )}
-        <p className="settings-field__hint">{description}</p>
+        <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
+          {description}
+        </p>
       </div>
-      <div className="settings-field__control">{children}</div>
+      <div className="flex shrink-0 items-center">{children}</div>
     </div>
   )
 }
@@ -100,11 +107,11 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
         htmlFor={FONT_SIZE_FIELD_ID}
         description="Base size the whole type scale derives from."
       >
-        <div className="appearance-font-size">
+        <div className="flex items-center gap-3">
           <Input
             id={FONT_SIZE_FIELD_ID}
             wrapperClassName="w-auto"
-            className="appearance-font-size__range h-auto rounded-none border-0 bg-transparent p-0"
+            className="h-auto max-w-full cursor-pointer rounded-none border-0 bg-transparent p-0 accent-accent focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[3px] pointer-coarse:min-h-11"
             type="range"
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}
@@ -112,7 +119,10 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
             value={settings.fontSize}
             onChange={(event) => updateFontSize(Number(event.target.value))}
           />
-          <span className="appearance-font-size__value" aria-hidden="true">
+          <span
+            className="min-w-[3.5ch] text-right text-sm text-muted-foreground tabular-nums"
+            aria-hidden="true"
+          >
             {settings.fontSize}px
           </span>
         </div>

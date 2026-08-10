@@ -152,7 +152,7 @@ function HubEntryFields({
 }) {
   const name = hubKey || 'new hub'
   return (
-    <div className="settings-hub-fields">
+    <div className="flex flex-col gap-2.5">
       <BoundedSelectField
         label="Type"
         ariaLabel={`${name} hub type`}
@@ -266,25 +266,33 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   }
 
   return (
-    <div className="settings-field settings-hubs-field" role="group">
-      <span className="settings-field__label">Skill hubs</span>
-      <p className="settings-field__hint">
+    <div className="flex flex-col gap-2" role="group">
+      <span className="text-base font-medium leading-[1.3] text-foreground">
+        Skill hubs
+      </span>
+      <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
         External hubs searched by the skills hub, keyed by hub name.
       </p>
       {keyError && (
-        <p className="settings-field__hint text-error" role="alert">
+        <p
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {keyError}
         </p>
       )}
       {entries.length > 0 ? (
-        <ul className="settings-hubs-field__items">
+        <ul className="m-0 flex list-none flex-col gap-3 p-0">
           {entries.map(([key, hub], index) => (
-            <li key={index} className="settings-hubs-field__item">
-              <div className="settings-hubs-field__head">
+            <li
+              key={index}
+              className="flex flex-col gap-3 rounded-lg border border-border bg-surface-secondary p-3.5"
+            >
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   type="text"
                   wrapperClassName="flex-1"
-                  className="settings-field__input"
+                  className="min-w-0 flex-[1_1_10rem] text-foreground [font-family:inherit] pointer-coarse:min-h-11"
                   value={key}
                   placeholder="hub-name"
                   aria-label={`Skill hub key ${index + 1}`}
@@ -311,9 +319,11 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
           ))}
         </ul>
       ) : (
-        <p className="settings-field__empty">No skill hubs.</p>
+        <p className="text-sm leading-[1.4] text-foreground-muted">
+          No skill hubs.
+        </p>
       )}
-      <div className="settings-field__actions">
+      <div className="flex flex-wrap gap-2">
         <Button
           type="button"
           size="sm"
