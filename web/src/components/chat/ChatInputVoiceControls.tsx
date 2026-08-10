@@ -95,16 +95,16 @@ export function ChatInputVoiceControls({
           aria-pressed={ttsEnabled || isSpeaking}
           aria-busy={ttsWarming}
           className={cn(
-            'chat-input-voice-toggle',
-            (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active',
-            ttsWarming && 'chat-input-voice-toggle--warming',
+            'chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
+            (ttsEnabled || isSpeaking) && 'chat-input-voice-toggle--active text-accent',
+            ttsWarming && 'chat-input-voice-toggle--warming animate-pulse text-accent',
           )}
         >
           <SpeakerIcon muted={!ttsEnabled && !isSpeaking} />
         </Button>
       )}
       {showSttControl && (
-        <div className="chat-input-voice-mic">
+        <div className="chat-input-voice-mic inline-flex min-w-0 shrink-0 items-center gap-1">
           <Button
             size="icon"
             variant="ghost"
@@ -114,8 +114,8 @@ export function ChatInputVoiceControls({
             aria-label={micLabel}
             aria-pressed={sttEnabled}
             className={cn(
-              'chat-input-voice-toggle',
-              sttEnabled && 'chat-input-voice-toggle--active',
+              'chat-input-voice-toggle text-[var(--text-secondary)] hover:text-[var(--text-primary)]',
+              sttEnabled && 'chat-input-voice-toggle--active text-accent',
             )}
           >
             <MicIcon muted={!sttEnabled} />
@@ -123,8 +123,8 @@ export function ChatInputVoiceControls({
           {sttEnabled && (
             <span
               className={cn(
-                'chat-input-voice-mode',
-                isRecording && 'chat-input-voice-mode--disabled',
+                'chat-input-voice-mode min-w-7 text-[length:var(--text-2xs)] font-bold leading-none text-[var(--text-muted)]',
+                isRecording && 'chat-input-voice-mode--disabled opacity-50',
               )}
               aria-disabled={isRecording || undefined}
             >

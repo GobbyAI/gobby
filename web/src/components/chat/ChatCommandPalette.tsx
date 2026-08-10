@@ -25,7 +25,7 @@ export function ChatCommandPalette({
     <div
       ref={paletteRef}
       id={listboxId}
-      className="command-palette font-sans"
+      className="command-palette absolute bottom-full left-6 right-6 z-10 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] font-sans shadow-[var(--shadow-popover-up,0_-4px_12px_oklch(0%_0_0/0.3))]"
       role="listbox"
       aria-label="Chat commands"
     >

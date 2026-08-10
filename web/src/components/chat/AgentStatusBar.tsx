@@ -122,13 +122,18 @@ export function AgentStatusBar({
 
   return (
     <div
-      className={cn('agent-status-bar', planPendingApproval && 'agent-status-bar--pending')}
+      className={cn(
+        'agent-status-bar flex min-h-[var(--activity-panel-bar-height,2.5rem)] shrink-0 items-center justify-between gap-3 border-t border-border bg-[var(--bg-secondary)] px-3 @max-[360px]/chat-column:pl-3 @max-[360px]/chat-column:pr-2',
+        planPendingApproval && 'agent-status-bar--pending flex-wrap gap-y-1.5',
+      )}
       data-testid="agent-status-bar"
     >
-      <div className="agent-status-bar__summary">
+      <div className="agent-status-bar__summary flex min-w-0 flex-1 flex-wrap items-center justify-start gap-3 max-[768px]:gap-2 @max-[360px]/chat-column:flex-nowrap">
         {viewingMeta && stateText ? (
-          <div className="chat-session-status">
-            <span className="chat-session-status__state">{stateText}</span>
+          <div className="chat-session-status flex min-w-0 flex-wrap items-center gap-1.5 @max-[360px]/chat-column:flex-nowrap">
+            <span className="chat-session-status__state whitespace-nowrap text-[length:var(--text-sm)] font-medium leading-none text-[var(--text-muted)] @max-[360px]/chat-column:hidden">
+              {stateText}
+            </span>
             {sessionBadge ? (
               <Chip tone="accent" uppercase className={chipIdentityClasses}>
                 {sessionBadge}
@@ -136,7 +141,7 @@ export function AgentStatusBar({
             ) : null}
           </div>
         ) : null}
-        <div className="agent-status-bar__context">
+        <div className="agent-status-bar__context flex shrink-0 items-center">
           <ContextUsageIndicator
             totalInputTokens={contextUsage?.totalInputTokens ?? 0}
             outputTokens={contextUsage?.outputTokens ?? 0}
@@ -149,7 +154,7 @@ export function AgentStatusBar({
           />
         </div>
       </div>
-      <div className="agent-status-bar__actions">
+      <div className="agent-status-bar__actions flex shrink-0 items-center gap-1.5">
         {canAttach && (
           <Button
             type="button"
@@ -161,7 +166,7 @@ export function AgentStatusBar({
             title="Attach"
           >
             <LinkIcon />
-            <span className="chat-action-btn__label">Attach</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Attach</span>
           </Button>
         )}
         {canDetach && (
@@ -175,7 +180,7 @@ export function AgentStatusBar({
             title="Detach"
           >
             <UnlinkIcon />
-            <span className="chat-action-btn__label">Detach</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Detach</span>
           </Button>
         )}
         {onOpenTerminal && (
@@ -189,7 +194,7 @@ export function AgentStatusBar({
             title="Terminal"
           >
             <PromptIcon />
-            <span className="chat-action-btn__label">Terminal</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Terminal</span>
           </Button>
         )}
         {canResume && (
@@ -203,7 +208,7 @@ export function AgentStatusBar({
             title="Resume"
           >
             <PlayIcon />
-            <span className="chat-action-btn__label">Resume</span>
+            <span className="chat-action-btn__label @max-[479px]/chat-column:hidden">Resume</span>
           </Button>
         )}
         <Button
@@ -218,11 +223,11 @@ export function AgentStatusBar({
           title="New Chat"
         >
           <PlusIcon />
-          <span className="chat-new-chat-btn__label">New Chat</span>
+          <span className="chat-new-chat-btn__label @max-[479px]/chat-column:hidden">New Chat</span>
         </Button>
       </div>
       {planPendingApproval && onApprovePlan && onRequestPlanChanges && (
-        <div className="agent-status-bar__plan">
+        <div className="agent-status-bar__plan min-w-0 basis-full [&_button]:h-[var(--status-bar-control-height)] [&_button]:min-h-[var(--status-bar-control-height)]">
           <PlanPendingActionStrip
             onApprove={onApprovePlan}
             onRequestChanges={onRequestPlanChanges}

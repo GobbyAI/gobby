@@ -164,17 +164,6 @@ function hasAnyMediaAncestor(rule: Rule): boolean {
   return false
 }
 
-function hasContainerAncestor(rule: Rule, container: string): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'container') {
-      if (parent.params === container) return true
-    }
-    parent = parent.parent
-  }
-  return false
-}
-
 function hasVariantAncestor(rule: Rule, variant: string): boolean {
   let parent = rule.parent as CssParent | undefined
   while (parent) {
@@ -195,16 +184,6 @@ function findRule(root: Root, selector: string, media?: string): Rule {
     if (mediaMatches) found = rule
   })
   expect(found, `Expected CSS rule ${selector}${media ? ` in ${media}` : ''}`).toBeDefined()
-  return found as Rule
-}
-
-function findContainerRule(root: Root, selector: string, container: string): Rule {
-  let found: Rule | undefined
-  root.walkRules(selector, rule => {
-    if (found) return
-    if (hasContainerAncestor(rule, container)) found = rule
-  })
-  expect(found, `Expected CSS rule ${selector} in @container ${container}`).toBeDefined()
   return found as Rule
 }
 
@@ -243,23 +222,6 @@ function expectNoDeclaration(root: Root, selector: string, property: string, med
   })
 
   expect(declarations.has(property)).toBe(false)
-}
-
-function expectContainerDeclarations(
-  root: Root,
-  selector: string,
-  container: string,
-  expected: Record<string, string>,
-): void {
-  const rule = findContainerRule(root, selector, container)
-  const declarations = new Map<string, string>()
-  rule.walkDecls(declaration => {
-    declarations.set(declaration.prop, declaration.value)
-  })
-
-  for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property)).toBe(value)
-  }
 }
 
 function expectVariantDeclarations(
@@ -338,6 +300,25 @@ describe('mobile chrome CSS', () => {
       .slice(0, 8)
       .map(([, path]) => path.slice(path.lastIndexOf('/') + 1))) {
       expect(chatStyles).not.toContain(`@import './styles/${stylesheet}';`)
+    }
+  })
+
+  it('retires the chat input stylesheet family in favor of component utilities', () => {
+    const chatStyles = readSource('src/components/chat/styles.css')
+    const retiredSheets = [
+      'input-base.css',
+      'input-composer.css',
+      'input-voice.css',
+      'input-responsive.css',
+      'input-status.css',
+      'input.css',
+    ]
+
+    expect(chatStyles).not.toContain("@import './styles/input.css';")
+    for (const sheet of retiredSheets) {
+      expect(existsSync(join(resolveWebPackageRoot(), 'src/components/chat/styles', sheet))).toBe(
+        false,
+      )
     }
   })
 
@@ -497,88 +478,53 @@ describe('mobile chrome CSS', () => {
   })
 
   it('keeps the minimum-width chat status bar to one row', () => {
-    const inputCss = parseCss('src/components/chat/styles/input.css')
-    const narrowChatColumn = 'chat-column (max-width: 360px)'
+    const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
-    expect(
-      findContainerRule(inputCss, '.agent-status-bar__summary', narrowChatColumn).selector,
-    ).toBe('.agent-status-bar__summary')
-    expectContainerDeclarations(inputCss, '.agent-status-bar__summary', narrowChatColumn, {
-      'flex-wrap': 'nowrap',
-    })
-    expectContainerDeclarations(inputCss, '.chat-session-status', narrowChatColumn, {
-      'flex-wrap': 'nowrap',
-    })
-    expectContainerDeclarations(inputCss, '.chat-session-status__state', narrowChatColumn, {
-      display: 'none',
-    })
+    expect(statusBarSource).toContain('@max-[360px]/chat-column:flex-nowrap')
+    expect(statusBarSource).toContain('@max-[360px]/chat-column:hidden')
   })
 
   it('right-aligns command and status bar action slots', () => {
     const layoutCss = parseCss('src/components/chat/styles/layout.css')
-    const inputCss = parseCss('src/components/chat/styles/input.css')
+    const mainColumnSource = readSource('src/components/chat/ChatMainColumn.tsx')
+    const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
     expect(findRule(layoutCss, '.command-bar').selector).toBe('.command-bar')
     expectDeclarations(layoutCss, '.command-bar', {
       padding: '0 0.75rem',
     })
-    expectDeclarations(inputCss, '.agent-status-bar', {
-      padding: '0 0.75rem',
-    })
-    expectContainerDeclarations(inputCss, '.command-bar', 'chat-column (max-width: 360px)', {
-      'padding-inline': '0.75rem 0.5rem',
-    })
-    expectContainerDeclarations(inputCss, '.agent-status-bar', 'chat-column (max-width: 360px)', {
-      'padding-inline': '0.75rem 0.5rem',
-    })
+    expectClassToken(statusBarSource, 'px-3')
+    expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pl-3')
+    expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pr-2')
   })
 
   it('keeps the minimum-width chat input toolbar controls to one row', () => {
-    const inputCss = parseCss('src/components/chat/styles/input.css')
     const chatInputSource = readSource('src/components/chat/ChatInput.tsx')
+    const toolbarSource = readSource('src/components/chat/ChatInputToolbar.tsx')
+    const voiceControlsSource = readSource('src/components/chat/ChatInputVoiceControls.tsx')
+    const mainColumnSource = readSource('src/components/chat/ChatMainColumn.tsx')
+    const narrowHookSource = readSource('src/components/chat/useChatInputNarrow.ts')
     const modeSelectorSource = readSource('src/components/chat/ModeSelector.tsx')
     const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
     const agentIndicatorSource = readSource('src/components/chat/ActiveAgentIndicator.tsx')
-    const narrowChatColumn = 'chat-column (max-width: 360px)'
 
     expectClassToken(chatInputSource, 'chat-input-footer')
     expectClassToken(chatInputSource, 'py-3')
-    expectNoClassToken(chatInputSource, 'px-4')
     expectNoClassToken(segmentedControlSource, 'px-2')
     expectNoClassToken(segmentedControlSource, 'px-3')
     expect(modeSelectorSource).toContain('controlHeight="sm"')
     expect(modeSelectorSource).toContain('coarseTouchTarget={false}')
     expectClassToken(agentIndicatorSource, 'chat-input-agent-button')
     expectClassToken(agentIndicatorSource, 'rounded')
-    expectNoClassToken(agentIndicatorSource, 'p-1.5')
-    expectDeclarations(inputCss, '.chat-input-footer', {
-      'padding-inline': '1rem',
-    })
-    expectDeclarations(inputCss, '.chat-input-toolbar', {
-      '--control-row-height-sm': 'var(--status-bar-control-height)',
-    })
-    expectNoDeclaration(inputCss, '.chat-input-toolbar', 'padding-right')
-    expectContainerDeclarations(inputCss, '.chat-input-toolbar__left', narrowChatColumn, {
-      gap: '0.25rem',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(inputCss, '.chat-input-voice-mic', {
-      gap: '0.25rem',
-    })
-    expectDeclarations(inputCss, '.chat-input-agent-button', {
-      display: 'inline-flex',
-      width: '2.25rem',
-      height: '2.25rem',
-      padding: '0.375rem',
-    })
-    expectContainerDeclarations(
-      inputCss,
-      '.chat-input-toolbar__left .segmented-control__option',
-      narrowChatColumn,
-      { 'padding-inline': '0.375rem' },
-    )
-    expectContainerDeclarations(inputCss, '.chat-input-footer', narrowChatColumn, {
-      'padding-inline': '0.75rem 0.5rem',
-    })
+    expectClassToken(agentIndicatorSource, 'p-1.5')
+    expectClassToken(agentIndicatorSource, 'size-9')
+    expectClassToken(chatInputSource, 'px-4')
+    expect(toolbarSource).toContain('[--control-row-height-sm:var(--status-bar-control-height)]')
+    expect(toolbarSource).toContain('@max-[360px]/chat-column:flex-nowrap')
+    expect(toolbarSource).toContain('@max-[360px]/chat-column:[&_button[role=radio]]:px-1.5')
+    expect(voiceControlsSource).toContain('gap-1')
+    expect(mainColumnSource).toContain('@container/chat-column')
+    expect(mainColumnSource).toContain('data-chat-column')
+    expect(narrowHookSource).toContain("closest('[data-chat-column]')")
   })
 })

@@ -7,6 +7,7 @@ import type {
 } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import type { VoiceInputMode } from '../../hooks/useSettings'
+import { cn } from '../../lib/utils'
 import { ChatCommandPalette } from './ChatCommandPalette'
 import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputPrimaryButton } from './ChatInputPrimaryButton'
@@ -436,7 +437,11 @@ export function ChatInput({
 
   return (
     <div
-      className={`chat-input-footer border-t border-border bg-background py-3${isDragOver ? ' ring-2 ring-accent ring-inset bg-accent/5' : ''}`}
+      className={cn(
+        'chat-input-footer border-t border-border bg-background px-4 py-3',
+        '@max-[360px]/chat-column:pl-3 @max-[360px]/chat-column:pr-2',
+        isDragOver && 'bg-accent/5 ring-2 ring-inset ring-accent',
+      )}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('application/x-gobby-file')) {
           e.preventDefault()
@@ -514,14 +519,14 @@ export function ChatInput({
         />
 
         {/* Input row */}
-        <div className="chat-input-shell">
+        <div className="chat-input-shell relative flex flex-col gap-2.5">
           <div className="flex items-start gap-2">
             <Textarea
               ref={textareaRef}
               name="message"
               style={{ minHeight: 'var(--control-row-height)' }}
               wrapperClassName="flex-1"
-              className="chat-input-textarea min-h-[36px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+              className="chat-input-textarea min-h-[36px] max-h-[200px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground [field-sizing:content] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -603,10 +608,10 @@ export function ChatInput({
               />
           )}
           {showObserveOverlay && (
-            <div className="chat-input-overlay">
+            <div className="chat-input-overlay absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-[color-mix(in_srgb,var(--bg-primary)_80%,transparent)]">
               <button
                 type="button"
-                className="chat-input-overlay__button"
+                className="chat-input-overlay__button min-h-10 rounded-full border border-[color-mix(in_srgb,var(--accent)_55%,transparent)] bg-accent px-4 text-[length:var(--text-base)] font-semibold text-accent-foreground hover:brightness-105"
                 onClick={onAttachObservedSession}
               >
                 Attach

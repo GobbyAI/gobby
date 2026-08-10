@@ -22,6 +22,13 @@ const targets = [
 
 const srcRoot = dirname(dirname(fileURLToPath(import.meta.url)))
 
+const CHAT_INPUT_TOUCH_CANDIDATES = [
+  'h-[36px]',
+  'w-[36px]',
+  'pointer-coarse:h-11',
+  'pointer-coarse:w-11',
+] as const
+
 async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
@@ -31,10 +38,7 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     'flex',
     'h-4',
     'w-4',
-    'h-[36px]',
-    'w-[36px]',
-    'pointer-coarse:h-11',
-    'pointer-coarse:w-11',
+    ...CHAT_INPUT_TOUCH_CANDIDATES,
     'pointer-coarse:min-h-11',
     'pointer-coarse:min-w-11',
   ])
@@ -236,7 +240,7 @@ describe('coarse-pointer touch targets', () => {
   it('promotes compact chat and activity controls to at least 44px', async () => {
     await emulateCoarsePointer()
     document.body.innerHTML = `
-      <button data-target="primary action" class="h-[36px] w-[36px] pointer-coarse:h-11 pointer-coarse:w-11">Send</button>
+      <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(' ')}">Send</button>
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
       <button data-target="session actions" class="session-more-btn">⋮</button>

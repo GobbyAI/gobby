@@ -110,7 +110,10 @@ export function ChatMainColumn({
   );
 
   return (
-    <div className="chat-column flex flex-col flex-1 min-w-[320px]">
+    <div
+      className="chat-column @container/chat-column flex min-w-[320px] flex-1 flex-col @max-[479px]/chat-column:[&_.command-bar-right_span]:hidden @max-[360px]/chat-column:[&_.command-bar]:pl-3 @max-[360px]/chat-column:[&_.command-bar]:pr-2"
+      data-chat-column
+    >
       <CommandBar
         sessionRef={effectiveSessionRef}
         title={viewingMeta?.title ?? activeTitle}

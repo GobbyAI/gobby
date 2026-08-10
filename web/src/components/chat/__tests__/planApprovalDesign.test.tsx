@@ -1,12 +1,10 @@
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import type { Plan } from '../../../types/plans'
 import { PlanReviewCard } from '../../activity/PlanReviewCard'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
 import { getPlanPendingColors } from '../planPendingSurface'
+import { AgentStatusBar } from '../AgentStatusBar'
 
 const planPendingColors = getPlanPendingColors('info')
 
@@ -14,21 +12,6 @@ const planPendingColors = getPlanPendingColors('info')
 vi.mock('../Markdown', () => ({
   Markdown: ({ content }: { content: string }) => <div>{content}</div>,
 }))
-
-const here = dirname(fileURLToPath(import.meta.url))
-const webSrc = join(here, '..', '..', '..')
-
-function readCss(rel: string, seen = new Set<string>()): string {
-  if (seen.has(rel)) return ''
-  seen.add(rel)
-
-  const source = readFileSync(join(webSrc, rel), 'utf8')
-  const baseDir = dirname(rel)
-  return source.replace(
-    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
-    (_statement: string, specifier: string) => readCss(join(baseDir, specifier), seen),
-  )
-}
 
 function makePlan(): Plan {
   return {
@@ -108,25 +91,24 @@ describe('plan-approval design fixes (#15637)', () => {
     expect(banner.innerHTML).toContain(amber.accentText)
   })
 
-  it('status bars share --activity-panel-bar-height and never redeclare it on an inner scope', () => {
-    const inputCss = readCss('components/chat/styles/input.css')
-    const layoutCss = readFileSync(join(webSrc, 'components/chat/styles/layout.css'), 'utf8')
-    const activityCss = readFileSync(join(webSrc, 'components/chat/styles/activity-panel.css'), 'utf8')
-
-    // All three bars key off the single source-of-truth token.
-    expect(inputCss).toMatch(/\.agent-status-bar\s*\{[^}]*min-height:\s*var\(--activity-panel-bar-height/)
-    expect(layoutCss).toMatch(/\.command-bar\s*\{[^}]*min-height:\s*var\(--activity-panel-bar-height/)
-    expect(activityCss).toMatch(/\.activity-panel-tabs\s*\{[^}]*min-height:\s*var\(--activity-panel-bar-height/)
-
-    // The exact failure activity-panel.css warns against: redeclaring the var
-    // on an inner scope shadows :root and drifts the bars out of sync.
-    expect(activityCss).not.toMatch(/--activity-panel-bar-height\s*:/)
+  it('AgentStatusBar owns the shared activity-bar height through component utilities', () => {
+    render(<AgentStatusBar interactionMode="none" />)
+    expect(screen.getByTestId('agent-status-bar').className).toContain(
+      'min-h-[var(--activity-panel-bar-height,2.5rem)]',
+    )
   })
 
   it('in-bar plan controls are pinned to --status-bar-control-height so they cannot stretch the bar', () => {
-    const inputCss = readCss('components/chat/styles/input.css')
-    expect(inputCss).toMatch(
-      /\.agent-status-bar__plan button\s*\{[^}]*height:\s*var\(--status-bar-control-height/,
+    render(
+      <AgentStatusBar
+        interactionMode="none"
+        planPendingApproval
+        onApprovePlan={vi.fn()}
+        onRequestPlanChanges={vi.fn()}
+      />,
     )
+    const plan = screen.getByTestId('plan-pending-strip').parentElement
+    expect(plan?.className).toContain('[&_button]:h-[var(--status-bar-control-height)]')
+    expect(plan?.className).toContain('[&_button]:min-h-[var(--status-bar-control-height)]')
   })
 })

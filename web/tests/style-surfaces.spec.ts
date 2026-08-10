@@ -1759,38 +1759,35 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
         break;
       }
       case "plans":
+        let planSocket: WebSocketRoute | undefined;
+        let resolvePlanSocket: (socket: WebSocketRoute) => void;
+        const planSocketReady = new Promise<WebSocketRoute>((resolve) => {
+          resolvePlanSocket = resolve;
+        });
         base = {
           localStorage: tabSeed("plans"),
           ws: (ws, message) => {
-            // The handler auto-switches the panel to Plans on receipt. The
-            // frame is re-sent for a while because the client registers its
-            // plan handler after React mounts — a single immediate send
-            // races that registration and gets dropped.
             const events = message.events;
             const isChatSocket =
               Array.isArray(events) && events.includes("chat_stream");
             if (message.type === "subscribe" && isChatSocket) {
-              for (let i = 0; i < 12; i += 1) {
-                // Trailing newlines render identically but defeat the
-                // client's identical-content dedupe, so a resend that lands
-                // after the plan handler registers still takes effect.
-                const frame = JSON.stringify({
-                  type: "plan_pending_approval",
-                  conversation_id: CONVERSATION_ID,
-                  plan_content:
-                    "# Implementation Plan\n\n1. Seed the panel\n2. Photograph every surface\n" +
-                    "\n".repeat(i),
-                  options: [{ id: "accept", label: "Approve" }],
-                });
-                setTimeout(() => {
-                  try {
-                    ws.send(frame);
-                  } catch {
-                    // Socket already closed — the cell is done with it.
-                  }
-                }, 500 + i * 1000);
-              }
+              planSocket = ws;
+              resolvePlanSocket(ws);
             }
+          },
+          prepare: async () => {
+            // page.goto has completed React mounting, so the plan handler is
+            // registered before this event drives the panel to Plans.
+            const ws = planSocket ?? (await planSocketReady);
+            ws.send(
+              JSON.stringify({
+                type: "plan_pending_approval",
+                conversation_id: CONVERSATION_ID,
+                plan_content:
+                  "# Implementation Plan\n\n1. Seed the panel\n2. Photograph every surface\n",
+                options: [{ id: "accept", label: "Approve" }],
+              }),
+            );
           },
           checkpoint,
         };
@@ -2178,6 +2175,59 @@ test.describe("representative mappings", () => {
   });
 });
 
+test.describe("composer parity", () => {
+  test("the capture matrix covers the composer and both live voice states", () => {
+    const composerCells = expandCaptureCells().filter(
+      (cell) => cell.scenario === "composer",
+    );
+
+    expect(new Set(composerCells.map((cell) => cell.state))).toEqual(
+      new Set(["base", "voice-recording", "voice-listening"]),
+    );
+    for (const sheet of [
+      "input-base.css",
+      "input-composer.css",
+      "input-voice.css",
+      "input-responsive.css",
+      "input-status.css",
+      "input.css",
+    ]) {
+      expect(fs.existsSync(path.join(SRC_DIR, "components/chat/styles", sheet))).toBe(false);
+    }
+  });
+});
+
+test.describe("reduced-motion relocation", () => {
+  test("recording, listening, loading, and streaming pair both motion preferences", () => {
+    const motionFamilies = [
+      ["composer", "voice-recording"],
+      ["composer", "voice-listening"],
+      ["chat", "loading"],
+      ["chat", "streaming"],
+    ] as const;
+    const cells = expandCaptureCells();
+
+    for (const [scenario, state] of motionFamilies) {
+      expect(
+        new Set(
+          cells
+            .filter((cell) => cell.scenario === scenario && cell.state === state)
+            .map((cell) => cell.motion),
+        ),
+      ).toEqual(new Set(["reduce", "none"]));
+    }
+
+    const accessibility = fs.readFileSync(
+      path.join(SRC_DIR, "styles/accessibility.css"),
+      "utf8",
+    );
+    expect(accessibility).toContain("prefers-reduced-motion: reduce");
+    expect(accessibility).toContain('.chat-input-primary-button[aria-pressed="true"]');
+    expect(accessibility).toContain('.chat-input-voice-toggle[aria-busy="true"]');
+    expect(accessibility).toContain(".voice-status-bar [data-voice-motion]");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The capture matrix (opt-in, @style-capture project only)
 // ---------------------------------------------------------------------------
@@ -2424,6 +2474,7 @@ async function runCaptureCell(
 }
 
 test.describe("style-surface capture matrix", () => {
+  test.describe.configure({ timeout: 90_000 });
   test.skip(
     !RUN_ID,
     `Set ${CAPTURE_RUN_ENV}=<label> (see the header comment) to run the capture matrix.`,
@@ -2431,7 +2482,6 @@ test.describe("style-surface capture matrix", () => {
 
   for (const cell of expandCaptureCells()) {
     test(`capture ${cell.key} @style-capture`, async ({ browser }, testInfo) => {
-      test.setTimeout(90_000);
       const fragment = await runCaptureCell(browser, cell, testInfo);
       expect(fragment.cellKey).toBe(cell.key);
       expect(fragment.pngSha256).toMatch(/^[0-9a-f]{64}$/);

@@ -2,6 +2,7 @@ import type { RefObject } from 'react'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import type { ChatMode, ChatModeInfo } from '../../types/chat'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
 import { Input } from '../ui/Input'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
@@ -96,16 +97,21 @@ export function ChatInputToolbar({
   return (
     <div ref={metaRef} className="chat-input-meta">
       <div
-        className={`chat-input-notice-slot${proxyDeliveryNotice ? ' has-notice' : ''}`}
+        className={cn(
+          'chat-input-notice-slot',
+          proxyDeliveryNotice ? 'mb-1.5 flex items-center' : 'hidden',
+        )}
         aria-live="polite"
       >
         {proxyDeliveryNotice ? (
-          <div className="chat-input-notice">{proxyDeliveryNotice}</div>
+          <div className="chat-input-notice text-[length:var(--text-sm)] text-[var(--text-muted)]">
+            {proxyDeliveryNotice}
+          </div>
         ) : null}
       </div>
 
-      <div className="chat-input-toolbar">
-        <div className="chat-input-toolbar__left">
+      <div className="chat-input-toolbar mb-2 flex flex-wrap items-center justify-between gap-3 [--control-row-height-sm:var(--status-bar-control-height)]">
+        <div className="chat-input-toolbar__left flex min-w-0 flex-wrap items-center gap-2 @max-[479px]/chat-column:gap-1 @max-[360px]/chat-column:flex-nowrap @max-[360px]/chat-column:[&_button[role=radio]]:px-1.5">
           {onModeChange && (
             <ModeSelector
               mode={mode}
@@ -154,7 +160,7 @@ export function ChatInputToolbar({
           />
         </div>
         {!canSelectModel && onWorktreeChange ? (
-          <div className="chat-input-toolbar__right">
+          <div className="chat-input-toolbar__right ml-auto flex min-w-0 flex-wrap items-center gap-2">
             <BranchIndicator
               currentBranch={currentBranch ?? null}
               worktreePath={worktreePath ?? null}

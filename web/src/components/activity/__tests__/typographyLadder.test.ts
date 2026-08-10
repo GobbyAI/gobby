@@ -115,6 +115,14 @@ describe('activity-panel typography ladder (#14245)', () => {
     )
   })
 
+  it('keeps chat status-bar typography on the shared component utility ladder', () => {
+    const agentStatusSource = readSource('src/components/chat/AgentStatusBar.tsx')
+    const voiceStatusSource = readSource('src/components/chat/VoiceStatusBar.tsx')
+
+    expect(agentStatusSource).toContain('text-[length:var(--text-sm)]')
+    expect(voiceStatusSource).toContain('text-[length:var(--text-xs)]')
+  })
+
   it('locks the tasks row title to --text-base / medium', () => {
     const source = readSource('src/components/tasks/task-execution.css')
 

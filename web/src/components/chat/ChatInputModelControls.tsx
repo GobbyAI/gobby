@@ -76,17 +76,17 @@ export function ChatInputModelControls({
     ? `${formattedModelLabel.slice(0, 15)}...`
     : formattedModelLabel
   return (
-    <div className="chat-input-controls">
-      <div className="chat-input-model-controls">
+    <div className="chat-input-controls flex min-w-0 flex-wrap items-center justify-start gap-2">
+      <div className="chat-input-model-controls flex min-w-0 flex-wrap items-center gap-1.5">
         <button
           type="button"
-          className="chat-input-select chat-input-select--provider chat-input-select--provider-icon !w-auto inline-flex h-9 items-center rounded-md border"
+          className="chat-input-select chat-input-select--provider chat-input-select--provider-icon inline-flex h-9 w-9 min-w-9 items-center justify-center rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
           disabled={selectionDisabled}
           aria-label="Select provider"
           title={providerPickerDisabledReason ?? getProviderDisplayName(effectiveProvider)}
           onClick={() => setProviderPickerOpen(true)}
         >
-          <div className="chat-input-select__value">
+          <div className="chat-input-select__value inline-flex min-w-0 max-w-full items-center justify-center gap-1.5">
             <SourceIcon source={effectiveProvider} size={14} />
           </div>
         </button>
@@ -108,17 +108,17 @@ export function ChatInputModelControls({
           disabled={selectionDisabled}
         >
           <SelectTrigger
-            className="chat-input-select chat-input-select--model !w-auto"
+            className="chat-input-select chat-input-select--model !w-auto min-w-0 max-w-[min(24rem,100%)] border-border bg-[var(--bg-secondary)] text-[length:var(--text-sm)] text-[var(--text-secondary)] [min-width:12rem] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             aria-label="Select model"
             title={providerPickerDisabledReason ?? 'Select model'}
           >
-            <div className="chat-input-select__value">
-              <span className="chat-input-select__text">{displayedModelLabel}</span>
+            <div className="chat-input-select__value inline-flex min-w-0 max-w-full items-center gap-1.5">
+              <span className="chat-input-select__text truncate">{displayedModelLabel}</span>
             </div>
           </SelectTrigger>
-          <SelectContent side="top" className="chat-input-select__content">
+          <SelectContent side="top" className="chat-input-select__content bg-[var(--bg-secondary)]">
             <SelectGroup>
-              <SelectLabel className="chat-input-select__label">Model</SelectLabel>
+              <SelectLabel className="chat-input-select__label block px-2.5 pb-1 pt-1.5 text-[length:var(--text-2xs)] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">Model</SelectLabel>
               {modelOptions.map((option) => (
                 <SelectItem key={option.value} value={option.value}>
                   {formatModelDisplayLabel(option.label)}
@@ -135,21 +135,21 @@ export function ChatInputModelControls({
           disabled={selectionDisabled}
         >
           <SelectTrigger
-            className="chat-input-select chat-input-select--reasoning !w-auto"
+            className="chat-input-select chat-input-select--reasoning !w-auto min-w-[7.5rem] max-w-full border-border bg-[var(--bg-secondary)] text-[length:var(--text-sm)] text-[var(--text-secondary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
             aria-label="Select reasoning effort"
             title={providerPickerDisabledReason ?? 'Select reasoning effort'}
           >
-            <div className="chat-input-select__value">
+            <div className="chat-input-select__value inline-flex min-w-0 max-w-full items-center gap-1.5">
               <BrainIcon />
-              <span className="chat-input-select__text">
+              <span className="chat-input-select__text truncate">
                 {reasoningOptions.find((option) => option.value === resolvedReasoning)?.label ??
                   'Auto'}
               </span>
             </div>
           </SelectTrigger>
-          <SelectContent side="top" className="chat-input-select__content">
+          <SelectContent side="top" className="chat-input-select__content bg-[var(--bg-secondary)]">
             <SelectGroup>
-              <SelectLabel className="chat-input-select__label">Effort</SelectLabel>
+              <SelectLabel className="chat-input-select__label block px-2.5 pb-1 pt-1.5 text-[length:var(--text-2xs)] font-bold uppercase tracking-[0.08em] text-[var(--text-muted)]">Effort</SelectLabel>
               {reasoningOptions.map((option) => (
                 <SelectItem
                   key={option.value}

@@ -1,4 +1,5 @@
 import type { VoiceInputMode } from '../../hooks/useSettings'
+import { cn } from '../../lib/utils'
 
 interface VoiceStatusBarProps {
   voiceLoading?: boolean
@@ -26,7 +27,10 @@ export function VoiceStatusBar({
 
   return (
     <div
-      className={`voice-status-bar${hasVisibleStatus ? "" : " voice-status-bar--idle"}`}
+      className={cn(
+        'voice-status-bar flex min-h-6 shrink-0 items-center gap-2 bg-[var(--bg-primary)] px-3 text-[length:var(--text-xs)] leading-none text-[var(--text-muted)]',
+        !hasVisibleStatus && 'voice-status-bar--idle pointer-events-none',
+      )}
       data-testid="voice-status-bar"
       role={hasVisibleStatus ? "status" : undefined}
       aria-live={hasVisibleStatus ? "polite" : undefined}
@@ -44,7 +48,10 @@ export function VoiceStatusBar({
         </>
       ) : isPttRecording ? (
         <>
-          <span className="w-2 h-2 rounded-full bg-destructive-foreground animate-pulse" />
+          <span
+            className="h-2 w-2 animate-pulse rounded-full bg-destructive-foreground"
+            data-voice-motion
+          />
           <span className="text-destructive-foreground">Recording...</span>
         </>
       ) : isListening && isSpeechDetected ? (
@@ -60,6 +67,7 @@ export function VoiceStatusBar({
                 key={i}
                 aria-hidden="true"
                 className="w-0.5 bg-success-foreground rounded-full animate-pulse"
+                data-voice-motion
                 style={{ height: `${h}px`, animationDelay: `${i * 0.1}s` }}
               />
             ))}
@@ -68,7 +76,10 @@ export function VoiceStatusBar({
         </>
       ) : isListening ? (
         <>
-          <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
+          <span
+            className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent"
+            data-voice-motion
+          />
           <span className="text-muted-foreground">Ready — speak to send</span>
         </>
       ) : null}
@@ -81,7 +92,7 @@ export function VoiceStatusBar({
 
 function SpinnerIcon() {
   return (
-    <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <svg className="animate-spin" data-voice-motion width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
     </svg>
   )
