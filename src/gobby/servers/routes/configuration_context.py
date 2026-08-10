@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING, Any, cast
 from fastapi import HTTPException
 
 from gobby.config.app import DaemonConfig
+from gobby.config.documents import ConfigDocumentsService
 from gobby.config.runtime import ConfigRuntime
 from gobby.config.values import ConfigValuesService
 from gobby.prompts.loader import PromptLoader
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.config_mutations import ConfigMutations
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
@@ -62,6 +64,26 @@ class ConfigurationRouteContext:
                     run_blocking=self.run_config_db,
                 )
                 self.server.services.config_values_service = service
+        return service
+
+    def get_config_documents_service(self) -> ConfigDocumentsService:
+        service = getattr(self.server.services, "config_documents_service", None)
+        if isinstance(service, ConfigDocumentsService):
+            return service
+        with self._service_init_lock:
+            service = getattr(self.server.services, "config_documents_service", None)
+            if not isinstance(service, ConfigDocumentsService):
+                database = require_hub_database(self.server.services.database)
+                secret_store = SecretStore(database)
+                repository = ConfigRepository(database, secret_store=secret_store)
+                service = ConfigDocumentsService(
+                    runtime=self.get_config_runtime(),
+                    mutations=ConfigMutations(database, secret_store=secret_store),
+                    runtime_candidate=repository.runtime_candidate,
+                    resolve_secret=secret_store.get,
+                    run_blocking=self.run_config_db,
+                )
+                self.server.services.config_documents_service = service
         return service
 
     async def run_config_db[T](self, operation: Callable[[], T]) -> T:

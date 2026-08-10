@@ -113,6 +113,7 @@ class ServiceContainer:
     # Config
     config_store: Any | None = None  # ConfigStore
     config_runtime: Any | None = None  # ConfigRuntime
+    config_documents_service: Any | None = None  # ConfigDocumentsService
     config_values_service: Any | None = None  # ConfigValuesService
     provider_capability_service: Any | None = None  # CapabilityRefreshCoordinator
     provider_capability_resolver: Any | None = None  # CapabilityResolver

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar
+from typing import Annotated, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, Strict, model_validator
 
@@ -21,9 +21,12 @@ class PatchConfigRequest(BaseModel):
     unset: frozenset[str] = frozenset()
 
 
-class SaveTemplateRequest(BaseModel):
-    """Request body for PUT /api/config/template."""
+class ConfigDocumentRequest(BaseModel):
+    """Request body for daemon YAML replacement endpoints."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: ConfigRevision
     content: str
 
 
@@ -81,12 +84,3 @@ class SaveApprovalRulesRequest(BaseModel):
     """Request body for PUT /api/config/tool-approvals/global."""
 
     rules: list[str]
-
-
-class ImportConfigRequest(BaseModel):
-    """Request body for POST /api/config/import."""
-
-    config_store: dict[str, Any] | None = None
-    config: dict[str, Any] | None = None
-    config_secret_keys: list[str] | None = None
-    prompts: dict[str, str] | None = None

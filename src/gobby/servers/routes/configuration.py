@@ -21,12 +21,11 @@ from gobby.servers.routes.configuration_generation_endpoints import (
 )
 from gobby.servers.routes.configuration_import_export import register_import_export_routes
 from gobby.servers.routes.configuration_models import (
-    ImportConfigRequest,
+    ConfigDocumentRequest,
     PatchConfigRequest,
     SaveApprovalRulesRequest,
     SavePromptOverrideRequest,
     SaveSecretRequest,
-    SaveTemplateRequest,
     SaveUISettingsRequest,
 )
 from gobby.servers.routes.configuration_prompts import register_prompt_routes
@@ -40,12 +39,11 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 __all__ = [
-    "ImportConfigRequest",
+    "ConfigDocumentRequest",
     "PatchConfigRequest",
     "SaveApprovalRulesRequest",
     "SavePromptOverrideRequest",
     "SaveSecretRequest",
-    "SaveTemplateRequest",
     "SaveUISettingsRequest",
     "create_configuration_router",
 ]
