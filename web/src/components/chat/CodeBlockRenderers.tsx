@@ -71,6 +71,11 @@ export function CodeBlockInner({ children, className }: CodeProps) {
         language={language || 'text'}
         lazy
         customStyle={{ margin: 0, borderRadius: 0 }}
+        // Markdown fences render in the app's mono stack (the wrapper's
+        // `[&_code]:font-mono` intent): the inline override outranks the
+        // Prism theme's font entry without any !important. Non-markdown
+        // CodeBlock consumers keep the theme font.
+        codeFontFamily="var(--font-mono)"
       >
         {codeString}
       </CodeBlock>

@@ -25,10 +25,21 @@ const STYLE_CAPTURE_USE = {
       ? { executablePath: process.env.GOBBY_CAPTURE_BROWSER }
       : {}),
     // The voice-recording capture cells exercise the live mic-recording
-    // animation against a fake capture device.
+    // animation against a fake capture device. The remaining flags force
+    // fully deterministic rasterization: GPU raster/compositing off (tile AA
+    // flicker, ±1-channel blend rounding on layer edges), partial raster off
+    // (damage-region reuse leaves ±1 seams on anti-aliased arcs at
+    // fractional offsets), Skia runtime opts off and a pinned color profile
+    // (machine-dependent LSB shifts). Unlike a full --disable-gpu this set
+    // keeps WebGL alive for the knowledge graph.
     args: [
       "--use-fake-ui-for-media-stream",
       "--use-fake-device-for-media-stream",
+      "--disable-gpu-rasterization",
+      "--disable-gpu-compositing",
+      "--disable-partial-raster",
+      "--disable-skia-runtime-opts",
+      "--force-color-profile=srgb",
     ],
   },
 };

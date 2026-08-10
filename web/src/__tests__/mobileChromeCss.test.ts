@@ -371,18 +371,19 @@ describe('mobile chrome CSS', () => {
       { display: 'inline-flex' },
     )
     expectDeclarations(shellCss, '.project-selector-compact-trigger', {
-      background: 'var(--accent-tint)',
-      color: 'var(--accent)',
+      width: '100%',
+      'padding-block': '0',
     })
     expectDeclarations(shellCss, '.project-selector-compact-wrap', {
       height: 'var(--control-row-height)',
       'min-height': 'var(--control-row-height)',
     })
     expectDeclarations(segmentedControlCss, '.segmented-control', {
+      '--segmented-option-px': '0.75rem',
       'font-size': 'var(--text-base)',
     })
     expectDeclarations(segmentedControlCss, '.segmented-control__option', {
-      'padding-inline': '0.75rem',
+      'padding-inline': 'var(--segmented-option-px)',
     })
     expectDeclarations(shellCss, '.app-header-actions', {
       '--control-row-height': 'var(--status-bar-control-height)',
@@ -394,10 +395,13 @@ describe('mobile chrome CSS', () => {
       { '--control-row-height': '2.75rem' },
       '(pointer: coarse)',
     )
+    // Width floor only: min-height is owned by the Button primitive's min-h
+    // utility (the dense icon buttons ship 44x32 on coarse pointers — the
+    // sheet's height floor was dead under the utility and stays deleted).
     expectDeclarations(
       shellCss,
       '.app-header-actions .app-theme-toggle',
-      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
+      { 'min-width': '2.75rem' },
       '(pointer: coarse)',
     )
     expectDeclarations(

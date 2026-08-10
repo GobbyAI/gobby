@@ -25,7 +25,7 @@ enforced mechanically by the style-debt ratchet
 tokens live in `web/src/styles/tokens.css` (`web/src/styles/index.css` only
 aggregates imports); Tailwind exposes the common tokens through the `@theme`
 blocks in `web/src/styles/tailwind-theme.css`, while `web/tailwind.config.ts`
-only sets content scanning and `important: true`.
+only sets content scanning.
 
 ## Design Tokens
 
@@ -175,7 +175,19 @@ Tailwind maps these as `font-normal`, `font-medium`, `font-semibold`, and
 
 ## Tailwind Usage
 
-Tailwind is configured with `important: true` and scans `./src/**/*.{ts,tsx}`.
+Tailwind scans `./src/**/*.{ts,tsx}` and utilities win by cascade-layer order
+alone — the `important: true` era is over (plan 6.1). The cascade model:
+
+- Utilities live in `@layer utilities`; global resets (`base.css`,
+  `accessibility.css`) live in `@layer base`, which utilities out-rank.
+- The surviving hook sheets (`app-shell.css`, `segmented-control.css`,
+  `dropdown-caret.css`, `settings-overlay.css`) are un-layered, so their
+  declarations out-cascade utilities regardless of specificity. A hook rule
+  may therefore only style properties that no utility on the same element
+  sets, in any state or variant. To let a caller vary a hook-styled property,
+  expose a custom property (see `--segmented-option-px`) instead of expecting
+  a utility to win.
+
 Use semantic Tailwind colors where mappings exist.
 
 | Tailwind class | CSS variable |
@@ -673,7 +685,9 @@ Do not:
 - Use gradients, gradient text, neon glows, or purple-blue AI-dashboard styling.
 - Add React Router; top-level navigation is hash-backed tab state.
 - Create broad global providers when a custom hook and local state will do.
-- Use `!important`; Tailwind utilities are already configured with `important: true`.
+- Use `!important`; utilities own their properties by cascade-layer order — fix
+  specificity at the source, and never style a utility-owned property from a
+  hook sheet (see [Tailwind Usage](#tailwind-usage)).
 - Use `btn`/`btn-*` classes — the `.btn` system is retired; use `<Button>` from `components/ui`.
 - Render raw `<button>`, `<input>`, `<select>`, or `<textarea>` outside `components/ui`; use the primitives.
 - Create new `.css` files or new `*_CLS` style-string constants (ratchet-enforced).

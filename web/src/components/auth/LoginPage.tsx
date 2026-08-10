@@ -97,10 +97,7 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
           type="submit"
           variant="primary"
           disabled={loading || !username || !password}
-          style={{
-            ...styles.button,
-            opacity: loading || !username || !password ? 0.6 : 1,
-          }}
+          style={styles.button}
         >
           {loading ? 'Signing in...' : 'Sign in'}
         </Button>
@@ -177,13 +174,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     color: 'var(--text-secondary)',
   },
+  // Geometry, chrome, and type scale come from the Input primitive (its
+  // error border state must stay live); only the text color is local.
   input: {
-    padding: '0.55rem 0.75rem',
-    borderRadius: 6,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
-    fontSize: 'var(--text-lg)',
   },
   checkboxLabel: {
     display: 'flex',
@@ -193,15 +187,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     cursor: 'pointer',
   },
+  // Chrome, type scale, cursor, and disabled dimming come from the primary
+  // Button primitive; the block padding (taller than md's min-height
+  // floor) and offset are local.
   button: {
-    padding: '0.6rem',
-    borderRadius: 6,
-    border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--accent-foreground)',
-    fontSize: 'var(--text-lg)',
-    fontWeight: 600,
-    cursor: 'pointer',
+    paddingBlock: '0.6rem',
     marginTop: '0.25rem',
   },
 }

@@ -55,5 +55,5 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Total lines across all recorded stylesheets. The ceiling only moves down;
 // once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 1947
+export const CSS_TOTAL_LINE_CEILING = 1683
 export const CSS_LINE_TIGHTEN_SLACK = 200

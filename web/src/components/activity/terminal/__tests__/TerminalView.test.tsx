@@ -249,6 +249,60 @@ describe("TerminalView", () => {
     }
   });
 
+  it("subtracts the wterm element's padding from the fitted grid", async () => {
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: height,
+        right: width,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this instanceof HTMLSpanElement) return rect(8, 16);
+        if (this.classList.contains("term-row")) return rect(800, 16);
+        return rect(800, 320);
+      });
+    // A grid sized to the raw container overflows the element by its padding
+    // and leaves it scrollable — the fit must subtract the padding box.
+    const fitCallbacks: Array<() => void> = [];
+    class ManualResizeObserver {
+      constructor(callback: () => void) {
+        fitCallbacks.push(callback);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", ManualResizeObserver);
+
+    try {
+      render(<TerminalView />);
+      await settleAsyncWork();
+
+      const instance = latestInstance();
+      instance.element.style.paddingTop = "12px";
+      instance.element.style.paddingBottom = "12px";
+      instance.element.style.paddingLeft = "12px";
+      instance.element.style.paddingRight = "12px";
+      act(() => {
+        for (const callback of fitCallbacks) callback();
+      });
+
+      // (800-24)px / 8px per char = 97 cols; (320-24)px / 16px = 18.5 -> 18.
+      expect(instance.resize).toHaveBeenCalledWith(97, 18);
+    } finally {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("resize transposition", async () => {
     vi.useFakeTimers();
     const onReady = vi.fn();

@@ -204,9 +204,11 @@ export function buildCaptureScenarios(): CaptureScenarioDescriptor[] {
     id: "memory-graph",
     planSection: "4.5",
     states: [
-      // The graph opens on desktop-tier widths only (`useIsMobile` gates the
-      // Show Graph action), so the portrait viewport cannot photograph it.
-      { id: "base", viewports: ["desktop", "landscape"], pointers: CAPTURE_POINTERS },
+      // The graph opens on the desktop tier only (`useIsMobile` gates the
+      // Show Graph action, and the mobile tier is width ≤767px OR height
+      // ≤500px), so neither portrait nor the 932×430 landscape viewport can
+      // photograph it.
+      { id: "base", viewports: ["desktop"], pointers: CAPTURE_POINTERS },
     ],
   });
 
@@ -222,10 +224,9 @@ export function buildCaptureScenarios(): CaptureScenarioDescriptor[] {
     id: "mobile-toolbar",
     planSection: "1.4",
     states: [
-      // Portrait only: today the mobile tier is width-gated (≤767px), so the
-      // 932×430 landscape viewport renders the desktop toolbar. Landscape
-      // mobile chrome arrives with 1.4's height clause and is re-baselined by
-      // every base scenario's landscape cells.
+      // Portrait only: the height clause (≤500px) makes the 932×430
+      // landscape viewport mobile-tier too, and every base scenario's
+      // landscape cells already photograph that chrome.
       {
         id: "base",
         viewports: ["portrait"],

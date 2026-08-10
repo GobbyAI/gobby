@@ -461,6 +461,9 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
     const ext = entry.name.split('.').pop() ?? ''
 
     if (isDir) {
+      // Indent base 0.5rem must equal px-2's inline padding: at depth 0 the
+      // inline indent and the utility agree, so row geometry is identical
+      // whichever wins the cascade.
       return (
         <div key={entry.path}>
           <div
@@ -468,7 +471,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
               'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
               isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
             )}
-            style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+            style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}
             role="treeitem"
             tabIndex={0}
             aria-level={depth + 1}
@@ -510,7 +513,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
           {isExpanded && !children && (
-            <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]" style={{ paddingLeft: `calc(0.75rem + ${depth + 1} * 1rem)` }}>Loading...</div>
+            <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]" style={{ paddingLeft: `calc(0.5rem + ${depth + 1} * 1rem)` }}>Loading...</div>
           )}
         </div>
       )
@@ -525,7 +528,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
             isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
           )}
-          style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
+          style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}
           role="treeitem"
           tabIndex={0}
           aria-level={depth + 1}

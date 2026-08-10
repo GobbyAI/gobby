@@ -68,10 +68,13 @@ import { SETTINGS_SECTIONS } from "../src/components/settings/sections";
 import {
   CAPTURE_RUN_ENV,
   buildCaptureScenarios,
+  captureRootDir,
   expandCaptureCells,
+  runDirFor,
   stageCaptureCell,
   type CaptureCell,
   type CaptureCellFragment,
+  type FinalizedRunManifest,
 } from "./support/captureRunFinalizer";
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -1481,6 +1484,15 @@ function baseApi(
     }
     case "/api/files/git-status":
       return { branch: "main", files: { "README.md": "M", "src/main.py": "??" } };
+    case "/api/source-control/status":
+      return {
+        github_available: false,
+        github_repo: null,
+        current_branch: "main",
+        branch_count: 1,
+        worktree_count: 0,
+        clone_count: 0,
+      };
     case "/api/files/read":
       return {
         content: "# Readme\n\nSeeded file content for the capture harness.\n",
@@ -1613,7 +1625,10 @@ async function showActivityTab(page: Page, tab: string): Promise<void> {
 }
 
 function isMobileCell(cell: CaptureCell): boolean {
-  return cell.viewport.width < 768;
+  // Mirror the CSS `mobile` custom variant (tailwind-theme.css): mobile is
+  // max-width 767px OR max-height 500px, so the landscape viewport
+  // (932×430) is mobile-tier and starts with the activity panel closed.
+  return cell.viewport.width < 768 || cell.viewport.height <= 500;
 }
 
 function tabImpl(
@@ -1668,10 +1683,10 @@ const TAB_CHECKPOINTS: Record<string, (page: Page, cell: CaptureCell) => Locator
     page.getByRole("tree", { name: "Wiki pages" }).getByRole("treeitem", { name: "Home" }),
   rules: (page) => page.getByRole("button", { name: "Select no-secrets-in-diff" }),
   plans: (page) => page.getByTestId("plan-review-status"),
-  changes: (page) => page.locator(".file-status-badge").first(),
+  changes: (page) => page.getByRole("button", { name: /alpha\.ts/ }),
   files: (page) =>
-    page.getByRole("tree", { name: "Project files" }).locator(".files-tree-item").first(),
-  pipelines: (page) => page.locator(".pipeline-exec-row").first(),
+    page.getByRole("tree", { name: "Project files" }).getByRole("treeitem").first(),
+  pipelines: (page) => page.getByRole("button", { name: /nightly-verify/ }).first(),
   cron: (page) => page.getByRole("button", { name: "Select Nightly Digest" }),
 };
 
@@ -1755,6 +1770,35 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
             }
           },
           checkpoint,
+          readiness: async (page) => {
+            // The renderer locks each wterm element's height to its fitted
+            // grid, and the fit re-runs on font load and debounced container
+            // resizes — a capture between fits shifts the whole dock by a
+            // row. Require the seeded scrollback to be rendered and every
+            // fitted box to hold still across consecutive checks.
+            const wterms = page.locator(".wterm");
+            await expect(wterms.first()).toBeVisible({ timeout: 20000 });
+            await expect(
+              page.getByText("plain line").first(),
+            ).toBeVisible({ timeout: 15000 });
+            const boxes = () =>
+              wterms.evaluateAll((els) =>
+                els
+                  .map((el) => {
+                    const r = el.getBoundingClientRect();
+                    return `${r.x},${r.y},${r.width},${r.height}`;
+                  })
+                  .join("|"),
+              );
+            await expect(async () => {
+              const first = await boxes();
+              await page.waitForTimeout(300);
+              const second = await boxes();
+              if (!first || first !== second) {
+                throw new Error("terminal still fitting");
+              }
+            }).toPass({ timeout: 15000, intervals: [300] });
+          },
         };
         break;
       }
@@ -1775,19 +1819,31 @@ function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
               resolvePlanSocket(ws);
             }
           },
-          prepare: async () => {
-            // page.goto has completed React mounting, so the plan handler is
-            // registered before this event drives the panel to Plans.
+          prepare: async (page) => {
+            // The app subscribes before every in-app consumer has registered
+            // its handler, so a single send can land in a gap and vanish.
+            // Re-drive the same event until the review banner mounts —
+            // duplicate sends render the identical latest-plan banner, so
+            // re-sending is pixel-neutral.
             const ws = planSocket ?? (await planSocketReady);
-            ws.send(
-              JSON.stringify({
-                type: "plan_pending_approval",
-                conversation_id: CONVERSATION_ID,
-                plan_content:
-                  "# Implementation Plan\n\n1. Seed the panel\n2. Photograph every surface\n",
-                options: [{ id: "accept", label: "Approve" }],
-              }),
-            );
+            const send = () =>
+              ws.send(
+                JSON.stringify({
+                  type: "plan_pending_approval",
+                  conversation_id: CONVERSATION_ID,
+                  plan_content:
+                    "# Implementation Plan\n\n1. Seed the panel\n2. Photograph every surface\n",
+                  options: [{ id: "accept", label: "Approve" }],
+                }),
+              );
+            send();
+            await expect(async () => {
+              if (await page.getByTestId("plan-review-status").isVisible()) {
+                return;
+              }
+              send();
+              throw new Error("plan review banner not mounted yet");
+            }).toPass({ timeout: 20000, intervals: [500, 1000, 2000] });
           },
           checkpoint,
         };
@@ -2000,6 +2056,8 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
       base: {
         localStorage: tabSeed("memory"),
         prepare: async (page) => {
+          // Desktop-tier viewports only (the matrix restricts this
+          // scenario): the panel is already open and Show Graph exists.
           await expect(
             page.getByRole("list", { name: "Memories" }).getByRole("listitem").first(),
           ).toBeVisible();
@@ -2010,7 +2068,16 @@ function buildImplementations(): Record<string, Record<string, StateImpl>> {
           await expect(
             page.locator(".knowledge-graph").getByText("2 entities · 1 relationships"),
           ).toBeVisible({ timeout: 20000 });
-          await expect(page.locator(".knowledge-graph canvas")).toBeVisible();
+          const canvas = page.locator(".knowledge-graph canvas");
+          await expect(canvas).toBeVisible();
+          // The WebGL scene animates forever (desktop link particles run on
+          // a rAF loop that page.screenshot's animations:"disabled" cannot
+          // freeze), so no amount of waiting yields a stable frame. Canvas
+          // pixels are CSS-inert; hide it once the graph has provably
+          // mounted so paired runs compare only the CSS-styled chrome.
+          await canvas.evaluate((el) => {
+            el.style.visibility = "hidden";
+          });
         },
       },
     },
@@ -2228,6 +2295,63 @@ test.describe("reduced-motion relocation", () => {
   });
 });
 
+test.describe("matrix parity review", () => {
+  // The executable review gate for cascade-neutral flips (plan section 6.1):
+  // two finalized labeled runs must agree byte-for-byte on every cell of the
+  // CURRENT expected matrix. Opt-in — point both env vars at finalized run
+  // labels under tests/screenshots/style-captures/runs/:
+  //
+  //   GOBBY_CAPTURE_PARITY_BEFORE=<sha>-before \
+  //   GOBBY_CAPTURE_PARITY_AFTER=<sha>-after \
+  //     npx playwright test tests/style-surfaces.spec.ts \
+  //     --grep "matrix parity review" --project=chromium
+  const BEFORE_ENV = "GOBBY_CAPTURE_PARITY_BEFORE";
+  const AFTER_ENV = "GOBBY_CAPTURE_PARITY_AFTER";
+
+  test("every matrix cell is pixel-identical across the labeled runs", () => {
+    const beforeLabel = process.env[BEFORE_ENV];
+    const afterLabel = process.env[AFTER_ENV];
+    test.skip(
+      !beforeLabel || !afterLabel,
+      `opt-in: set ${BEFORE_ENV} and ${AFTER_ENV} to finalized capture-run labels`,
+    );
+
+    const loadManifest = (label: string): FinalizedRunManifest => {
+      const manifestPath = path.join(
+        runDirFor(captureRootDir(), label),
+        "run-manifest.json",
+      );
+      expect(
+        fs.existsSync(manifestPath),
+        `no finalized capture run "${label}" at ${manifestPath}`,
+      ).toBe(true);
+      return JSON.parse(
+        fs.readFileSync(manifestPath, "utf8"),
+      ) as FinalizedRunManifest;
+    };
+    const before = loadManifest(beforeLabel!);
+    const after = loadManifest(afterLabel!);
+
+    // Both runs must cover the current expected matrix exactly — a stale or
+    // shrunken run cannot vouch for parity.
+    const expectedKeys = expandCaptureCells()
+      .map((cell) => cell.key)
+      .sort();
+    expect(Object.keys(before.cells).sort()).toEqual(expectedKeys);
+    expect(Object.keys(after.cells).sort()).toEqual(expectedKeys);
+
+    const differing = expectedKeys.filter(
+      (key) => before.cells[key]?.pngSha256 !== after.cells[key]?.pngSha256,
+    );
+    expect(
+      differing,
+      `${differing.length} cell(s) differ between "${beforeLabel}" and ` +
+        `"${afterLabel}" — review each pair and fix every regression at its ` +
+        `source (component specificity, never a new !important).`,
+    ).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The capture matrix (opt-in, @style-capture project only)
 // ---------------------------------------------------------------------------
@@ -2235,26 +2359,66 @@ test.describe("reduced-motion relocation", () => {
 async function settle(page: Page): Promise<void> {
   await page.evaluate(async () => {
     await document.fonts.ready;
+    // Raster images paint progressively: a screenshot can catch a half
+    // decoded logo. Wait for every <img> and every CSS background-image
+    // URL to be fully loaded before capture.
+    await Promise.all(
+      Array.from(document.images, (img) => img.decode().catch(() => {})),
+    );
+    const bgUrls = new Set<string>();
+    for (const el of Array.from(document.querySelectorAll("*"))) {
+      const match = getComputedStyle(el).backgroundImage.match(
+        /url\("?([^")]+)"?\)/,
+      );
+      if (match) bgUrls.add(match[1]);
+    }
+    await Promise.all(
+      Array.from(bgUrls, (url) =>
+        new Promise<void>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+          img.src = url;
+        }),
+      ),
+    );
     await new Promise((resolve) =>
       requestAnimationFrame(() => requestAnimationFrame(resolve)),
     );
   });
 }
 
-async function assertPointerEmulation(page: Page, cell: CaptureCell): Promise<void> {
-  // Poll: touch-derived pointer emulation can apply a beat after load. A
-  // page where it never applies still fails loudly — that is the contract.
-  await expect
-    .poll(
-      () => page.evaluate(() => window.matchMedia("(pointer: coarse)").matches),
-      {
-        timeout: 5000,
-        message:
-          `matchMedia pointer axis mis-emulated for ${cell.key}: expected ` +
-          `pointer:${cell.pointer}`,
-      },
-    )
-    .toBe(cell.pointer === "coarse");
+async function assertPointerEmulation(
+  page: Page,
+  cell: CaptureCell,
+  opts?: { bestEffort?: boolean },
+): Promise<void> {
+  // Poll: touch-derived pointer emulation can apply a beat after load. On
+  // the rendered document a page where it never applies fails loudly — that
+  // is the contract. The pre-goto warm-up call is best-effort instead:
+  // about:blank sometimes never re-evaluates its media queries after the
+  // context-level touch emulation lands, while the navigation right after
+  // commits a fresh document that picks the emulation up at commit — so a
+  // warm-up timeout is noise, never evidence about the real page.
+  try {
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() => window.matchMedia("(pointer: coarse)").matches),
+        {
+          // Generous: emulation is context-level and always lands eventually,
+          // but heavy first renders (agents editor, force graph) can starve
+          // the poll well past 5s under parallel-worker load.
+          timeout: opts?.bestEffort ? 5000 : 15000,
+          message:
+            `matchMedia pointer axis mis-emulated for ${cell.key}: expected ` +
+            `pointer:${cell.pointer}`,
+        },
+      )
+      .toBe(cell.pointer === "coarse");
+  } catch (error) {
+    if (!opts?.bestEffort) throw error;
+  }
 }
 
 interface ComputedAnimation {
@@ -2304,31 +2468,91 @@ async function runCaptureCell(
       consoleLog.push(`pageerror: ${String(error).slice(0, 300)}`);
     });
 
-    // Deterministic clock via SHIFT, not freeze: "now" is pinned to the
-    // fixed epoch but keeps ticking. A frozen Date.now (page.clock or a
-    // static override) stalls the app's elapsed-time logic — whole
-    // surfaces (voice controls, WS-driven states) never mount — while a
-    // shifted clock keeps relative timestamp labels pairable across runs
-    // without breaking scheduling.
+    if (cell.pointer === "coarse") {
+      // Belt over the context-level hasTouch: rarely a page target misses
+      // the context's touch emulation entirely — pointer:coarse never
+      // becomes true, even on the committed document. Re-issuing the same
+      // CDP override on the page's own session pins it. The session stays
+      // attached: Emulation overrides reset when their session detaches.
+      const cdp = await context.newCDPSession(page);
+      await cdp.send("Emulation.setTouchEmulationEnabled", {
+        enabled: true,
+        maxTouchPoints: 1,
+      });
+    }
+
+    // Warm up the pointer axis on the blank page, before the app loads, so
+    // the app almost always mounts with the emulated axis already in force.
+    // Best-effort by design: see assertPointerEmulation — the hard contract
+    // is the post-render assert on the real document.
+    await assertPointerEmulation(page, cell, { bestEffort: true });
+
+    // Deterministic clock: Date is FROZEN at the fixed epoch (constructor
+    // and Date.now), while timers and performance.now keep running — only
+    // page.clock-style full virtual time stalls scheduling and prevents
+    // surfaces from mounting. Pinning Date alone keeps every client-side
+    // stamp and relative label byte-identical across paired runs.
+    // Lazy mounts (CodeBlock and any other IntersectionObserver consumer)
+    // are bistable in captures: whether the observer fires before an
+    // overlay/tab covers the target depends on load timing, so paired runs
+    // can disagree on placeholder-vs-mounted pixels. Make every observer
+    // fire immediately — captures always photograph the mounted state.
+    await page.addInitScript(() => {
+      class EagerIntersectionObserver {
+        private readonly callback: IntersectionObserverCallback;
+        readonly root = null;
+        readonly rootMargin = "0px";
+        readonly thresholds = [0];
+        constructor(callback: IntersectionObserverCallback) {
+          this.callback = callback;
+        }
+        observe(target: Element): void {
+          this.callback(
+            [
+              {
+                isIntersecting: true,
+                target,
+                intersectionRatio: 1,
+                time: 0,
+                boundingClientRect: target.getBoundingClientRect(),
+                intersectionRect: target.getBoundingClientRect(),
+                rootBounds: null,
+              } as IntersectionObserverEntry,
+            ],
+            this as unknown as IntersectionObserver,
+          );
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+        takeRecords(): IntersectionObserverEntry[] {
+          return [];
+        }
+      }
+      window.IntersectionObserver =
+        EagerIntersectionObserver as unknown as typeof IntersectionObserver;
+    });
+
+    // Fully frozen, never merely shifted: the clock must not advance during
+    // the run, or client-side stamps (message receive times) tick between
+    // paired runs — a rendered 7:00:00 vs 7:00:01 was a real diff class.
     await page.addInitScript((fixedNowMs: number) => {
       const OriginalDate = Date;
-      const offset = fixedNowMs - OriginalDate.now();
-      class ShiftedDate extends OriginalDate {
+      class FrozenDate extends OriginalDate {
         constructor(...args: unknown[]) {
           if (args.length === 0) {
-            super(OriginalDate.now() + offset);
+            super(fixedNowMs);
           } else {
             // @ts-expect-error variadic Date construction passthrough
             super(...args);
           }
         }
         static now(): number {
-          return OriginalDate.now() + offset;
+          return fixedNowMs;
         }
       }
-      ShiftedDate.parse = OriginalDate.parse;
-      ShiftedDate.UTC = OriginalDate.UTC;
-      (window as { Date: unknown }).Date = ShiftedDate;
+      FrozenDate.parse = OriginalDate.parse;
+      FrozenDate.UTC = OriginalDate.UTC;
+      (window as { Date: unknown }).Date = FrozenDate;
     }, FIXED_TIME.getTime());
 
     const settings = {
@@ -2415,6 +2639,23 @@ async function runCaptureCell(
     await settle(page);
     await impl.readiness?.(page, cell);
 
+    // The activity panel's session list streams in after first paint; a
+    // capture taken during its loading placeholder is nondeterministic
+    // between paired runs. No cell hangs the sessions endpoint, so this gate
+    // is unconditional — the loading cells only hang the MESSAGES fetch, and
+    // their sessions panel still races to loaded run-to-run.
+    await expect(page.getByText(/Loading sessions/)).toHaveCount(0, {
+      timeout: 15000,
+    });
+    // Same race for the chat column's message fetch ("Loading messages…"
+    // vs "No messages yet" flips run-to-run). Deliberate loading states
+    // photograph that placeholder, so only they opt out.
+    if (!cell.state.startsWith("loading")) {
+      await expect(page.getByText(/Loading messages/)).toHaveCount(0, {
+        timeout: 15000,
+      });
+    }
+
     if (cell.motion !== null) {
       const target = impl.motionTarget?.(page);
       if (!target) {
@@ -2446,6 +2687,31 @@ async function runCaptureCell(
       }
     }
 
+    // Pixel determinism: a screenshot must not sample a timing-dependent
+    // animation frame, a mid-flight transition (hover/focus fades from
+    // prepare interactions), or a fading macOS overlay scrollbar left by a
+    // programmatic scroll. The motion contract was already asserted on
+    // computed styles above, so freezing here loses nothing.
+    // The freeze must sit INSIDE @layer utilities: for !important
+    // declarations layer precedence is reversed (layered beats un-layered),
+    // so with important:true active an un-layered freeze would lose to the
+    // animate-*/transition-* utilities. Same layer + injected last wins in
+    // both flag states.
+    await page.addStyleTag({
+      content:
+        "@layer utilities { *, *::before, *::after { animation: none !important; transition: none !important; } " +
+        "::-webkit-scrollbar { display: none !important; } }",
+    });
+
+    // Overlay scrollbars fade on their own compositor timeline after any
+    // programmatic scroll; a mid-fade thumb leaves ±1-channel residue along
+    // scroll-container edges that breaks paired-run byte equality. Remove
+    // the scrollbar lane entirely for the shot — overlay bars occupy no
+    // layout space, so geometry is unchanged.
+    await page.addStyleTag({
+      content: "* { scrollbar-width: none !important; }",
+    });
+
     if (cell.grayscale) {
       // The repeatable deutan check: capture the state fully desaturated.
       await page.addStyleTag({
@@ -2453,9 +2719,13 @@ async function runCaptureCell(
       });
     }
 
+    // Always "disabled": the motion contract is enforced by the computed-style
+    // assertions above, so the pixels themselves must be phase-deterministic —
+    // Playwright rewinds infinite animations to their initial state and
+    // fast-forwards finite ones identically in both runs of a parity pair.
     const png = await page.screenshot({
       caret: "hide",
-      animations: cell.motion === null ? "disabled" : "allow",
+      animations: "disabled",
     });
     return stageCaptureCell(testInfo, cell, png);
   } catch (error) {
@@ -2475,6 +2745,12 @@ async function runCaptureCell(
 
 test.describe("style-surface capture matrix", () => {
   test.describe.configure({ timeout: 90_000 });
+  // The configure() timeout above proved inert on this runner — every
+  // capture attempt in a full matrix run died at the 30s default — so pin
+  // the per-test timeout imperatively as well.
+  test.beforeEach(() => {
+    test.setTimeout(90_000);
+  });
   test.skip(
     !RUN_ID,
     `Set ${CAPTURE_RUN_ENV}=<label> (see the header comment) to run the capture matrix.`,

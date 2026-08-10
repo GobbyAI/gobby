@@ -1,6 +1,8 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { compile } from '@tailwindcss/node'
 import { describe, expect, it } from 'vitest'
 import {
   BTN_CLASS_ALLOWLIST,
@@ -493,5 +495,25 @@ describe('style ratchet', () => {
       `Total CSS shrank to ${scan.cssTotalLines} lines, more than ${CSS_LINE_TIGHTEN_SLACK} below ` +
         `the ceiling ${CSS_TOTAL_LINE_CEILING}. Lower CSS_TOTAL_LINE_CEILING to ${scan.cssTotalLines} in ${ALLOWLIST}.`,
     ).toBeGreaterThanOrEqual(CSS_TOTAL_LINE_CEILING - CSS_LINE_TIGHTEN_SLACK)
+  })
+})
+
+describe('tailwind cascade', () => {
+  // Plan section 6.1: the `important: true` config flag is retired. Utilities
+  // win by layer order alone; the only !important left in the codebase is the
+  // six-declaration set recorded in IMPORTANT_ALLOWLIST.
+  it('emits no !important from compiled utilities', async () => {
+    const webRoot = join(fileURLToPath(import.meta.url), '..', '..', '..')
+    const tailwind = await compile(
+      '@import "tailwindcss";\n@config "./tailwind.config.ts";',
+      { base: webRoot, onDependency() {} },
+    )
+    const css = tailwind.build(['flex', 'h-4', 'text-sm', 'animate-spin'])
+    // Preflight legitimately ships one !important ([hidden] display), so the
+    // assertion scopes to the utilities layer — the surface the retired
+    // `important: true` flag used to blanket.
+    const utilitiesLayer = css.slice(css.indexOf('@layer utilities'))
+    expect(utilitiesLayer).toContain('@layer utilities')
+    expect(utilitiesLayer).not.toMatch(IMPORTANT)
   })
 })

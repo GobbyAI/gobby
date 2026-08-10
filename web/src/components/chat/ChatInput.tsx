@@ -524,7 +524,6 @@ export function ChatInput({
             <Textarea
               ref={textareaRef}
               name="message"
-              style={{ minHeight: 'var(--control-row-height)' }}
               wrapperClassName="flex-1"
               className="chat-input-textarea min-h-[36px] max-h-[200px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground [field-sizing:content] placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
               value={input}

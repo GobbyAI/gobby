@@ -175,8 +175,22 @@ function TerminalInstance({
           const cell = measureCell(readyTerminal.element);
           if (!cell) return;
           const rect = container.getBoundingClientRect();
-          const cols = Math.max(1, Math.floor(rect.width / cell.charWidth));
-          const rows = Math.max(1, Math.floor(rect.height / cell.rowHeight));
+          // The grid must fit INSIDE the wterm element's padding box: sizing
+          // to the raw container makes the grid overflow by the padding,
+          // which leaves the element scrollable — the visible row offset then
+          // depends on the write/fit ordering instead of the layout.
+          const style = getComputedStyle(readyTerminal.element);
+          const pad = (value: string) => Number.parseFloat(value) || 0;
+          const padX = pad(style.paddingLeft) + pad(style.paddingRight);
+          const padY = pad(style.paddingTop) + pad(style.paddingBottom);
+          const cols = Math.max(
+            1,
+            Math.floor((rect.width - padX) / cell.charWidth),
+          );
+          const rows = Math.max(
+            1,
+            Math.floor((rect.height - padY) / cell.rowHeight),
+          );
           if (cols !== readyTerminal.cols || rows !== readyTerminal.rows) {
             readyTerminal.resize(cols, rows);
           }
