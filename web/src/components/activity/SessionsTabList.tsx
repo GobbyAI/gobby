@@ -94,7 +94,13 @@ function SessionEntryRow({
     <div
       role="button"
       tabIndex={0}
-      className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
+      className={cn(
+        "session-entry flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between border-0 border-b border-border bg-transparent px-3 py-2 text-left font-[inherit] text-[inherit] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]",
+        isSelected &&
+          "session-entry--active bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
+        isPaused &&
+          "session-entry--paused opacity-[0.55] hover:opacity-75",
+      )}
       onClick={() => onSelect(entry.id)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -127,7 +133,10 @@ function SessionEntryRow({
           variant="ghost"
           size="icon"
           dense
-          className={cn("session-more-btn", coarseHitAreaCls)}
+          className={cn(
+            "session-more-btn size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+            coarseHitAreaCls,
+          )}
           onClick={(event) => onMenuButtonClick(event, entry)}
           title="Session actions"
           aria-label="Session actions"

@@ -29,6 +29,18 @@ const CHAT_INPUT_TOUCH_CANDIDATES = [
   'pointer-coarse:w-11',
 ] as const
 
+const ACTIVITY_MENU_TOUCH_CANDIDATES = [
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const SESSION_ACTION_TOUCH_CANDIDATES = [
+  'pointer-coarse:h-11',
+  'pointer-coarse:w-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
 async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
@@ -39,13 +51,13 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     'h-4',
     'w-4',
     ...CHAT_INPUT_TOUCH_CANDIDATES,
+    ...ACTIVITY_MENU_TOUCH_CANDIDATES,
+    ...SESSION_ACTION_TOUCH_CANDIDATES,
     'pointer-coarse:min-h-11',
     'pointer-coarse:min-w-11',
   ])
   const cssSources = [
     tailwindCss,
-    readFileSync(join(srcRoot, 'components/chat/styles/sessions-tab.css'), 'utf8'),
-    readFileSync(join(srcRoot, 'components/chat/styles/activity-panel.css'), 'utf8'),
     readFileSync(join(srcRoot, 'components/tasks/task-execution.css'), 'utf8'),
     readFileSync(join(srcRoot, 'components/activity/taskdetail/task-detail.css'), 'utf8'),
   ]
@@ -243,10 +255,10 @@ describe('coarse-pointer touch targets', () => {
       <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(' ')}">Send</button>
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
-      <button data-target="session actions" class="session-more-btn">⋮</button>
-      <button data-target="task actions" class="task-more-btn">⋮</button>
+      <button data-target="session actions" class="session-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
+      <button data-target="task actions" class="task-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
       <button data-target="task expand" class="activity-task-row-toggle">›</button>
-      <button data-target="activity menu item" class="activity-panel-mobile-menu__item">Sessions</button>
+      <button data-target="activity menu item" class="activity-panel-mobile-menu__item ${ACTIVITY_MENU_TOUCH_CANDIDATES.join(' ')}">Sessions</button>
       <label data-target="filter option" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Filter</label>
       <label data-target="session role filter" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Parent</label>
       <button data-target="error dismiss" class="activity-task-detail-edit-error__dismiss">×</button>

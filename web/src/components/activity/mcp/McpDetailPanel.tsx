@@ -53,8 +53,10 @@ export function McpDetailPanel({
   if (!selection) {
     return (
       <div className="activity-mcp-detail">
-        <div className="activity-panel-status-bar activity-panel-status-bar--detail">
-          <span className="activity-panel-status-bar__title">MCP</span>
+        <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
+          <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
+            MCP
+          </span>
         </div>
         <div className="activity-mcp-detail-body activity-mcp-detail-body--empty">
           Select a server or tool.
@@ -67,8 +69,8 @@ export function McpDetailPanel({
     const health = server ? status?.server_health?.[server.name] : null;
     return (
       <div className="activity-mcp-detail">
-        <div className="activity-panel-status-bar activity-panel-status-bar--detail">
-          <span className="activity-panel-status-bar__title">
+        <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
+          <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
             {server?.name ?? selection.serverName}
           </span>
         </div>
@@ -117,22 +119,23 @@ export function McpDetailPanel({
   const title = `${selection.serverName}.${selection.toolName}`;
   return (
     <div className="activity-mcp-detail">
-      <div className="activity-panel-status-bar activity-panel-status-bar--detail">
-        <span className="activity-panel-status-bar__title">{title}</span>
+      <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
+        <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
+          {title}
+        </span>
         {schema && (
-          <div className="activity-panel-status-bar__actions">
+          <div className="activity-panel-status-bar__actions flex flex-none items-center gap-3">
             <Button
               type="button"
               variant="accent"
               size="sm"
-              className="activity-panel-action-btn"
               onClick={onCallTool}
               disabled={executing || !formValid}
               aria-label="Call tool"
               title="Call tool"
             >
               <CallToolIcon />
-              <span className="activity-panel-action-btn__label">
+              <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
                 {executing ? "Calling" : "Call Tool"}
               </span>
             </Button>

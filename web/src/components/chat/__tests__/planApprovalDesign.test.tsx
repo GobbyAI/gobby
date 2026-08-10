@@ -10,6 +10,10 @@ import { AgentStatusBar } from '../AgentStatusBar'
 
 const planPendingColors = getPlanPendingColors('info')
 const commandBarSource = readFileSync(resolve('src/components/chat/CommandBar.tsx'), 'utf8')
+const activityPanelSource = readFileSync(
+  resolve('src/components/activity/ActivityPanel.tsx'),
+  'utf8',
+)
 
 // Render markdown as plain text so the pending banner is the only thing under test.
 vi.mock('../Markdown', () => ({
@@ -103,6 +107,12 @@ describe('plan-approval design fixes (#15637)', () => {
 
   it('CommandBar owns the shared activity-bar height through component utilities', () => {
     expect(commandBarSource).toContain('min-h-[var(--activity-panel-bar-height)]')
+  })
+
+  it('ActivityPanel owns the shared tab-bar height and padding through component utilities', () => {
+    expect(activityPanelSource).toContain('activity-panel-tabs')
+    expect(activityPanelSource).toContain('min-h-[var(--activity-panel-bar-height)]')
+    expect(activityPanelSource).toContain('px-3')
   })
 
   it('in-bar plan controls are pinned to --status-bar-control-height so they cannot stretch the bar', () => {

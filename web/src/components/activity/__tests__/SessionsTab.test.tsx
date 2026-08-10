@@ -982,7 +982,7 @@ describe("SessionsTab", () => {
     const activeSvg = activeDot.querySelector("svg");
     expect(activeDot.getAttribute("data-kind")).toBe("active");
     expect(activeDot.getAttribute("class")).toContain(
-      "activity-row-status-dot--pulse",
+      "animate-[pulse_1.5s_ease-in-out_infinite]",
     );
     expect(activeSvg?.getAttribute("class")).toContain(
       "activity-row-status-dot__glyph--active",

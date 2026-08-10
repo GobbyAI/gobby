@@ -61,19 +61,18 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('exposes shared row-title and row-meta utility classes locked to the ladder', () => {
-    const source = readSource('src/components/chat/styles/activity-panel.css')
+    const source = readSource('src/components/activity/ActivityPanel.tsx')
 
-    expect(source).toMatch(
-      /\.activity-row-title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-row-meta\s*{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
-    )
+    expect(source).toContain('[&_.activity-row-title]:text-[length:var(--text-base)]')
+    expect(source).toContain('[&_.activity-row-title]:font-[var(--font-weight-medium)]')
+    expect(source).toContain('[&_.activity-row-meta]:text-[length:var(--text-sm)]')
+    expect(source).toContain('[&_.activity-row-meta]:font-[var(--font-weight-normal)]')
   })
 
   it('uses one shared activity status-bar height and readable title size', () => {
     const rootSource = readSource('src/styles/tokens.css')
-    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
+    const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
+    const mcpDetailSource = readSource('src/components/activity/mcp/McpDetailPanel.tsx')
     const taskSource = readSource('src/components/tasks/task-execution.css')
     const sessionsSource = readSessionsSurfaceSource()
 
@@ -81,13 +80,19 @@ describe('activity-panel typography ladder (#14245)', () => {
     // .agent-status-bar, .voice-status-bar, and the activity-panel bars all
     // inherit the same height. Inner scopes must not redeclare it.
     expect(rootSource).toContain('--activity-panel-bar-height: 2.75rem')
-    expect(activitySource).not.toMatch(/\.activity-panel\s*{[^}]*--activity-panel-bar-height:/)
-    expect(activitySource).toMatch(
-      /\.activity-panel-status-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height\)/,
+    expect(activitySource).not.toContain('[--activity-panel-bar-height:')
+    expect(activitySource).toContain(
+      '[&_.activity-panel-status-bar]:min-h-[var(--activity-panel-bar-height)]',
     )
-    expect(activitySource).toMatch(
-      /\.activity-panel-status-bar__title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
+    expect(activitySource).toContain(
+      '[&_.activity-panel-status-bar__title]:text-[length:var(--text-base)]',
     )
+    expect(activitySource).toContain(
+      '[&_.activity-panel-status-bar__title]:font-[var(--font-weight-medium)]',
+    )
+    expect(mcpDetailSource).toContain('min-h-[var(--activity-panel-bar-height)]')
+    expect(mcpDetailSource).toContain('text-[length:var(--text-base)]')
+    expect(mcpDetailSource).toContain('font-[var(--font-weight-medium)]')
     expect(taskSource).toMatch(
       /\.activity-task-pane-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height,\s*2\.5rem\)/,
     )
@@ -96,7 +101,8 @@ describe('activity-panel typography ladder (#14245)', () => {
 
   it('keeps status-bar controls at desktop visual height on touch devices', () => {
     const rootSource = readSource('src/styles/tokens.css')
-    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
+    const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
+    const tasksToolbarSource = readSource('src/components/activity/TasksTabToolbar.tsx')
     const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
@@ -105,12 +111,17 @@ describe('activity-panel typography ladder (#14245)', () => {
     // via the Button `dense` prop (min-h-7 with no pointer-coarse promotion).
     expect(statusBarSource).toMatch(/variant="accent"\s+size="sm"\s+dense/)
     expect(commandBarSource).toContain('min-h-[var(--status-bar-control-height)]')
-    expect(activitySource).toMatch(
-      /\.activity-panel-tabs\s*{[^}]*padding:\s*0 0\.75rem/,
-    )
-    expect(activitySource).toMatch(
-      /\.activity-filter-button\s*{[^}]*margin-left:\s*auto/,
-    )
+    expect(activitySource).toContain('activity-panel-tabs')
+    expect(activitySource).toContain('px-3')
+    expect(tasksToolbarSource).toContain('activity-filter-button')
+    expect(tasksToolbarSource).toContain('ml-auto')
+
+    const filterButtonAuthors = readTsxSources('src')
+      .filter(([, source]) => source.includes('activity-filter-button'))
+      .map(([path]) => path)
+    expect(filterButtonAuthors).toEqual([
+      'src/components/activity/TasksTabToolbar.tsx',
+    ])
   })
 
   it('keeps chat status-bar typography on the shared component utility ladder', () => {

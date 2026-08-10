@@ -268,8 +268,6 @@ describe('mobile chrome CSS', () => {
 
   it('loads activity styles from each standalone owner', () => {
     const ownershipPins = [
-      ['src/components/activity/ActivityPanel.tsx', '../chat/styles/activity-panel.css'],
-      ['src/components/activity/SessionsTab.tsx', '../chat/styles/sessions-tab.css'],
       ['src/components/activity/ActivityMcpTab.tsx', '../chat/styles/mcp-tab.css'],
       ['src/components/activity/RulesTab.tsx', '../chat/styles/rules-tab.css'],
       ['src/components/activity/FilesTab.tsx', '../chat/styles/files-tab.css'],
@@ -289,6 +287,23 @@ describe('mobile chrome CSS', () => {
 
     const chatPageImports = importSpecifiers(readSource('src/components/chat/ChatPage.tsx'))
     expect(chatPageImports).not.toContain('./styles.css')
+  })
+
+  it('retires the activity panel and sessions sheets in favor of component utilities', () => {
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
+    const sessionsTabSource = readSource('src/components/activity/SessionsTab.tsx')
+
+    for (const sheet of ['activity-panel.css', 'sessions-tab.css']) {
+      expect(
+        existsSync(join(resolveWebPackageRoot(), 'src/components/chat/styles', sheet)),
+      ).toBe(false)
+    }
+    expect(importSpecifiers(activityPanelSource)).not.toContain(
+      '../chat/styles/activity-panel.css',
+    )
+    expect(importSpecifiers(sessionsTabSource)).not.toContain(
+      '../chat/styles/sessions-tab.css',
+    )
   })
 
   it('retires the chat input stylesheet family in favor of component utilities', () => {
@@ -375,45 +390,26 @@ describe('mobile chrome CSS', () => {
   })
 
   it('keeps activity panel filter toolbars to one compact row', () => {
-    const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
-    const sessionsCss = parseCss('src/components/chat/styles/sessions-tab.css')
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
+    const quickMenuSource = readSource('src/components/activity/QuickMenu.tsx')
 
-    expect(findRule(activityCss, '.activity-panel-toolbar').selector).toBe(
-      '.activity-panel-toolbar',
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-toolbar]:[--control-row-height-sm:var(--status-bar-control-height)]',
     )
-    expectDeclarations(activityCss, '.activity-panel-toolbar', {
-      '--control-row-height-sm': 'var(--status-bar-control-height)',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(activityCss, '.activity-panel-search', {
-      flex: '1 1 9rem',
-      'min-width': '0',
-      'min-height': 'var(--control-row-height-sm)',
-    })
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-search',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain('[&_.activity-panel-toolbar]:flex-nowrap')
+    expect(activityPanelSource).toContain('[&_.activity-panel-search]:flex-[1_1_9rem]')
+    expect(activityPanelSource).toContain('[&_.activity-panel-search]:min-w-0')
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search]:min-h-[var(--control-row-height-sm)]',
     )
-    expectDeclarations(
-      activityCss,
-      '.activity-panel-mobile-trigger',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain(
+      'pointer-coarse:[&_.activity-panel-search]:min-h-11',
     )
-    expectDeclarations(
-      activityCss,
-      '.activity-filter-dropdown__item',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
+    expect(activityPanelSource).toContain('max-[768px]:min-h-11')
+    expect(activityPanelSource).toContain(
+      'pointer-coarse:[&_.activity-filter-dropdown__item]:min-h-11',
     )
-    expectDeclarations(
-      sessionsCss,
-      '.quick-menu-item',
-      { 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
+    expect(quickMenuSource).toContain('pointer-coarse:min-h-11')
   })
 
   it('keeps rules-tab layout responsive to geometry while coarse pointers size targets only', () => {
@@ -449,18 +445,17 @@ describe('mobile chrome CSS', () => {
   })
 
   it('shows an accent focus-visible ring on activity panel search inputs', () => {
-    const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
-    const focusOutlines: string[] = []
+    const activityPanelSource = readSource('src/components/activity/ActivityPanel.tsx')
 
-    findRule(activityCss, '.activity-panel-search:focus').walkDecls('outline', declaration => {
-      focusOutlines.push(declaration.value)
-    })
-
-    expect(focusOutlines).toEqual([])
-    expectDeclarations(activityCss, '.activity-panel-search:focus-visible', {
-      outline: '2px solid var(--accent)',
-      'outline-offset': '1px',
-    })
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-2',
+    )
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-accent',
+    )
+    expect(activityPanelSource).toContain(
+      '[&_.activity-panel-search:focus-visible]:outline-offset-1',
+    )
   })
 
   it('keeps the minimum-width chat status bar to one row', () => {

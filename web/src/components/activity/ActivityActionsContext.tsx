@@ -123,7 +123,7 @@ export function ActivityActionButtons() {
   const addLabel = actions.addLabel ?? "New";
 
   return (
-    <span className="activity-panel-actions-slot">
+    <span className="activity-panel-actions-slot flex min-w-0 shrink items-center gap-2">
       {actions.selector && (
         <SegmentedControl<string>
           value={actions.selector.value}
@@ -131,7 +131,7 @@ export function ActivityActionButtons() {
           options={actions.selector.options}
           ariaLabel={actions.selector.ariaLabel}
           controlHeight="sm"
-          className="activity-panel-header-segmented"
+          className="activity-panel-header-segmented min-w-0 shrink @max-[479px]/activity-panel:[&>.segmented-control__option]:px-2"
         />
       )}
       {actions.filter && (
@@ -149,14 +149,15 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
-          className="activity-panel-action-btn"
           onClick={actions.search.onToggle}
           aria-label={actions.search.ariaLabel}
           title={actions.search.ariaLabel}
           aria-expanded={actions.search.open}
         >
           <SearchGlyph />
-          <span className="activity-panel-action-btn__label">Search</span>
+          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+            Search
+          </span>
         </Button>
       )}
       {actions.onRefresh && (
@@ -164,14 +165,15 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
-          className="activity-panel-action-btn"
           onClick={actions.onRefresh}
           disabled={actions.refreshing}
           aria-label={actions.refreshAriaLabel ?? refreshLabel}
           title={actions.refreshAriaLabel ?? refreshLabel}
         >
           <RefreshGlyph />
-          <span className="activity-panel-action-btn__label">{refreshLabel}</span>
+          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+            {refreshLabel}
+          </span>
         </Button>
       )}
       {actions.onAdd && (
@@ -179,14 +181,15 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
-          className="activity-panel-action-btn"
           onClick={actions.onAdd}
           disabled={actions.addDisabled}
           aria-label={actions.addAriaLabel ?? addLabel}
           title={actions.addAriaLabel ?? addLabel}
         >
           <PlusGlyph />
-          <span className="activity-panel-action-btn__label">{addLabel}</span>
+          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+            {addLabel}
+          </span>
         </Button>
       )}
     </span>

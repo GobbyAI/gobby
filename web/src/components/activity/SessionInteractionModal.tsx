@@ -142,7 +142,7 @@ export function SessionInteractionModal({
         <div className="mt-3">
           <Textarea
             ref={inputRef}
-            className="session-modal-textarea"
+            className="session-modal-textarea h-[4.5em] w-full resize-none overflow-y-auto rounded-md border border-border bg-[var(--bg-primary)] p-2 font-mono text-[length:var(--text-base)] text-[var(--text-primary)] focus:border-accent focus:outline-none"
             wrapperClassName="w-full"
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -163,7 +163,7 @@ export function SessionInteractionModal({
               variant="secondary"
               size="sm"
               className={cn(
-                "session-modal-btn session-modal-btn--secondary",
+                "session-modal-btn session-modal-btn--secondary bg-transparent px-3 py-1.5 text-[length:var(--text-md)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] disabled:cursor-not-allowed disabled:opacity-50",
                 coarseHitAreaCls,
               )}
               onClick={onClose}
@@ -174,7 +174,10 @@ export function SessionInteractionModal({
               type="button"
               variant="accent"
               size="sm"
-              className={cn("session-modal-btn", coarseHitAreaCls)}
+              className={cn(
+                "session-modal-btn px-3 py-1.5 text-[length:var(--text-md)] hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50",
+                coarseHitAreaCls,
+              )}
               onClick={handleSend}
               disabled={sending || !text.trim()}
             >

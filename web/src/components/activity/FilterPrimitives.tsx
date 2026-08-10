@@ -34,15 +34,13 @@ export const FilterDropdownTrigger = forwardRef<
       type="button"
       variant="accent"
       size="sm"
-      className={cn(
-        "activity-panel-action-btn activity-filter-button",
-        coarseHitAreaCls,
-        className,
-      )}
+      className={cn(coarseHitAreaCls, className)}
       aria-expanded={open}
     >
       {icon}
-      <span className="activity-panel-action-btn__label">{label}</span>
+      <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+        {label}
+      </span>
       {activeCount > 0 && (
         <span className="activity-filter-badge">{activeCount}</span>
       )}

@@ -189,7 +189,10 @@ function TaskTreeRowComponent({
         variant="ghost"
         size="icon"
         dense
-        className={cn(coarseHitAreaCls, "task-more-btn h-auto min-h-0 w-auto p-0")}
+        className={cn(
+          "task-more-btn size-7 min-h-7 min-w-7 shrink-0 p-0 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:size-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+          coarseHitAreaCls,
+        )}
         onClick={(event) => onMenuButtonClick(event, task)}
         title="Task actions"
         aria-label="Task actions"
