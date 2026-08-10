@@ -36,7 +36,6 @@ export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {}
 // The complete recorded stylesheet set. New .css files are banned outright.
 export const CSS_FILE_ALLOWLIST: readonly string[] = [
   'src/styles/accessibility.css',
-  'src/styles/app-shell.css',
   'src/styles/base.css',
   'src/styles/index.css',
   'src/styles/markdown.css',
@@ -53,5 +52,5 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Total lines across all recorded stylesheets. The ceiling only moves down;
 // once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 1636
+export const CSS_TOTAL_LINE_CEILING = 1499
 export const CSS_LINE_TIGHTEN_SLACK = 200

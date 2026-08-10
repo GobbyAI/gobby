@@ -249,12 +249,12 @@ export function ProjectSelector({
 
   return (
     <div
-      className="project-selector"
+      className="relative min-w-0 mobile:w-25"
       ref={triggerRef}
       role="group"
       aria-label="Project selector"
     >
-      <div className="project-selector-segmented-wrap">
+      <div className="mobile:hidden">
         <SegmentedControl<ProjectMode>
           value={isPersonal ? "personal" : "project"}
           onChange={handleModeChange}
@@ -264,18 +264,17 @@ export function ProjectSelector({
           ]}
           ariaLabel="Project scope"
           disabled={disabled}
-          coarseTouchTarget={false}
-          className="project-selector-segmented"
+          className="overflow-hidden"
         />
       </div>
-      <div className="project-selector-compact-wrap">
+      <div className="hidden h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch overflow-hidden rounded-md border border-border bg-background mobile:inline-flex">
         <Button
           ref={compactTriggerRef}
           type="button"
           variant="ghost"
           size="sm"
           dense
-          className={cn("project-selector-compact-trigger", coarseHitAreaCls)}
+          className={cn("w-full py-0 [font-family:inherit]", coarseHitAreaCls)}
           onClick={toggleCompactMenu}
           onKeyDown={handleCompactTriggerKeyDown}
           disabled={disabled}
@@ -284,7 +283,9 @@ export function ProjectSelector({
           aria-expanded={showCompactMenu}
           aria-controls={showCompactMenu ? listboxId : undefined}
         >
-          <span className="project-selector-compact-label">{selectedLabel}</span>
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            {selectedLabel}
+          </span>
         </Button>
       </div>
       {pickerMode &&

@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compile } from '@tailwindcss/node'
-import postcss, { type Root, type Rule } from 'postcss'
+import postcss from 'postcss'
 import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
@@ -22,28 +22,9 @@ function resolveWebPackageRoot(): string {
 
 let webPackageRoot: string | undefined
 
-interface CssParent {
-  type: string
-  name?: string
-  params?: string
-  parent?: CssParent
-}
-
 function readSource(rel: string): string {
   webPackageRoot ??= resolveWebPackageRoot()
   return readFileSync(join(webPackageRoot, rel), 'utf8')
-}
-
-function readCssSource(rel: string, seen = new Set<string>()): string {
-  if (seen.has(rel)) return ''
-  seen.add(rel)
-
-  const source = readSource(rel)
-  const baseDir = dirname(rel)
-  return source.replace(
-    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
-    (_statement: string, specifier: string) => readCssSource(join(baseDir, specifier), seen),
-  )
 }
 
 function importSpecifiers(source: string): string[] {
@@ -147,10 +128,6 @@ function expectStringAttribute(source: string, attrName: string, value: string):
   expect(jsxAttributeValues(source, attrName)).toContain(value)
 }
 
-function parseCss(rel: string): Root {
-  return postcss.parse(readCssSource(rel), { from: rel })
-}
-
 async function injectUtilityStyles(
   candidates: readonly string[],
   includeCoarsePointer = false,
@@ -215,93 +192,6 @@ function cssLengthToPixels(value: string): number {
   return cssLengthToPixels(spacing) * Number(spacingMultiple)
 }
 
-function hasMediaAncestor(rule: Rule, media: string): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'media') {
-      if (parent.params?.includes(media)) return true
-    }
-    parent = parent.parent
-  }
-  return false
-}
-
-function hasAnyMediaAncestor(rule: Rule): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule') return true
-    parent = parent.parent
-  }
-  return false
-}
-
-function hasVariantAncestor(rule: Rule, variant: string): boolean {
-  let parent = rule.parent as CssParent | undefined
-  while (parent) {
-    if (parent.type === 'atrule' && parent.name === 'variant' && parent.params === variant) {
-      return true
-    }
-    parent = parent.parent
-  }
-  return false
-}
-
-function findRule(root: Root, selector: string, media?: string): Rule {
-  let found: Rule | undefined
-  root.walkRules(rule => {
-    if (found) return
-    if (!rule.selectors.includes(selector)) return
-    const mediaMatches = media ? hasMediaAncestor(rule, media) : !hasAnyMediaAncestor(rule)
-    if (mediaMatches) found = rule
-  })
-  expect(found, `Expected CSS rule ${selector}${media ? ` in ${media}` : ''}`).toBeDefined()
-  return found as Rule
-}
-
-function findVariantRule(root: Root, selector: string, variant: string): Rule {
-  let found: Rule | undefined
-  root.walkRules(selector, rule => {
-    if (found) return
-    if (hasVariantAncestor(rule, variant)) found = rule
-  })
-  expect(found, `Expected CSS rule ${selector} in @variant ${variant}`).toBeDefined()
-  return found as Rule
-}
-
-function expectDeclarations(
-  root: Root,
-  selector: string,
-  expected: Record<string, string>,
-  media?: string,
-): void {
-  const rule = findRule(root, selector, media)
-  const declarations = new Map<string, string>()
-  rule.walkDecls(declaration => {
-    declarations.set(declaration.prop, declaration.value)
-  })
-
-  for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property)).toBe(value)
-  }
-}
-
-function expectVariantDeclarations(
-  root: Root,
-  selector: string,
-  variant: string,
-  expected: Record<string, string>,
-): void {
-  const rule = findVariantRule(root, selector, variant)
-  const declarations = new Map<string, string>()
-  rule.walkDecls(declaration => {
-    declarations.set(declaration.prop, declaration.value)
-  })
-
-  for (const [property, value] of Object.entries(expected)) {
-    expect(declarations.get(property)).toBe(value)
-  }
-}
-
 describe('mobile chrome CSS', () => {
   it('owns Tailwind from the app global stylesheet after retiring chat aliases', () => {
     const globalStyles = readSource('src/styles/index.css')
@@ -315,11 +205,12 @@ describe('mobile chrome CSS', () => {
     }
   })
 
-  it('loads the app shell without the retired primitive and settings sheets', () => {
+  it('loads the app without the retired shell, primitive, and settings sheets', () => {
     const source = readSource('src/main.tsx')
     const imports = importSpecifiers(source)
 
-    expect(imports).toContain('./styles/app-shell.css')
+    expect(existsSync(join(resolveWebPackageRoot(), 'src/styles/app-shell.css'))).toBe(false)
+    expect(imports).not.toContain('./styles/app-shell.css')
     for (const sheet of ['segmented-control.css', 'dropdown-caret.css']) {
       expect(existsSync(join(resolveWebPackageRoot(), 'src/styles', sheet))).toBe(false)
       expect(imports).not.toContain(`./styles/${sheet}`)
@@ -413,43 +304,83 @@ describe('mobile chrome CSS', () => {
     }
   })
 
-  it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', () => {
+  it('keeps the top app chrome compact on narrow screens and touch-sized for coarse pointers', async () => {
     const appSource = readSource('src/App.tsx')
     const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')
     const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
+    const themeToggleSource = readSource('src/components/ThemeToggle.tsx')
     const activityActionsSource = readSource('src/components/activity/ActivityActionsContext.tsx')
-    const shellCss = parseCss('src/styles/app-shell.css')
 
-    expectClassToken(appSource, 'app-header')
-    expectClassToken(appSource, 'app-brand')
+    for (const token of [
+      'relative',
+      'z-[100]',
+      'justify-between',
+      'gap-3',
+      'border-b',
+      'border-border',
+      'px-4',
+      'py-3',
+      '[@media(max-width:768px)]:gap-2',
+      '[@media(max-width:768px)]:px-3',
+      '[@media(max-width:768px)]:py-2.5',
+      '[@media(max-width:768px)]:text-[length:var(--text-2xl)]',
+      '[--control-row-height:var(--status-bar-control-height)]',
+      'pointer-coarse:[--control-row-height:2.75rem]',
+      'flex-nowrap',
+      'pointer-coarse:min-w-11',
+      '[--app-brand-logo-size:2.75rem]',
+      '[@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]',
+    ]) {
+      expectClassToken(appSource, token)
+    }
     expectStringAttribute(appSource, 'aria-label', 'Log out')
-    expectClassToken(appSource, 'app-logout-btn')
-    expectClassToken(appSource, 'app-brand-logo')
-    expectClassToken(appSource, 'app-brand-title')
-    expectClassToken(appSource, 'app-header-actions')
-    expectClassToken(appSource, 'app-health-badge')
-    expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
+    expectStringAttribute(appSource, 'size', 'var(--app-brand-logo-size)')
+    for (const hook of [
+      'app-header',
+      'app-brand',
+      'app-brand-logo',
+      'app-brand-title',
+      'app-header-actions',
+      'app-health-badge',
+      'app-settings-cog',
+      'app-logout-btn',
+    ]) {
+      expectNoClassToken(appSource, hook)
+    }
 
-    expectVariantDeclarations(
-      shellCss,
-      '.app-header-actions .project-selector-segmented-wrap',
-      'mobile',
-      { display: 'none' },
-    )
-    expectVariantDeclarations(
-      shellCss,
-      '.project-selector-compact-wrap',
-      'mobile',
-      { display: 'inline-flex' },
-    )
-    expectDeclarations(shellCss, '.project-selector-compact-trigger', {
-      width: '100%',
-      'padding-block': '0',
-    })
-    expectDeclarations(shellCss, '.project-selector-compact-wrap', {
-      height: 'var(--control-row-height)',
-      'min-height': 'var(--control-row-height)',
-    })
+    expectStringAttribute(themeToggleSource, 'size', 'icon')
+    expectClassToken(themeToggleSource, 'shrink-0')
+    expectClassToken(themeToggleSource, 'pointer-coarse:min-w-11')
+    expectNoClassToken(themeToggleSource, 'app-theme-toggle')
+
+    for (const token of [
+      'relative',
+      'min-w-0',
+      'mobile:w-25',
+      'mobile:hidden',
+      'hidden',
+      'h-[var(--control-row-height)]',
+      'min-h-[var(--control-row-height)]',
+      'mobile:inline-flex',
+      'w-full',
+      'py-0',
+      '[font-family:inherit]',
+      'overflow-hidden',
+      'text-ellipsis',
+      'whitespace-nowrap',
+    ]) {
+      expectClassToken(projectSelectorSource, token)
+    }
+    expect(projectSelectorSource).not.toContain('coarseTouchTarget={false}')
+    for (const hook of [
+      'project-selector',
+      'project-selector-segmented-wrap',
+      'project-selector-compact-wrap',
+      'project-selector-compact-trigger',
+      'project-selector-compact-label',
+    ]) {
+      expectNoClassToken(projectSelectorSource, hook)
+    }
     for (const token of [
       '[--segmented-option-px:0.75rem]',
       'text-[length:var(--text-base)]',
@@ -468,31 +399,19 @@ describe('mobile chrome CSS', () => {
     expect(activityActionsSource).toContain(
       '@max-[479px]/activity-panel:[&>.segmented-control__option]:[--segmented-option-px:0.5rem]',
     )
-    expectDeclarations(shellCss, '.app-header-actions', {
-      '--control-row-height': 'var(--status-bar-control-height)',
-      'flex-wrap': 'nowrap',
-    })
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions',
-      { '--control-row-height': '2.75rem' },
-      '(pointer: coarse)',
+    const denseIconTokens = ['min-h-8', 'w-8', 'pointer-coarse:min-w-11'] as const
+    document.body.innerHTML = `<button data-dense-header-icon class="${denseIconTokens.join(' ')}"></button>`
+    const style = await injectUtilityStyles(denseIconTokens, true)
+    const denseIconStyle = getComputedStyle(
+      document.querySelector('[data-dense-header-icon]')!,
     )
-    // Width floor only: min-height is owned by the Button primitive's min-h
-    // utility (the dense icon buttons ship 44x32 on coarse pointers — the
-    // sheet's height floor was dead under the utility and stays deleted).
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions .app-theme-toggle',
-      { 'min-width': '2.75rem' },
-      '(pointer: coarse)',
-    )
-    expectDeclarations(
-      shellCss,
-      '.app-header-actions .segmented-control__option',
-      { 'min-width': '2.75rem', 'min-height': '2.75rem' },
-      '(pointer: coarse)',
-    )
+    expect(cssLengthToPixels(denseIconStyle.width)).toBe(32)
+    expect(cssLengthToPixels(denseIconStyle.minWidth)).toBe(44)
+    expect(cssLengthToPixels(denseIconStyle.minHeight)).toBe(32)
+
+    style.remove()
+    document.body.replaceChildren()
+    document.documentElement.style.removeProperty('--spacing')
   })
 
   it('keeps segmented-control and dropdown-caret computed geometry pixel-neutral', async () => {
