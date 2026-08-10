@@ -21,6 +21,7 @@ import gobby.servers.auth_service as auth_service_module
 import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.ui import AuthConfig
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -267,7 +268,7 @@ def test_local_token_refreshes_after_rotation(
     assert service.local_token() == "new-token"
 
 
-def test_server_auth_mode_uses_config_then_explicit_override(temp_db: HubDatabase) -> None:
+def test_server_auth_mode_uses_bootstrap(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
         config=DaemonConfig(auth_mode="required"),
         database=temp_db,
@@ -279,11 +280,14 @@ def test_server_auth_mode_uses_config_then_explicit_override(temp_db: HubDatabas
     )
 
     default_server = http_module.HTTPServer(services)
-    explicit_server = http_module.HTTPServer(services, auth_mode="disabled")
+    bootstrap_server = http_module.HTTPServer(
+        services,
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+    )
 
     assert isinstance(default_server.auth_service, AuthService)
     assert default_server.auth_service.enabled is True
-    assert explicit_server.auth_service.enabled is False
+    assert bootstrap_server.auth_service.enabled is False
 
 
 def test_verify_password_uses_argon2id_hash(temp_db: HubDatabase, tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.extensions import HookExtensionsConfig, WebhookEndpointConfig, WebhooksConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
@@ -72,7 +73,7 @@ class TestAdminEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         client = TestClient(server.app)
@@ -102,7 +103,7 @@ class TestAdminEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         client = TestClient(server.app)
@@ -128,7 +129,7 @@ class TestAdminEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         client = TestClient(server.app)
@@ -169,7 +170,7 @@ class TestAdminEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         with patch("gobby.servers.routes.admin._config.get_version") as mock_version:
@@ -198,7 +199,7 @@ class TestMCPEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
     @pytest.fixture
@@ -336,7 +337,7 @@ class TestMCPEndpointsWithManager:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server.mcp_manager = FakeMCPManagerSimple()
         server.services.mcp_manager = server.mcp_manager
@@ -399,7 +400,7 @@ class TestCodeEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
     @pytest.fixture
@@ -472,7 +473,7 @@ class TestHooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         mock_hook_manager = MagicMock()
@@ -507,7 +508,7 @@ class TestHooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         mock_hook_manager = MagicMock()
@@ -563,7 +564,7 @@ class TestHooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         mock_hook_manager = MagicMock()
         server.app.state.hook_manager = mock_hook_manager
@@ -615,7 +616,7 @@ class TestHooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         mock_hook_manager = MagicMock()
@@ -660,7 +661,7 @@ class TestHooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         mock_hook_manager = MagicMock()
@@ -702,7 +703,7 @@ class TestWebhooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
     @pytest.fixture
@@ -732,7 +733,7 @@ class TestWebhooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         with TestClient(server.app) as client:
@@ -770,7 +771,7 @@ class TestWebhooksEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         with TestClient(server.app) as client:
@@ -817,7 +818,7 @@ class TestInternalRegistries:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server._internal_manager = mock_internal_manager
 
@@ -846,7 +847,7 @@ class TestInternalRegistries:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server._internal_manager = mock_internal_manager
 
@@ -877,7 +878,7 @@ class TestInternalRegistries:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server._internal_manager = mock_internal_manager
 
@@ -911,7 +912,7 @@ class TestInternalRegistries:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server._internal_manager = mock_internal_manager
 
@@ -946,7 +947,7 @@ class TestInternalRegistries:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         server._internal_manager = mock_internal_manager
 

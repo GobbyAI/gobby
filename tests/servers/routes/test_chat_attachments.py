@@ -74,7 +74,12 @@ def test_attachment_limits_returns_configured_max_file_bytes(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_file_bytes": 4,
+            "chat.attachment_max_total_bytes_per_message": 4,
+        }
+    )
 
     response = client.get("/api/chat/attachments/limits")
 
@@ -145,7 +150,12 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_file_bytes": 4,
+            "chat.attachment_max_total_bytes_per_message": 4,
+        }
+    )
 
     response = client.post(
         "/api/chat/attachments",

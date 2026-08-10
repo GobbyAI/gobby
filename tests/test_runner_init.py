@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.config import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
@@ -201,6 +202,10 @@ class TestGobbyRunnerInit:
 
         with (
             patch("gobby.runner_init.storage.load_config", return_value=mock_config),
+            patch(
+                "gobby.runner_init.storage.load_bootstrap",
+                return_value=BootstrapConfig(database_url="postgresql://localhost/gobby"),
+            ),
             patch("gobby.runner_init.storage.init_telemetry"),
             patch("gobby.runner_init.storage.setup_file_logging"),
             patch(

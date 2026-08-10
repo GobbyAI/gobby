@@ -16,6 +16,7 @@ from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -118,15 +119,15 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
         )
 
     fallback_server = HTTPServer(services(None))
-    configured_server = HTTPServer(services(DaemonConfig(auth_mode="disabled")))
-    explicit_server = HTTPServer(
+    runtime_disabled_server = HTTPServer(services(DaemonConfig(auth_mode="disabled")))
+    bootstrap_disabled_server = HTTPServer(
         services(DaemonConfig(auth_mode="required")),
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
     assert fallback_server.auth_service.enabled is True
-    assert configured_server.auth_service.enabled is False
-    assert explicit_server.auth_service.enabled is False
+    assert runtime_disabled_server.auth_service.enabled is True
+    assert bootstrap_disabled_server.auth_service.enabled is False
 
 
 def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabase) -> None:

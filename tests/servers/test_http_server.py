@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.sessions import SessionManager
 
@@ -223,7 +224,7 @@ class TestMCPEndpointsWithManager:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
     @pytest.fixture

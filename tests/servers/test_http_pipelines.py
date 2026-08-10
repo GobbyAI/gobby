@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -58,7 +59,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
 
@@ -174,7 +175,7 @@ class TestPipelinesRunEndpoint:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         with TestClient(server.app) as client:

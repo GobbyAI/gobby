@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
 from gobby.config.app import DaemonConfig, load_config
+from gobby.config.bootstrap import load_bootstrap
 from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
@@ -57,6 +58,39 @@ def _warn_missing_terminal_dependency(config: DaemonConfig) -> None:
         )
 
 
+def init_runtime_capacity(runner: GobbyRunner) -> None:
+    """Size runtime capacity from the initial active configuration epoch."""
+    from gobby.storage.hub.postgres import PostgresHubDatabase
+
+    postgres_database = cast(PostgresHubDatabase, runner.database)
+    database_capacity = postgres_database.server_capacity()
+    runner.database_concurrency = resolve_database_concurrency(
+        runner.config.database_concurrency,
+        database_capacity,
+        cpu_count=os.process_cpu_count() or 1,
+    )
+    postgres_database.resize_pool(runner.database_concurrency.pool_max_size)
+    runner.db_executor = DatabaseExecutor(
+        max_workers=runner.database_concurrency.executor_max_workers
+    )
+    runner.worktree_delete_executor = WorktreeDeleteExecutor(max_workers=4)
+    runner.coverage_executor = CoverageExecutor(
+        max_concurrency=runner.database_concurrency.coverage_max_concurrency
+    )
+    if runner.database_concurrency.hardware_warning is not None:
+        logger.warning(runner.database_concurrency.hardware_warning)
+    logger.info("Database concurrency: %s", runner.database_concurrency.as_dict())
+
+    init_telemetry(runner.config.telemetry, runner.config.logging, verbose=runner.verbose)
+    runner.database_watchdog = DatabaseSaturationWatchdog(
+        postgres_database,
+        runner.db_executor,
+        runner.coverage_executor,
+        runner.database_concurrency,
+    )
+    runner.database_watchdog.start()
+
+
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
     """Initialize config, telemetry, database, secrets, and core managers."""
     if config_path is not None and not config_path.exists():
@@ -66,6 +100,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             f"or omit --config to use the default path (~/.gobby/bootstrap.yaml)."
         )
     runner._config_file = str(config_path) if config_path else None
+    runner.bootstrap_config = load_bootstrap(
+        runner._config_file,
+        resolve_database_url=True,
+    )
     runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
@@ -146,33 +184,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             postgres_database.open_runtime_async_connection,
         ),
     )
-    database_capacity = postgres_database.server_capacity()
-    runner.database_concurrency = resolve_database_concurrency(
-        runner.config.database_concurrency,
-        database_capacity,
-        cpu_count=os.process_cpu_count() or 1,
-    )
-    postgres_database.resize_pool(runner.database_concurrency.pool_max_size)
-    runner.db_executor = DatabaseExecutor(
-        max_workers=runner.database_concurrency.executor_max_workers
-    )
-    runner.worktree_delete_executor = WorktreeDeleteExecutor(max_workers=4)
-    runner.coverage_executor = CoverageExecutor(
-        max_concurrency=runner.database_concurrency.coverage_max_concurrency
-    )
-    if runner.database_concurrency.hardware_warning is not None:
-        logger.warning(runner.database_concurrency.hardware_warning)
-    logger.info("Database concurrency: %s", runner.database_concurrency.as_dict())
-
-    init_telemetry(runner.config.telemetry, runner.config.logging, verbose=verbose)
-    runner.database_watchdog = DatabaseSaturationWatchdog(
-        postgres_database,
-        runner.db_executor,
-        runner.coverage_executor,
-        runner.database_concurrency,
-    )
-    runner.database_watchdog.start()
-
     from gobby.storage.model_metadata import ModelMetadataStore
 
     try:

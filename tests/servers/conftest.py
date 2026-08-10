@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import AuthMode, BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -41,7 +42,7 @@ def create_http_server(
     database: Any | None = None,
     span_storage: Any | None = None,
     transcript_reader: Any | None = None,
-    auth_mode: str = "disabled",
+    auth_mode: AuthMode = "disabled",
 ) -> HTTPServer:
     """
     Create an HTTPServer instance with the new ServiceContainer API.
@@ -88,7 +89,7 @@ def create_http_server(
         port=port,
         test_mode=test_mode,
         codex_client=codex_client,
-        auth_mode=auth_mode,
+        bootstrap_config=BootstrapConfig(auth_mode=auth_mode),
     )
 
 
@@ -131,7 +132,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
 

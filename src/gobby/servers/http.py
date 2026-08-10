@@ -11,10 +11,11 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.ai import build_daemon_tool_chat_service
-from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import (
@@ -23,12 +24,11 @@ from gobby.mcp_proxy.semantic_search import (
     SemanticToolSearch,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.servers.auth_service import AuthMode, AuthService
+from gobby.servers.auth_service import AuthService
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
     from gobby.app_context import ServiceContainer
-    from gobby.config.app import DaemonConfig
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -58,7 +58,7 @@ class HTTPServer:
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
-        auth_mode: str | None = None,
+        bootstrap_config: BootstrapConfig | None = None,
     ) -> None:
         """
         Initialize HTTP server.
@@ -68,38 +68,37 @@ class HTTPServer:
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             codex_client: CodexAppServerClient instance for Codex integration
-            auth_mode: Explicit authentication mode override
+            bootstrap_config: Process topology and authentication configuration
         """
         self.services = services
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
-        configured_auth_mode = getattr(services.config, "auth_mode", None)
-        effective_auth_mode = (
-            auth_mode
-            if auth_mode is not None
-            else configured_auth_mode
-            if isinstance(configured_auth_mode, str)
-            else "required"
-        )
+        self.bootstrap_config = bootstrap_config or BootstrapConfig()
+        effective_auth_mode = self.bootstrap_config.auth_mode
         if effective_auth_mode not in ("required", "disabled"):
             raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
+        self.startup_config = (
+            services.config.model_copy(deep=True)
+            if isinstance(services.config, DaemonConfig)
+            else services.config
+        )
         self.auth_service = AuthService(
             lambda: self.services.database,
-            mode=cast(AuthMode, effective_auth_mode),
+            mode=effective_auth_mode,
         )
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None
 
-        self.broadcaster = HookEventBroadcaster(services.websocket_server, services.config)
+        self.broadcaster = HookEventBroadcaster(services.websocket_server, self.startup_config)
 
         self._start_time: float = time.time()
 
-        if services.config and services.tool_chat_service is None:
+        if self.startup_config and services.tool_chat_service is None:
             try:
                 services.tool_chat_service = build_daemon_tool_chat_service(
-                    services.config,
+                    self.startup_config,
                     credential_manager=getattr(
                         services.database,
                         "managed_credential_manager",
@@ -148,11 +147,7 @@ class HTTPServer:
 
         if services.mcp_manager is None:
             raise RuntimeError("caller must check services.mcp_manager")
-        # Determine WebSocket port
-        ws_port = DEFAULT_WEBSOCKET_PORT
-        cfg = services.config
-        if cfg and hasattr(cfg, "websocket") and cfg.websocket:
-            ws_port = cfg.websocket.port
+        ws_port = self.bootstrap_config.websocket_port
 
         # Create a lazy getter for tool_proxy that will be available after
         # GobbyDaemonTools is created. This allows in-process agents to route
@@ -305,7 +300,7 @@ class HTTPServer:
     # Property accessors for services (delegate to container)
     @property
     def config(self) -> DaemonConfig | None:
-        return self.services.config
+        return self.startup_config
 
     @property
     def session_manager(self) -> Any:
@@ -628,6 +623,7 @@ async def create_server(
     services: ServiceContainer,
     port: int = 60887,
     test_mode: bool = False,
+    bootstrap_config: BootstrapConfig | None = None,
 ) -> HTTPServer:
     """
     Create HTTP server instance.
@@ -644,4 +640,5 @@ async def create_server(
         services=services,
         port=port,
         test_mode=test_mode,
+        bootstrap_config=bootstrap_config,
     )

@@ -11,13 +11,18 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers import app_factory
 
 pytestmark = pytest.mark.unit
 
 
 def _server(config: DaemonConfig) -> SimpleNamespace:
-    return SimpleNamespace(services=SimpleNamespace(config=config))
+    return SimpleNamespace(
+        services=SimpleNamespace(config=config),
+        startup_config=config,
+        bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+    )
 
 
 def _vite_proxy_endpoint(app: Any) -> Any:

@@ -20,12 +20,8 @@ from gobby.servers.app_factory import _mount_production_ui
 pytestmark = pytest.mark.unit
 
 
-class _ServicesShape(Protocol):
-    config: object
-
-
 class _ServerShape(Protocol):
-    services: _ServicesShape
+    startup_config: object
 
 
 def _make_dist_only_web_dir(root: Path) -> Path:
@@ -41,7 +37,7 @@ def _make_dist_only_web_dir(root: Path) -> Path:
 
 def _server_stub(web_dir: Path) -> _ServerShape:
     config = SimpleNamespace(ui=SimpleNamespace(web_dir=str(web_dir)))
-    return cast(_ServerShape, SimpleNamespace(services=SimpleNamespace(config=config)))
+    return cast(_ServerShape, SimpleNamespace(startup_config=config))
 
 
 def test_mount_production_ui_serves_index_on_root(tmp_path: Path) -> None:

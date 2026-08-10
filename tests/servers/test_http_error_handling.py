@@ -9,6 +9,7 @@ from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
 from gobby.config import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.sessions import SessionManager
 
@@ -51,7 +52,7 @@ class TestExceptionHandlers:
     def test_hook_exception_is_acknowledged(self, session_storage: SessionManager) -> None:
         """Hook ingress keeps its acknowledgement-on-error contract."""
         services = ServiceContainer(
-            config=DaemonConfig(bind_host="127.0.0.1", auth_mode="disabled"),
+            config=DaemonConfig(bind_host="127.0.0.1"),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -60,6 +61,7 @@ class TestExceptionHandlers:
             services=services,
             port=60887,
             test_mode=True,
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
         @server.app.get("/api/hooks/custom-error")

@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.attention import AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -21,7 +22,9 @@ def test_app_reaches_attention_endpoints(temp_db: HubDatabase) -> None:
         task_manager=MagicMock(),
         attention_manager=AttentionStateManager(temp_db, epoch="wiring-test"),
     )
-    server = HTTPServer(services=services, test_mode=True, auth_mode="disabled")
+    server = HTTPServer(
+        services=services, test_mode=True, bootstrap_config=BootstrapConfig(auth_mode="disabled")
+    )
     paths = {route.path for route in server.app.routes}
     assert "/api/attention/roster" in paths
     assert "/api/attention/{entry_id}/seen" in paths

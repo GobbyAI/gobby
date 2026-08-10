@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.servers.http import HTTPServer
 from gobby.storage.cron import CronJobStorage, SystemRowProtected
@@ -95,7 +96,12 @@ def http_server(
         cron_storage=cron_storage,
         cron_scheduler=cron_scheduler,
     )
-    return HTTPServer(services=services, port=60888, test_mode=True, auth_mode="disabled")
+    return HTTPServer(
+        services=services,
+        port=60888,
+        test_mode=True,
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+    )
 
 
 @pytest.fixture

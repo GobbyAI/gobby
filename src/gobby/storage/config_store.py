@@ -120,9 +120,20 @@ class ConfigStore:
 
     def __init__(self, db: HubDatabase, *, secret_store: SecretStore | None = None):
         self.db = db
-        self._secret_store = secret_store or SecretStore(db)
-        self.repository = ConfigRepository(db, secret_store=self._secret_store)
-        self.mutations = ConfigMutations(db, secret_store=self._secret_store)
+        self._secret_store = secret_store
+        self.repository = ConfigRepository(db, secret_store=secret_store)
+        self._mutations = (
+            ConfigMutations(db, secret_store=secret_store) if secret_store is not None else None
+        )
+
+    @property
+    def mutations(self) -> ConfigMutations:
+        if self._mutations is None:
+            secret_store = self._secret_store or SecretStore(self.db)
+            self._secret_store = secret_store
+            self.repository = ConfigRepository(self.db, secret_store=secret_store)
+            self._mutations = ConfigMutations(self.db, secret_store=secret_store)
+        return self._mutations
 
     def initialize(self) -> frozenset[str]:
         """Run startup registry reconciliation before the daemon becomes ready."""
@@ -152,8 +163,8 @@ class ConfigStore:
             return self.mutations
         self._secret_store = secret_store
         self.repository = ConfigRepository(self.db, secret_store=secret_store)
-        self.mutations = ConfigMutations(self.db, secret_store=secret_store)
-        return self.mutations
+        self._mutations = ConfigMutations(self.db, secret_store=secret_store)
+        return self._mutations
 
     def _apply_internal(
         self,

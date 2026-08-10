@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from pydantic_core import to_jsonable_python
+
 from gobby.config.app import DaemonConfig
 from gobby.config.registry import (
     CONFIG_REGISTRY,
@@ -300,7 +302,7 @@ class ConfigValuesService:
                 secret_set[key] = is_set
                 projected[key] = MASKED_SECRET if is_set else None
             else:
-                projected[key] = value
+                projected[key] = to_jsonable_python(value)
         return projected, secret_set
 
     def _failed_live(self, snapshot: ConfigSnapshot) -> dict[str, object]:

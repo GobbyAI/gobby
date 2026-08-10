@@ -103,7 +103,12 @@ async def test_prepare_message_attachments_honors_config_store_file_count(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_files_per_message", 1)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_files_per_message": 1,
+            "chat.attachment_max_total_bytes_per_message": 100_000_000,
+        }
+    )
     first = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_1)
     second = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_2)
 
@@ -116,7 +121,12 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_file_bytes": 4,
+            "chat.attachment_max_total_bytes_per_message": 4,
+        }
+    )
     attachment_id = _attachment(temp_db, tmp_path, size_bytes=5)
 
     with pytest.raises(ValueError, match="exceeds configured 4 byte limit"):

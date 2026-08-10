@@ -31,6 +31,7 @@ class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
         self.session_manager: Any = None
         self.daemon_config: Any = None
         self.web_chat_runtime_manager: Any = None
+        self.config_runtime: Any = None
 
     async def _fire_lifecycle(self, cid: str, event_type: str, data: object) -> None:
         pass

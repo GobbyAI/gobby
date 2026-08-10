@@ -467,10 +467,15 @@ class TestWebChatLifecycle:
         # column, so the DB-backed session id must be a valid UUID string and
         # the row must exist to satisfy the FK.
         db_session_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+        machine_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
+        temp_db.execute(
+            "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+            (machine_id,),
+        )
         temp_db.execute(
             "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
             "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-            (db_session_id, db_session_id, "machine-registry", "test", sample_project["id"]),
+            (db_session_id, db_session_id, machine_id, "test", sample_project["id"]),
         )
 
         task_manager = LocalTaskManager(temp_db)

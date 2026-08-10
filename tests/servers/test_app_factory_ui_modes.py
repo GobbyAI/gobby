@@ -12,13 +12,18 @@ from starlette.datastructures import Headers
 from starlette.routing import WebSocketRoute
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers import app_factory
 
 pytestmark = pytest.mark.unit
 
 
 def _server(config: DaemonConfig) -> SimpleNamespace:
-    return SimpleNamespace(services=SimpleNamespace(config=config))
+    return SimpleNamespace(
+        services=SimpleNamespace(config=config),
+        startup_config=config,
+        bootstrap_config=BootstrapConfig(ui_port=config.ui.port),
+    )
 
 
 def test_production_ui_serves_dist_and_keeps_api_daemon_owned(tmp_path: Path) -> None:

@@ -177,9 +177,10 @@ def init_servers(runner: GobbyRunner) -> None:
 
     runner.http_server = HTTPServer(
         services=services,
-        port=runner.config.daemon_port,
+        port=runner.bootstrap_config.daemon_port,
         test_mode=runner.config.test_mode,
         codex_client=codex_client,
+        bootstrap_config=runner.bootstrap_config,
     )
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
@@ -226,8 +227,8 @@ def init_servers(runner: GobbyRunner) -> None:
     runner.websocket_server = None
     if runner.config.websocket and getattr(runner.config.websocket, "enabled", True):
         websocket_config = WebSocketConfig(
-            host=runner.config.bind_host,
-            port=runner.config.websocket.port,
+            host=runner.bootstrap_config.bind_host,
+            port=runner.bootstrap_config.websocket_port,
             ping_interval=runner.config.websocket.ping_interval,
             ping_timeout=runner.config.websocket.ping_timeout,
         )

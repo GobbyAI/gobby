@@ -95,14 +95,11 @@ def create_app(server: "HTTPServer") -> FastAPI:
         ),
     )
 
+    startup_config = server.startup_config
     cors_origins = (
         ["*"]
-        if server.services.config and server.services.config.test_mode
-        else (
-            server.services.config.cors_origins
-            if server.services.config
-            else ["http://localhost:*"]
-        )
+        if startup_config and startup_config.test_mode
+        else (startup_config.cors_origins if startup_config else ["http://localhost:*"])
     )
     origin_regex_parts = [fnmatch.translate(o) for o in cors_origins if "*" in o]
     exact_origins = [o for o in cors_origins if "*" not in o]
@@ -145,10 +142,10 @@ def create_app(server: "HTTPServer") -> FastAPI:
 
     _mount_ws_endpoint(app, server)
 
-    if server.services.config and server.services.config.ui.enabled:
+    if startup_config and startup_config.ui.enabled:
         from gobby.cli.ui_mode import resolve_ui_mode
 
-        ui_resolution = resolve_ui_mode(server.services.config)
+        ui_resolution = resolve_ui_mode(startup_config)
         if ui_resolution.effective == "production":
             _mount_production_ui(app, server)
         else:

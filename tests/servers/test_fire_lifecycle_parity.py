@@ -73,15 +73,26 @@ SESSION_ID = "cccccccc-cccc-4ccc-8ccc-ccccccccccc1"
 def _seed_session_row(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     """Insert the project + session rows session_variables' FK requires."""
     project_id = "dddddddd-dddd-4ddd-8ddd-ddddddddddd1"
+    machine_id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1"
     db.execute(
         "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, NOW()) "
         "ON CONFLICT (id) DO NOTHING",
         (project_id, "parity-test-project"),
     )
     db.execute(
+        "INSERT INTO machines (id) VALUES (%s) ON CONFLICT (id) DO NOTHING",
+        (machine_id,),
+    )
+    db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id) "
         "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (id) DO NOTHING",
-        (session_id, session_id, "machine-parity", "test", project_id),
+        (
+            session_id,
+            session_id,
+            machine_id,
+            "test",
+            project_id,
+        ),
     )
 
 

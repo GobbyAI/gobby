@@ -87,7 +87,12 @@ class ConfigRepository:
     ) -> None:
         self.db = db
         self.registry = registry
-        self.secret_store = secret_store or SecretStore(db)
+        self._secret_store = secret_store
+
+    def _secrets(self) -> SecretStore:
+        if self._secret_store is None:
+            self._secret_store = SecretStore(self.db)
+        return self._secret_store
 
     def read(self, *, resolve_secrets: bool = True) -> ConfigReadSnapshot:
         """Read a complete configuration snapshot in one read-only transaction."""
@@ -201,7 +206,7 @@ class ConfigRepository:
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                 reference = self._secret_reference(key, value)
                 name = reference.removeprefix("$secret:")
-                plaintext = self.secret_store.get(name) if resolve_secrets else None
+                plaintext = self._secrets().get(name) if resolve_secrets else None
                 bindings[key] = SecretBinding(reference, plaintext)
 
         values = self._complete_values(overrides)

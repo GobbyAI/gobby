@@ -56,6 +56,7 @@ def _server(
     sessions: list[Any] | None = None,
 ) -> SimpleNamespace:
     live_sessions = sessions or []
+    config = SimpleNamespace(tmux=SimpleNamespace(socket_path="/tmp/gobby.sock"))
     return SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
@@ -71,7 +72,8 @@ def _server(
             task_manager=SimpleNamespace(get_task=lambda _task_id: None),
             agent_runner=None,
             database=temp_db,
-            config=SimpleNamespace(tmux=SimpleNamespace(socket_path="/tmp/gobby.sock")),
+            config=config,
+            config_runtime=SimpleNamespace(snapshot=SimpleNamespace(active=config)),
             run_db=_run_db,
         )
     )

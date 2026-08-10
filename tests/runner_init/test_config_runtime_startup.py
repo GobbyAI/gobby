@@ -10,6 +10,7 @@ import pytest
 
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 from gobby.app_context import ServiceContainer, clear_app_context, get_app_context, set_app_context
+from gobby.config.app import DaemonConfig
 from gobby.config.runtime import ConfigRuntime
 from gobby.runner import GobbyRunner
 from gobby.shutdown_intent import ShutdownIntent
@@ -32,14 +33,14 @@ class _Runtime:
         self.degraded = start_degraded
         self.closed = False
 
-    async def start(self) -> object:
+    async def start(self) -> SimpleNamespace:
         self.events.append("runtime.start")
         if self.start_hook is not None:
             await self.start_hook()
         if self.start_error is not None:
             raise self.start_error
         self.ready = True
-        return object()
+        return SimpleNamespace(active=DaemonConfig(ui={"enabled": False}))
 
     def register_revision_publisher(
         self,
@@ -70,6 +71,9 @@ def _patch_runner_phases(
     def services(_runner: GobbyRunner) -> None:
         events.append("services")
 
+    def capacity(_runner: GobbyRunner) -> None:
+        events.append("capacity")
+
     def orchestration(_runner: GobbyRunner) -> None:
         events.append("orchestration")
 
@@ -86,6 +90,7 @@ def _patch_runner_phases(
         runner.http_server = cast(Any, SimpleNamespace(services=container))
 
     monkeypatch.setattr("gobby.runner_init.init_storage_and_config", storage)
+    monkeypatch.setattr("gobby.runner_init.init_runtime_capacity", capacity)
     monkeypatch.setattr("gobby.runner_init.init_services", services)
     monkeypatch.setattr("gobby.runner_init.init_orchestration", orchestration)
     monkeypatch.setattr("gobby.runner_init.init_servers", servers)
@@ -106,7 +111,14 @@ async def test_startup_constructs_one_runtime(monkeypatch: pytest.MonkeyPatch) -
     runner = await GobbyRunner.create()
 
     assert runner.config_runtime is cast(ConfigRuntime, runtime)
-    assert events == ["storage", "runtime.start", "services", "orchestration", "servers"]
+    assert events == [
+        "storage",
+        "runtime.start",
+        "capacity",
+        "services",
+        "orchestration",
+        "servers",
+    ]
 
 
 async def test_context_shares_runner_runtime(monkeypatch: pytest.MonkeyPatch) -> None:

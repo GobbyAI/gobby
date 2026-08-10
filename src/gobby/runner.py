@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.code_index.nightly_reindex import CodeIndexNightlyFullReindexer
     from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
+    from gobby.config.bootstrap import BootstrapConfig
     from gobby.config.runtime import ConfigRuntime
     from gobby.daemon_lease import ActiveDaemonLease
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -100,6 +101,7 @@ class GobbyRunner:
     # Phase 1: storage & config (init_storage_and_config)
     _config_file: str | None
     config: DaemonConfig
+    bootstrap_config: BootstrapConfig
     verbose: bool
     machine_id: str | None
     _shutdown_requested: bool
@@ -226,7 +228,8 @@ class GobbyRunner:
         self._prepare_base_state()
         try:
             self._initialize_storage(config_path, verbose)
-            await self.config_runtime.start()
+            startup_snapshot = await self.config_runtime.start()
+            self.config = startup_snapshot.active
             self._initialize_post_database_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)
@@ -252,10 +255,12 @@ class GobbyRunner:
     def _initialize_post_database_services(self) -> None:
         from gobby.runner_init import (
             init_orchestration,
+            init_runtime_capacity,
             init_servers,
             init_services,
         )
 
+        init_runtime_capacity(self)
         init_services(self)
         init_orchestration(self)
         init_servers(self)

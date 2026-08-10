@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import DEFAULT, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.logging import LoggingSettings
 from gobby.config.postgres_pool import PostgresPoolConfig
@@ -150,6 +151,7 @@ def create_base_patches(
 
     patches = [
         patch("gobby.runner_init.storage.init_telemetry"),
+        patch("gobby.runner_init.storage.load_bootstrap", return_value=BootstrapConfig()),
         patch("gobby.runner_init.storage.setup_file_logging"),
         patch("gobby.runner_init.storage.get_machine_id", return_value=TEST_MACHINE_ID),
         patch(

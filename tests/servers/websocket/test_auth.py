@@ -26,6 +26,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.config.app import DaemonConfig
+    from gobby.config.bootstrap import BootstrapConfig
     from gobby.runner_init import servers as runner_servers
 
     auth_callback = AsyncMock(
@@ -52,8 +53,12 @@ async def test_wired_callback_rejects_and_accepts(monkeypatch: pytest.MonkeyPatc
         def __init__(self, **kwargs: object) -> None:
             websocket_init.update(kwargs)
 
+        async def broadcast_config_event(self, _event: object) -> None:
+            pass
+
     runner = MagicMock()
     runner.config = DaemonConfig(websocket={"enabled": True})
+    runner.bootstrap_config = BootstrapConfig()
     runner.codex_client = None
     runner.wake_dispatcher = MagicMock()
     runner.cron_scheduler = None

@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.sessions import (
     _get_commit_count,
@@ -202,7 +203,7 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
     with TestClient(server.app):
@@ -253,7 +254,7 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
     with TestClient(server.app):
