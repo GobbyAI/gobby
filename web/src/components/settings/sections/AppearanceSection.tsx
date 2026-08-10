@@ -120,7 +120,7 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
             onChange={(event) => updateFontSize(Number(event.target.value))}
           />
           <span
-            className="min-w-[3.5ch] text-right text-sm text-muted-foreground tabular-nums"
+            className="min-w-[3.5ch] text-right text-sm leading-[1.6] text-muted-foreground tabular-nums"
             aria-hidden="true"
           >
             {settings.fontSize}px

@@ -242,7 +242,7 @@ function SecretStoreGroup({
                 className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium text-muted-foreground">
+                  <span className="text-sm font-medium leading-[1.6] text-muted-foreground">
                     <code>{secret.name}</code>
                   </span>
                   <div className="flex flex-wrap gap-2">

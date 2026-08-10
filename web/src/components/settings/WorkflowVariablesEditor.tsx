@@ -177,11 +177,11 @@ export function WorkflowVariablesEditor() {
               className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
             >
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <code className="min-w-0 break-all text-base font-medium text-foreground">
+                <code className="min-w-0 break-all text-base font-medium leading-[1.6] text-foreground">
                   {variable.name}
                 </code>
                 <div className="flex flex-wrap items-center gap-3">
-                  <span className="rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm text-muted-foreground lowercase">
+                  <span className="rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm leading-[1.6] text-muted-foreground lowercase">
                     {variable.source}
                   </span>
                   <Switch
@@ -203,11 +203,11 @@ export function WorkflowVariablesEditor() {
                 </div>
               </div>
               <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <code className="break-all text-sm text-muted-foreground">
+                <code className="break-all text-sm leading-[1.6] text-muted-foreground">
                   {variableDisplayValue(variable.definition_json)}
                 </code>
                 {variable.description ? (
-                  <span className="text-sm text-foreground-muted">
+                  <span className="text-sm leading-[1.6] text-foreground-muted">
                     {variable.description}
                   </span>
                 ) : null}

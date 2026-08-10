@@ -226,7 +226,7 @@ function PromptOverridesGroup({
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div className="flex min-w-0 flex-col gap-1">
-              <span className="min-w-0 break-all text-base font-medium text-foreground">
+              <span className="min-w-0 break-all text-base font-medium leading-[1.6] text-foreground">
                 {detail.path}
               </span>
               {detail.description ? (
@@ -309,7 +309,7 @@ function PromptOverridesGroup({
                       void openPrompt(prompt.path)
                     }}
                   >
-                    <span className="break-all text-base font-medium text-foreground">
+                    <span className="break-all text-base font-medium leading-none text-foreground">
                       {prompt.path}
                     </span>
                     {prompt.description ? (
@@ -317,7 +317,7 @@ function PromptOverridesGroup({
                         {prompt.description}
                       </span>
                     ) : null}
-                    <span className="self-start rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm text-muted-foreground">
+                    <span className="self-start rounded-md border border-border bg-surface-secondary px-2 py-0.5 text-sm leading-none text-muted-foreground">
                       {prompt.has_override ? 'Overridden' : 'Bundled'}
                     </span>
                   </Button>
