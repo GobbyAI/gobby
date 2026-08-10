@@ -193,33 +193,49 @@ function cssLengthToPixels(value: string): number {
 }
 
 describe('mobile chrome CSS', () => {
-  it('owns Tailwind from the app global stylesheet after retiring chat aliases', () => {
-    const globalStyles = readSource('src/styles/index.css')
-    const chatRoot = join(resolveWebPackageRoot(), 'src/components/chat')
+  it('pins the final app style-bearing import order', () => {
+    const styleBearingImports = importSpecifiers(readSource('src/main.tsx')).filter(
+      specifier =>
+        specifier.startsWith('@fontsource-variable/') || specifier.endsWith('.css'),
+    )
 
-    expect(globalStyles).toContain('@import "tailwindcss";')
-    expect(globalStyles).toContain('@config "../../tailwind.config.ts";')
-    expect(globalStyles).toContain('@import "./tailwind-theme.css";')
-    for (const retiredSheet of ['styles.css', 'styles/layout.css', 'styles/variables.css']) {
-      expect(existsSync(join(chatRoot, retiredSheet))).toBe(false)
+    expect(styleBearingImports).toEqual([
+      '@fontsource-variable/geist',
+      '@fontsource-variable/jetbrains-mono',
+      './styles/index.css',
+    ])
+
+    for (const sheet of [
+      'src/styles/app-shell.css',
+      'src/styles/segmented-control.css',
+      'src/styles/dropdown-caret.css',
+      'src/styles/settings-overlay.css',
+    ]) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
     }
   })
 
-  it('loads the app without the retired shell, primitive, and settings sheets', () => {
-    const source = readSource('src/main.tsx')
-    const imports = importSpecifiers(source)
+  it('pins the final global stylesheet directive order', () => {
+    const directives = readSource('src/styles/index.css')
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
 
-    expect(existsSync(join(resolveWebPackageRoot(), 'src/styles/app-shell.css'))).toBe(false)
-    expect(imports).not.toContain('./styles/app-shell.css')
-    for (const sheet of ['segmented-control.css', 'dropdown-caret.css']) {
-      expect(existsSync(join(resolveWebPackageRoot(), 'src/styles', sheet))).toBe(false)
-      expect(imports).not.toContain(`./styles/${sheet}`)
+    expect(directives).toEqual([
+      '@import "tailwindcss";',
+      '@config "../../tailwind.config.ts";',
+      '@import "./tailwind-theme.css";',
+      '@import "./tokens.css";',
+      '@import "./base.css";',
+      '@import "./markdown.css";',
+      '@import "./accessibility.css";',
+    ])
+
+    const chatRoot = join(resolveWebPackageRoot(), 'src/components/chat')
+
+    for (const retiredSheet of ['styles.css', 'styles/layout.css', 'styles/variables.css']) {
+      expect(existsSync(join(chatRoot, retiredSheet))).toBe(false)
     }
-    expect(existsSync(join(resolveWebPackageRoot(), 'src/styles/settings-overlay.css'))).toBe(
-      false,
-    )
-    expect(imports).not.toContain('./styles/settings-overlay.css')
-    expect(imports).not.toContain('./styles/settings.css')
   })
 
   it('keeps settings overlay geometry and coarse input floors pixel-neutral', async () => {
