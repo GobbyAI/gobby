@@ -12,7 +12,12 @@ import click
 import psutil
 
 from gobby.cli.utils_runtime import facade
-from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.bootstrap import (
+    DEFAULT_DAEMON_PORT,
+    DEFAULT_WEBSOCKET_PORT,
+    BootstrapConfigError,
+    load_bootstrap,
+)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -101,11 +106,11 @@ def kill_all_gobby_daemons() -> int:
         return 0
 
     try:
-        config = deps.load_config()
+        config = load_bootstrap(resolve_database_url=False)
         http_port = int(config.daemon_port)
-        ws_port = int(config.websocket.port)
-    except (AttributeError, OSError, TypeError, ValueError):
-        http_port = 60887
+        ws_port = int(config.websocket_port)
+    except (BootstrapConfigError, AttributeError, OSError, TypeError, ValueError):
+        http_port = DEFAULT_DAEMON_PORT
         ws_port = DEFAULT_WEBSOCKET_PORT
 
     killed_count = 0

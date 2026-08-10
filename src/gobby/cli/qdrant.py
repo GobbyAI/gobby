@@ -8,6 +8,8 @@ import sys
 
 import click
 
+from gobby.cli.runtime import get_cli_runtime
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,11 +40,9 @@ def qdrant_status() -> None:
     from .services import get_qdrant_status
 
     try:
-        from gobby.config.app import load_config
-
-        config = load_config()
+        config = get_cli_runtime().require_config()
         url = config.databases.qdrant.url
-    except (ImportError, FileNotFoundError, ValueError, AttributeError) as e:
+    except Exception as e:
         logger.debug("Could not load config for qdrant status: %s", e)
         url = None
 

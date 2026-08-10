@@ -66,11 +66,12 @@ def init_local_storage() -> HubDatabase:
     Returns:
         The initialized database instance. The caller owns the returned handle.
     """
+    from gobby.config.bootstrap import load_bootstrap
     from gobby.storage.hub.postgres import PostgresHubDatabase
     from gobby.storage.projects import ensure_personal_project
 
-    config = facade().load_config(resolve_database_url=True)
-    if config.hub_backend != "postgres" or not config.database_url:
+    config = load_bootstrap(resolve_database_url=True)
+    if not config.database_url:
         raise RuntimeError("PostgreSQL hub database is not configured")
     hub_db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
     initialized = False

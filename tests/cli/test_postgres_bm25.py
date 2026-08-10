@@ -30,9 +30,11 @@ def test_repair_code_index_json_success(monkeypatch: Any) -> None:
     monkeypatch.setattr(postgres, "_read_bootstrap_database_url", lambda _home: "postgres://db")
     monkeypatch.setattr(
         postgres,
-        "load_config",
-        lambda **_kwargs: SimpleNamespace(
-            code_index=SimpleNamespace(maintenance_index_timeout_seconds=41)
+        "get_cli_runtime",
+        lambda: SimpleNamespace(
+            require_config=lambda: SimpleNamespace(
+                code_index=SimpleNamespace(maintenance_index_timeout_seconds=41)
+            )
         ),
     )
     calls: list[tuple[str, float]] = []
@@ -54,9 +56,11 @@ def test_repair_code_index_failure_is_nonzero(monkeypatch: Any) -> None:
     monkeypatch.setattr(postgres, "_read_bootstrap_database_url", lambda _home: "postgres://db")
     monkeypatch.setattr(
         postgres,
-        "load_config",
-        lambda **_kwargs: SimpleNamespace(
-            code_index=SimpleNamespace(maintenance_index_timeout_seconds=41)
+        "get_cli_runtime",
+        lambda: SimpleNamespace(
+            require_config=lambda: SimpleNamespace(
+                code_index=SimpleNamespace(maintenance_index_timeout_seconds=41)
+            )
         ),
     )
     monkeypatch.setattr(postgres, "repair_bm25_indexes", lambda *_args, **_kwargs: _status(False))

@@ -16,7 +16,6 @@ import pytest
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
-from psycopg_pool.errors import PoolTimeout
 
 import gobby.runner_init.helpers as runner_helpers
 import gobby.storage.hub.runtime as hub_runtime
@@ -100,7 +99,7 @@ def _insert_epoch(
     return epoch_id
 
 
-def test_migration_354_installs_bookkeeping_ledgers_and_login_fence(
+def test_migration_installs_ledgers_without_named_schema_login_fence(
     epoch_admin: tuple[psycopg.Connection[Any], str],
     postgres_schema: str,
 ) -> None:
@@ -147,25 +146,17 @@ def test_migration_354_installs_bookkeeping_ledgers_and_login_fence(
 
     assert {"filename", "checksum"} <= columns
     assert tables == {"maintenance_epochs", "destructive_batches"}
-    assert trigger is not None
-    assert trigger["evtevent"] == "login"
-    assert trigger["evtenabled"] == "A"
-    assert "pg_catalog.current_schema()" not in trigger["function_definition"]
-    assert "GOBBY_MAINTENANCE_EPOCH %s" not in trigger["function_definition"]
+    assert trigger is None
 
 
-def test_database_login_fence_rejects_bare_pre_protocol_client_and_accepts_token(
+def test_named_schema_login_allows_bare_and_epoch_bound_clients(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
     epoch_id = _insert_epoch(connection)
 
-    with pytest.raises(psycopg.Error) as exc_info:
-        psycopg.connect(scoped_dsn)
-
-    rejection = str(exc_info.value)
-    assert str(epoch_id) not in rejection
-    assert "gobby hub-maintenance status" in rejection
+    with psycopg.connect(scoped_dsn) as bare:
+        assert bare.execute("SELECT 1").fetchone() == (1,)
 
     with psycopg.connect(bind_maintenance_epoch(scoped_dsn, epoch_id)) as admitted:
         configured_epoch = admitted.execute(
@@ -174,21 +165,17 @@ def test_database_login_fence_rejects_bare_pre_protocol_client_and_accepts_token
         assert configured_epoch == (str(epoch_id),)
 
 
-def test_database_login_fence_ignores_client_search_path(
+def test_named_schema_login_allows_explicit_client_search_path(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection)
+    _insert_epoch(connection)
 
-    with pytest.raises(psycopg.Error) as exc_info:
-        psycopg.connect(scoped_dsn, options="-csearch_path=pg_catalog")
-
-    rejection = str(exc_info.value)
-    assert str(epoch_id) not in rejection
-    assert "gobby hub-maintenance status" in rejection
+    with psycopg.connect(scoped_dsn, options="-csearch_path=pg_catalog") as client:
+        assert client.execute("SELECT 1").fetchone() == (1,)
 
 
-def test_database_login_fence_rejects_external_libpq_ingress_like_rust_clients(
+def test_named_schema_login_allows_external_libpq_clients(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
@@ -197,7 +184,7 @@ def test_database_login_fence_rejects_external_libpq_ingress_like_rust_clients(
         pytest.skip("psql is required for the external libpq ingress check")
     epoch_id = _insert_epoch(connection, campaign="reconcile")
 
-    rejected = subprocess.run(
+    bare = subprocess.run(
         [psql, "-X", scoped_dsn, "-Atqc", "SELECT 1"],
         capture_output=True,
         text=True,
@@ -216,9 +203,8 @@ def test_database_login_fence_rejects_external_libpq_ingress_like_rust_clients(
         check=False,
     )
 
-    assert rejected.returncode != 0
-    assert str(epoch_id) not in rejected.stderr
-    assert "gobby hub-maintenance status" in rejected.stderr
+    assert bare.returncode == 0, bare.stderr
+    assert bare.stdout.strip() == "1"
     assert admitted.returncode == 0, admitted.stderr
     assert admitted.stdout.strip() == "1"
 
@@ -232,7 +218,7 @@ def test_logins_are_unaffected_without_an_open_epoch(
         assert connection.execute("SELECT 1").fetchone() == (1,)
 
 
-def test_restored_epoch_fence_is_released_without_touching_origin_state(
+def test_restored_epoch_is_released_without_touching_origin_state(
     epoch_admin: tuple[psycopg.Connection[Any], str],
     postgres_schema: str,
 ) -> None:
@@ -260,8 +246,8 @@ def test_restored_epoch_fence_is_released_without_touching_origin_state(
             ),
         )
 
-        with pytest.raises(psycopg.Error):
-            psycopg.connect(restored_dsn)
+        with psycopg.connect(restored_dsn) as pre_release:
+            assert pre_release.execute("SELECT 1").fetchone() == (1,)
 
         released = release_restored_maintenance_epoch(restored_dsn)
 
@@ -282,18 +268,13 @@ def test_restored_epoch_fence_is_released_without_touching_origin_state(
         connection.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(origin_schema)))
 
 
-def test_python_admission_probe_surfaces_actionable_epoch_error(
+def test_named_schema_admission_probe_allows_open_epoch(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection, campaign="reconcile")
+    _insert_epoch(connection, campaign="reconcile")
 
-    with pytest.raises(MaintenanceEpochActiveError) as exc_info:
-        probe_maintenance_admission(scoped_dsn)
-
-    assert exc_info.value.epoch_id == epoch_id
-    assert str(epoch_id) not in str(exc_info.value)
-    assert "gobby hub-maintenance resume" in str(exc_info.value)
+    assert probe_maintenance_admission(scoped_dsn) == scoped_dsn
 
 
 def test_runtime_and_daemon_boot_use_courtesy_admission_check(
@@ -306,7 +287,7 @@ def test_runtime_and_daemon_boot_use_courtesy_admission_check(
         postgres_pool=object(),
     )
 
-    monkeypatch.setattr(hub_runtime, "load_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr(hub_runtime, "load_bootstrap", lambda *_args, **_kwargs: config)
     monkeypatch.setattr(
         hub_runtime,
         "admitted_database_url",
@@ -586,10 +567,10 @@ def test_epoch_open_releases_fence_after_mid_open_database_error(
         assert subsequent.execute("SELECT 1").fetchone() == (1,)
 
 
-def test_connection_pool_recovers_after_fence_release_without_restart(
+def test_named_schema_pool_remains_available_across_epoch_release(
     epoch_admin: tuple[psycopg.Connection[Any], str],
 ) -> None:
-    """The 2026-07-31 wedge: an open fence starves the pool; release must restore it."""
+    """Named-schema test pools remain usable because login fencing is public-only."""
     connection, scoped_dsn = epoch_admin
     epoch_id = _insert_epoch(connection, campaign="schema-apply")
 
@@ -601,11 +582,8 @@ def test_connection_pool_recovers_after_fence_release_without_restart(
         timeout=1.0,
     )
     try:
-        with pytest.raises(PoolTimeout):
-            with pool.connection(timeout=1.0):
-                pass
-        stats = pool.get_stats()
-        assert stats.get("connections_errors", 0) >= 1
+        with pool.connection(timeout=1.0) as pooled:
+            assert pooled.execute("SELECT 1").fetchone() is not None
 
         connection.execute(
             """

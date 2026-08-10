@@ -23,7 +23,7 @@ Import from submodules directly for specific configs:
     from gobby.config.extensions import WebhooksConfig
 
 Import from this package for app-level items:
-    from gobby.config import DaemonConfig, load_config
+    from gobby.config import BootstrapConfig, DaemonConfig, load_bootstrap
 """
 
 # Core configuration and utilities from app.py
@@ -31,17 +31,18 @@ from gobby.config.app import (
     DaemonConfig,
     expand_env_vars,
     export_config_to_yaml,
-    load_config,
     load_yaml,
 )
+from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
 from gobby.config.indexing import IndexingConfig
 
 __all__ = [
     # Core app-level exports only
+    "BootstrapConfig",
     "DaemonConfig",
     "IndexingConfig",
     "expand_env_vars",
     "export_config_to_yaml",
-    "load_config",
+    "load_bootstrap",
     "load_yaml",
 ]

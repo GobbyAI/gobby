@@ -47,7 +47,7 @@ from gobby.cli.utils_ui import (
     spawn_ui_server,
     stop_ui_server,
 )
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
 from gobby.paths import get_gobby_home
@@ -86,7 +86,6 @@ __all__ = [
     "is_port_available",
     "kill_all_gobby_daemons",
     "list_project_names",
-    "load_config",
     "logger",
     "logging",
     "os",
