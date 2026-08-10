@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import type { Plan } from '../../../types/plans'
@@ -7,6 +9,7 @@ import { getPlanPendingColors } from '../planPendingSurface'
 import { AgentStatusBar } from '../AgentStatusBar'
 
 const planPendingColors = getPlanPendingColors('info')
+const commandBarSource = readFileSync(resolve('src/components/chat/CommandBar.tsx'), 'utf8')
 
 // Render markdown as plain text so the pending banner is the only thing under test.
 vi.mock('../Markdown', () => ({
@@ -96,6 +99,10 @@ describe('plan-approval design fixes (#15637)', () => {
     expect(screen.getByTestId('agent-status-bar').className).toContain(
       'min-h-[var(--activity-panel-bar-height,2.5rem)]',
     )
+  })
+
+  it('CommandBar owns the shared activity-bar height through component utilities', () => {
+    expect(commandBarSource).toContain('min-h-[var(--activity-panel-bar-height)]')
   })
 
   it('in-bar plan controls are pinned to --status-bar-control-height so they cannot stretch the bar', () => {

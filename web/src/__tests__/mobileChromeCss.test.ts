@@ -242,24 +242,16 @@ function expectVariantDeclarations(
 }
 
 describe('mobile chrome CSS', () => {
-  it('owns Tailwind from the app global stylesheet and keeps chat variables alias-only', () => {
+  it('owns Tailwind from the app global stylesheet after retiring chat aliases', () => {
     const globalStyles = readSource('src/styles/index.css')
-    const chatVariables = readSource('src/components/chat/styles/variables.css')
-    const chatVariableNames = Array.from(
-      chatVariables.matchAll(/^\s*(--[A-Za-z0-9_-]+)\s*:/gm),
-      match => match[1],
-    )
+    const chatRoot = join(resolveWebPackageRoot(), 'src/components/chat')
 
     expect(globalStyles).toContain('@import "tailwindcss";')
     expect(globalStyles).toContain('@config "../../tailwind.config.ts";')
     expect(globalStyles).toContain('@import "./tailwind-theme.css";')
-    expect(chatVariables).not.toMatch(/tailwindcss|@config|@theme/)
-    expect(chatVariableNames).toEqual([
-      '--bg-code',
-      '--bg-muted',
-      '--border-color',
-      '--accent-color',
-    ])
+    for (const retiredSheet of ['styles.css', 'styles/layout.css', 'styles/variables.css']) {
+      expect(existsSync(join(chatRoot, retiredSheet))).toBe(false)
+    }
   })
 
   it('loads the app shell after segmented controls and omits the retired settings sheet', () => {
@@ -295,16 +287,11 @@ describe('mobile chrome CSS', () => {
       expect(importSpecifiers(readSource(owner))).toContain(stylesheet)
     }
 
-    const chatStyles = readSource('src/components/chat/styles.css')
-    for (const stylesheet of ownershipPins
-      .slice(0, 8)
-      .map(([, path]) => path.slice(path.lastIndexOf('/') + 1))) {
-      expect(chatStyles).not.toContain(`@import './styles/${stylesheet}';`)
-    }
+    const chatPageImports = importSpecifiers(readSource('src/components/chat/ChatPage.tsx'))
+    expect(chatPageImports).not.toContain('./styles.css')
   })
 
   it('retires the chat input stylesheet family in favor of component utilities', () => {
-    const chatStyles = readSource('src/components/chat/styles.css')
     const retiredSheets = [
       'input-base.css',
       'input-composer.css',
@@ -314,7 +301,6 @@ describe('mobile chrome CSS', () => {
       'input.css',
     ]
 
-    expect(chatStyles).not.toContain("@import './styles/input.css';")
     for (const sheet of retiredSheets) {
       expect(existsSync(join(resolveWebPackageRoot(), 'src/components/chat/styles', sheet))).toBe(
         false,
@@ -485,14 +471,11 @@ describe('mobile chrome CSS', () => {
   })
 
   it('right-aligns command and status bar action slots', () => {
-    const layoutCss = parseCss('src/components/chat/styles/layout.css')
+    const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const mainColumnSource = readSource('src/components/chat/ChatMainColumn.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
-    expect(findRule(layoutCss, '.command-bar').selector).toBe('.command-bar')
-    expectDeclarations(layoutCss, '.command-bar', {
-      padding: '0 0.75rem',
-    })
+    expectClassToken(commandBarSource, 'px-3')
     expectClassToken(statusBarSource, 'px-3')
     expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pl-3')
     expect(mainColumnSource).toContain('@max-[360px]/chat-column:[&_.command-bar]:pr-2')

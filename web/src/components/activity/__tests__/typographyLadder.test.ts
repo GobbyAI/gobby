@@ -97,16 +97,14 @@ describe('activity-panel typography ladder (#14245)', () => {
   it('keeps status-bar controls at desktop visual height on touch devices', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/chat/styles/activity-panel.css')
-    const layoutSource = readSource('src/components/chat/styles/layout.css')
+    const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
     expect(rootSource).toContain('--status-bar-control-height: 1.75rem')
     // Status-bar session actions encode the desktop-height-on-touch contract
     // via the Button `dense` prop (min-h-7 with no pointer-coarse promotion).
     expect(statusBarSource).toMatch(/variant="accent"\s+size="sm"\s+dense/)
-    expect(layoutSource).toMatch(
-      /\.command-bar-btn\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
-    )
+    expect(commandBarSource).toContain('min-h-[var(--status-bar-control-height)]')
     expect(activitySource).toMatch(
       /\.activity-panel-tabs\s*{[^}]*padding:\s*0 0\.75rem/,
     )

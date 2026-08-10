@@ -158,7 +158,7 @@ function ProtocolAwareText({
             <div
               key={`${id}-t${index}`}
               className={cn(
-                'message-content leading-relaxed text-foreground',
+                'message-content text-[length:var(--text-lg)] leading-relaxed text-foreground',
                 markdownBodyClassName,
               )}
               data-testid="chat-message-content"
