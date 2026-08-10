@@ -3,6 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { SessionMessage } from "../../hooks/useSessionDetail";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { markdownBodyClassName } from "../shared/MarkdownBody";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
@@ -200,7 +201,7 @@ export function SessionsTabDetailPane({
       {contentMode === "summary" ? (
           <div className="flex-1 overflow-y-auto p-4">
             {summaryMarkdown ? (
-              <div className="message-content">
+              <div className={cn("message-content", markdownBodyClassName)}>
                 <MemoizedMarkdown
                   content={summaryMarkdown}
                   id={`watch-summary-${selectedSessionId}`}

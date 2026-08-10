@@ -6,7 +6,7 @@ import { ConfirmDialog } from './ui/ConfirmDialog'
 import { TabBar } from './ui/TabBar'
 import { coarseHitAreaCls } from './ui/controlStyles'
 import { CodeMirrorEditor } from './shared/CodeMirrorEditor'
-import { MarkdownBody } from './shared/MarkdownBody'
+import { MarkdownBody, markdownBodyClassName } from './shared/MarkdownBody'
 import { getLanguageColorVar, FOLDER_ICON_COLOR_VAR } from '../lib/languageColors'
 import { undo, redo } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
@@ -601,7 +601,12 @@ function FileContent({
   if (file.language === 'markdown') {
     return (
       <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
-        <div className="message-content overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]">
+        <div
+          className={cn(
+            'message-content overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]',
+            markdownBodyClassName,
+          )}
+        >
           <MarkdownBody
             content={file.content}
             id={`files-page-md-${file.projectId}:${file.path}`}

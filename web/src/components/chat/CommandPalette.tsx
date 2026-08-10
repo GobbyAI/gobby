@@ -238,7 +238,9 @@ export function CommandPalette({
           aria-label="Command palette results"
         >
           {allItems.length === 0 && (
-            <div className="command-palette-empty">No results</div>
+            <div className="command-palette-empty p-6 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]">
+              No results
+            </div>
           )}
 
           {/* Sessions */}

@@ -5,6 +5,7 @@ import { extractImageSrc } from '../../lib/imageSources'
 import { formatAttachmentSize, normalizeAttachmentUrl } from '../../lib/chatAttachments'
 import { MESSAGE_SPACING } from '../shared/spacing'
 import { GobbyLogo } from '../shared/GobbyLogo'
+import { markdownBodyClassName } from '../shared/MarkdownBody'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { CompactionSummaryCard } from './CompactionSummaryCard'
@@ -156,12 +157,15 @@ function ProtocolAwareText({
           return (
             <div
               key={`${id}-t${index}`}
-              className="message-content leading-relaxed text-foreground"
+              className={cn(
+                'message-content leading-relaxed text-foreground',
+                markdownBodyClassName,
+              )}
               data-testid="chat-message-content"
             >
               <Markdown content={renderImagePlaceholders(segment.content)} id={`${id}-${index}`} />
               {isStreaming && index === lastTextSegmentIndex && (
-                <span className="cursor inline-block w-2 h-4 bg-foreground animate-pulse ml-1.5" />
+                <span className="cursor ml-1.5 inline-block h-4 w-2 animate-pulse bg-foreground align-text-bottom" />
               )}
             </div>
           )

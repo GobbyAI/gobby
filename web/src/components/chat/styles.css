@@ -1,8 +1,6 @@
 @import './styles/variables.css';
 @import './styles/layout.css';
-@import './styles/message.css';
 @import './styles/input.css';
-@import './styles/empty-state.css';
 
 .tool-result-wrap {
   text-indent: -2ch;

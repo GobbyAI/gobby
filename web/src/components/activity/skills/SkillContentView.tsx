@@ -11,7 +11,7 @@ import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
 import { Button } from "../../ui/Button";
 import { EditableViewActions } from "../../shared/EditableView";
 import { detectLanguageFromPath, useEditableContent } from "../../shared/editableContent";
-import { MarkdownBody } from "../../shared/MarkdownBody";
+import { MarkdownBody, markdownBodyClassName } from "../../shared/MarkdownBody";
 import { saveSkillFile } from "./SkillsTabActions";
 import {
   loadSkillFileContent,
@@ -204,7 +204,9 @@ export function SkillContentView({
               onSave={() => void editState.saveEdit()}
             />
           ) : language === "markdown" ? (
-            <div className="message-content h-full min-h-0 overflow-y-auto p-3 text-sm text-foreground">
+            <div
+              className={`message-content h-full min-h-0 overflow-y-auto p-3 text-sm text-foreground ${markdownBodyClassName}`}
+            >
               <MarkdownBody
                 content={activeContent}
                 id={`skill-content-${skill.id}-${activeLabel}`}

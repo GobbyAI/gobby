@@ -110,14 +110,14 @@ describe('ActivityPanelEmpty (#14246)', () => {
 
   describe('typography ladder hierarchy', () => {
     it('matches the chat empty-state look: heading --text-xl / secondary, body --text-base / muted', () => {
-      const source = readSource('src/components/chat/styles/empty-state.css')
+      const source = readSource('src/components/activity/ActivityPanelEmpty.tsx')
 
-      expect(source).toMatch(
-        /\.activity-tab-empty__heading\s*{[^}]*font-size:\s*var\(--text-xl\)[^}]*color:\s*var\(--text-secondary\)/,
-      )
-      expect(source).toMatch(
-        /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*color:\s*var\(--text-muted\)/,
-      )
+      expect(source).toContain('text-[length:var(--text-xl)]')
+      expect(source).toContain('text-[var(--text-secondary)]')
+      expect(source).toContain('max-w-[26rem]')
+      expect(source).toContain('text-[length:var(--text-base)]')
+      expect(source).toContain('text-[var(--text-muted)]')
+      expect(source).not.toContain("import '../chat/styles/empty-state.css'")
     })
 
     it('routes every panel through ActivityPanelEmpty (no loose .activity-tab-empty literals)', () => {

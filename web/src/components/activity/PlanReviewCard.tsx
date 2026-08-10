@@ -3,6 +3,7 @@ import type { Plan } from '../../types/plans'
 import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
+import { markdownBodyClassName } from '../shared/MarkdownBody'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
 import {
   getPlanPendingColors,
@@ -121,7 +122,12 @@ export const PlanReviewCard = memo(function PlanReviewCard({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="message-content prose dark:prose-invert max-w-none p-4 leading-relaxed prose-p:leading-relaxed">
+        <div
+          className={cn(
+            'message-content prose p-4 leading-relaxed dark:prose-invert prose-p:leading-relaxed',
+            markdownBodyClassName,
+          )}
+        >
           <Markdown content={content} id={`plan-review-${plan.id}`} />
         </div>
 

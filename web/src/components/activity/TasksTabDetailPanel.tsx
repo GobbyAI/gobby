@@ -17,6 +17,7 @@ import {
   type TaskInlineEditApi,
 } from "./taskdetail/taskDetailFormat";
 import { Markdown } from "../chat/Markdown";
+import { markdownBodyClassName } from "../shared/MarkdownBody";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 
@@ -139,7 +140,9 @@ export function TasksTabDetailPanel({
           <div className="activity-task-detail-section-title">
             Validation feedback
           </div>
-          <div className="activity-task-detail-markdown message-content">
+          <div
+            className={`activity-task-detail-markdown message-content ${markdownBodyClassName}`}
+          >
             <Markdown content={validationFeedback} id={`task-vf-${task.id}`} />
           </div>
         </div>

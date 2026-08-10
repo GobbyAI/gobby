@@ -278,16 +278,21 @@ export const MessageList = memo(
     if (messages.length === 0 && !isThinking) {
       return (
         <div className="chat-scaled flex-1 min-h-0 flex items-center justify-center">
-          <div className="chat-empty-state">
+          <div className="chat-empty-state flex flex-col items-center gap-3 text-center text-[var(--text-muted)]">
             {isLoadingMessages ? (
               <p className="text-sm animate-pulse">Loading messages...</p>
             ) : (
               <>
-                <div className="chat-empty-state__icon" aria-hidden="true">
+                <div
+                  className="chat-empty-state__icon inline-flex items-center justify-center opacity-[0.35]"
+                  aria-hidden="true"
+                >
                   <ChatEmptyIcon />
                 </div>
-                <div className="chat-empty-state__title">Chat</div>
-                <p className="chat-empty-state__copy">
+                <div className="chat-empty-state__title text-[length:var(--text-xl)] text-[var(--text-secondary)]">
+                  Chat
+                </div>
+                <p className="chat-empty-state__copy max-w-[26rem] text-[length:var(--text-base)] text-[var(--text-muted)]">
                   Start a conversation with Gobby
                 </p>
               </>

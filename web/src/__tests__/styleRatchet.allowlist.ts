@@ -40,7 +40,6 @@ export const CSS_FILE_ALLOWLIST: readonly string[] = [
   'src/components/chat/styles.css',
   'src/components/chat/styles/activity-panel.css',
   'src/components/chat/styles/cron-tab.css',
-  'src/components/chat/styles/empty-state.css',
   'src/components/chat/styles/files-tab.css',
   'src/components/chat/styles/input-base.css',
   'src/components/chat/styles/input-composer.css',
@@ -50,7 +49,6 @@ export const CSS_FILE_ALLOWLIST: readonly string[] = [
   'src/components/chat/styles/input.css',
   'src/components/chat/styles/layout.css',
   'src/components/chat/styles/mcp-tab.css',
-  'src/components/chat/styles/message.css',
   'src/components/chat/styles/pipelines-tab.css',
   'src/components/chat/styles/rules-tab.css',
   'src/components/chat/styles/sessions-tab.css',
@@ -78,5 +76,5 @@ export const IMPORTANT_ALLOWLIST: Record<string, number> = {
 
 // Total lines across all recorded stylesheets. The ceiling only moves down;
 // once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 6600
+export const CSS_TOTAL_LINE_CEILING = 6266
 export const CSS_LINE_TIGHTEN_SLACK = 200

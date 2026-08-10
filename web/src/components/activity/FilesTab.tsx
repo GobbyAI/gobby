@@ -14,7 +14,7 @@ import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { CodeBlock } from '../shared/CodeBlock'
-import { MarkdownBody } from '../shared/MarkdownBody'
+import { MarkdownBody, markdownBodyClassName } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { EditableViewActions } from '../shared/EditableView'
 import { detectLanguageFromPath, useEditableContent } from '../shared/editableContent'
@@ -644,7 +644,12 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 onSave={() => void editState.saveEdit()}
               />
             ) : language === 'markdown' ? (
-              <div className="files-markdown-viewer message-content">
+              <div
+                className={cn(
+                  'files-markdown-viewer message-content',
+                  markdownBodyClassName,
+                )}
+              >
                 <MarkdownBody
                   content={fileContent ?? ''}
                   id={`files-tab-md-${selectedFile ?? 'none'}`}

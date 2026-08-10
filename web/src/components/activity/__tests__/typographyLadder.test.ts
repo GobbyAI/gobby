@@ -197,16 +197,28 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('locks the activity-tab-empty body and provides heading helpers (chat empty-state parity)', () => {
-    const source = readSource('src/components/chat/styles/empty-state.css')
+    const source = readSource('src/components/activity/ActivityPanelEmpty.tsx')
 
-    expect(source).toMatch(
-      /\.activity-tab-empty\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-normal)]')
+    expect(source).toContain('text-[length:var(--text-xl)]')
+    expect(source).toContain('text-[var(--text-secondary)]')
+    expect(source).toContain('text-[var(--text-muted)]')
+  })
+
+  it('locks the chat empty-state title and copy to the same utility ladder', () => {
+    const source = readSource('src/components/chat/MessageList.tsx')
+    const commandPaletteSource = readSource('src/components/chat/CommandPalette.tsx')
+
+    expect(source).toContain('chat-empty-state flex flex-col items-center gap-3 text-center')
+    expect(source).toContain(
+      'chat-empty-state__title text-[length:var(--text-xl)] text-[var(--text-secondary)]',
     )
-    expect(source).toMatch(
-      /\.activity-tab-empty__heading\s*{[^}]*font-size:\s*var\(--text-xl\)[^}]*color:\s*var\(--text-secondary\)/,
+    expect(source).toContain(
+      'chat-empty-state__copy max-w-[26rem] text-[length:var(--text-base)] text-[var(--text-muted)]',
     )
-    expect(source).toMatch(
-      /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*color:\s*var\(--text-muted\)/,
+    expect(commandPaletteSource).toContain(
+      'command-palette-empty p-6 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]',
     )
   })
 

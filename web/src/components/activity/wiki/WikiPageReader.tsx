@@ -9,7 +9,7 @@ import type { Components } from "react-markdown";
 import type { PluggableList } from "unified";
 
 import { Anchor } from "../../chat/CodeBlockRenderers";
-import { MarkdownBody } from "../../shared/MarkdownBody";
+import { MarkdownBody, markdownBodyClassName } from "../../shared/MarkdownBody";
 import { MermaidBlock } from "../../shared/MermaidBlock";
 import { Button } from "../../ui/Button";
 import { Card } from "../../ui/Card";
@@ -426,7 +426,9 @@ export function WikiPageReader({
               </p>
             ) : null}
 
-            <div className="message-content text-sm text-foreground">
+            <div
+              className={`message-content text-sm text-foreground ${markdownBodyClassName}`}
+            >
               <MarkdownBody
                 content={stripLeadingTitleHeading(detail.body, title)}
                 id={`wiki-${path}`}

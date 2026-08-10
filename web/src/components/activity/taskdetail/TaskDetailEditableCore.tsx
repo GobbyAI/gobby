@@ -11,6 +11,7 @@ import {
   TaskTextAreaField,
 } from "../TaskFieldEditors";
 import type { TaskInlineEditApi } from "./taskDetailFormat";
+import { markdownBodyClassName } from "../../shared/MarkdownBody";
 
 /**
  * D5 §3 — the editable core. PATCH-family fields only (category, priority,
@@ -28,7 +29,9 @@ function StaticBlock({ label, value }: { label: string; value: string }) {
   return (
     <div className="activity-task-detail-core-block">
       <div className="activity-task-detail-core-block__label">{label}</div>
-      <div className="activity-task-detail-markdown message-content">
+      <div
+        className={`activity-task-detail-markdown message-content ${markdownBodyClassName}`}
+      >
         {value}
       </div>
     </div>
