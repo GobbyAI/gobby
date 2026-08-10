@@ -1,5 +1,4 @@
 import { memo, useMemo, useState } from 'react'
-import '../chat/styles/traces-tab.css'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { Button } from '../ui/Button'
@@ -108,7 +107,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                 type="button"
                 variant="ghost"
                 data-testid="trace-row-button"
-                className={`pipeline-exec-row${selectedTraceId === trace.trace_id ? ' pipeline-exec-row--active' : ''} ${coarseHitAreaCls}`}
+                className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left transition-colors duration-100 [color:inherit] [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedTraceId === trace.trace_id ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''} ${coarseHitAreaCls}`}
                 onClick={() => setSelectedTraceId(trace.trace_id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -178,14 +177,14 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
             ) : spans.length === 0 ? (
               <p className="text-xs text-muted-foreground p-2">No spans</p>
             ) : (
-              <ul className="traces-tab-spans">
+              <ul className="m-0 list-none p-0">
                 {spans.map((span) => (
-                  <li key={span.id} className="traces-tab-span">
+                  <li key={span.id} className="flex min-w-0 items-center gap-2 border-b border-[var(--border)] px-3 py-1.5 text-[length:var(--text-xs)] last:border-b-0">
                     <TraceStatusDot status={span.status} />
-                    <span className="traces-tab-span__name" title={span.name}>
+                    <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={span.name}>
                       {span.name}
                     </span>
-                    <span className="traces-tab-span__duration tabular-nums">
+                    <span className="shrink-0 tabular-nums text-[var(--text-muted)]">
                       {formatDurationNs(Math.max(0, span.end_time_ns - span.start_time_ns))}
                     </span>
                   </li>

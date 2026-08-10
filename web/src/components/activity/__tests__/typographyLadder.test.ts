@@ -103,6 +103,8 @@ describe('activity-panel typography ladder (#14245)', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
     const tasksToolbarSource = readSource('src/components/activity/TasksTabToolbar.tsx')
+    const filterPrimitivesSource = readSource('src/components/activity/FilterPrimitives.tsx')
+    const taskStyles = readSource('src/components/tasks/task-execution.css')
     const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
@@ -115,6 +117,9 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(activitySource).toContain('px-3')
     expect(tasksToolbarSource).toContain('activity-filter-button')
     expect(tasksToolbarSource).toContain('ml-auto')
+    expect(filterPrimitivesSource).toContain('activity-filter-badge')
+    expect(taskStyles).toMatch(/\.activity-filter-button\s*{/)
+    expect(taskStyles).toMatch(/\.activity-filter-badge\s*{/)
 
     const filterButtonAuthors = readTsxSources('src')
       .filter(([, source]) => source.includes('activity-filter-button'))
@@ -189,28 +194,21 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('locks cron run rows to the meta token', () => {
-    const source = readSource('src/components/chat/styles/cron-tab.css')
+    const source = readSource('src/components/activity/CronTab.tsx')
 
-    expect(source).toMatch(
-      /\.cron-tab-run\s*{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).toContain('font-[var(--font-weight-normal)]')
+    expect(source).not.toContain('cron-tab-run')
   })
 
   it('locks files-tab tree rows to --text-base and meta size to --text-sm', () => {
-    const source = readSource('src/components/chat/styles/files-tab.css')
+    const source = readSource('src/components/activity/FilesTab.tsx')
 
-    expect(source).toMatch(
-      /\.file-tree-entry\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.files-tree-item\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.file-tree-size\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
-    expect(source).toMatch(
-      /\.files-tree-loading\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-medium)]')
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).not.toContain('files-tree-item')
+    expect(source).not.toContain('files-tree-loading')
   })
 
   it('locks the activity-tab-empty body and provides heading helpers (chat empty-state parity)', () => {

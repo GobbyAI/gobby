@@ -1,5 +1,4 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import '../chat/styles/pipelines-tab.css'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { Button } from '../ui/Button'
@@ -541,7 +540,7 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                 type="button"
                 key={exec.id}
                 variant="ghost"
-                className={`pipeline-exec-row${selectedId === exec.id ? ' pipeline-exec-row--active' : ''} ${coarseHitAreaCls}`}
+                className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left transition-colors duration-100 [color:inherit] [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedId === exec.id ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''} ${coarseHitAreaCls}`}
                 onClick={() => handleSelect(exec.id)}
               >
                 <div className="flex items-center gap-2 min-w-0">

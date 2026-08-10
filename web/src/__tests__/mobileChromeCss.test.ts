@@ -214,16 +214,6 @@ function expectDeclarations(
   }
 }
 
-function expectNoDeclaration(root: Root, selector: string, property: string, media?: string): void {
-  const rule = findRule(root, selector, media)
-  const declarations = new Set<string>()
-  rule.walkDecls(declaration => {
-    declarations.add(declaration.prop)
-  })
-
-  expect(declarations.has(property)).toBe(false)
-}
-
 function expectVariantDeclarations(
   root: Root,
   selector: string,
@@ -266,8 +256,17 @@ describe('mobile chrome CSS', () => {
     expect(imports).not.toContain('./styles/settings.css')
   })
 
-  it('loads activity styles from each standalone owner', () => {
-    const ownershipPins = [
+  it('retires the small activity tab sheets and every owner import', () => {
+    const retiredSheets = [
+      'src/components/activity/skills/SkillsTab.css',
+      'src/components/chat/styles/cron-tab.css',
+      'src/components/chat/styles/files-tab.css',
+      'src/components/chat/styles/mcp-tab.css',
+      'src/components/chat/styles/pipelines-tab.css',
+      'src/components/chat/styles/rules-tab.css',
+      'src/components/chat/styles/traces-tab.css',
+    ] as const
+    const retiredImports = [
       ['src/components/activity/ActivityMcpTab.tsx', '../chat/styles/mcp-tab.css'],
       ['src/components/activity/RulesTab.tsx', '../chat/styles/rules-tab.css'],
       ['src/components/activity/FilesTab.tsx', '../chat/styles/files-tab.css'],
@@ -275,14 +274,18 @@ describe('mobile chrome CSS', () => {
       ['src/components/activity/TracesTab.tsx', '../chat/styles/traces-tab.css'],
       ['src/components/activity/PipelinesTab.tsx', '../chat/styles/pipelines-tab.css'],
       ['src/components/activity/SkillsTab.tsx', '../chat/styles/rules-tab.css'],
+      ['src/components/activity/SkillsTab.tsx', './skills/SkillsTab.css'],
       [
         'src/components/activity/integrations/IntegrationsFilterPanel.tsx',
         '../../chat/styles/rules-tab.css',
       ],
     ] as const
 
-    for (const [owner, stylesheet] of ownershipPins) {
-      expect(importSpecifiers(readSource(owner))).toContain(stylesheet)
+    for (const sheet of retiredSheets) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
+    }
+    for (const [owner, stylesheet] of retiredImports) {
+      expect(importSpecifiers(readSource(owner))).not.toContain(stylesheet)
     }
 
     const chatPageImports = importSpecifiers(readSource('src/components/chat/ChatPage.tsx'))
@@ -410,38 +413,6 @@ describe('mobile chrome CSS', () => {
       'pointer-coarse:[&_.activity-filter-dropdown__item]:min-h-11',
     )
     expect(quickMenuSource).toContain('pointer-coarse:min-h-11')
-  })
-
-  it('keeps rules-tab layout responsive to geometry while coarse pointers size targets only', () => {
-    const rulesCss = parseCss('src/components/chat/styles/rules-tab.css')
-
-    expect(findVariantRule(rulesCss, '.rules-tab .activity-panel-toolbar', 'mobile').selector).toBe(
-      '.rules-tab .activity-panel-toolbar',
-    )
-    expectVariantDeclarations(
-      rulesCss,
-      '.rules-tab .activity-panel-toolbar',
-      'mobile',
-      { 'flex-wrap': 'wrap' },
-    )
-    expectVariantDeclarations(
-      rulesCss,
-      '.rules-tab .activity-panel-search',
-      'mobile',
-      { 'flex-basis': '100%' },
-    )
-    expectNoDeclaration(
-      rulesCss,
-      '.rules-tab .activity-panel-toolbar',
-      'flex-wrap',
-      '(pointer: coarse)',
-    )
-    expectNoDeclaration(
-      rulesCss,
-      '.rules-tab .activity-panel-search',
-      'flex-basis',
-      '(pointer: coarse)',
-    )
   })
 
   it('shows an accent focus-visible ring on activity panel search inputs', () => {

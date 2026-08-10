@@ -52,13 +52,13 @@ export function McpDetailPanel({
 
   if (!selection) {
     return (
-      <div className="activity-mcp-detail">
+      <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">
         <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
           <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
             MCP
           </span>
         </div>
-        <div className="activity-mcp-detail-body activity-mcp-detail-body--empty">
+        <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]">
           Select a server or tool.
         </div>
       </div>
@@ -68,15 +68,15 @@ export function McpDetailPanel({
   if (selection.kind === "server") {
     const health = server ? status?.server_health?.[server.name] : null;
     return (
-      <div className="activity-mcp-detail">
+      <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">
         <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
           <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
             {server?.name ?? selection.serverName}
           </span>
         </div>
-        <div className="activity-mcp-detail-body">
+        <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-primary)]">
           {server ? (
-            <dl className="activity-mcp-kv">
+            <dl className="m-0 grid gap-[0.45rem] [&>div]:grid [&>div]:grid-cols-[minmax(5.5rem,30%)_minmax(0,1fr)] [&>div]:gap-3 [&_dd]:m-0 [&_dd]:min-w-0 [&_dd]:[overflow-wrap:anywhere] [&_dt]:text-[var(--text-secondary)]">
               <div>
                 <dt>Type</dt>
                 <dd>{getServerType(server) === "internal" ? "Internal" : "External"}</dd>
@@ -109,7 +109,7 @@ export function McpDetailPanel({
               )}
             </dl>
           ) : (
-            <p className="activity-mcp-detail-muted">Server not found.</p>
+            <p className="text-[var(--text-secondary)]">Server not found.</p>
           )}
         </div>
       </div>
@@ -118,7 +118,7 @@ export function McpDetailPanel({
 
   const title = `${selection.serverName}.${selection.toolName}`;
   return (
-    <div className="activity-mcp-detail">
+    <div className="flex min-h-0 flex-[1_1_auto] flex-col overflow-hidden bg-[var(--bg-primary)]">
       <div className="activity-panel-status-bar activity-panel-status-bar--detail flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-3 border-b border-border bg-[var(--bg-secondary)] px-3">
         <span className="activity-panel-status-bar__title block min-w-0 truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
           {title}
@@ -142,27 +142,27 @@ export function McpDetailPanel({
           </div>
         )}
       </div>
-      <div className="activity-mcp-detail-body">
+      <div className="min-h-0 flex-[1_1_auto] overflow-auto p-3 text-[length:var(--text-sm)] text-[var(--text-primary)]">
         {schemaLoading ? (
-          <p className="activity-mcp-detail-muted">Loading schema...</p>
+          <p className="text-[var(--text-secondary)]">Loading schema...</p>
         ) : schema ? (
           <>
             {(schema.description || tool?.brief) && (
-              <p className="activity-mcp-description">
+              <p className="mb-3 mt-0 text-[var(--text-secondary)]">
                 {schema.description || tool?.brief}
               </p>
             )}
-            <section className="activity-mcp-section">
-              <Heading level={3} className="activity-mcp-section-title">
+            <section>
+              <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
                 Input Schema
               </Heading>
               <JsonBlock
                 value={schema.inputSchema}
-                className="activity-mcp-json-block"
+                className="max-h-56 overflow-auto rounded-md border border-[var(--border)] bg-[var(--bg-deep)] px-[0.6rem] py-2 text-[length:var(--text-xs)] leading-[1.45] [overflow-wrap:anywhere]"
               />
             </section>
-            <section className="activity-mcp-section">
-              <Heading level={3} className="activity-mcp-section-title">
+            <section className="mt-[0.9rem]">
+              <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
                 Arguments
               </Heading>
               <ToolArgumentForm
@@ -174,20 +174,19 @@ export function McpDetailPanel({
               />
             </section>
             {executionResult && (
-              <section className="activity-mcp-section">
-                <Heading level={3} className="activity-mcp-section-title">
+              <section className="mt-[0.9rem]">
+                <Heading level={3} className="mb-[0.4rem] mt-0 text-[length:var(--text-sm)] font-[var(--font-weight-medium)]">
                   Result
                 </Heading>
                 <JsonResultBlock
                   value={executionResult.value}
                   variant={executionResult.success ? "normal" : "error"}
-                  className="activity-mcp-result"
                 />
               </section>
             )}
           </>
         ) : (
-          <p className="activity-mcp-detail-muted">Schema unavailable.</p>
+          <p className="text-[var(--text-secondary)]">Schema unavailable.</p>
         )}
       </div>
     </div>

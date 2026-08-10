@@ -7,11 +7,13 @@ import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import {
+  InlineFilterFieldRow,
+  InlineFilterPanel,
+} from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { SelectField } from "./fields";
-import "../chat/styles/rules-tab.css";
-import "./skills/SkillsTab.css";
 import {
   deleteSkill,
   downloadSkillExport,
@@ -328,7 +330,7 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
   );
 
   return (
-    <div className="skills-tab relative flex h-full flex-col">
+    <div className="relative flex h-full min-h-0 flex-col">
       {segment === "installed" && searchOpen && (
         <ActivityToolbarSearchRow
           value={filters.search}
@@ -339,8 +341,8 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
         />
       )}
       {segment === "installed" && showFilters && (
-        <div className="activity-filter-panel">
-          <div className="activity-filter-panel__field">
+        <InlineFilterPanel aria-label="Skill filters">
+          <InlineFilterFieldRow>
             <SelectField
               label="Source"
               ariaLabel="Skill source"
@@ -354,8 +356,8 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
               }
               options={[...SKILL_SOURCE_OPTIONS]}
             />
-          </div>
-          <div className="activity-filter-panel__field">
+          </InlineFilterFieldRow>
+          <InlineFilterFieldRow>
             <SelectField
               label="Category"
               ariaLabel="Skill category"
@@ -369,8 +371,8 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
                 ...categoryOptions.map((category) => ({ value: category, label: category })),
               ]}
             />
-          </div>
-        </div>
+          </InlineFilterFieldRow>
+        </InlineFilterPanel>
       )}
 
       {error && (

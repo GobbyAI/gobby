@@ -20,13 +20,13 @@ const MAX_DIFF_LINES = 2000
 
 function statusBadge(status: string) {
   const map: Record<string, { label: string; className: string }> = {
-    E: { label: 'E', className: 'file-status-modified' },
-    W: { label: 'W', className: 'file-status-added' },
-    D: { label: 'D', className: 'file-status-deleted' },
+    E: { label: 'E', className: 'bg-[color-mix(in_srgb,var(--color-warning-foreground)_20%,transparent)] text-[var(--color-warning-foreground)]' },
+    W: { label: 'W', className: 'bg-[color-mix(in_srgb,var(--color-success-foreground)_20%,transparent)] text-[var(--color-success-foreground)]' },
+    D: { label: 'D', className: 'bg-[color-mix(in_srgb,var(--color-error)_20%,transparent)] text-[var(--color-error)]' },
   }
-  const info = map[status] || { label: status, className: 'file-status-untracked' }
+  const info = map[status] || { label: status, className: 'bg-[var(--bg-tertiary)] text-[var(--text-muted)]' }
   return (
-    <span className={`file-status-badge ${info.className}`}>
+    <span className={`inline-flex size-5 shrink-0 items-center justify-center rounded font-mono text-[length:var(--text-2xs)] font-bold ${info.className}`}>
       {info.label}
     </span>
   )

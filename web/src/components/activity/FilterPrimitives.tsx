@@ -2,6 +2,7 @@ import {
   forwardRef,
   type AriaRole,
   type ButtonHTMLAttributes,
+  type HTMLAttributes,
   type MouseEvent,
   type ReactNode,
   type Ref,
@@ -58,7 +59,54 @@ interface FilterDropdownShellProps {
   panelRef?: Ref<HTMLDivElement>;
   overlayTestId?: string;
   outsideInteraction?: "click" | "primary-mousedown";
+  panelVariant?: "dropdown" | "inline";
   onClose: () => void;
+}
+
+interface InlineFilterPanelProps extends HTMLAttributes<HTMLDivElement> {
+  variant?: "dropdown" | "inline";
+}
+
+export const InlineFilterPanel = forwardRef<
+  HTMLDivElement,
+  InlineFilterPanelProps
+>(function InlineFilterPanel(
+  { variant = "inline", className, children, ...props },
+  ref,
+) {
+  return (
+    <div
+      {...props}
+      ref={ref}
+      className={cn(
+        variant === "inline"
+          ? "absolute right-3 top-1 z-[85] grid max-h-[min(28rem,calc(100vh-6rem))] w-[min(22rem,calc(100vw-1rem))] gap-[0.65rem] overflow-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-3 shadow-md"
+          : "z-[100] flex flex-col rounded-md border border-border bg-[var(--bg-secondary)] shadow-xl",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+});
+
+export function InlineFilterFieldRow({
+  children,
+  className,
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "grid min-w-0 gap-[0.3rem] text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)] [&_select]:min-h-11 [&_select]:min-w-0 [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--bg-primary)] [&_select]:px-[0.55rem] [&_select]:text-[var(--text-primary)] [&_select]:[font:inherit] [&_select:focus-visible]:outline [&_select:focus-visible]:outline-2 [&_select:focus-visible]:outline-offset-2 [&_select:focus-visible]:outline-[var(--accent)]",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function FilterDropdownShell({
@@ -70,6 +118,7 @@ export function FilterDropdownShell({
   panelRef,
   overlayTestId,
   outsideInteraction = "click",
+  panelVariant = "dropdown",
   onClose,
 }: FilterDropdownShellProps) {
   const handleMouseDown = (event: MouseEvent<HTMLDivElement>) => {
@@ -90,19 +139,16 @@ export function FilterDropdownShell({
             : undefined
         }
       />
-      <div
+      <InlineFilterPanel
         ref={panelRef}
-        className={cn(
-          "z-[100] flex flex-col rounded-md border border-border shadow-xl",
-          className,
-        )}
-        style={{ background: "var(--bg-secondary)" }}
+        variant={panelVariant}
+        className={className}
         role={role}
         aria-label={ariaLabel}
         aria-modal={ariaModal}
       >
         {children}
-      </div>
+      </InlineFilterPanel>
     </>
   );
 }

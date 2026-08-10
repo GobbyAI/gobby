@@ -8,7 +8,6 @@ import {
   type CSSProperties,
   type Ref,
 } from 'react'
-import '../chat/styles/files-tab.css'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
@@ -87,7 +86,7 @@ function FileTreeRenameInput({
         ref={inputRef}
         aria-label={`Rename ${name}`}
         wrapperClassName="min-w-0 flex-1"
-        className="file-tree-rename-input h-auto rounded border-[var(--accent)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[length:inherit] text-[var(--text-primary)]"
+        className="h-auto flex-1 rounded border-[var(--accent)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[length:inherit] text-[var(--text-primary)] outline-none"
         defaultValue={name}
         onKeyDown={(event) => {
           if (event.key === 'Enter') onSubmit()
@@ -465,7 +464,10 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       return (
         <div key={entry.path}>
           <div
-            className={`files-tree-item${isSelected ? ' file-tree-entry--active' : ''}`}
+            className={cn(
+              'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
+            )}
             style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
             role="treeitem"
             tabIndex={0}
@@ -488,7 +490,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 onCancel={() => setRenaming(null)}
               />
             ) : (
-              <span className={`files-tree-name${getDirStatus(entry.path) ? ' files-tree-name--modified' : ''}`}>{entry.name}</span>
+              <span className={cn('min-w-0 flex-1 truncate', getDirStatus(entry.path) && 'text-[var(--color-warning-foreground)]')}>{entry.name}</span>
             )}
             {!isRenaming && (
               <Button
@@ -496,7 +498,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 variant="ghost"
                 size="icon"
                 dense
-                className={cn(coarseHitAreaCls, 'files-tree-actions')}
+                className={cn(coarseHitAreaCls, 'ml-auto size-6 shrink-0 rounded border-0 bg-transparent p-0 text-[var(--text-muted)] opacity-0 group-hover/files-tree:opacity-100 group-focus-within/files-tree:opacity-100 aria-expanded:opacity-100 hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] focus-visible:bg-[var(--bg-secondary)] focus-visible:text-[var(--text-primary)]')}
                 aria-label={`Actions for ${entry.name}`}
                 aria-haspopup="menu"
                 aria-expanded={ctxMenu?.entry.path === entry.path}
@@ -508,16 +510,21 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           </div>
           {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
           {isExpanded && !children && (
-            <div className="files-tree-loading" style={{ paddingLeft: `calc(0.75rem + ${depth + 1} * 1rem)` }}>Loading...</div>
+            <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]" style={{ paddingLeft: `calc(0.75rem + ${depth + 1} * 1rem)` }}>Loading...</div>
           )}
         </div>
       )
     }
 
+    const fileStatus = getFileStatus(entry.path)
+
     return (
       <div key={entry.path}>
         <div
-          className={`files-tree-item files-tree-file${isSelected ? ' file-tree-entry--active' : ''}`}
+          className={cn(
+            'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+            isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
+          )}
           style={{ paddingLeft: `calc(0.75rem + ${depth} * 1rem)` }}
           role="treeitem"
           tabIndex={0}
@@ -545,11 +552,20 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
               onCancel={() => setRenaming(null)}
             />
           ) : (
-            <span className={`files-tree-name${getFileStatus(entry.path) ? ` files-tree-name--${getFileStatus(entry.path)?.replace('?', 'untracked')}` : ''}`}>{entry.name}</span>
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate',
+                fileStatus === 'M' && 'text-[var(--color-warning-foreground)]',
+                fileStatus === 'A' && 'text-[var(--color-success-foreground)]',
+                fileStatus === 'D' && 'text-[var(--color-error)] line-through',
+                fileStatus === '??' && 'text-[var(--text-muted)]',
+              )}
+            >
+              {entry.name}
+            </span>
           )}
           {(() => {
-            const status = getFileStatus(entry.path)
-            if (status) return <GitStatusBadge status={status} />
+            if (fileStatus) return <GitStatusBadge status={fileStatus} />
             return null
           })()}
           {!isRenaming && (
@@ -558,7 +574,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
               variant="ghost"
               size="icon"
               dense
-              className={cn(coarseHitAreaCls, 'files-tree-actions')}
+              className={cn(coarseHitAreaCls, 'ml-auto size-6 shrink-0 rounded border-0 bg-transparent p-0 text-[var(--text-muted)] opacity-0 group-hover/files-tree:opacity-100 group-focus-within/files-tree:opacity-100 aria-expanded:opacity-100 hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] focus-visible:bg-[var(--bg-secondary)] focus-visible:text-[var(--text-primary)]')}
               aria-label={`Actions for ${entry.name}`}
               aria-haspopup="menu"
               aria-expanded={ctxMenu?.entry.path === entry.path}
@@ -615,9 +631,9 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       {/* File viewer */}
       {selectedFile && (
         <div className={`flex-1 ${useHorizontal ? 'min-w-0' : ''} flex flex-col min-h-0`}>
-          <div className="file-viewer-toolbar">
-            <span className="file-viewer-path">{selectedFile}</span>
-            <div className="file-viewer-actions">
+          <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 [container-name:files-viewer] [container-type:inline-size]">
+            <span className="min-w-0 truncate text-[length:var(--text-sm)] text-[var(--text-secondary)]">{selectedFile}</span>
+            <div className="flex shrink-0 items-center gap-1.5">
               <EditableViewActions
                 isEditing={editState.isEditing}
                 onEdit={editState.beginEdit}
@@ -625,12 +641,12 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 onCancel={editState.cancelEdit}
                 editDisabled={fileLoading || Boolean(fileError)}
                 saveDisabled={Boolean(fileError)}
-                buttonClassName="file-viewer-btn"
-                labelClassName="file-viewer-btn__label"
+                buttonClassName="shrink-0"
+                labelClassName="@max-[360px]/files-viewer:hidden mobile:hidden"
               />
             </div>
           </div>
-          <div className="files-code-viewer">
+          <div className="min-h-0 flex-1 overflow-auto bg-[var(--bg-primary)] [&>div]:min-h-full [&_pre]:not-italic [&_pre>code]:not-italic">
             {fileLoading ? (
               <div className="p-3 text-xs text-muted-foreground">Loading...</div>
             ) : fileError ? (
@@ -646,7 +662,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             ) : language === 'markdown' ? (
               <div
                 className={cn(
-                  'files-markdown-viewer message-content',
+                  'message-content p-4 px-6 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)] not-italic [overflow-wrap:anywhere]',
                   markdownBodyClassName,
                 )}
               >
@@ -675,10 +691,10 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
       {/* Context menu */}
       {ctxMenu && (
         <>
-          <div className="file-ctx-backdrop" onClick={closeCtxMenu} />
+          <div className="fixed inset-0 z-[90]" onClick={closeCtxMenu} />
           <div
             ref={ctxMenuRef}
-            className="file-ctx-menu"
+            className="z-[91] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]"
             role="menu"
             aria-label={`Actions for ${ctxMenu.entry.name}`}
             style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
@@ -693,24 +709,24 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
                 variant="ghost"
                 size="sm"
                 dense
-                className={cn(coarseHitAreaCls, 'file-ctx-item')}
+                className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')}
                 onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}
               >
                 Add to chat
               </Button>
             )}
             {!ctxMenu.entry.is_dir && (
-              <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleDuplicate(ctxMenu.entry)}>
+              <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleDuplicate(ctxMenu.entry)}>
                 Duplicate
               </Button>
             )}
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleRename(ctxMenu.entry)}>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleRename(ctxMenu.entry)}>
               Rename
             </Button>
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item')} onClick={() => handleMove(ctxMenu.entry)}>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleMove(ctxMenu.entry)}>
               Move
             </Button>
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'file-ctx-item file-ctx-item--danger')} onClick={() => handleDelete(ctxMenu.entry)}>
+            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--color-error)] transition-colors duration-100 hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]')} onClick={() => handleDelete(ctxMenu.entry)}>
               Delete
             </Button>
           </div>
@@ -784,7 +800,7 @@ function GitStatusBadge({ status }: { status: string }) {
   const color = getGitStatusColorVar(label)
   return (
     <span
-      className="files-git-badge"
+      className="ml-1.5 shrink-0 pr-1 text-[length:var(--text-2xs)] font-bold [font-family:inherit]"
       style={{ color }}
       title={status === 'M' ? 'Modified' : status === 'A' ? 'Added' : status === 'D' ? 'Deleted' : status === 'R' ? 'Renamed' : 'Untracked'}
     >

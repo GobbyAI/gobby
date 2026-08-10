@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import "../chat/styles/rules-tab.css";
 import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
@@ -9,7 +8,10 @@ import { coarseHitAreaCls } from "../ui/controlStyles";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
-import { FilterDropdownShell, FilterFieldRow } from "./FilterPrimitives";
+import {
+  FilterDropdownShell,
+  InlineFilterFieldRow,
+} from "./FilterPrimitives";
 import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { SelectField } from "./fields";
@@ -71,10 +73,11 @@ function RulesFilterDropdown({
       ariaLabel="Rule filters"
       onClose={onClose}
       overlayTestId="rules-filter-overlay"
-      className="absolute top-1 right-2 w-[min(24rem,calc(100vw-1.5rem))] max-h-[70vh] overflow-y-auto"
+      panelVariant="inline"
+      className="z-[100]"
     >
-      <div className="grid grid-cols-2 gap-1 p-1.5">
-        <FilterFieldRow>
+      <div className="grid grid-cols-2 gap-1">
+        <InlineFilterFieldRow>
           <SelectField
             label="Event"
             ariaLabel="Filter by event"
@@ -85,8 +88,8 @@ function RulesFilterDropdown({
               ...eventOptions.map((eventName) => ({ value: eventName, label: eventName })),
             ]}
           />
-        </FilterFieldRow>
-        <FilterFieldRow>
+        </InlineFilterFieldRow>
+        <InlineFilterFieldRow>
           <SelectField
             label="Group"
             ariaLabel="Filter by group"
@@ -97,8 +100,8 @@ function RulesFilterDropdown({
               ...groupOptions.map((group) => ({ value: group, label: group })),
             ]}
           />
-        </FilterFieldRow>
-        <FilterFieldRow>
+        </InlineFilterFieldRow>
+        <InlineFilterFieldRow>
           <SelectField
             label="Source"
             ariaLabel="Filter by source"
@@ -111,8 +114,8 @@ function RulesFilterDropdown({
             }
             options={[...RULE_SOURCE_OPTIONS]}
           />
-        </FilterFieldRow>
-        <FilterFieldRow>
+        </InlineFilterFieldRow>
+        <InlineFilterFieldRow>
           <SelectField
             label="Tag"
             ariaLabel="Filter by tag"
@@ -123,7 +126,7 @@ function RulesFilterDropdown({
               ...tagOptions.map((tag) => ({ value: tag, label: tag })),
             ]}
           />
-        </FilterFieldRow>
+        </InlineFilterFieldRow>
       </div>
       <div className="flex items-center justify-between gap-2 border-t border-border px-2 py-1.5">
         <Button
@@ -357,7 +360,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       : "No disabled rules";
 
   return (
-    <div className="rules-tab">
+    <div className="relative flex h-full min-h-0 flex-col">
       {searchOpen && (
         <ActivityToolbarSearchRow
           value={data.search}
@@ -386,7 +389,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
           type="button"
           variant="destructive"
           size="sm"
-          className={cn("rules-action-error", coarseHitAreaCls)}
+          className={cn("min-h-11 cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[var(--color-warning-soft)] px-3 py-[0.45rem] text-left text-[length:var(--text-sm)] text-[var(--color-warning-foreground)]", coarseHitAreaCls)}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
@@ -395,7 +398,10 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
       )}
 
       <div
-        className={cn("rules-list-shell", selectedName && "rules-list-shell--split")}
+        className={cn(
+          "min-h-0 flex-[1_1_auto] overflow-auto",
+          selectedName && "flex-[0_0_auto] border-b border-[var(--border)]",
+        )}
         style={selectedName ? { height: `${topHeight}%` } : undefined}
       >
         {data.isLoading && data.rules.length === 0 ? (
@@ -442,7 +448,7 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
             minHeight={15}
             maxHeight={80}
           />
-          <div className="rules-detail-shell">
+          <div className="min-h-0 flex-[1_1_auto]">
             <RulesDetailPanel
               detail={detail}
               isLoading={detailLoading}

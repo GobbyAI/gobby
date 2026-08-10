@@ -222,48 +222,48 @@ export function FilesPage({
                   variant="accent"
                   size="sm"
                   dense
-                  className={cn(coarseHitAreaCls, 'file-viewer-btn')}
+                  className={cn(coarseHitAreaCls, 'shrink-0')}
                   onClick={handleShowDiff}
                   aria-pressed={showDiff}
                   aria-label="Diff"
                   title="Diff"
                 >
                   <DiffIcon />
-                  <span className="file-viewer-btn__label">Diff</span>
+                  <span className="@max-[360px]/files-viewer:hidden mobile:hidden">Diff</span>
                 </Button>
               )}
               {activeFile.editing ? (
                 <>
-                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'file-viewer-btn')} onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
+                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'shrink-0')} onClick={handleUndo} title="Undo (Cmd+Z)" aria-label="Undo">
                     <UndoIcon />
                   </Button>
-                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'file-viewer-btn')} onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
+                  <Button variant="accent" size="icon" dense className={cn(coarseHitAreaCls, 'shrink-0')} onClick={handleRedo} title="Redo (Cmd+Shift+Z)" aria-label="Redo">
                     <RedoIcon />
                   </Button>
                   <Button
                     variant="accent"
                     size="sm"
                     dense
-                    className={cn(coarseHitAreaCls, 'file-viewer-btn')}
+                    className={cn(coarseHitAreaCls, 'shrink-0')}
                     onClick={handleCancel}
                     aria-label="Cancel"
                     title="Cancel"
                   >
                     <XIcon />
-                    <span className="file-viewer-btn__label">Cancel</span>
+                    <span className="@max-[360px]/files-viewer:hidden mobile:hidden">Cancel</span>
                   </Button>
                   <Button
                     variant="accent"
                     size="sm"
                     dense
-                    className={cn(coarseHitAreaCls, 'file-viewer-btn')}
+                    className={cn(coarseHitAreaCls, 'shrink-0')}
                     onClick={() => onSaveFile(activeFileIndex)}
                     disabled={activeFile.truncated || activeFile.saving || !activeFile.dirty}
                     aria-label={activeFile.saving ? 'Saving' : 'Save'}
                     title={activeFile.saving ? 'Saving...' : 'Save'}
                   >
                     <CheckIcon />
-                    <span className="file-viewer-btn__label">{activeFile.saving ? 'Saving...' : 'Save'}</span>
+                    <span className="@max-[360px]/files-viewer:hidden mobile:hidden">{activeFile.saving ? 'Saving...' : 'Save'}</span>
                   </Button>
                 </>
               ) : (
@@ -271,7 +271,7 @@ export function FilesPage({
                   variant="accent"
                   size="sm"
                   dense
-                  className={cn(coarseHitAreaCls, 'file-viewer-btn')}
+                  className={cn(coarseHitAreaCls, 'shrink-0')}
                   onClick={() => {
                     onToggleEditing(activeFileIndex)
                     hideDiff()
@@ -281,7 +281,7 @@ export function FilesPage({
                   title={activeFile.truncated ? 'File is too large to edit safely' : 'Edit'}
                 >
                   <EditIcon />
-                  <span className="file-viewer-btn__label">Edit</span>
+                  <span className="@max-[360px]/files-viewer:hidden mobile:hidden">Edit</span>
                 </Button>
               )}
             </div>
@@ -575,7 +575,7 @@ function FileContent({
               variant="accent"
               size="icon"
               dense
-              className={cn(coarseHitAreaCls, 'file-viewer-btn')}
+              className={cn(coarseHitAreaCls, 'shrink-0')}
               onClick={onDismissSaveError}
               aria-label="Dismiss save error"
               title="Dismiss"

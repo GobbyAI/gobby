@@ -1,4 +1,7 @@
-import "../../chat/styles/rules-tab.css";
+import {
+  InlineFilterFieldRow,
+  InlineFilterPanel,
+} from "../FilterPrimitives";
 import { SelectField } from "../fields";
 import { CHANNEL_DISPLAY_NAMES, INTEGRATION_CHANNEL_TYPES } from "./channelMetadata";
 import { type IntegrationFilters } from "./IntegrationsTabModel";
@@ -9,16 +12,15 @@ interface IntegrationsFilterPanelProps {
 }
 
 /**
- * Filter panel opened by the header Filter trigger (#19159). Rendered by the
- * tab root, anchored below the header via .activity-filter-panel.
+ * Filter panel opened by the header Filter trigger (#19159).
  */
 export function IntegrationsFilterPanel({
   filters,
   onFiltersChange,
 }: IntegrationsFilterPanelProps) {
   return (
-    <div className="activity-filter-panel">
-      <div className="activity-filter-panel__field">
+    <InlineFilterPanel aria-label="Integration filters">
+      <InlineFilterFieldRow>
         <SelectField
           label="Platform"
           ariaLabel="Platform filter"
@@ -38,8 +40,8 @@ export function IntegrationsFilterPanel({
             })),
           ]}
         />
-      </div>
-      <div className="activity-filter-panel__field">
+      </InlineFilterFieldRow>
+      <InlineFilterFieldRow>
         <SelectField
           label="Status"
           ariaLabel="Integration status"
@@ -57,7 +59,7 @@ export function IntegrationsFilterPanel({
             { value: "disabled", label: "Disabled" },
           ]}
         />
-      </div>
-    </div>
+      </InlineFilterFieldRow>
+    </InlineFilterPanel>
   );
 }

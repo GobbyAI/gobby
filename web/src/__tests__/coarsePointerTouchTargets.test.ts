@@ -18,6 +18,7 @@ const targets = [
   'filter option',
   'session role filter',
   'error dismiss',
+  'pipeline row',
 ] as const
 
 const srcRoot = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -41,6 +42,12 @@ const SESSION_ACTION_TOUCH_CANDIDATES = [
   'pointer-coarse:min-w-11',
 ] as const
 
+const ACTIVITY_TAB_TOUCH_CANDIDATES = [
+  'min-h-[var(--activity-panel-row-height)]',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
 async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
   const tailwind = await compile('@import "tailwindcss";', {
     base: srcRoot,
@@ -53,6 +60,7 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     ...CHAT_INPUT_TOUCH_CANDIDATES,
     ...ACTIVITY_MENU_TOUCH_CANDIDATES,
     ...SESSION_ACTION_TOUCH_CANDIDATES,
+    ...ACTIVITY_TAB_TOUCH_CANDIDATES,
     'pointer-coarse:min-h-11',
     'pointer-coarse:min-w-11',
   ])
@@ -250,6 +258,13 @@ describe('coarse-pointer touch targets', () => {
   })
 
   it('promotes compact chat and activity controls to at least 44px', async () => {
+    const pipelinesSource = readFileSync(
+      join(srcRoot, 'components/activity/PipelinesTab.tsx'),
+      'utf8',
+    )
+    expect(pipelinesSource).toContain('pointer-coarse:min-h-11')
+    expect(pipelinesSource).toContain('pointer-coarse:min-w-11')
+
     await emulateCoarsePointer()
     document.body.innerHTML = `
       <button data-target="primary action" class="${CHAT_INPUT_TOUCH_CANDIDATES.join(' ')}">Send</button>
@@ -262,6 +277,7 @@ describe('coarse-pointer touch targets', () => {
       <label data-target="filter option" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Filter</label>
       <label data-target="session role filter" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Parent</label>
       <button data-target="error dismiss" class="activity-task-detail-edit-error__dismiss">×</button>
+      <button data-target="pipeline row" class="${ACTIVITY_TAB_TOUCH_CANDIDATES.join(' ')}">Run</button>
     `
 
     for (const target of targets) {
