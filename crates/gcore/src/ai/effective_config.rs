@@ -11,7 +11,10 @@ use thiserror::Error;
 #[cfg(feature = "postgres")]
 use crate::ai_context::PostgresAiConfigSource;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
-use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
+use crate::config::{
+    ConfigSource, DaemonOrPrimary, DaemonServedConfig, is_machine_config_key,
+    routing_overrides_only,
+};
 use crate::provisioning::{StandaloneConfig, gcore_config_path};
 use crate::runtime_mode::{RuntimeMode, RuntimeModeError, runtime_mode};
 
@@ -21,17 +24,6 @@ pub const SERVICE_CAPABILITIES_PATH: &str = "/api/config/service-capabilities";
 const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
 const POSTGRES_DSN_KEY: &str = "databases.postgres.dsn";
 const MANAGED_EXECUTION_BOOTSTRAP_ENV: &str = "GOBBY_MANAGED_EXECUTION_BOOTSTRAP";
-const MANAGED_CONFIG_KEYS: &[&str] = &[
-    "ai.embeddings.dim",
-    "ai.embeddings.model",
-    "ai.embeddings.query_prefix",
-    "ai.embeddings.routing",
-    "ai.embeddings.timeout_seconds",
-    "databases.falkordb.host",
-    "databases.falkordb.port",
-    "databases.qdrant.url",
-    "indexing.respect_gitignore",
-];
 
 pub type EffectiveConfigLayers = (DaemonServedConfig, Option<StandaloneConfig>);
 pub type EffectiveLocalAiSource = AiConfigSource<DaemonOrPrimary<NoPrimaryAiConfigSource>>;
@@ -374,7 +366,7 @@ fn validate_managed_bundle(
         });
     }
     for key in bundle.config.keys() {
-        if !MANAGED_CONFIG_KEYS.contains(&key.as_str()) {
+        if !is_machine_config_key(key) {
             return Err(EffectiveConfigError::Contract {
                 key: key.clone(),
                 reason: "configuration key is not allowed in managed execution",

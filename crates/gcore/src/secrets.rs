@@ -9,7 +9,7 @@
 use anyhow::{Context as _, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE;
-use postgres::{Client, Row};
+use postgres::{GenericClient, Row};
 use scrypt::{Params as ScryptParams, scrypt};
 
 const SECRET_KEY_ID: &str = "default";
@@ -45,7 +45,7 @@ impl SecretKeyMaterial {
     }
 }
 
-fn load_key_material(conn: &mut Client) -> anyhow::Result<SecretKeyMaterial> {
+fn load_key_material(conn: &mut impl GenericClient) -> anyhow::Result<SecretKeyMaterial> {
     let row = conn
         .query_one(
             "SELECT wrapped_dek, kek_posture, kek_salt, kek_kdf_n, kek_kdf_r, kek_kdf_p \
@@ -180,7 +180,7 @@ fn decrypt_secret_value(
 }
 
 /// Resolve a secret by name from the PostgreSQL hub `secrets` table.
-pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<String> {
+pub fn resolve_secret(conn: &mut impl GenericClient, secret_name: &str) -> anyhow::Result<String> {
     let name = secret_name.trim();
     validate_secret_name(name)?;
 
@@ -199,7 +199,7 @@ pub fn resolve_secret(conn: &mut Client, secret_name: &str) -> anyhow::Result<St
 }
 
 /// Resolve `$secret:NAME` and `${VAR}` patterns in a config value.
-pub fn resolve_config_value(value: &str, conn: &mut Client) -> anyhow::Result<String> {
+pub fn resolve_config_value(value: &str, conn: &mut impl GenericClient) -> anyhow::Result<String> {
     resolve_config_value_with(value, |name| resolve_secret(conn, name))
 }
 

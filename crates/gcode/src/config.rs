@@ -2,6 +2,7 @@
 
 mod context;
 mod layers;
+mod runtime_contract;
 mod services;
 
 #[cfg(test)]

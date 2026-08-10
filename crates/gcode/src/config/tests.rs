@@ -576,3 +576,5 @@ fn project_id_context_with_services_rejects_empty_id_before_runtime_resolution()
 
     assert!(err.to_string().contains("--project-id must not be empty"));
 }
+
+mod runtime_contract;

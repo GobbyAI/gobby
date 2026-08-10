@@ -6,6 +6,7 @@
 
 mod daemon_source;
 mod resolve;
+mod runtime_contract;
 mod types;
 
 /// FalkorDB graph name owned by the gcode code graph projection.
@@ -17,7 +18,13 @@ pub use resolve::{
     LayeredConfigSource, decode_config_value, resolve_ai_setting, resolve_ai_tuning,
     resolve_capability_binding, resolve_capability_routing, resolve_embedding_config,
     resolve_embedding_config_from_binding, resolve_embedding_config_resolution,
-    resolve_env_pattern, resolve_falkordb_config, resolve_indexing_config, resolve_qdrant_config,
+    resolve_env_pattern, resolve_falkordb_config, resolve_indexing_config,
+    resolve_indexing_config_from_source, resolve_qdrant_config,
+};
+pub use runtime_contract::{
+    CodecVector, DynamicSegmentError, decode_dynamic_segment, encode_dynamic_segment,
+    invalid_dynamic_segments, is_machine_config_key, is_registered_runtime_key,
+    runtime_contract_codec_vectors,
 };
 pub use types::{
     AiCapability, AiRouting, AiTuning, CapabilityBinding, EmbeddingConfig,

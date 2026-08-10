@@ -21,7 +21,6 @@ mod projection;
 mod savings;
 mod schema;
 mod search;
-mod secrets;
 mod setup;
 mod skill;
 #[doc(hidden)]
@@ -133,14 +132,20 @@ mod tests {
             std::fs::read_to_string(manifest_dir.join("src/config.rs")).expect("read config.rs");
         let config_services = std::fs::read_to_string(manifest_dir.join("src/config/services.rs"))
             .expect("read config/services.rs");
+        let config_layers = std::fs::read_to_string(manifest_dir.join("src/config/layers.rs"))
+            .expect("read config/layers.rs");
+        let runtime_contract =
+            std::fs::read_to_string(manifest_dir.join("src/config/runtime_contract.rs"))
+                .expect("read config/runtime_contract.rs");
         assert!(config_services.contains("gobby_core::config::{"));
         assert!(config_services.contains("ConfigSource"));
         assert!(config_services.contains("StandaloneConfig"));
-        assert!(config_services.contains("impl ServiceConfigSource for PostgresConfigSource"));
+        assert!(config_layers.contains("impl ServiceConfigSource for ServiceSource"));
         assert!(config_services.contains("struct ErrorCapturingConfigSource"));
         assert!(config_services.contains("impl<S> ConfigSource for ErrorCapturingConfigSource"));
         assert!(!config_services.contains("impl ConfigSource for PostgresConfigSource"));
-        assert!(config_services.contains("gobby_core::postgres::read_config_value"));
+        assert!(runtime_contract.contains("gobby_core::secrets::resolve_config_value"));
+        assert!(runtime_contract.contains("gobby_core::config::decode_config_value"));
         assert!(config_services.contains("gobby_core::config::decode_config_value"));
         assert!(!config_root.contains("fn decode_config_value("));
 

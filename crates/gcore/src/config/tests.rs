@@ -210,3 +210,4 @@ mod daemon_source;
 mod embedding_guard;
 mod indexing;
 mod resolution;
+mod runtime_contract;
