@@ -769,3 +769,629 @@ Manual smoke: `gcode search` cold (handshake mints grant), `gobby stop` then `gc
 **Human handoff at review cap** `kind: verification`
 
 The user-extended adversarial review cap (4 rounds) is reached with a `needs_review` verdict. All 18 final findings were individually voted and repaired above; no further adversary round launches. Continuation is an explicit human decision through the coordinator: continue interactively (further review requires the user to extend the cap again), hand off to build through the coordinator handoff derivation (`derive_plan_handoff_manifest` → `apply_plan_handoff_manifest` → expansion-mode validation → `gobby build`), or stop with this base-validated artifact in place. The #19645-closure expansion precondition in Constraints binds every continuation path.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Fencing epoch and lease identity unification
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: `deployment_runtime` table exists with deployment token,
+    monotonic fencing epoch, and signing secret; epoch increments exactly once per
+    lease acquisition including promotion and stale recovery. file: `src/gobby/daemon_lease.py`.
+
+    1.1.2: Lease advisory-lock keying uses `deployment_advisory_key`; the `hashtext`
+    scheme is gone. symbol: `ActiveDaemonLease`.
+
+    1.1.3: Two deployments sharing one database hold independent leases and epochs.
+    test: `tests/test_daemon_lease.py::test_deployment_scoped_lease_and_epoch`.
+
+    1.1.4: `deployment_runtime` DDL ships inside baseline 375 with idempotent guards;
+    no numbered migration is added; `BASELINE_CHECKSUM`, the catalog manifest, and
+    the packaged expected identity regenerate together in the stated order. file:
+    `crates/gcore/assets/schema/baseline.sql`.
+
+    1.1.5: gdaemon applies the refreshed baseline to fresh and existing hubs, and
+    both embedded identity contract tests pass alongside Python expected-identity
+    parity. test: `crates/gdaemon/tests/cli_contract.rs::version_json_reports_exact_schema_identity_contract`.
+
+    1.1.6: Receipt classification recognizes the #19645 baseline receipt as the exact
+    predecessor; fresh, predecessor, current, and arbitrary-mismatch states classify
+    correctly. test: `crates/gcore/src/schema/runner_tests.rs::receipt_chain_advances_from_19645_baseline`.
+
+    1.1.7: The complete interactive-principal and credential-material DDL is sealed
+    in this fold before identity regeneration; 1.3 introduces no schema change. file:
+    `crates/gcore/assets/schema/baseline.sql`.
+
+    1.1.8: Only the supervising daemon acquires the active-daemon advisory lease;
+    client crates contain zero advisory-lease references per the E1 audit. file: `src/gobby/daemon_lease.py`.
+
+    1.1.9: The grant-signing secret rotates atomically with every lease acquisition
+    and epoch bump; restore-and-reacquire rejects archived grants at daemon presentation,
+    while offline direct authorization stays bounded by grant expiry. test: `tests/test_daemon_lease.py::test_signing_secret_rotates_on_acquisition`.
+
+    1.1.10: The credential-material DDL is ciphertext-shaped: sealed columns carry
+    ciphertext and AAD identity only, and no plaintext connection-material column
+    exists in the baseline. file: `crates/gcore/assets/schema/baseline.sql`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:1.1:1.1.1
+  - covers:daemon-native-runtime-boundary:1.1:1.1.2
+  - covers:daemon-native-runtime-boundary:1.1:1.1.3
+  - covers:daemon-native-runtime-boundary:1.1:1.1.4
+  - covers:daemon-native-runtime-boundary:1.1:1.1.5
+  - covers:daemon-native-runtime-boundary:1.1:1.1.6
+  - covers:daemon-native-runtime-boundary:1.1:1.1.7
+  - covers:daemon-native-runtime-boundary:1.1:1.1.8
+  - covers:daemon-native-runtime-boundary:1.1:1.1.9
+  - covers:daemon-native-runtime-boundary:1.1:1.1.10
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: 'v2 grant bundle: schema, signing, and rejection matrix'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.2.1: v2 bundle model exists with API contract version, deployment
+    identity, integer-versioned schema identity, principal, tagged-union datastore
+    + AI capabilities carrying complete direct connection material, epoch, expiry,
+    and HMAC signature. file: `src/gobby/runtime_grants/schema.py`.
+
+    1.2.2: Signing uses the deployment''s stored secret; verification is daemon-side
+    only. symbol: `sign_grant`.
+
+    1.2.3: Each rejection class (expired, bad signature, wrong deployment, wrong schema,
+    wrong API contract, wrong capability, stale epoch, revoked) returns its own typed
+    code. test: `tests/runtime_grants/test_rejection_matrix.py::test_each_rejection_class_is_typed`.
+
+    1.2.4: The v1 bundle models and the `GET /api/config/service-capabilities` route
+    are gone, including the service-capabilities contract tests introduced by #19645.
+    file: `src/gobby/servers/routes/configuration_effective.py`.
+
+    1.2.5: Golden serialization vectors exist for every capability variant and round-trip
+    byte-identically in Python. test: `tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip`.
+
+    1.2.6: One issuance observes one active configuration revision; a grant never
+    mixes capabilities and secrets across revisions, including under concurrent activation
+    and failed rotation. test: `tests/runtime_grants/test_active_config_binding.py::test_single_revision_per_grant`.
+
+    1.2.7: `config_revision` is a signed first-class grant field carrying the exact
+    observed revision, present in every golden vector. test: `tests/runtime_grants/test_golden_vectors.py::test_config_revision_signed`.
+
+    1.2.8: `payload_checksum` is a first-class serialized field over the canonical
+    payload, present and pinned in every golden vector. test: `tests/runtime_grants/test_golden_vectors.py::test_payload_checksum_pinned`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:1.2:1.2.1
+  - covers:daemon-native-runtime-boundary:1.2:1.2.2
+  - covers:daemon-native-runtime-boundary:1.2:1.2.3
+  - covers:daemon-native-runtime-boundary:1.2:1.2.4
+  - covers:daemon-native-runtime-boundary:1.2:1.2.5
+  - covers:daemon-native-runtime-boundary:1.2:1.2.6
+  - covers:daemon-native-runtime-boundary:1.2:1.2.7
+  - covers:daemon-native-runtime-boundary:1.2:1.2.8
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Handshake endpoint and interactive principals
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: Handshake issues v2 grants to both operator-token and
+    capability-token callers and is registered in the agent capability matrix. file:
+    `src/gobby/servers/routes/runtime_handshake.py`.
+
+    1.3.2: Interactive principals are scoped Postgres roles keyed (machine_id, project_id),
+    reused across handshakes within TTL, revocable and rotatable via the existing
+    manager surface. symbol: `ManagedCredentialManager.issue`.
+
+    1.3.3: A handshake after a daemon restart returns a grant with the bumped fencing
+    epoch, and a prior-epoch grant presented for a brokered operation is rejected
+    typed. test: `tests/servers/routes/test_runtime_handshake.py::test_epoch_bump_rejects_prior_grants`.
+
+    1.3.4: All three managed launchers launch children with pre-materialized grant
+    files; no child reads `bootstrap.yaml` for a DSN. file: `src/gobby/gwiki_gateway.py`.
+
+    1.3.5: `gobby_agent_auth` represents interactive owners with a unique `(deployment_token,
+    machine_id, project_id)` active binding; same-key reuse, cross-project isolation,
+    and same-database cross-deployment independence are tested. test: `tests/storage/test_managed_credentials.py::test_interactive_binding_uniqueness`.
+
+    1.3.6: Issued grants never advertise validity beyond the underlying role''s `VALID
+    UNTIL`, and concurrent handshakes for one principal serialize daemon-side. test:
+    `tests/servers/routes/test_runtime_handshake.py::test_expiry_bounded_and_serialized`.
+
+    1.3.7: The handshake router is exported, included in the built application, and
+    registered with its intended auth dependency. test: `tests/servers/routes/test_runtime_handshake.py::test_route_registered_in_app`.
+
+    1.3.8: Granted principals are equal to or narrower than verified bearer claims;
+    body/claims mismatches and managed-source acquisition failures reject typed (fail-closed)
+    for every bearer kind. test: `tests/servers/routes/test_runtime_handshake.py::test_bearer_claim_binding_matrix`.
+
+    1.3.9: Interactive issue-or-reuse returns the same live-generation DSN across
+    handshakes and daemon restarts; rotation and revocation atomically replace stored
+    material. test: `tests/storage/test_managed_credentials.py::test_interactive_reuse_after_restart`.
+
+    1.3.10: `GET /api/runtime/config` serves registered non-capability settings from
+    the active configuration snapshot to grant-presenting callers, with operator and
+    agent-run precedence pinned. test: `tests/servers/routes/test_runtime_config.py::test_grant_presenting_config_transport`.
+
+    1.3.11: Dormant CodeWiki route outputs are byte-identical after the routing changes:
+    status stays 200 with the pinned payload, refresh stays 409. test: `tests/servers/routes/test_wiki_code_routes.py::test_dormant_outputs_pinned`.
+
+    1.3.12: Capability-token claims carry a signed machine_id from every issuer; the
+    handshake verifies it and rejects absent or mismatched values typed. test: `tests/servers/routes/test_runtime_handshake.py::test_machine_claim_binding`.
+
+    1.3.13: Rotation drains predecessor generations until the last grant issued against
+    them expires; explicit revocation invalidates early with its own typed code distinct
+    from expiry, surfaced at reachable-daemon presentation. test: `tests/storage/test_managed_credentials.py::test_rotation_drains_predecessor_generations`.
+
+    1.3.14: Interactive credential material is stored ciphertext-only with AAD identity
+    binding; plaintext never persists and retired generations are removed. test: `tests/storage/test_managed_credentials.py::test_credential_material_ciphertext_at_rest`.
+
+    1.3.15: `GET /api/runtime/config` returns the active config_revision with its
+    settings snapshot. test: `tests/servers/routes/test_runtime_config.py::test_config_revision_in_response`.
+
+    1.3.16: The bearer-free challenge endpoint proves daemon knowledge of the caller''s
+    credential secret over a client nonce for both bearer kinds; no credential attaches
+    before proof succeeds. test: `tests/servers/routes/test_runtime_handshake.py::test_challenge_proof_before_bearer`.
+
+    1.3.17: Every managed launcher installs a run-scoped capability token whose claims
+    equal the grant principal and whose expiry covers the child deadline; managed
+    refresh authenticates with it, and absent or mismatched envelope tokens reject
+    typed with no operator fallback. test: `tests/servers/routes/test_runtime_handshake.py::test_managed_refresh_envelope_token`.
+
+    1.3.18: The isolated-agent launcher materializes a signed managed grant, generates
+    no per-run bootstrap.yaml and no scoped DSN, and isolation tests assert grant-file
+    permissions, principal binding, and cleanup. test: `tests/agents/test_isolation.py::test_grant_file_isolation`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:1.3:1.3.1
+  - covers:daemon-native-runtime-boundary:1.3:1.3.2
+  - covers:daemon-native-runtime-boundary:1.3:1.3.3
+  - covers:daemon-native-runtime-boundary:1.3:1.3.4
+  - covers:daemon-native-runtime-boundary:1.3:1.3.5
+  - covers:daemon-native-runtime-boundary:1.3:1.3.6
+  - covers:daemon-native-runtime-boundary:1.3:1.3.7
+  - covers:daemon-native-runtime-boundary:1.3:1.3.8
+  - covers:daemon-native-runtime-boundary:1.3:1.3.9
+  - covers:daemon-native-runtime-boundary:1.3:1.3.10
+  - covers:daemon-native-runtime-boundary:1.3:1.3.11
+  - covers:daemon-native-runtime-boundary:1.3:1.3.12
+  - covers:daemon-native-runtime-boundary:1.3:1.3.13
+  - covers:daemon-native-runtime-boundary:1.3:1.3.14
+  - covers:daemon-native-runtime-boundary:1.3:1.3.15
+  - covers:daemon-native-runtime-boundary:1.3:1.3.16
+  - covers:daemon-native-runtime-boundary:1.3:1.3.17
+  - covers:daemon-native-runtime-boundary:1.3:1.3.18
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: 'gcore grant client: handshake, cache, renewal, typed errors'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  validation_criteria: "2.1.1: Grant client resolves managed file \u2192 cache \u2192\
+    \ handshake, validates structurally on every load, and caches at 0600 with atomic\
+    \ replace. file: `crates/gcore/src/grant/cache.rs`.\n2.1.2: Renewal triggers past\
+    \ half-TTL when the daemon is reachable and never blocks an invocation holding\
+    \ an unexpired grant. symbol: `GrantBundle`.\n2.1.3: Schema-identity mismatch\
+    \ between binary and grant fails typed before any datastore connection. test:\
+    \ `crates/gcore/src/grant/tests.rs::schema_mismatch_refuses_construction`.\n2.1.4:\
+    \ Expired grant with unreachable daemon yields `DaemonRequired`; unexpired grant\
+    \ with unreachable daemon permits datastore paths and refuses AI paths. test:\
+    \ `crates/gcore/src/grant/tests.rs::outage_window_semantics`.\n2.1.5: The grant\
+    \ module is exported from the crate root; both binaries build with `--no-default-features`\
+    \ with grant acquisition and datastore construction intact, and cargo-tree assertions\
+    \ prove the AI dependency stack is absent from those graphs. file: `crates/gcore/src/lib.rs`.\n\
+    2.1.6: Cache location derives from local state with cross-language deployment-token\
+    \ parity; loads validate deployment, project, machine, principal kind, and source;\
+    \ managed grants are never written to the interactive cache. test: `crates/gcore/src/grant/tests.rs::managed_grant_never_overwrites_interactive_cache`.\n\
+    2.1.7: Concurrent renewals serialize on the per-cache lock and never replace a\
+    \ newer credential generation with an older one. test: `crates/gcore/src/grant/tests.rs::concurrent_renewal_refuses_downgrade`.\n\
+    2.1.8: `inspect_cached_grant` classifies absent/malformed/valid/expiring/expired\
+    \ without authorizing construction or exposing secrets. test: `crates/gcore/src/grant/tests.rs::inspect_is_non_authorizing`.\n\
+    2.1.9: Rust deserializes the 1.2 golden vectors byte-identically for every capability\
+    \ variant. test: `crates/gcore/src/grant/tests.rs::golden_vectors_match_python`.\n\
+    2.1.10: Every acquisition path validates `api_contract` against the client's expected\
+    \ contract; mismatch yields `ApiContractMismatch` with its stable CLI mapping;\
+    \ golden vectors cover old-client/new-grant. test: `crates/gcore/src/grant/tests.rs::api_contract_gate`.\n\
+    2.1.11: Cache selection follows the trusted endpoint\u2192deployment binding:\
+    \ local derivation verified against handshake metadata, handshake-before-cache\
+    \ on unbound endpoints, rebind only via authenticated handshake, persisted binding\
+    \ under outage. test: `crates/gcore/src/grant/tests.rs::endpoint_deployment_binding`.\n\
+    2.1.12: Renewal contention is bounded: zero-wait try-lock with immediate serve\
+    \ of the unexpired grant, shared deadline, post-acquisition re-read, stale-lock\
+    \ takeover, and typed `Timeout` on exhaustion. test: `crates/gcore/src/grant/tests.rs::bounded_renewal_contention`.\n\
+    2.1.13: The machine-config client fetches registered non-capability settings with\
+    \ grant presentation; capabilities and connection material remain grant-only.\
+    \ file: `crates/gcore/src/config/machine_config.rs`.\n2.1.14: Non-loopback daemon\
+    \ URLs are rejected typed (`RemoteEndpoint`) before any credential attaches; overridden\
+    \ local ports handshake normally. test: `crates/gcore/src/grant/tests.rs::remote_endpoint_refused_before_auth`.\n\
+    2.1.15: Managed-source refresh locks and replaces the managed grant file under\
+    \ the same execution principal; interactive refresh owns the interactive cache;\
+    \ the destinations never cross under concurrency. test: `crates/gcore/src/grant/tests.rs::refresh_destination_by_source`.\n\
+    2.1.16: Grant and machine-config settings cache and replace as one revision-coherent\
+    \ unit; a revision mismatch triggers exactly one synchronized re-handshake replacing\
+    \ both; a cold start under outage serves the cached pair or fails typed. test:\
+    \ `crates/gcore/src/grant/tests.rs::config_revision_coherence`.\n2.1.17: Every\
+    \ acquisition source verifies the canonical-payload checksum before construction;\
+    \ corrupted payloads and corrupted checksums fail `Malformed` for both offline\
+    \ sources. test: `crates/gcore/src/grant/tests.rs::corrupt_grant_refused_offline`.\n\
+    2.1.18: A second revision mismatch after the single re-handshake preserves the\
+    \ prior coherent pair and fails typed `ConfigRevisionMismatch`; a barrier test\
+    \ pins back-to-back activations. test: `crates/gcore/src/grant/tests.rs::config_revision_second_mismatch_terminal`.\n\
+    2.1.19: On endpoints without a trusted binding the challenge proof precedes any\
+    \ bearer; a substituted loopback listener receives neither bearer nor trusted\
+    \ binding nor accepted grant. test: `crates/gcore/src/grant/tests.rs::substituted_listener_gets_no_bearer`.\n\
+    2.1.20: Managed-source refresh authenticates with the launch-envelope token; expired\
+    \ envelopes and principal mismatches fail typed with no operator-token fallback.\
+    \ test: `crates/gcore/src/grant/tests.rs::managed_refresh_envelope_auth`."
+  labels:
+  - covers:daemon-native-runtime-boundary:2.1:2.1.1
+  - covers:daemon-native-runtime-boundary:2.1:2.1.2
+  - covers:daemon-native-runtime-boundary:2.1:2.1.3
+  - covers:daemon-native-runtime-boundary:2.1:2.1.4
+  - covers:daemon-native-runtime-boundary:2.1:2.1.5
+  - covers:daemon-native-runtime-boundary:2.1:2.1.6
+  - covers:daemon-native-runtime-boundary:2.1:2.1.7
+  - covers:daemon-native-runtime-boundary:2.1:2.1.8
+  - covers:daemon-native-runtime-boundary:2.1:2.1.9
+  - covers:daemon-native-runtime-boundary:2.1:2.1.10
+  - covers:daemon-native-runtime-boundary:2.1:2.1.11
+  - covers:daemon-native-runtime-boundary:2.1:2.1.12
+  - covers:daemon-native-runtime-boundary:2.1:2.1.13
+  - covers:daemon-native-runtime-boundary:2.1:2.1.14
+  - covers:daemon-native-runtime-boundary:2.1:2.1.15
+  - covers:daemon-native-runtime-boundary:2.1:2.1.16
+  - covers:daemon-native-runtime-boundary:2.1:2.1.17
+  - covers:daemon-native-runtime-boundary:2.1:2.1.18
+  - covers:daemon-native-runtime-boundary:2.1:2.1.19
+  - covers:daemon-native-runtime-boundary:2.1:2.1.20
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Gate service construction; collapse DSN resolution
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: gcode resolves its DSN exclusively through the grant
+    client; the env/daemon/bootstrap/gcore.yaml resolution ladder is gone. file: `crates/gcode/src/db/resolution.rs`.
+
+    2.2.2: gwiki resolves identically, including honoring managed grant files. file:
+    `crates/gwiki/src/support/env.rs`.
+
+    2.2.3: `CodewikiFacts` connections come from the grant-resolved context; the facade
+    API is unchanged. symbol: `CodewikiFacts`.
+
+    2.2.4: The boundary test additionally forbids env-DSN and bootstrap-DSN resolution
+    inside the moved engine. test: `crates/gwiki/tests/code_engine_boundary.rs::moved_engine_uses_only_facade`.
+
+    2.2.5: With no grant and no daemon, both binaries fail with the typed daemon-required
+    error before touching any datastore. behavior: "daemon required" in `docs/guides/ai-configuration.md`.
+
+    2.2.6: Default path/project-file dispatch resolves the local project UUID to a
+    project grant; no pre-grant datastore access exists on any dispatch path. test:
+    `crates/gcode/tests/grant_errors.rs::no_pregrant_datastore_access`.
+
+    2.2.7: Every grant error class has a stable JSON code, message, and exit status
+    in both CLIs. test: `crates/gcode/tests/grant_errors.rs::grant_errors_stable_contract`.
+
+    2.2.8: `--project <name>` resolves through the authenticated daemon lookup and
+    then the handshake; the lookup precedes every datastore touch. test: `crates/gcode/tests/grant_errors.rs::project_name_lookup_authenticated`.
+
+    2.2.9: `gcode projects` dispatches to the operator-only daemon listing; capability-token
+    and anonymous calls reject typed. test: `tests/servers/test_auth_service.py::test_projects_listing_operator_only`.
+
+    2.2.10: Global `gcode prune` triggers `POST /api/code-index/prune` as an operator-only
+    route; the daemon decomposes it into the hub-record sweep plus per-project children
+    carrying project-scoped grants; capability-token calls reject typed. test: `tests/servers/routes/test_code_index_prune_route.py::test_global_prune_operator_only`.
+
+    2.2.11: `gcode prune --project` resolves through the ordinary project-grant path.
+    test: `crates/gcode/tests/grant_errors.rs::project_prune_uses_project_grant`.
+
+    2.2.12: Dispatch outside any project with no `--project` rejects typed before
+    any datastore access or non-operator daemon call. test: `crates/gcode/tests/grant_errors.rs::projectless_rejection`.
+
+    2.2.13: Global prune snapshots before deleting, reconciles projections before
+    hub-record removal, bounds child concurrency and deadlines, records durable dirty/retry
+    markers on child failure or timeout, and returns structured per-project outcomes;
+    an idempotent retry converges. test: `tests/servers/routes/test_code_index_prune_route.py::test_partial_failure_recovery`.
+
+    2.2.14: The global prune and projects CLI implementations and the shared direct-DSN
+    helper contain no direct datastore construction; both global commands dispatch
+    through typed daemon clients. test: `crates/gcode/src/commands/status/prune/tests.rs::global_prune_uses_daemon_client`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:2.2:2.2.1
+  - covers:daemon-native-runtime-boundary:2.2:2.2.2
+  - covers:daemon-native-runtime-boundary:2.2:2.2.3
+  - covers:daemon-native-runtime-boundary:2.2:2.2.4
+  - covers:daemon-native-runtime-boundary:2.2:2.2.5
+  - covers:daemon-native-runtime-boundary:2.2:2.2.6
+  - covers:daemon-native-runtime-boundary:2.2:2.2.7
+  - covers:daemon-native-runtime-boundary:2.2:2.2.8
+  - covers:daemon-native-runtime-boundary:2.2:2.2.9
+  - covers:daemon-native-runtime-boundary:2.2:2.2.10
+  - covers:daemon-native-runtime-boundary:2.2:2.2.11
+  - covers:daemon-native-runtime-boundary:2.2:2.2.12
+  - covers:daemon-native-runtime-boundary:2.2:2.2.13
+  - covers:daemon-native-runtime-boundary:2.2:2.2.14
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: Collapse gcore AI routing to daemon-only
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: `AiRouting` has exactly Daemon and Off variants; Auto
+    and Direct are unrepresentable. symbol: `AiRouting`.
+
+    3.1.2: Direct transports, one-shot direct generation, and probe-based discovery
+    are deleted. file: `crates/gcore/src/ai/probe.rs`.
+
+    3.1.3: No client crate reads vendor API-key environment variables. test: `crates/gcore/src/ai/tests.rs::no_vendor_env_key_reads`.
+
+    3.1.4: Modality gating reads grant capabilities; a grant lacking a modality yields
+    the typed unavailable error without an HTTP roundtrip. test: `crates/gcore/src/ai/tests.rs::grant_gates_modalities`.
+
+    3.1.5: Every workspace consumer of the removed variants and transports is migrated
+    or deleted; the workspace zero-match audit for direct/auto routing, DirectChatTransport,
+    and vendor key names passes. file: `crates/gcore/src/ai/generation/mod.rs`.
+
+    3.1.6: Hybrid search during a daemon outage returns lexical and graph results
+    with a structured semantic-degradation warning; the silent empty-source degrade
+    path is gone; explicit AI commands still fail typed. test: `crates/gcode/src/commands/search.rs::outage_degrades_with_warning`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:3.1:3.1.1
+  - covers:daemon-native-runtime-boundary:3.1:3.1.2
+  - covers:daemon-native-runtime-boundary:3.1:3.1.3
+  - covers:daemon-native-runtime-boundary:3.1:3.1.4
+  - covers:daemon-native-runtime-boundary:3.1:3.1.5
+  - covers:daemon-native-runtime-boundary:3.1:3.1.6
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Remove CLI routing surfaces; bump contracts; deterministic outline
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: gwiki exposes no routing flags beyond `--no-ai` in
+    its source and in-memory CLI surface; the final canonical snapshot, version bump,
+    and mirror parity are owned solely by 4.1.5. file: `crates/gwiki/src/contract.rs`.
+
+    3.2.2: `gcode outline` has no summarize surface in its source and in-memory CLI
+    definition; the final canonical snapshot, version bump, and mirror parity are
+    owned solely by 4.1.5. file: `crates/gcode/src/contract.rs`.
+
+    3.2.3: gwiki''s probe module is deleted and no status-route body parsing remains
+    for availability decisions. file: `crates/gwiki/src/daemon.rs`.
+
+    3.2.4: Documentation describes the daemon-only contract including outage semantics.
+    behavior: "daemon-only AI routing" in `docs/guides/ai-configuration.md`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:3.2:3.2.1
+  - covers:daemon-native-runtime-boundary:3.2:3.2.2
+  - covers:daemon-native-runtime-boundary:3.2:3.2.3
+  - covers:daemon-native-runtime-boundary:3.2:3.2.4
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Remove standalone mode and local credential ownership
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  - '3.2'
+  - '2.2'
+  validation_criteria: '4.1.1: gcore''s `runtime_mode` module, `StandaloneConfig`,
+    and every gcore.yaml read are gone from the client crates; gwiki''s unrelated
+    system-model `RuntimeMode` documentation enum is untouched. file: `crates/gcore/src/runtime_mode.rs`.
+
+    4.1.2: No client crate contains KEK unwrap or `$secret:` resolution. file: `crates/gcore/src/secrets.rs`.
+
+    4.1.3: `gcode setup` standalone surface is removed with its contract entries.
+    file: `crates/gcode/src/commands/setup.rs`.
+
+    4.1.4: `ConfigSource` retains its trait shape with grant-backed implementors.
+    symbol: `ConfigSource`.
+
+    4.1.5: Final contract versions (gcode 4, gwiki 17) land exactly once with regenerated
+    snapshots and passing pinned-mirror parity. file: `crates/gcode/contract/gcode.contract.json`.
+
+    4.1.6: Client-crate sources contain zero qualified references to the removed surfaces
+    (`gobby_core::runtime_mode`, `StandaloneConfig`, `gcore.yaml`, env DSNs, `$secret:`)
+    per the E1 audit, which is scoped to exclude gwiki''s unrelated system-model RuntimeMode.
+    file: `crates/gcore/src/runtime_mode.rs`.
+
+    4.1.7: The gcode and gwiki READMEs, the maintained gwiki/gcore/codewiki/code-index
+    guides, the gwiki daemon-web page, and the gcode/gwiki CLI contract docs describe
+    only grant-based resolution and daemon-only AI; no maintained page advertises
+    standalone setup, direct/auto routing, removed DSN variables, or client bootstrap.yaml
+    credentials. file: `crates/gcode/README.md`.
+
+    4.1.8: The standalone-precedence regression arm added by #19645 is deleted with
+    the mode; surviving runtime-contract tests assert grant-backed authority. file:
+    `crates/gcode/src/config/tests/runtime_contract.rs`.
+
+    4.1.9: No module root or public re-export keeps a standalone surface compiled
+    or reachable; gcore''s crate root, gcode''s setup module root, and gwiki''s programmatic
+    API drop their standalone declarations. file: `crates/gcore/src/lib.rs`.
+
+    4.1.10: The gcore provisioning module, its embedded compose template, and their
+    tests are deleted with nothing relocated; the Python installer surface remains
+    the sole provisioning owner and the gwiki system-model fixture drops the deleted
+    asset reference. file: `crates/gcore/src/provisioning/mod.rs`.
+
+    4.1.11: No `Command::Setup` construction, `SetupOptions` conversion or export,
+    exhaustive setup match, or `StandaloneSetup` implementation survives anywhere
+    in the workspace; the gcode and gcore setup test seams convert to grant fixtures
+    or die with the mode. file: `crates/gwiki/src/cli/mapping.rs`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:4.1:4.1.1
+  - covers:daemon-native-runtime-boundary:4.1:4.1.2
+  - covers:daemon-native-runtime-boundary:4.1:4.1.3
+  - covers:daemon-native-runtime-boundary:4.1:4.1.4
+  - covers:daemon-native-runtime-boundary:4.1:4.1.5
+  - covers:daemon-native-runtime-boundary:4.1:4.1.6
+  - covers:daemon-native-runtime-boundary:4.1:4.1.7
+  - covers:daemon-native-runtime-boundary:4.1:4.1.8
+  - covers:daemon-native-runtime-boundary:4.1:4.1.9
+  - covers:daemon-native-runtime-boundary:4.1:4.1.10
+  - covers:daemon-native-runtime-boundary:4.1:4.1.11
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: Remove MemoryWikiStore and daemon-optional wiki modes
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.2'
+  validation_criteria: "4.2.1: `MemoryWikiStore` and every hubless fallback selection\
+    \ are deleted. file: `crates/gwiki/src/store/memory.rs`.\n4.2.2: `WikiIndexStore`\
+    \ trait shape is unchanged. symbol: `WikiIndexStore`.\n4.2.3: `gwiki status` surfaces\
+    \ grant validity, deployment token, epoch, and daemon reachability. test: `crates/gwiki/tests/status_grant_state.rs::status_reports_grant_state`.\n\
+    4.2.4: Every former MemoryWikiStore production consumer compiles against the trait\
+    \ with its stated disposition; unit tests use the test-only fake. file: `crates/gwiki/src/store.rs`.\n\
+    4.2.5: `gwiki status`, help, and contract output work with an expired or absent\
+    \ grant, reporting state via the non-authorizing inspector. test: `crates/gwiki/tests/status_grant_state.rs::expired_grant_reports_not_fails`.\n\
+    4.2.6: `audio.rs` finishes below 1,000 lines with its test module extracted; every\
+    \ production file touched by this leaf ends below the ceiling. file: `crates/gwiki/src/ingest/audio/tests.rs`.\n\
+    4.2.7: Every workspace `MemoryWikiStore` constructor, wrapper, and typed parameter\
+    \ is migrated \u2014 production to the trait, tests to the fake \u2014 before\
+    \ `store/memory.rs` is deleted; the workspace zero-match audit passes. file: `crates/gwiki/src/store/test_fake.rs`."
+  labels:
+  - covers:daemon-native-runtime-boundary:4.2:4.2.1
+  - covers:daemon-native-runtime-boundary:4.2:4.2.2
+  - covers:daemon-native-runtime-boundary:4.2:4.2.3
+  - covers:daemon-native-runtime-boundary:4.2:4.2.4
+  - covers:daemon-native-runtime-boundary:4.2:4.2.5
+  - covers:daemon-native-runtime-boundary:4.2:4.2.6
+  - covers:daemon-native-runtime-boundary:4.2:4.2.7
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: Bind identity on daemon AI and broker routes
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  - '3.1'
+  validation_criteria: '5.1.1: All gcore daemon transports attach the signed grant
+    and grant-derived identity. file: `crates/gcore/src/ai/daemon/transport.rs`.
+
+    5.1.2: AI and broker capability-matrix rows require grant presentation and identity
+    binding; anonymous calls 401. test: `tests/servers/test_auth_service.py::test_ai_routes_require_identity`.
+
+    5.1.3: Savings and graph-lifecycle calls carry identity and succeed under the
+    new matrix. symbol: `report_savings`.
+
+    5.1.4: Each of the five modalities plus `embeddings_doctor` has its own presentation-binding
+    test; forged identity headers under a valid operator token are rejected typed.
+    test: `tests/servers/test_auth_service.py::test_modality_grant_presentation_matrix`.
+
+    5.1.5: Stale-epoch presentation triggers exactly one synchronized re-handshake
+    and retry; exhaustion yields the typed rejection. test: `crates/gcore/src/grant/tests.rs::stale_epoch_single_retry`.
+
+    5.1.6: Every effectful route validates live lease ownership pre-handler; lease-connection
+    loss immediately stops effectful service; a displaced daemon rejects during takeover
+    overlap. test: `tests/servers/test_auth_service.py::test_effectful_requires_live_lease`.
+
+    5.1.7: Effectful hub writes validate the owned epoch in-transaction; a lease lost
+    between guard and commit cannot commit; takeover drains predecessor in-flight
+    work before serving. test: `tests/servers/test_auth_service.py::test_in_transaction_epoch_fencing`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:5.1:5.1.1
+  - covers:daemon-native-runtime-boundary:5.1:5.1.2
+  - covers:daemon-native-runtime-boundary:5.1:5.1.3
+  - covers:daemon-native-runtime-boundary:5.1:5.1.4
+  - covers:daemon-native-runtime-boundary:5.1:5.1.5
+  - covers:daemon-native-runtime-boundary:5.1:5.1.6
+  - covers:daemon-native-runtime-boundary:5.1:5.1.7
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Boundary end-to-end suite
+  category: test
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  - '5.1'
+  validation_criteria: '6.1.1: The core six scenarios pass against an isolated daemon.
+    test: `tests/e2e/test_runtime_boundary.py::test_runtime_boundary_scenarios`.
+
+    6.1.2: No scenario leaves a binary in a fallback mode; every failure is the typed
+    daemon-required or rejection-matrix error. behavior: "typed failure contract"
+    in `docs/guides/ai-configuration.md`.
+
+    6.1.3: No test injects any removed credential or endpoint variable (`GCODE_DATABASE_URL`,
+    `GWIKI_DATABASE_URL`, `GOBBY_POSTGRES_DSN`, `GOBBY_FALKORDB_*`, `GOBBY_QDRANT_*`)
+    or writes `gcore.yaml`; shared fixtures provision schema and grants through supported
+    paths only. file: `crates/gwiki/tests/common/mod.rs`.
+
+    6.1.4: Automatic daemon-side symbol summarization and gcode summary retrieval
+    hold under the boundary. test: `tests/e2e/test_runtime_boundary.py::test_symbol_summary_regression`.
+
+    6.1.5: All five AI modalities bind identity end-to-end under the grant boundary.
+    test: `tests/e2e/test_runtime_boundary.py::test_modality_identity_binding`.
+
+    6.1.6: Concurrent renewal across processes preserves the newest generation and
+    never blocks a valid invocation. test: `tests/e2e/test_runtime_boundary.py::test_concurrent_renewal_race`.
+
+    6.1.7: Broker-scope paths behave per the command-scope table: projects listing,
+    global prune decomposition including partial-failure retry convergence, project
+    prune, and capability-token rejection. test: `tests/e2e/test_runtime_boundary.py::test_broker_scope_paths`.
+
+    6.1.8: Diagnostics report state under expired or absent grants without acquiring.
+    test: `tests/e2e/test_runtime_boundary.py::test_diagnostics_under_expiry`.
+
+    6.1.9: Hybrid search during outage degrades with the exact structured warning;
+    explicit AI commands fail typed in the same window. test: `tests/e2e/test_runtime_boundary.py::test_search_degrades_with_warning`.
+
+    6.1.10: Dormant CodeWiki routes return byte-identical outputs under the boundary.
+    test: `tests/e2e/test_runtime_boundary.py::test_dormant_codewiki_unchanged`.
+
+    6.1.11: Restoring the hub database from backup and reacquiring the lease rejects
+    archived grants at daemon presentation via the fresh signing secret; offline direct
+    authorization on an unexpired archived grant is exercised separately for the PostgreSQL,
+    FalkorDB, and Qdrant direct variants and stays bounded by grant expiry. test:
+    `tests/e2e/test_runtime_boundary.py::test_restore_replay_rejected`.
+
+    6.1.12: During standby-takeover overlap the displaced daemon refuses effectful
+    requests immediately while the new owner serves; dropping the lease after a successful
+    pre-handler guard cannot produce a committed effect under the old epoch. test:
+    `tests/e2e/test_runtime_boundary.py::test_takeover_fencing`.
+
+    6.1.13: Rotation during outage drains the predecessor generation until issued-grant
+    expiry; explicit revocation presented to a reachable daemon fails early with the
+    typed revoked code, while outage-window backend invalidation surfaces as the ordinary
+    datastore-authorization error. test: `tests/e2e/test_runtime_boundary.py::test_rotation_drain_and_revocation`.
+
+    6.1.14: The gcode phase-7 contract and storage-conformance suites run green on
+    grant fixtures with zero references to removed variables, client bootstrap.yaml
+    credentials, or standalone mode. test: `tests/code_index/test_gcode_phase7_contract.py::test_contract_on_grant_fixtures`.'
+  labels:
+  - covers:daemon-native-runtime-boundary:6.1:6.1.1
+  - covers:daemon-native-runtime-boundary:6.1:6.1.2
+  - covers:daemon-native-runtime-boundary:6.1:6.1.3
+  - covers:daemon-native-runtime-boundary:6.1:6.1.4
+  - covers:daemon-native-runtime-boundary:6.1:6.1.5
+  - covers:daemon-native-runtime-boundary:6.1:6.1.6
+  - covers:daemon-native-runtime-boundary:6.1:6.1.7
+  - covers:daemon-native-runtime-boundary:6.1:6.1.8
+  - covers:daemon-native-runtime-boundary:6.1:6.1.9
+  - covers:daemon-native-runtime-boundary:6.1:6.1.10
+  - covers:daemon-native-runtime-boundary:6.1:6.1.11
+  - covers:daemon-native-runtime-boundary:6.1:6.1.12
+  - covers:daemon-native-runtime-boundary:6.1:6.1.13
+  - covers:daemon-native-runtime-boundary:6.1:6.1.14
+  tdd: false
+  source_section: '6.1'
+  assigned_agent: backend-developer
+```
