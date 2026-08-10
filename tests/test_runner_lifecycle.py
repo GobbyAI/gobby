@@ -2142,6 +2142,7 @@ class TestRunGobbyFunction:
 
         with (
             patch("gobby.runner_init.init_storage_and_config", side_effect=init_storage),
+            patch("gobby.runner_init.init_runtime_capacity"),
             patch("gobby.runner_init.init_services", side_effect=RuntimeError("init failed")),
             patch("gobby.runner_init.init_orchestration"),
             patch("gobby.runner_init.init_servers"),

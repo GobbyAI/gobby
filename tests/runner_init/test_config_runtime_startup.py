@@ -68,7 +68,7 @@ def _patch_runner_phases(
         events.append("storage")
         runner.config_runtime = cast(ConfigRuntime, runtime)
 
-    def services(_runner: GobbyRunner) -> None:
+    async def services(_runner: GobbyRunner) -> None:
         events.append("services")
 
     def capacity(_runner: GobbyRunner) -> None:
@@ -91,7 +91,7 @@ def _patch_runner_phases(
 
     monkeypatch.setattr("gobby.runner_init.init_storage_and_config", storage)
     monkeypatch.setattr("gobby.runner_init.init_runtime_capacity", capacity)
-    monkeypatch.setattr("gobby.runner_init.init_services", services)
+    monkeypatch.setattr("gobby.runner_init.services.init_stateful_services", services)
     monkeypatch.setattr("gobby.runner_init.init_orchestration", orchestration)
     monkeypatch.setattr("gobby.runner_init.init_servers", servers)
 

@@ -33,7 +33,9 @@ from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
 from gobby.llm.base import LLMTextResult, VisionInputError, VisionProviderError
 from gobby.llm.image_payloads import MAX_IMAGE_BYTES
-from gobby.servers.routes.llm import create_llm_router
+from gobby.runner_init.services import AIServiceBundle
+from gobby.servers.http import HTTPServer
+from gobby.servers.routes.llm import _server_operation, create_llm_router
 
 pytestmark = pytest.mark.unit
 
@@ -111,6 +113,31 @@ def client(server_with_llm: MagicMock) -> TestClient:
         app,
         headers={"X-Gobby-Session-Id": "019fc08a-1d63-4b23-bbc8-659d56bc4168"},
     )
+
+
+def test_server_operation_captures_one_runtime_epoch(monkeypatch: pytest.MonkeyPatch) -> None:
+    server = HTTPServer.__new__(HTTPServer)
+    server.startup_config = DaemonConfig()
+    server.services = MagicMock()
+    active_config = DaemonConfig()
+    text_service = MagicMock()
+    bundle = MagicMock()
+    bundle.snapshot.active = active_config
+    bundle.services = {
+        "ai_services": AIServiceBundle(
+            text_generation_service=text_service,
+            llm_service=MagicMock(),
+            tool_chat_service=MagicMock(),
+        )
+    }
+    capture = MagicMock(return_value=bundle)
+    monkeypatch.setattr(server, "capture_runtime_bundle", capture)
+
+    config, service = _server_operation(server, "text_generation_service")
+
+    assert config is active_config
+    assert service is text_service
+    capture.assert_called_once_with()
 
 
 def test_finish_reason_returns_unmapped_stop_reason() -> None:

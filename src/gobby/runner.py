@@ -230,7 +230,7 @@ class GobbyRunner:
             self._initialize_storage(config_path, verbose)
             startup_snapshot = await self.config_runtime.start()
             self.config = startup_snapshot.active
-            self._initialize_post_database_services()
+            await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)
             if runtime is not None:
@@ -262,6 +262,19 @@ class GobbyRunner:
 
         init_runtime_capacity(self)
         init_services(self)
+        init_orchestration(self)
+        init_servers(self)
+
+    async def _initialize_runtime_services(self) -> None:
+        from gobby.runner_init import (
+            init_orchestration,
+            init_runtime_capacity,
+            init_servers,
+        )
+        from gobby.runner_init.services import init_stateful_services
+
+        init_runtime_capacity(self)
+        await init_stateful_services(self)
         init_orchestration(self)
         init_servers(self)
 

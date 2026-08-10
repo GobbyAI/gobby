@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -26,7 +28,14 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
 from gobby.tasks.validation import TaskValidator
 
+from .config_subscribers import PreparedService, ServiceSubscriber, live_subscriber_keys
+
 if TYPE_CHECKING:
+    from gobby.ai import TextGenerationService, ToolChatService
+    from gobby.code_index.context import CodeIndexContext
+    from gobby.config.app import DaemonConfig
+    from gobby.llm.service import LLMService
+    from gobby.mcp_proxy.semantic_search import SemanticToolSearch
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
@@ -41,8 +50,16 @@ def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
     degraded_services.add(service_name)
 
 
-def init_services(runner: GobbyRunner) -> None:
+async def init_stateful_services(runner: GobbyRunner) -> None:
     """Initialize LLM, memory, code indexer, MCP proxy, sync, and messaging."""
+    _init_stateful_dependencies(runner)
+    await _register_stateful_services(runner)
+    _apply_stateful_services(runner)
+    _init_project_context(runner)
+
+
+def init_services(runner: GobbyRunner) -> None:
+    """Initialize services for the synchronous construction path."""
     _init_llm_service(runner)
     _init_memory_stack(runner)
     _init_code_indexer(runner)
@@ -51,6 +68,294 @@ def init_services(runner: GobbyRunner) -> None:
     _init_message_processor(runner)
     _init_task_validator(runner)
     _init_project_context(runner)
+
+
+@dataclass(frozen=True)
+class AIServiceBundle:
+    text_generation_service: TextGenerationService
+    llm_service: LLMService
+    tool_chat_service: ToolChatService
+
+
+@dataclass
+class MemoryServiceBundle:
+    vector_store: VectorStore
+    _memory_manager: MemoryManager
+    memory_backup_manager: MemoryBackupManager | None
+    semantic_search: SemanticToolSearch
+    _repair_started: bool = False
+
+    @property
+    def memory_manager(self) -> MemoryManager:
+        if not self._repair_started:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return self._memory_manager
+            self._memory_manager.start_projection_scope_repair()
+            self._repair_started = True
+        return self._memory_manager
+
+
+def _init_stateful_dependencies(runner: GobbyRunner) -> None:
+    from gobby.mcp_proxy.metrics import ToolMetricsManager
+    from gobby.mcp_proxy.metrics_events import MetricsEventStore
+    from gobby.projects.write_fence import ProjectWriteFence
+    from gobby.storage.projects import LocalProjectManager
+
+    runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
+    runner.mcp_db_manager = LocalMCPManager(runner.database)
+    try:
+        bundled = runner.mcp_db_manager.normalize_bundled_servers()
+    except Exception:
+        logger.exception("error normalizing bundled MCP servers")
+        bundled = {"normalized": 0, "duplicates_removed": 0, "tools_migrated": 0}
+    if bundled["normalized"] or bundled["duplicates_removed"]:
+        logger.info(
+            "Normalized bundled MCP servers: %s normalized, %s duplicates removed",
+            bundled["normalized"],
+            bundled["duplicates_removed"],
+        )
+    runner.metrics_event_store = MetricsEventStore(runner.database)
+    runner.metrics_manager = ToolMetricsManager(
+        runner.database,
+        event_store=runner.metrics_event_store,
+    )
+
+
+async def _register_stateful_services(runner: GobbyRunner) -> None:
+    loop = asyncio.get_running_loop()
+    subscribers = (
+        ServiceSubscriber(
+            name="ai_services",
+            keys=live_subscriber_keys("ai_services"),
+            builder=lambda change: _build_ai_services(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="memory_services",
+            keys=live_subscriber_keys("memory_services"),
+            builder=lambda change: _build_memory_services(runner, change.desired, loop),
+        ),
+        ServiceSubscriber(
+            name="code_index",
+            keys=live_subscriber_keys("code_index"),
+            builder=lambda change: _build_code_index(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="mcp_manager",
+            keys=live_subscriber_keys("mcp_manager"),
+            builder=lambda change: _build_mcp_manager(runner, change.desired, loop),
+            required=True,
+        ),
+        ServiceSubscriber(
+            name="message_processor",
+            keys=live_subscriber_keys("message_processor"),
+            builder=lambda change: _build_message_processor(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="task_validator",
+            keys=live_subscriber_keys("task_validator"),
+            builder=lambda change: _build_task_validator(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="mcp_proxy_config",
+            keys=live_subscriber_keys("mcp_proxy_config"),
+            builder=lambda change: change.desired.mcp_client_proxy,
+            required=True,
+        ),
+        ServiceSubscriber(
+            name="chat_config",
+            keys=live_subscriber_keys("chat_config"),
+            builder=lambda change: change.desired.chat,
+            required=True,
+        ),
+    )
+    for subscriber in subscribers:
+        await runner.config_runtime.register_subscriber(subscriber)
+
+
+def _build_ai_services(runner: GobbyRunner, config: DaemonConfig) -> AIServiceBundle:
+    text_generation = build_daemon_text_generation_service(config)
+    return AIServiceBundle(
+        text_generation_service=text_generation,
+        llm_service=create_llm_service(config, text_generation=text_generation),
+        tool_chat_service=build_daemon_tool_chat_service(
+            config,
+            credential_manager=runner.managed_credential_manager,
+        ),
+    )
+
+
+def _build_memory_services(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> PreparedService:
+    from gobby.mcp_proxy.semantic_search import SemanticToolSearch
+    from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+
+    db_cfg = config.databases
+    emb_cfg = config.embeddings
+    api_key = _resolve_embedding_api_key(runner, emb_cfg)
+    raw_vector_store = VectorStore(
+        url=db_cfg.qdrant.url,
+        api_key=db_cfg.qdrant.api_key,
+        embedding_dim=emb_cfg.dim,
+    )
+    vector_store = cast(
+        VectorStore,
+        ProjectFencedVectorStore(raw_vector_store, runner.project_write_fence),
+    )
+    embed_fn: Callable[..., Any] | None = None
+    try:
+        _validate_memory_embedding_config(emb_cfg, api_key=api_key)
+    except ValueError as exc:
+        logger.warning("Memory embeddings disabled: %s", exc)
+    else:
+        embedding_service = EmbeddingService(
+            model=emb_cfg.model,
+            api_base=emb_cfg.api_base,
+            api_key=api_key,
+            dim=emb_cfg.dim,
+            query_prefix=_embedding_query_prefix(emb_cfg),
+        )
+        embed_fn = embedding_service.generate_embedding
+    text_generation = build_daemon_text_generation_service(config)
+    llm_service = create_llm_service(config, text_generation=text_generation)
+    falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
+    memory_manager = MemoryManager(
+        runner.database,
+        config.memory,
+        llm_service=llm_service,
+        vector_store=vector_store,
+        embed_fn=embed_fn,
+        falkordb_host=falkor_cfg.host if falkor_cfg else None,
+        falkordb_port=falkor_cfg.port if falkor_cfg else 16379,
+        falkordb_password=falkor_cfg.password if falkor_cfg else None,
+        falkordb_graph_name=falkor_cfg.graph_name if falkor_cfg else "gobby_kg",
+        falkordb_graph_search=falkor_cfg.graph_search if falkor_cfg else True,
+        falkordb_graph_min_score=falkor_cfg.graph_min_score if falkor_cfg else 0.5,
+        falkordb_rrf_k=falkor_cfg.rrf_k if falkor_cfg else 60,
+        embedding_dim=emb_cfg.dim,
+        collection_prefix=db_cfg.qdrant.collection_prefix,
+        run_db=runner.db_executor.run,
+        max_graph_deterministic_attempts=config.knowledge_graph_queue.max_deterministic_attempts,
+        project_write_fence=runner.project_write_fence,
+    )
+    backup = (
+        MemoryBackupManager(
+            db=runner.database,
+            memory_manager=memory_manager,
+            config=config.memory_backup,
+        )
+        if config.memory_backup.enabled
+        else None
+    )
+    semantic_search = SemanticToolSearch(
+        db=runner.database,
+        embedding_api_key=api_key,
+        embedding_model=emb_cfg.model,
+        embedding_dim=emb_cfg.dim,
+        api_base=emb_cfg.api_base,
+        vector_store=vector_store,
+    )
+    bundle = MemoryServiceBundle(vector_store, memory_manager, backup, semantic_search)
+    return PreparedService(bundle, lambda: _dispose_async(loop, memory_manager.close))
+
+
+def _build_code_index(runner: GobbyRunner, config: DaemonConfig) -> CodeIndexContext | None:
+    if not config.code_index.enabled:
+        return None
+    from gobby.code_index.context import CodeIndexContext
+    from gobby.code_index.gcode_gateway import GcodeGateway
+    from gobby.code_index.storage import CodeIndexStorage
+
+    return CodeIndexContext(
+        storage=CodeIndexStorage(runner.database),
+        gcode_gateway=GcodeGateway(),
+        config=config.code_index,
+        run_db=runner.db_executor.run,
+    )
+
+
+def _build_mcp_manager(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> PreparedService:
+    manager = MCPClientManager(
+        mcp_db_manager=runner.mcp_db_manager,
+        metrics_manager=runner.metrics_manager,
+        stdio_errlog_path=str(resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)),
+    )
+    return PreparedService(manager, lambda: _dispose_async(loop, manager.disconnect_all))
+
+
+def _build_message_processor(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+) -> SessionMessageProcessor | None:
+    if not config.message_tracking.enabled:
+        return None
+    return SessionMessageProcessor(
+        db=runner.database,
+        poll_interval=config.message_tracking.poll_interval,
+        session_manager=runner.session_manager,
+        run_db=runner.db_executor.run,
+    )
+
+
+def _build_task_validator(runner: GobbyRunner, config: DaemonConfig) -> TaskValidator | None:
+    if not config.gobby_tasks.validation.enabled:
+        return None
+    text_generation = build_daemon_text_generation_service(config)
+    return TaskValidator(
+        llm_service=create_llm_service(config, text_generation=text_generation),
+        config=config.gobby_tasks.validation,
+        db=runner.database,
+    )
+
+
+def _dispose_async(
+    loop: asyncio.AbstractEventLoop,
+    operation: Callable[[], Any],
+) -> None:
+    future = asyncio.run_coroutine_threadsafe(operation(), loop)
+    try:
+        future.result(timeout=4.5)
+    except BaseException:
+        future.cancel()
+        raise
+
+
+def _apply_stateful_services(runner: GobbyRunner) -> None:
+    bundle = runner.config_runtime.capture()
+    runner.config = bundle.snapshot.active
+    ai = bundle.services.get("ai_services")
+    runner.text_generation_service = (
+        ai.text_generation_service if isinstance(ai, AIServiceBundle) else None
+    )
+    runner.llm_service = ai.llm_service if isinstance(ai, AIServiceBundle) else None
+    runner.tool_chat_service = ai.tool_chat_service if isinstance(ai, AIServiceBundle) else None
+    memory = bundle.services.get("memory_services")
+    runner.vector_store = memory.vector_store if isinstance(memory, MemoryServiceBundle) else None
+    runner.memory_manager = (
+        memory.memory_manager if isinstance(memory, MemoryServiceBundle) else None
+    )
+    runner.memory_backup_manager = (
+        memory.memory_backup_manager if isinstance(memory, MemoryServiceBundle) else None
+    )
+    runner.code_indexer = bundle.services.get("code_index")
+    mcp_manager = bundle.services.get("mcp_manager")
+    if not isinstance(mcp_manager, MCPClientManager):
+        raise RuntimeError("required MCP configuration subscriber is unavailable")
+    runner.mcp_proxy = mcp_manager
+    message_processor = bundle.services.get("message_processor")
+    runner.message_processor = (
+        message_processor if isinstance(message_processor, SessionMessageProcessor) else None
+    )
+    task_validator = bundle.services.get("task_validator")
+    runner.task_validator = task_validator if isinstance(task_validator, TaskValidator) else None
 
 
 def _init_llm_service(runner: GobbyRunner) -> None:

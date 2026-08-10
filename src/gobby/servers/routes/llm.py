@@ -27,6 +27,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
     build_daemon_vision_extract_service,
 )
+from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import (
     FeatureCandidateInput,
     FeatureProfile,
@@ -42,6 +43,23 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _server_operation(server: HTTPServer, name: str) -> tuple[DaemonConfig | None, Any]:
+    from gobby.runner_init.services import AIServiceBundle
+    from gobby.servers.http import HTTPServer as RuntimeHTTPServer
+
+    if isinstance(server, RuntimeHTTPServer):
+        bundle = server.capture_runtime_bundle()
+        config = bundle.snapshot.active if bundle else server.startup_config
+        if bundle is not None:
+            ai_services = bundle.services.get("ai_services")
+            if isinstance(ai_services, AIServiceBundle):
+                return config, getattr(ai_services, name)
+        return config, getattr(server.services, name, None)
+    return server.config, getattr(server.services, name, None)
+
+
 DEFAULT_TEXT_GENERATE_PROFILE = FeatureProfile.LOW.value
 DEFAULT_CHAT_COMPLETIONS_PROFILE = FeatureProfile.HIGH.value
 _VISION_TEMP_DIR_NAME = "gobby-vision"
@@ -218,11 +236,10 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
     @router.post("/generate")
     async def generate_text(payload: TextGeneratePayload) -> Any:
         """Run one-shot text_generate through the daemon capability registry."""
-        config = server.config
+        config, service = _server_operation(server, "text_generation_service")
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
 
-        service = getattr(server.services, "text_generation_service", None)
         if service is None:
             raise HTTPException(status_code=503, detail="Text generation service not initialized")
         generation_config = config.ai.generation
@@ -296,10 +313,9 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 detail="Authenticated session header is required",
             )
 
-        config = server.config
+        config, service = _server_operation(server, "tool_chat_service")
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
-        service = getattr(server.services, "tool_chat_service", None)
         if service is None:
             raise HTTPException(status_code=503, detail="Tool chat service not initialized")
         try:

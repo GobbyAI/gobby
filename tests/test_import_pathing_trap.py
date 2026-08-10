@@ -6,6 +6,7 @@ import pytest
 
 import gobby.mcp_proxy.stdio
 import gobby.runner
+import gobby.runner_init.storage
 import gobby.runner_maintenance
 
 pytestmark = pytest.mark.unit
@@ -38,20 +39,24 @@ async def test_runner_uses_patched_config(
     # Only phase 1 (storage/config) is needed to check database path.
     # Phases 2-4 pull in numpy transitively, which crashes on reimport
     # when other tests have already loaded numpy in this process.
+    monkeypatch.setattr("gobby.runner_init.init_runtime_capacity", lambda self: None)
     monkeypatch.setattr("gobby.runner_init.init_services", lambda self: None)
     monkeypatch.setattr("gobby.runner_init.init_orchestration", lambda self: None)
     monkeypatch.setattr("gobby.runner_init.init_servers", lambda self: None)
 
-    def _fake_database(config):
+    def _init_storage(
+        runner: gobby.runner.GobbyRunner,
+        _config_path: Path | None,
+        _verbose: bool,
+    ) -> None:
+        runner.config = gobby.runner_init.storage.load_config()
         db = MagicMock()
-        db.database_url = config.database_url
-        db.fetchall.return_value = []
-        db.fetchone.return_value = None
-        return db
+        db.database_url = runner.config.database_url
+        runner.database = db
 
     monkeypatch.setattr(
-        "gobby.runner_init.storage.init_hub_database",
-        _fake_database,
+        "gobby.runner_init.init_storage_and_config",
+        _init_storage,
     )
 
     runner = gobby.runner.GobbyRunner()
