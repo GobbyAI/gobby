@@ -170,7 +170,8 @@ def _get_embedding_api_key(
     embedding_api_key: str | None = None
     try:
         from gobby.config.embedding_keys import AI_EMBEDDING_API_KEY_KEY
-        from gobby.storage.config_store import ConfigStore, config_key_to_secret_name
+        from gobby.storage.config_mutations import config_key_to_secret_name
+        from gobby.storage.config_store import ConfigStore
         from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.secrets import SecretStore
 

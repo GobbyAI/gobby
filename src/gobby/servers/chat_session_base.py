@@ -10,9 +10,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from gobby.llm.claude_models import ChatEvent
+
+if TYPE_CHECKING:
+    from gobby.config.values import ConfigRuntimeReader
 
 
 @runtime_checkable
@@ -48,6 +51,7 @@ class ChatSessionProtocol(Protocol):
     _tool_approval_config: Any
     _tool_approval_callback: Callable[..., Any] | None
     _session_manager_ref: Any
+    _config_runtime_ref: ConfigRuntimeReader | None
     _on_mode_persist: Callable[[str], None] | None
     _on_approved_tools_persist: Callable[[set[str]], None] | None
     _approved_tools: set[str]

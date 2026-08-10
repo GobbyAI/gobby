@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     import asyncio
     from collections.abc import Callable
 
+    from gobby.config.values import ConfigRuntimeReader
     from gobby.llm.service import LLMService
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
@@ -127,6 +128,7 @@ class HookManagerFactory:
         message_processor: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,
+        config_runtime: ConfigRuntimeReader | None,
         get_machine_id: Callable[[], str | None],
         resolve_project_id: Callable[[str | None, str | None], str],
         database: HubDatabase | None = None,
@@ -148,6 +150,7 @@ class HookManagerFactory:
             message_processor: SessionMessageProcessor instance
             agent_runner: Optional AgentRunner for agent-scoped workflow completion
             completion_registry: Optional CompletionEventRegistry for wait-step wakeups
+            config_runtime: Runtime snapshot reader for live configuration policy
             get_machine_id: Callable returning machine ID
             resolve_project_id: Callable resolving project ID from (project_id, cwd)
             database: Optional database instance to share with daemon services
@@ -212,6 +215,7 @@ class HookManagerFactory:
             autonomous,
             agent_runner,
             completion_registry,
+            config_runtime,
             tool_proxy_getter,
             broadcaster,
             loop,
@@ -554,6 +558,7 @@ class HookManagerFactory:
         autonomous: _Autonomous,
         agent_runner: Any | None,
         completion_registry: Any | None,
+        config_runtime: ConfigRuntimeReader | None,
         tool_proxy_getter: Any | None,
         broadcaster: Any | None,
         daemon_loop: asyncio.AbstractEventLoop | None,
@@ -586,6 +591,7 @@ class HookManagerFactory:
             runner=agent_runner,
             completion_registry=completion_registry,
             task_manager=storage.task,
+            config_runtime=config_runtime,
         )
 
         pipeline_executor = None

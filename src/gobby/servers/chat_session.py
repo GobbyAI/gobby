@@ -28,6 +28,7 @@ from gobby.agents.sandbox import (
     preflight_provider_native_settings_file_async,
 )
 from gobby.config.feature_base import parse_feature_candidate
+from gobby.config.values import ConfigRuntimeReader
 from gobby.servers.chat_session_helpers import (
     PendingApproval,
     _build_gobby_mcp_entry,
@@ -106,6 +107,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     system_prompt_override: str | None = field(default=None, repr=False)
     resume_session_id: str | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)
+    _config_runtime_ref: ConfigRuntimeReader | None = field(default=None, repr=False)
     _transcript_path_captured: bool = field(default=False, repr=False)
     _active_reasoning_effort: str | None = field(default=None, repr=False)
     _preapproved_tool_use_ids: set[str] = field(default_factory=set, repr=False)

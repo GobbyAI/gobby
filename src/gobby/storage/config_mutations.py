@@ -279,6 +279,8 @@ class ConfigMutations:
         if not keys.intersection(AI_EMBEDDING_CONFIG_KEY_SET):
             return
         active_run_id = _journal_run_id(snapshot.overrides.get(EMBEDDING_SWITCH_JOURNAL_KEY))
+        if active_run_id == "unknown":
+            raise EmbeddingConfigMutationBlocked("Malformed embedding switch journal")
         if source == "embedding_switch":
             if active_run_id != embedding_run_id:
                 raise EmbeddingConfigMutationBlocked(
@@ -542,15 +544,9 @@ def _validate_revision(revision: int) -> None:
 def _journal_run_id(value: object) -> str | None:
     if value is None:
         return None
-    parsed = value
-    if isinstance(parsed, str):
-        try:
-            parsed = json.loads(parsed)
-        except json.JSONDecodeError:
-            return "unknown"
-    if not isinstance(parsed, dict):
+    if not isinstance(value, dict):
         return "unknown"
-    run_id = parsed.get("run_id")
+    run_id = value.get("run_id")
     return run_id if isinstance(run_id, str) and run_id else "unknown"
 
 

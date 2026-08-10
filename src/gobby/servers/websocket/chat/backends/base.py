@@ -7,10 +7,13 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.context_windows import resolve_context_window
+
+if TYPE_CHECKING:
+    from gobby.config.values import ConfigRuntimeReader
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +108,7 @@ class ManagedChatSessionBase:
     _tool_approval_config: Any | None = field(default=None, repr=False)
     _tool_approval_callback: Any | None = field(default=None, repr=False)
     _session_manager_ref: Any | None = field(default=None, repr=False)
+    _config_runtime_ref: ConfigRuntimeReader | None = field(default=None, repr=False)
     _on_mode_persist: Callable[[str], None] | None = field(default=None, repr=False)
     _on_approved_tools_persist: Callable[[set[str]], None] | None = field(default=None, repr=False)
     _approved_tools: set[str] = field(default_factory=set, repr=False)

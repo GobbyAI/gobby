@@ -229,7 +229,11 @@ def register_core_routes(
             if runtime_manager is not None:
                 sandbox_policy_hash = runtime_manager.sandbox_policy_hash
             else:
-                sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
+                config_runtime = server.services.config_runtime
+                if config_runtime is None:
+                    raise RuntimeError("Config runtime unavailable")
+                config = config_runtime.snapshot.active
+                sandbox_policy_hash = web_chat_sandbox_policy_hash(config)
 
             session = await server.run_db(
                 server.session_manager.create_web_chat_session,

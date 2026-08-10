@@ -14,11 +14,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.auth_service import AuthService
-from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
-from gobby.servers.routes.configuration_ui_settings import UI_SETTINGS_KEYS
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
@@ -37,6 +37,21 @@ from tests.servers.conftest import create_http_server
 pytestmark = pytest.mark.unit
 
 LOCAL_RUNTIME_TOKEN = "configuration-route-test-token"
+
+
+class StubConfigRuntime(ConfigRuntime):
+    """Concrete runtime test double accepted by configuration route guards."""
+
+    def __init__(self, snapshot: ConfigSnapshot) -> None:
+        self.current = snapshot
+
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        return self.current
+
+    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
+        assert revision == self.current.revision
+        return self.current
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +88,18 @@ def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> 
         database=temp_db,
         task_manager=task_manager,
     )
+    http_server.services.config_runtime = StubConfigRuntime(
+        ConfigSnapshot(
+            revision=1,
+            desired=real_config,
+            active=real_config,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={},
+        )
+    )
     http_server.auth_service = AuthService(
         lambda: temp_db,
         mode="disabled",
@@ -90,45 +117,9 @@ def client(server: Any) -> TestClient:
 
 
 class TestUISettingsRoundTrip:
-    def test_ui_settings_round_trip_persists_known_keys(
-        self, client: TestClient, temp_db: Any
-    ) -> None:
-        response = client.put(
-            "/api/config/ui-settings",
-            json={
-                "fontSize": 18,
-                "defaultChatMode": "plan",
-                "planPendingVariant": "amber",
-            },
-        )
-        assert response.status_code == 200
-        assert response.json() == {"ok": True}
-
-        get_response = client.get("/api/config/ui-settings")
-        assert get_response.status_code == 200
-        assert get_response.json()["fontSize"] == 18
-        assert get_response.json()["defaultChatMode"] == "plan"
-        assert get_response.json()["planPendingVariant"] == "amber"
-
-        store = ConfigStore(temp_db)
-        assert store.get("ui_settings.defaultChatMode") == "plan"
-        assert store.get("ui_settings.planPendingVariant") == "amber"
-
-    def test_ui_settings_rejects_retired_post_plan_mode_key(
-        self, client: TestClient, temp_db: HubDatabase
-    ) -> None:
-        """The post-plan-mode preference was removed; mode is chosen at approval."""
-        response = client.put(
-            "/api/config/ui-settings",
-            json={"postPlanChatMode": "bypass"},
-        )
-        # Unknown field is ignored, leaving an all-null payload the validator rejects.
-        assert response.status_code == 422
-
-        get_response = client.get("/api/config/ui-settings")
-        assert get_response.status_code == 200
-        assert "postPlanChatMode" not in get_response.json()
-        assert ConfigStore(temp_db).get("ui_settings.postPlanChatMode") is None
+    def test_specialized_ui_setting_writers_are_removed(self, client: TestClient) -> None:
+        assert client.put("/api/config/ui-settings", json={"fontSize": 18}).status_code == 405
+        assert client.delete("/api/config/ui-settings/fontSize").status_code == 404
 
 
 class TestGlobalToolApprovalRules:
@@ -140,22 +131,14 @@ class TestGlobalToolApprovalRules:
         assert data["default_rules"] == list(DEFAULT_GLOBAL_APPROVAL_RULES)
         assert "mcp:gobby*:*" in data["built_in_exemptions"]
 
-    def test_save_global_tool_approval_rules_normalizes(
-        self, client: TestClient, temp_db: Any
-    ) -> None:
+    def test_specialized_global_tool_approval_writer_is_removed(self, client: TestClient) -> None:
         response = client.put(
             "/api/config/tool-approvals/global",
             json={
                 "rules": [" tool:Write ", "tool:Write", "", "mcp:third-party:*"],
             },
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["ok"] is True
-        assert data["rules"] == ["tool:Write", "mcp:third-party:*"]
-
-        store = ConfigStore(temp_db)
-        assert store.get("tool_approvals.global_rules") == ["tool:Write", "mcp:third-party:*"]
+        assert response.status_code == 405
 
 
 class TestValidationDetectionPreview:
@@ -664,156 +647,25 @@ class TestUISettings:
         assert response.status_code == 200
         assert response.json() == {}
 
-    def test_put_and_get(self, client: TestClient) -> None:
-        """PUT settings then GET them back."""
-        put_resp = client.put(
-            "/api/config/ui-settings",
-            json={
-                "fontSize": 18,
-                "model": "sonnet",
-                "theme": "light",
-                "defaultChatMode": "act",
-                "planPendingVariant": "info",
-                "selectedProvider": "codex",
+    def test_get_reads_runtime_snapshot(self, server: Any, client: TestClient) -> None:
+        runtime = server.services.config_runtime
+        assert isinstance(runtime, StubConfigRuntime)
+        snapshot = runtime.snapshot
+        runtime.current = ConfigSnapshot(
+            revision=snapshot.revision,
+            desired=snapshot.desired,
+            active=snapshot.active,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={
+                "ui_settings.fontSize": 18,
+                "ui_settings.voiceInputMode": "vad",
             },
         )
-        assert put_resp.status_code == 200
-        assert put_resp.json()["ok"] is True
 
-        get_resp = client.get("/api/config/ui-settings")
-        assert get_resp.status_code == 200
-        data = get_resp.json()
-        assert data["fontSize"] == 18
-        assert data["model"] == "sonnet"
-        assert data["theme"] == "light"
-        assert data["defaultChatMode"] == "act"
-        assert data["planPendingVariant"] == "info"
-        assert data["selectedProvider"] == "codex"
-
-    def test_put_and_get_voice_toggles(self, client: TestClient) -> None:
-        """STT/TTS/voice-input toggles round-trip (previously dropped server-side)."""
-        put_resp = client.put(
-            "/api/config/ui-settings",
-            json={
-                "sttEnabled": False,
-                "ttsEnabled": True,
-                "voiceInputMode": "vad",
-            },
-        )
-        assert put_resp.status_code == 200
-        assert put_resp.json()["ok"] is True
-
-        data = client.get("/api/config/ui-settings").json()
-        assert data["sttEnabled"] is False
-        assert data["ttsEnabled"] is True
-        assert data["voiceInputMode"] == "vad"
-
-    def test_delete_voice_toggle(self, client: TestClient) -> None:
-        """A voice toggle is a known key and is deletable like other UI settings."""
-        client.put("/api/config/ui-settings", json={"voiceInputMode": "ptt"})
-
-        resp = client.delete("/api/config/ui-settings/voiceInputMode")
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-        assert "voiceInputMode" not in client.get("/api/config/ui-settings").json()
-
-    def test_put_partial_update(self, client: TestClient) -> None:
-        """PUT with only some keys updates only those."""
-        client.put("/api/config/ui-settings", json={"fontSize": 14, "theme": "dark"})
-        client.put("/api/config/ui-settings", json={"fontSize": 20})
-
-        data = client.get("/api/config/ui-settings").json()
-        assert data["fontSize"] == 20
-        assert data["theme"] == "dark"
-
-    def test_put_empty_body(self, client: TestClient) -> None:
-        """PUT with no fields is rejected."""
-        response = client.put("/api/config/ui-settings", json={})
-        assert response.status_code == 422
-
-    def test_put_all_null_body(self, client: TestClient) -> None:
-        """PUT with only null values is rejected."""
-        response = client.put("/api/config/ui-settings", json={"fontSize": None})
-        assert response.status_code == 422
-
-    def test_get_backend_error_returns_500(self, client: TestClient) -> None:
-        with patch.object(ConfigStore, "get_all", side_effect=RuntimeError("db down")):
-            response = client.get("/api/config/ui-settings")
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Internal server error"
-
-    def test_put_backend_error_returns_500(self, client: TestClient) -> None:
-        with patch.object(ConfigStore, "set_many", side_effect=RuntimeError("db down")):
-            response = client.put("/api/config/ui-settings", json={"fontSize": 18})
-
-        assert response.status_code == 500
-        assert response.json()["detail"] == "Internal server error"
-
-    def test_ui_settings_isolated_from_daemon_config(
-        self, client: TestClient, temp_db: Any
-    ) -> None:
-        """UI settings use a separate namespace and don't affect DaemonConfig."""
-        client.put("/api/config/ui-settings", json={"fontSize": 22})
-
-        # Verify stored under ui_settings. prefix
-        store = ConfigStore(temp_db)
-        assert store.get("ui_settings.fontSize") == 22
-        # Not in the main config namespace
-        assert store.get("fontSize") is None
-
-    def test_delete_existing_setting(self, client: TestClient) -> None:
-        """DELETE removes a single UI setting."""
-        client.put("/api/config/ui-settings", json={"fontSize": 16, "theme": "dark"})
-
-        resp = client.delete("/api/config/ui-settings/fontSize")
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
-
-        # fontSize gone, theme still present
-        data = client.get("/api/config/ui-settings").json()
-        assert "fontSize" not in data
-        assert data["theme"] == "dark"
-
-    def test_delete_not_found(self, client: TestClient) -> None:
-        """DELETE for a valid key that was never set returns 404."""
-        resp = client.delete("/api/config/ui-settings/theme")
-        assert resp.status_code == 404
-
-    def test_delete_invalid_key(self, client: TestClient) -> None:
-        """DELETE with an unknown key returns 400."""
-        resp = client.delete("/api/config/ui-settings/bogusKey")
-        assert resp.status_code == 400
-        assert "Unknown UI setting" in resp.json()["detail"]
-
-
-class TestUISettingsVoiceFields:
-    """DB-free contract for the STT/TTS/voice-input UI settings.
-
-    These previously round-tripped through useSettings but were dropped because
-    SaveUISettingsRequest omitted them and the route allowlist excluded them.
-    Verified without a database so the contract runs even where the route's
-    Postgres fixture is unavailable.
-    """
-
-    @pytest.mark.parametrize("field", ["sttEnabled", "ttsEnabled", "voiceInputMode"])
-    def test_model_declares_voice_field(self, field: str) -> None:
-        """The request model declares each voice field so it is not stripped."""
-        assert field in SaveUISettingsRequest.model_fields
-        assert field in SaveUISettingsRequest.UI_SETTING_FIELDS
-
-    def test_model_accepts_only_a_voice_toggle(self) -> None:
-        """A payload with only a voice toggle is a valid (non-empty) update."""
-        parsed = SaveUISettingsRequest(sttEnabled=False)
-        assert parsed.sttEnabled is False
-        assert parsed.ttsEnabled is None
-        assert parsed.voiceInputMode is None
-
-    def test_voice_input_mode_round_trips_value(self) -> None:
-        parsed = SaveUISettingsRequest(voiceInputMode="vad")
-        assert parsed.voiceInputMode == "vad"
-
-    @pytest.mark.parametrize("key", ["sttEnabled", "ttsEnabled", "voiceInputMode"])
-    def test_route_allowlist_includes_voice_field(self, key: str) -> None:
-        """The route get/save/delete allowlist persists each voice field."""
-        assert key in UI_SETTINGS_KEYS
+        assert client.get("/api/config/ui-settings").json() == {
+            "fontSize": 18,
+            "voiceInputMode": "vad",
+        }

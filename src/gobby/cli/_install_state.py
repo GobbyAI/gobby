@@ -13,7 +13,8 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
 )
-from gobby.storage.config_store import ConfigStore, config_key_to_secret_name
+from gobby.storage.config_mutations import config_key_to_secret_name
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.secrets import SecretStore
 
 

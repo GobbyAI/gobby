@@ -47,6 +47,7 @@ def create_lifespan(
             "message_processor": server.services.message_processor,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
+            "config_runtime": server.services.config_runtime,
             "database": server.services.database,
             "session_manager": server.services.session_manager,
             "memory_manager": server.services.memory_manager,

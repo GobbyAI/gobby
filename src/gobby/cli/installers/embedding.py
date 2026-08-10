@@ -490,7 +490,7 @@ def _managed_embedding_collections_exist(config_store: ConfigStore) -> bool:
     from gobby.config.app import load_config
     from gobby.memory.collection_names import CollectionNameResolver
     from gobby.memory.vectorstore import VectorStore
-    from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+    from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
     async def _inspect() -> bool:
         config = load_config(config_store=config_store)

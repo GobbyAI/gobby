@@ -40,6 +40,7 @@ from gobby.utils.session_refs import try_resolve_session_field
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
+    from gobby.config.values import ConfigRuntimeReader
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.llm.service import LLMService
@@ -70,6 +71,7 @@ class HookManager:
         message_processor: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
+        config_runtime: "ConfigRuntimeReader | None" = None,
         database: "HubDatabase | None" = None,
         session_manager: "SessionManager | None" = None,
         code_index_trigger: Any | None = None,
@@ -119,6 +121,7 @@ class HookManager:
             message_processor=message_processor,
             agent_runner=agent_runner,
             completion_registry=completion_registry,
+            config_runtime=config_runtime,
             database=database,
             session_manager=session_manager,
             get_machine_id=self.get_machine_id,

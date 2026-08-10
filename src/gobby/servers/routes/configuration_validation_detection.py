@@ -40,9 +40,7 @@ def register_validation_detection_routes(
             except ValidationError as exc:
                 raise HTTPException(400, str(exc)) from exc
         else:
-            server = context.server
-            config = getattr(server.services, "config", None)
-            detection_config = getattr(config, "validation_detection", ValidationDetectionConfig())
+            detection_config = context.get_config_runtime().snapshot.active.validation_detection
         match = classify_validation_command(request.command, detection_config)
         if match is None:
             return {"matched": False}

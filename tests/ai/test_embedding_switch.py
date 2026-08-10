@@ -92,8 +92,8 @@ class TestSwitchJournal:
             updated_at="2026-06-29T00:00:00Z",
             old_physical_names={"memories": "memories@old"},
         )
-        data = journal.to_json()
-        restored = SwitchJournal.from_json(data)
+        data = journal.to_dict()
+        restored = SwitchJournal.from_dict(data)
         assert restored.run_id == journal.run_id
         assert restored.catalog_key == journal.catalog_key
         assert restored.target_dim == journal.target_dim
@@ -145,7 +145,7 @@ class TestSwitchStateMachine:
         store = self._mock_store()
         # First switch starts fine
         start_switch(store, "qwen3-8b-q8", "ollama")
-        # Second switch should fail — the lifecycle store returns the journal JSON
+        # Second switch should fail — the lifecycle store returns the journal object.
         store.get_internal_lifecycle.return_value = SwitchJournal(
             "4096-abc",
             "qwen3-8b-q8",
@@ -157,20 +157,20 @@ class TestSwitchStateMachine:
             phase=PHASE_BUILDING,
             started_at="2026-06-29T00:00:00Z",
             updated_at="2026-06-29T00:00:00Z",
-        ).to_json()
+        ).to_dict()
         with pytest.raises(SwitchAlreadyActiveError):
             start_switch(store, "qwen3-4b-q8", "ollama")
 
     def test_start_switch_rejects_invalid_journal_type(self) -> None:
         store = self._mock_store()
-        store.get_internal_lifecycle.return_value = {"run_id": "bad"}
+        store.get_internal_lifecycle.return_value = "bad"
 
         with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal type"):
             start_switch(store, "qwen3-8b-q8", "ollama")
 
     def test_get_switch_status_rejects_malformed_journal(self) -> None:
         store = self._mock_store()
-        store.get_internal_lifecycle.return_value = "{not json"
+        store.get_internal_lifecycle.return_value = {"run_id": "bad"}
 
         with pytest.raises(SwitchJournalStateError, match="Invalid embedding switch journal"):
             get_switch_status(store)
@@ -202,7 +202,7 @@ class TestSwitchStateMachine:
     def test_abort_switch_returns_journal(self) -> None:
         store = self._mock_store()
         journal, _ = start_switch(store, "qwen3-8b-q8", "ollama")
-        store.get_internal_lifecycle.return_value = journal.to_json()
+        store.get_internal_lifecycle.return_value = journal.to_dict()
         aborted = abort_switch(store)
         assert aborted is not None
         assert aborted.phase == PHASE_ABORTED

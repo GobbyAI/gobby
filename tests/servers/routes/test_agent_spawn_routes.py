@@ -14,8 +14,11 @@ from starlette.testclient import TestClient
 
 from gobby.agents.launcher_session import get_or_create_launcher_session
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.events.completion_registry import CompletionEventRegistry
-from gobby.storage.config_store import ConfigStore
+from gobby.servers.http import HTTPServer
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
@@ -23,6 +26,19 @@ from gobby.utils.machine_id import require_machine_id
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+class StubConfigRuntime(ConfigRuntime):
+    def __init__(self, snapshot: ConfigSnapshot) -> None:
+        self.current = snapshot
+
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        return self.current
+
+    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
+        assert revision == self.current.revision
+        return self.current
 
 
 # ---------------------------------------------------------------------------
@@ -51,38 +67,51 @@ def _submit_for_development_review(task_manager: LocalTaskManager, task_id: str)
 
 
 @pytest.fixture
-def task_manager(temp_db) -> LocalTaskManager:
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
 @pytest.fixture
-def config_store(temp_db) -> ConfigStore:
-    return ConfigStore(temp_db)
-
-
-@pytest.fixture
-def session_manager(temp_db) -> SessionManager:
+def session_manager(temp_db: HubDatabase) -> SessionManager:
     return SessionManager(temp_db)
 
 
 @pytest.fixture
-def test_project(project_manager) -> Any:
+def test_project(project_manager: Any) -> Any:
     """Create a test project for FK constraints."""
     return project_manager.create(name="spawn-test-proj", repo_path="/tmp/spawn-test")
 
 
 @pytest.fixture
-def server(temp_db, task_manager, session_manager, config_store):
-    return create_http_server(
-        config=DaemonConfig(),
+def server(
+    temp_db: HubDatabase,
+    task_manager: LocalTaskManager,
+    session_manager: SessionManager,
+) -> HTTPServer:
+    config = DaemonConfig()
+    http_server = create_http_server(
+        config=config,
         database=temp_db,
         session_manager=session_manager,
         task_manager=task_manager,
     )
+    http_server.services.config_runtime = StubConfigRuntime(
+        ConfigSnapshot(
+            revision=1,
+            desired=config,
+            active=config,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={},
+        )
+    )
+    return http_server
 
 
 @pytest.fixture
-def client(server) -> TestClient:
+def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
@@ -291,15 +320,35 @@ class TestSpawnAgent:
 
     def test_terminal_spawn_passes_daemon_config_for_sandbox_defaults(
         self,
+        caplog: pytest.LogCaptureFixture,
         client: TestClient,
-        server,
+        server: HTTPServer,
+        session_manager: SessionManager,
         task_manager: LocalTaskManager,
         test_project: Any,
     ) -> None:
         """Web launcher terminal spawns should defer sandbox defaults to daemon config."""
         task = _create_task(task_manager, test_project.id, "Sandboxed terminal task")
+        child = session_manager.register(
+            external_id="sandboxed-terminal-child",
+            machine_id=None,
+            source="codex",
+            project_id=test_project.id,
+        )
         server.services.agent_runner = MagicMock()
-        server.services.config = DaemonConfig(agent_sandbox={"enabled": False})
+        config = DaemonConfig(agent_sandbox={"enabled": False})
+        runtime = server.services.config_runtime
+        assert isinstance(runtime, StubConfigRuntime)
+        runtime.current = ConfigSnapshot(
+            revision=2,
+            desired=config,
+            active=config,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={},
+        )
 
         with (
             patch(
@@ -316,7 +365,7 @@ class TestSpawnAgent:
                     return_value={
                         "success": True,
                         "run_id": "run-123",
-                        "child_session_id": "child-456",
+                        "child_session_id": child.id,
                         "isolation": "none",
                     }
                 ),
@@ -325,14 +374,18 @@ class TestSpawnAgent:
             response = client.post("/api/agents/spawn", json={"task_id": task.id})
 
         assert response.status_code == 200
-        kwargs = mock_spawn.await_args.kwargs
-        assert kwargs["daemon_config"] is server.services.config
+        await_args = mock_spawn.await_args
+        assert await_args is not None
+        kwargs = await_args.kwargs
+        assert kwargs["daemon_config"] == config
         assert "sandbox" not in kwargs
+        assert "Counter agent_spawns_total not registered" not in caplog.text
 
     def test_spawn_route_supplies_owning_completion_registry(
         self,
         client: TestClient,
-        server,
+        server: HTTPServer,
+        session_manager: SessionManager,
         task_manager: LocalTaskManager,
         test_project: Any,
     ) -> None:
@@ -340,6 +393,12 @@ class TestSpawnAgent:
         spawn_agent_impl, so a deferred-health failure after a successful
         run_id return can wake a pre-registered waiter."""
         task = _create_task(task_manager, test_project.id, "Registry wiring task")
+        child = session_manager.register(
+            external_id="completion-registry-child",
+            machine_id=None,
+            source="codex",
+            project_id=test_project.id,
+        )
         server.services.agent_runner = MagicMock()
         server.services.completion_registry = CompletionEventRegistry()
 
@@ -358,7 +417,7 @@ class TestSpawnAgent:
                     return_value={
                         "success": True,
                         "run_id": "run-123",
-                        "child_session_id": "child-456",
+                        "child_session_id": child.id,
                         "isolation": "none",
                     }
                 ),
@@ -367,7 +426,9 @@ class TestSpawnAgent:
             response = client.post("/api/agents/spawn", json={"task_id": task.id})
 
         assert response.status_code == 200
-        kwargs = mock_spawn.await_args.kwargs
+        await_args = mock_spawn.await_args
+        assert await_args is not None
+        kwargs = await_args.kwargs
         assert server.services.completion_registry is not None
         assert kwargs["completion_registry"] is server.services.completion_registry
 
@@ -455,23 +516,32 @@ class TestLaunchDefaults:
         assert data["defaults"] == {}
         assert "built_in" in data
 
-    def test_save_and_get_defaults(self, client: TestClient) -> None:
-        """Save defaults for a category and retrieve them."""
-        # Save
-        response = client.put(
-            "/api/agents/launch-defaults",
-            json={
-                "project_id": "proj-1",
-                "category": "code",
-                "agent_name": "developer",
-                "isolation": "worktree",
-                "model": "sonnet",
+    def test_get_defaults_from_runtime_snapshot(
+        self, server: HTTPServer, client: TestClient
+    ) -> None:
+        """Registered launch defaults are projected from one runtime snapshot."""
+        runtime = server.services.config_runtime
+        assert isinstance(runtime, StubConfigRuntime)
+        snapshot = runtime.snapshot
+        runtime.current = ConfigSnapshot(
+            revision=snapshot.revision,
+            desired=snapshot.desired,
+            active=snapshot.active,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={
+                "launch_defaults.proj-1": {
+                    "code": {
+                        "agent_name": "developer",
+                        "isolation": "worktree",
+                        "model": "sonnet",
+                    }
+                }
             },
         )
-        assert response.status_code == 200
-        assert response.json()["status"] == "success"
 
-        # Retrieve
         response = client.get("/api/agents/launch-defaults?project_id=proj-1")
         assert response.status_code == 200
         data = response.json()
@@ -481,25 +551,13 @@ class TestLaunchDefaults:
         assert code_defaults["isolation"] == "worktree"
         assert code_defaults["model"] == "sonnet"
 
-    def test_save_multiple_categories(self, client: TestClient) -> None:
-        """Save defaults for multiple categories."""
-        for cat, agent in [("code", "code-agent"), ("research", "research-agent")]:
-            client.put(
-                "/api/agents/launch-defaults",
-                json={
-                    "project_id": "proj-2",
-                    "category": cat,
-                    "agent_name": agent,
-                    "isolation": "none",
-                },
-            )
+    def test_specialized_launch_defaults_writer_is_removed(self, client: TestClient) -> None:
+        response = client.put(
+            "/api/agents/launch-defaults",
+            json={"project_id": "proj-2", "category": "code", "agent_name": "developer"},
+        )
 
-        response = client.get("/api/agents/launch-defaults?project_id=proj-2")
-        data = response.json()
-        assert "code" in data["defaults"]
-        assert "research" in data["defaults"]
-        assert data["defaults"]["code"]["agent_name"] == "code-agent"
-        assert data["defaults"]["research"]["agent_name"] == "research-agent"
+        assert response.status_code == 405
 
 
 # ---------------------------------------------------------------------------

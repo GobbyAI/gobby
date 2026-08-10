@@ -20,7 +20,6 @@ from gobby.mcp_proxy.tools.workflows._rules import (
     list_rules,
     toggle_rule,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.workflows.definitions import split_rule_definition_data
 from gobby.workflows.loader import _is_bundled_template
 
@@ -56,13 +55,6 @@ class RuleUpdateRequest(BaseModel):
     enabled: bool | None = Field(default=None, description="New enabled state")
     priority: int | None = Field(default=None, description="New priority")
     tags: list[str] | None = Field(default=None, description="New tags")
-
-
-class RulesCollectionUpdate(BaseModel):
-    """Request body for updating rules collection settings."""
-
-    enforcement_enabled: bool | None = Field(default=None, description="Global enforcement toggle")
-    aggregate_blocks: bool | None = Field(default=None, description="Aggregate rule block gates")
 
 
 class RuleToggleRequest(BaseModel):
@@ -178,9 +170,12 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
                 enabled=enabled,
                 project_id=project_id,
             )
-            config_store = ConfigStore(server.services.database)
-            enforcement = await server.run_db(config_store.get, "rules.enforcement_enabled")
-            aggregate_blocks = await server.run_db(config_store.get, "rules.aggregate_blocks")
+            config_runtime = server.services.config_runtime
+            if config_runtime is None:
+                raise RuntimeError("Config runtime unavailable")
+            config_values = config_runtime.snapshot.active_values
+            enforcement = config_values.get("rules.enforcement_enabled", True)
+            aggregate_blocks = config_values.get("rules.aggregate_blocks", True)
             return {
                 "status": "success",
                 "rules": result["rules"],
@@ -214,30 +209,6 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         await _broadcast_rule("rule_created", rule_id)
 
         return {"status": "success", "rule": result["rule"]}
-
-    # -----------------------------------------------------------------
-    # PUT /api/rules  (collection-level: enforcement toggle)
-    # -----------------------------------------------------------------
-
-    @router.put("")
-    async def update_rules_collection(request: RulesCollectionUpdate) -> dict[str, Any]:
-        """Update rules collection settings (e.g. global enforcement toggle)."""
-        config_store = ConfigStore(server.services.database)
-        if request.enforcement_enabled is not None:
-            await server.run_db(
-                config_store.set, "rules.enforcement_enabled", request.enforcement_enabled
-            )
-        if request.aggregate_blocks is not None:
-            await server.run_db(
-                config_store.set, "rules.aggregate_blocks", request.aggregate_blocks
-            )
-        enforcement = await server.run_db(config_store.get, "rules.enforcement_enabled")
-        aggregate_blocks = await server.run_db(config_store.get, "rules.aggregate_blocks")
-        return {
-            "status": "success",
-            "enforcement_enabled": enforcement is not False,
-            "aggregate_blocks": aggregate_blocks is not False,
-        }
 
     # -----------------------------------------------------------------
     # PUT /api/rules/bulk-toggle

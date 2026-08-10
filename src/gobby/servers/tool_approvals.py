@@ -12,10 +12,10 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.normalization import canonicalize_shell_tool_name
 from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
 from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS
-from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -258,25 +258,14 @@ def matches_allowlist(key: str, rules: Iterable[str]) -> bool:
     return any(fnmatch(key, rule) for rule in rules if rule)
 
 
-def get_global_approval_rules(config_store: ConfigStore) -> list[str]:
-    """Load daemon-wide approval rules from config_store."""
-    try:
-        stored = config_store.get(GLOBAL_APPROVAL_RULES_CONFIG_KEY)
-    except Exception as exc:
-        logger.debug("Failed to load global approval rules: %s", exc)
-        return list(DEFAULT_GLOBAL_APPROVAL_RULES)
+def get_global_approval_rules(snapshot: ConfigSnapshot) -> list[str]:
+    """Load daemon-wide approval rules from one runtime snapshot."""
+    stored = snapshot.active_values.get(GLOBAL_APPROVAL_RULES_CONFIG_KEY)
     if stored is None:
         return list(DEFAULT_GLOBAL_APPROVAL_RULES)
     if isinstance(stored, list):
         return sanitize_approval_rules(str(item) for item in stored)
     return list(DEFAULT_GLOBAL_APPROVAL_RULES)
-
-
-def set_global_approval_rules(config_store: ConfigStore, rules: Iterable[str]) -> list[str]:
-    """Persist daemon-wide approval rules and return the normalized list."""
-    normalized = sanitize_approval_rules(rules)
-    config_store.set(GLOBAL_APPROVAL_RULES_CONFIG_KEY, normalized, source="user")
-    return normalized
 
 
 def load_project_approval_rules(project_path: str | None) -> list[str]:

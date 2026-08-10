@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, Strict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Strict
 
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
@@ -43,44 +43,3 @@ class SavePromptOverrideRequest(BaseModel):
     """Request body for PUT /api/config/prompts/{path}."""
 
     content: str
-
-
-class SaveUISettingsRequest(BaseModel):
-    """Request body for PUT /api/config/ui-settings."""
-
-    UI_SETTING_FIELDS: ClassVar[tuple[str, ...]] = (
-        "fontSize",
-        "model",
-        "theme",
-        "defaultChatMode",
-        "sttEnabled",
-        "ttsEnabled",
-        "voiceInputMode",
-        "planPendingVariant",
-        "selectedProjectId",
-        "selectedProvider",
-    )
-
-    fontSize: int | None = None
-    model: str | None = None
-    theme: str | None = None
-    defaultChatMode: str | None = None
-    sttEnabled: bool | None = None
-    ttsEnabled: bool | None = None
-    voiceInputMode: str | None = None
-    planPendingVariant: str | None = None
-    selectedProjectId: str | None = None
-    selectedProvider: str | None = None
-
-    @model_validator(mode="after")
-    def require_at_least_one_setting(self) -> SaveUISettingsRequest:
-        """Reject empty payloads and all-null no-op updates."""
-        if all(getattr(self, field) is None for field in self.UI_SETTING_FIELDS):
-            raise ValueError("At least one UI setting must be provided")
-        return self
-
-
-class SaveApprovalRulesRequest(BaseModel):
-    """Request body for PUT /api/config/tool-approvals/global."""
-
-    rules: list[str]

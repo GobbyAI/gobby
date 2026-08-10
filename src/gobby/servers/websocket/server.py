@@ -36,6 +36,7 @@ websockets_logger = logging.getLogger("websockets.server")
 
 
 if TYPE_CHECKING:
+    from gobby.config.values import ConfigRuntimeReader
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
@@ -77,6 +78,7 @@ class WebSocketServer(
         session_manager: "SessionManager | None" = None,
         db_executor: "DatabaseExecutor | None" = None,
         daemon_config: Any = None,
+        config_runtime: ConfigRuntimeReader | None = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
         tool_proxy_getter: Callable[[], Any | None] | None = None,
@@ -108,6 +110,7 @@ class WebSocketServer(
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
         self.daemon_config = daemon_config
+        self.config_runtime = config_runtime
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
         self.webhook_dispatcher: WebhookDispatcher | None = None

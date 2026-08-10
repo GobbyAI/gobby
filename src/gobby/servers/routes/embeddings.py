@@ -20,7 +20,7 @@ from gobby.ai.embedding_switch import SwitchAlreadyActiveError
 from gobby.ai.embedding_switch_service import EmbeddingSwitchTaskActive
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 from gobby.servers.responses import JSONResponse
-from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig

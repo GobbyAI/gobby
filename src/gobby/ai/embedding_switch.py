@@ -13,16 +13,16 @@ A switch journal (stored in ConfigStore) tracks the run state so
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
 from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
 from gobby.memory.collection_names import CollectionNameResolver
-from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +77,14 @@ class SwitchJournal:
     old_physical_names: dict[str, str] = field(default_factory=dict)
     error: str | None = None
 
-    def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True)
+    def to_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
 
     @staticmethod
-    def from_json(data: str) -> SwitchJournal:
-        d = json.loads(data)
+    def from_dict(data: Mapping[str, object]) -> SwitchJournal:
+        d = dict(data)
         d.setdefault("old_physical_names", {})
-        return SwitchJournal(**d)
+        return SwitchJournal(**cast(Any, d))
 
 
 class SwitchError(RuntimeError):
@@ -111,12 +111,12 @@ def _read_journal(config_store: EmbeddingSwitchLifecycleStore) -> SwitchJournal 
     raw = config_store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY)
     if raw is None:
         return None
-    if not isinstance(raw, str):
+    if not isinstance(raw, dict):
         raise SwitchJournalStateError(
             f"Invalid embedding switch journal type: {type(raw).__name__}"
         )
     try:
-        return SwitchJournal.from_json(raw)
+        return SwitchJournal.from_dict(raw)
     except Exception as exc:
         logger.warning("Failed to parse switch journal", exc_info=True)
         raise SwitchJournalStateError("Invalid embedding switch journal") from exc
@@ -127,7 +127,7 @@ def _write_journal(
     journal: SwitchJournal,
 ) -> None:
     """Write the switch journal to ConfigStore."""
-    config_store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_json())
+    config_store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
 
 
 def _delete_journal(

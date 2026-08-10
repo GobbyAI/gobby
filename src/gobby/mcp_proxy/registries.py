@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from gobby.memory.manager import MemoryManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.concurrency import CoverageExecutor
-    from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.merge_resolutions import MergeResolutionManager
@@ -66,8 +65,6 @@ def setup_internal_registries(
     pipeline_execution_manager: LocalPipelineExecutionManager | None = None,
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
-    config_store: ConfigStore | None = None,
-    config_setter: Callable[[DaemonConfig], None] | None = None,
     memory_backup_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     wake_dispatcher: WakeDispatcher | None = None,
@@ -396,15 +393,11 @@ def setup_internal_registries(
         manager.add_registry(config_registry)
         logger.debug("Config registry initialized")
 
-    # Initialize voice registry if config_store is available
-    if _config is not None and config_store is not None and config_setter is not None:
+    # Voice uses the same typed, revisioned service as generic configuration tools.
+    if config_service_getter is not None:
         from gobby.mcp_proxy.tools.voice import create_voice_registry
 
-        voice_registry = create_voice_registry(
-            config=_config,
-            config_store=config_store,
-            config_setter=config_setter,
-        )
+        voice_registry = create_voice_registry(config_service_getter)
         manager.add_registry(voice_registry)
         logger.debug("Voice registry initialized")
 

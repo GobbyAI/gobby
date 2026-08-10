@@ -242,6 +242,7 @@ def init_servers(runner: GobbyRunner) -> None:
             session_manager=runner.session_manager,
             db_executor=runner.db_executor,
             daemon_config=runner.config,
+            config_runtime=runner.config_runtime,
             internal_manager=runner.http_server._internal_manager,
             web_chat_session_registry=web_chat_session_registry,
             tool_proxy_getter=tool_proxy_getter,

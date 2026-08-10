@@ -93,19 +93,6 @@ class BatchSpawnResponse(BaseModel):
     failed: int
 
 
-class LaunchDefaultsRequest(ReasoningEffortMixin):
-    """Request body for saving per-category launch defaults."""
-
-    project_id: str
-    category: str
-    agent_name: str = "default"
-    web_chat: bool = False
-    isolation: Literal["none", "worktree", "clone"] = "none"
-    model: str | None = None
-    reasoning_effort: str | None = None
-    reasoning_required: bool | None = None
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -167,16 +154,6 @@ def _build_task_prompt(
     return "\n".join(parts)
 
 
-def _get_config_store(server: HTTPServer) -> Any:
-    """Get the config store from server services."""
-    if server.services.config_store:
-        return server.services.config_store
-    # Fallback: create one from the database
-    from gobby.storage.config_store import ConfigStore
-
-    return ConfigStore(server.services.database)
-
-
 # ---------------------------------------------------------------------------
 # Router factory
 # ---------------------------------------------------------------------------
@@ -206,6 +183,10 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         effective_project_id = project_id or getattr(task, "project_id", None)
         if not effective_project_id:
             return AgentSpawnResponse(success=False, error="Could not determine project_id")
+        config_runtime = server.services.config_runtime
+        if config_runtime is None:
+            return AgentSpawnResponse(success=False, error="Config runtime unavailable")
+        config_snapshot = config_runtime.snapshot
 
         # Build prompt
         prompt = req.prompt
@@ -236,7 +217,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             if runtime_manager is not None:
                 sandbox_policy_hash = runtime_manager.sandbox_policy_hash
             else:
-                sandbox_policy_hash = web_chat_sandbox_policy_hash(server.services.config)
+                sandbox_policy_hash = web_chat_sandbox_policy_hash(config_snapshot.active)
 
             from gobby.llm.local_detection import is_local_agent_definition
 
@@ -363,7 +344,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             session_manager=server.services.session_manager,
             db=server.services.database,
             completion_registry=server.services.completion_registry,
-            daemon_config=server.services.config,
+            daemon_config=config_snapshot.active,
         )
 
         if result.get("success"):
@@ -475,36 +456,15 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         """Get per-category launch defaults for the project."""
         try:
-            store = _get_config_store(server)
             key = f"launch_defaults.{project_id}"
-            saved = store.get(key) or {}
+            config_runtime = server.services.config_runtime
+            if config_runtime is None:
+                raise RuntimeError("Config runtime unavailable")
+            saved = config_runtime.snapshot.active_values.get(key) or {}
             # Merge with built-in defaults for any missing categories
             return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
         except Exception as e:
             logger.exception("Error fetching launch defaults: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
-
-    # -----------------------------------------------------------------------
-    # PUT /api/agents/launch-defaults
-    # -----------------------------------------------------------------------
-    @router.put("/launch-defaults")
-    async def save_launch_defaults(request: LaunchDefaultsRequest) -> dict[str, Any]:
-        """Save per-category launch defaults for the project."""
-        try:
-            store = _get_config_store(server)
-            key = f"launch_defaults.{request.project_id}"
-            existing = store.get(key) or {}
-            existing[request.category] = {
-                "agent_name": request.agent_name,
-                "isolation": request.isolation,
-                "model": request.model,
-                "reasoning_effort": request.reasoning_effort,
-                "reasoning_required": bool(request.reasoning_required),
-            }
-            store.set(key, existing, source="web_ui")
-            return {"status": "success", "category": request.category}
-        except Exception as e:
-            logger.exception("Error saving launch defaults: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------

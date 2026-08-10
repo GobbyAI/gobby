@@ -21,7 +21,6 @@ from gobby.servers.websocket.chat.backends.droid_plan import (
     _extract_plan_from_tool_args,
     _is_plan_exit_tool,
 )
-from gobby.storage.config_store import ConfigStore
 
 DROID_PERMISSION_CANCEL = "cancel"
 DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
@@ -37,6 +36,7 @@ class DroidPermissionSession(Protocol):
     chat_mode: str
     _approved_tools: set[str]
     _session_manager_ref: Any | None
+    _config_runtime_ref: Any | None
     _plan_exit_blocked_this_turn: bool
 
     async def _apply_pre_tool_lifecycle(
@@ -184,11 +184,10 @@ class DroidPermissionResolver:
 
     @staticmethod
     def _global_rules_for_session(session: DroidPermissionSession) -> list[str]:
-        session_manager = getattr(session, "_session_manager_ref", None)
-        db = getattr(session_manager, "db", None) if session_manager else None
-        if db is None:
+        config_runtime = getattr(session, "_config_runtime_ref", None)
+        if config_runtime is None:
             return list(DEFAULT_GLOBAL_APPROVAL_RULES)
-        return get_global_approval_rules(ConfigStore(db))
+        return get_global_approval_rules(config_runtime.snapshot)
 
     @staticmethod
     def _approval_prompt_payload(tool_payloads: list[ToolPayload]) -> tuple[str, dict[str, Any]]:

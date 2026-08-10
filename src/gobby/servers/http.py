@@ -225,8 +225,6 @@ class HTTPServer:
             pipeline_execution_manager=services.pipeline_execution_manager,
             hook_manager_resolver=lambda: self._hook_manager,
             config_service_getter=config_route_context.get_config_service,
-            config_store=services.config_store,
-            config_setter=lambda c: setattr(services, "config", c),
             memory_backup_manager=services.memory_backup_manager,
             completion_registry=services.completion_registry,
             wake_dispatcher=services.wake_dispatcher,

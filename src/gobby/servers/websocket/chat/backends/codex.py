@@ -47,7 +47,6 @@ from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMi
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
-from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -587,11 +586,10 @@ class CodexWebChatBackend:
 
     @staticmethod
     def _global_rules_for_session(session: CodexManagedChatSession) -> list[str]:
-        session_manager = getattr(session, "_session_manager_ref", None)
-        db = getattr(session_manager, "db", None) if session_manager else None
-        if db is None:
+        config_runtime = getattr(session, "_config_runtime_ref", None)
+        if config_runtime is None:
             return list(DEFAULT_GLOBAL_APPROVAL_RULES)
-        return get_global_approval_rules(ConfigStore(db))
+        return get_global_approval_rules(config_runtime.snapshot)
 
     async def handle_approval_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         thread_id = params.get("threadId")

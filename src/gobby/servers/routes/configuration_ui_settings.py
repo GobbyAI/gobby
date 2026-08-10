@@ -10,7 +10,6 @@ from fastapi import APIRouter, HTTPException
 
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
-from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +36,7 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
     async def get_ui_settings() -> JSONResponse:
         """Return persisted UI settings."""
         try:
-            config_store = context.get_config_store()
-            stored = config_store.get_all()
+            stored = context.get_config_runtime().snapshot.active_values
             result: dict[str, Any] = {}
             for key in UI_SETTINGS_KEYS:
                 value = stored.get(f"{UI_SETTINGS_PREFIX}{key}")
@@ -50,41 +48,3 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         except _UI_SETTING_STORAGE_ERRORS as e:
             logger.exception("Failed to get UI settings: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
-
-    @router.put("/ui-settings")
-    async def save_ui_settings(request: SaveUISettingsRequest) -> JSONResponse:
-        """Persist UI settings to config_store."""
-        try:
-            config_store = context.get_config_store()
-            entries: dict[str, Any] = {}
-            for key in UI_SETTINGS_KEYS:
-                value = getattr(request, key, None)
-                if value is not None:
-                    entries[f"{UI_SETTINGS_PREFIX}{key}"] = value
-            if entries:
-                config_store.set_many(entries, source="ui")
-            return JSONResponse(content={"ok": True})
-        except HTTPException:
-            raise
-        except _UI_SETTING_STORAGE_ERRORS as e:
-            logger.exception("Failed to save UI settings: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
-
-    @router.delete("/ui-settings/{key}")
-    async def delete_ui_setting(key: str) -> JSONResponse:
-        """Delete a single UI setting by key name."""
-        if key not in UI_SETTINGS_KEYS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unknown UI setting '{key}'. Valid keys: {', '.join(UI_SETTINGS_KEYS)}",
-            )
-        try:
-            config_store = context.get_config_store()
-            if not config_store.delete(f"{UI_SETTINGS_PREFIX}{key}"):
-                raise HTTPException(status_code=404, detail=f"UI setting '{key}' not found")
-            return JSONResponse(content={"ok": True})
-        except HTTPException:
-            raise
-        except _UI_SETTING_STORAGE_ERRORS as e:
-            logger.exception("Failed to delete UI setting '%s': %s", key, e)
-            raise HTTPException(status_code=500, detail="Failed to delete UI setting") from e

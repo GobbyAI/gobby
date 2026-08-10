@@ -56,6 +56,7 @@ class ChatSessionMixin:
     _pending_providers: dict[str, str]
     _pending_config_updated_at: dict[str, datetime]
     _pending_inject_contexts: dict[str, str]
+    config_runtime: Any | None
     _session_create_locks: dict[str, asyncio.Lock]
     web_chat_session_registry: Any
 
@@ -331,6 +332,7 @@ class ChatSessionMixin:
                 )
             session = ChatSession(conversation_id=conversation_id, provider=provider_name)
         session.sandbox_policy_hash = current_web_chat_policy_hash
+        session._config_runtime_ref = self.config_runtime
 
         if effective_reasoning_effort is not None:
             session.reasoning_effort = effective_reasoning_effort

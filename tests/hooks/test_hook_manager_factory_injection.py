@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,6 +51,7 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
     """HookManager should pass daemon-owned storage handles into the factory."""
     database = MagicMock()
     session_manager = MagicMock()
+    config_runtime = MagicMock()
     components = _mock_components(database, session_manager)
 
     with (
@@ -66,10 +67,12 @@ def test_hook_manager_forwards_injected_database_and_session_manager() -> None:
             daemon_port=60887,
             database=database,
             session_manager=session_manager,
+            config_runtime=config_runtime,
         )
 
     assert create.call_args.kwargs["database"] is database
     assert create.call_args.kwargs["session_manager"] is session_manager
+    assert create.call_args.kwargs["config_runtime"] is config_runtime
     assert manager._database is database
     assert manager._session_manager is session_manager
 
@@ -121,6 +124,7 @@ def test_factory_create_reuses_injected_session_manager(
         progress_tracker=MagicMock(),
         stuck_detector=MagicMock(),
     )
+    config_runtime = MagicMock()
 
     with (
         patch.object(HookManagerFactory, "_create_database") as create_database,
@@ -134,7 +138,7 @@ def test_factory_create_reuses_injected_session_manager(
             HookManagerFactory,
             "_create_workflow_engine",
             return_value=workflow_components,
-        ),
+        ) as create_workflow_engine,
         patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
     ):
         components = HookManagerFactory.create(
@@ -152,15 +156,17 @@ def test_factory_create_reuses_injected_session_manager(
             get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
             resolve_project_id=lambda _project_id, _cwd: "project-1",
             session_manager=session_manager,
+            config_runtime=config_runtime,
         )
 
     create_database.assert_not_called()
     assert components.database is temp_db
     assert components.session_manager is session_manager
-    assert components.session_coordinator._session_manager is session_manager
-    assert components.event_handlers._session_manager is session_manager
+    assert cast(object, components.session_coordinator._session_manager) is session_manager
+    assert cast(object, components.event_handlers._session_manager) is session_manager
     assert components.session_task_manager.db is temp_db
     assert components.task_manager.db is temp_db
+    assert create_workflow_engine.call_args.args[9] is config_runtime
 
 
 def _patched_subsystems() -> tuple[SimpleNamespace, SimpleNamespace]:
@@ -195,6 +201,7 @@ def _create_kwargs(session_manager: SessionManager, default_config: DaemonConfig
         "get_machine_id": lambda: "21000000-0000-4000-8000-000000000001",
         "resolve_project_id": lambda _project_id, _cwd: "project-1",
         "session_manager": session_manager,
+        "config_runtime": MagicMock(),
     }
 
 

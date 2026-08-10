@@ -232,7 +232,11 @@ class ConfigStore:
             self._bind_secret_store(secret_store)
         snapshot = self.repository.read(resolve_secrets=False)
         preserved = set(preserved_secret_keys)
-        keys = frozenset(key for key in snapshot.overrides if key not in preserved)
+        keys = frozenset(
+            key
+            for key in snapshot.overrides
+            if key not in preserved and key not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS
+        )
         result = self._apply_internal(
             ConfigPatch(unset=keys),
             source="user",
