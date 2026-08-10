@@ -14,9 +14,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.build.dispatch_tick import DispatcherTickSummary
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronScheduler
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.system_automation import SystemAutomationLoop
@@ -82,17 +83,12 @@ def test_system_automation_config_defaults_enabled_with_sixty_second_interval() 
     assert config.system_loops.automation.interval_seconds == 60
 
 
-def test_config_store_overrides_system_automation_config(tmp_path) -> None:
-    class DummyConfigStore:
-        def get_all(self) -> dict[str, object]:
-            return {
-                "system_loops.automation.enabled": False,
-                "system_loops.automation.interval_seconds": 7,
-            }
-
-    config = load_config(
-        config_file=str(tmp_path / "bootstrap.yaml"),
-        config_store=DummyConfigStore(),
+def test_runtime_candidate_overrides_system_automation_config() -> None:
+    config = ConfigRepository(MagicMock()).runtime_candidate(
+        {
+            "system_loops.automation.enabled": False,
+            "system_loops.automation.interval_seconds": 7,
+        }
     )
 
     assert config.system_loops.automation.enabled is False

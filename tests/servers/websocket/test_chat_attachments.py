@@ -16,7 +16,6 @@ from gobby.servers.websocket.chat_attachments import (
     partition_attachment_items,
     prepare_message_attachments,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -42,9 +41,16 @@ def test_chat_attachment_limits_reject_non_positive_values(kwargs: dict[str, int
         ChatAttachmentLimits(**kwargs)
 
 
-def _owner(temp_db: HubDatabase) -> SimpleNamespace:
+def _owner(
+    temp_db: HubDatabase,
+    *,
+    daemon_config: DaemonConfig | None = None,
+    config_runtime: object | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
-        session_manager=SimpleNamespace(db=temp_db), daemon_config=DaemonConfig()
+        session_manager=SimpleNamespace(db=temp_db),
+        daemon_config=daemon_config or DaemonConfig(),
+        config_runtime=config_runtime,
     )
 
 
@@ -99,21 +105,28 @@ async def test_prepare_message_attachments_binds_ids_and_formats_safe_context(
 
 
 @pytest.mark.asyncio
-async def test_prepare_message_attachments_honors_config_store_file_count(
+async def test_prepare_message_attachments_honors_active_file_count(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    ConfigStore(temp_db).set_many(
-        {
-            "chat.attachment_max_files_per_message": 1,
-            "chat.attachment_max_total_bytes_per_message": 100_000_000,
+    active_config = DaemonConfig(
+        chat={
+            "attachment_max_files_per_message": 1,
+            "attachment_max_total_bytes_per_message": 100_000_000,
         }
+    )
+    runtime = SimpleNamespace(
+        ready=True,
+        capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=active_config)),
     )
     first = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_1)
     second = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_2)
 
     with pytest.raises(ValueError, match="Too many attachments"):
-        await prepare_message_attachments(_owner(temp_db), [{"id": first}, {"id": second}])
+        await prepare_message_attachments(
+            _owner(temp_db, config_runtime=runtime),
+            [{"id": first}, {"id": second}],
+        )
 
 
 @pytest.mark.asyncio
@@ -121,17 +134,17 @@ async def test_prepare_message_attachments_checks_current_file_size_limit_before
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    ConfigStore(temp_db).set_many(
-        {
-            "chat.attachment_max_file_bytes": 4,
-            "chat.attachment_max_total_bytes_per_message": 4,
+    daemon_config = DaemonConfig(
+        chat={
+            "attachment_max_file_bytes": 4,
+            "attachment_max_total_bytes_per_message": 4,
         }
     )
     attachment_id = _attachment(temp_db, tmp_path, size_bytes=5)
 
     with pytest.raises(ValueError, match="exceeds configured 4 byte limit"):
         await prepare_message_attachments(
-            _owner(temp_db),
+            _owner(temp_db, daemon_config=daemon_config),
             [{"id": attachment_id}],
             conversation_id="conv-1",
         )
@@ -148,13 +161,13 @@ async def test_prepare_message_attachments_checks_current_total_size_limit_befor
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_total_bytes_per_message", 8)
+    daemon_config = DaemonConfig(chat={"attachment_max_total_bytes_per_message": 8})
     first = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_1, size_bytes=5)
     second = _attachment(temp_db, tmp_path, attachment_id=ATT_ID_2, size_bytes=5)
 
     with pytest.raises(ValueError, match="exceed configured 8 byte total limit"):
         await prepare_message_attachments(
-            _owner(temp_db),
+            _owner(temp_db, daemon_config=daemon_config),
             [{"id": first}, {"id": second}],
             conversation_id="conv-1",
         )

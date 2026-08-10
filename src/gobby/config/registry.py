@@ -579,6 +579,7 @@ _MANAGED_EMBEDDING_PATHS = frozenset(
         EMBEDDING_CATALOG_KEY_FIELD,
     )
 )
+_SECRET_REFERENCE_PATHS = frozenset({"databases.falkordb.password"})
 _MACHINE_EXPORT_KEYS = frozenset(
     {
         AI_EMBEDDING_MODEL_KEY,
@@ -637,7 +638,9 @@ def _activation(source_path: str) -> ActivationPolicy:
 
 def _secrecy(source_path: str) -> ConfigSecrecy:
     name = source_path.rsplit(".", 1)[-1]
-    return ConfigSecrecy.REFERENCE if "api_key" in name else ConfigSecrecy.NONE
+    if source_path in _SECRET_REFERENCE_PATHS or "api_key" in name:
+        return ConfigSecrecy.REFERENCE
+    return ConfigSecrecy.NONE
 
 
 def _pattern_from_mapping(leaf: _Leaf, pattern: str) -> ConfigPatternSpec:

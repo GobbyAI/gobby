@@ -150,9 +150,10 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.embedding_switch_coordinator = None
     try:
         from gobby.ai.embedding_switch_service import EmbeddingSwitchCoordinator
+        from gobby.storage.config_store import ConfigStore
 
         runner.embedding_switch_coordinator = EmbeddingSwitchCoordinator(
-            config_store=runner.config_store,
+            config_store=ConfigStore(runner.database, secret_store=runner.secret_store),
             db=runner.database,
             fence=runner.project_write_fence,
             config_runtime=runner.config_runtime,

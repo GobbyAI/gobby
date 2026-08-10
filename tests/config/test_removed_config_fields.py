@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from dataclasses import fields
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
 
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig
 from gobby.config.build import BuildConfig, load_build_config
 from gobby.config.code_index import CodeIndexConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.tasks import TaskExpansionConfig
+from gobby.storage.config_repository import ConfigRepository, UnknownStoredConfigKeyError
 from gobby.storage.config_store import flatten_config
 
 pytestmark = pytest.mark.unit
@@ -141,24 +143,8 @@ def test_flattened_defaults_emit_no_removed_config_paths() -> None:
     }.isdisjoint(flattened)
 
 
-def test_load_config_rejects_removed_config_fields(tmp_path: Path) -> None:
-    class DummyConfigStore:
-        def __init__(self) -> None:
-            self.deleted: list[str] = []
+def test_runtime_candidate_rejects_removed_config_fields() -> None:
+    repository = ConfigRepository(MagicMock())
 
-        def get_all(self) -> dict[str, object]:
-            return dict(REMOVED_CONFIG_STORE_ROWS)
-
-        def delete(self, key: str) -> bool:
-            self.deleted.append(key)
-            return True
-
-    store = DummyConfigStore()
-
-    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
-        load_config(
-            config_file=str(tmp_path / "bootstrap.yaml"),
-            config_store=store,
-        )
-
-    assert store.deleted == []
+    with pytest.raises(UnknownStoredConfigKeyError):
+        repository.runtime_candidate(dict(REMOVED_CONFIG_STORE_ROWS))

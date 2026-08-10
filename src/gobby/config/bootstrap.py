@@ -40,11 +40,6 @@ DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 AuthMode = Literal["required", "disabled"]
 DatastoreMode = Literal["local", "remote"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
-HUB_BACKEND_POSTGRES_REQUIRED = (
-    "Only the PostgreSQL hub backend is supported. "
-    f"Run `gobby postgres install` to write PostgreSQL settings; "
-    f"see {HUB_BACKEND_MIGRATION_DOCS}."
-)
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
     "database_url is required in bootstrap.yaml. "
     f"Run `gobby postgres install`; see {HUB_BACKEND_MIGRATION_DOCS}."

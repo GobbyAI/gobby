@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
 from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
@@ -65,7 +65,7 @@ def init_runtime_capacity(runner: GobbyRunner) -> None:
     postgres_database = cast(PostgresHubDatabase, runner.database)
     database_capacity = postgres_database.server_capacity()
     runner.database_concurrency = resolve_database_concurrency(
-        runner.config.database_concurrency,
+        runner.startup_config.database_concurrency,
         database_capacity,
         cpu_count=os.process_cpu_count() or 1,
     )
@@ -81,7 +81,11 @@ def init_runtime_capacity(runner: GobbyRunner) -> None:
         logger.warning(runner.database_concurrency.hardware_warning)
     logger.info("Database concurrency: %s", runner.database_concurrency.as_dict())
 
-    init_telemetry(runner.config.telemetry, runner.config.logging, verbose=runner.verbose)
+    init_telemetry(
+        runner.startup_config.telemetry,
+        runner.startup_config.logging,
+        verbose=runner.verbose,
+    )
     runner.database_watchdog = DatabaseSaturationWatchdog(
         postgres_database,
         runner.db_executor,
@@ -104,10 +108,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         runner._config_file,
         resolve_database_url=True,
     )
-    runner.config = load_config(runner._config_file, resolve_database_url=True)
     runner.verbose = verbose
 
-    setup_file_logging(runner.config.logging, verbose=verbose)
+    bootstrap_defaults = DaemonConfig.model_validate(runner.bootstrap_config.to_config_dict())
+    setup_file_logging(bootstrap_defaults.logging, verbose=verbose)
 
     runner.machine_id = get_machine_id()
 
@@ -133,7 +137,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._tmux_window_repair_task = None
     runner._pending_tasks = set()
 
-    runner.database = init_hub_database(runner.config)
+    runner.database = init_hub_database(runner.bootstrap_config)
     if runner.machine_id is None:
         raise RuntimeError("local machine identity is unavailable")
     runner.machine_id = ensure_machine_identity(runner.database, runner.machine_id)
@@ -155,20 +159,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     from gobby.storage.secrets import SecretStore
 
     runner.secret_store = SecretStore(runner.database)
-    runner.config_store = ConfigStore(runner.database, secret_store=runner.secret_store)
+    auth_config_store = ConfigStore(runner.database, secret_store=runner.secret_store)
     runner.secret_store.ensure_ready()
-    runner.config_store.initialize()
-    from gobby.providers.capabilities.metadata_aliases import seed_model_metadata_aliases
-
-    seed_model_metadata_aliases(runner.config_store)
-    ensure_local_api_token(runner.config_store)
-    runner.config = load_config(
-        config_file=runner._config_file,
-        secret_resolver=runner.secret_store.get,
-        config_store=runner.config_store,
-        resolve_database_url=True,
-    )
-    _warn_missing_terminal_dependency(runner.config)
+    ensure_local_api_token(auth_config_store)
     postgres_database = cast(PostgresHubDatabase, runner.database)
     from gobby.ai.embedding_switch import managed_embedding_projection
     from gobby.config.runtime import ConfigRuntime
@@ -179,6 +172,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         runner.database,
         secret_store=runner.secret_store,
     )
+    config_repository.reconcile_registry()
+    stored_config = config_repository.read()
+    runner.startup_config = config_repository.runtime_candidate(dict(stored_config.overrides))
+    _warn_missing_terminal_dependency(runner.startup_config)
     runner.config_runtime = ConfigRuntime(
         config_repository,
         notification_source=ConfigNotificationListener(
@@ -202,7 +199,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.span_storage = SpanStorage(runner.database)
 
-    if runner.config.telemetry and runner.config.telemetry.traces_enabled:
+    if runner.startup_config.telemetry and runner.startup_config.telemetry.traces_enabled:
         from gobby.telemetry.providers import add_span_storage_exporter
 
         broadcast_loop = asyncio.get_running_loop()
@@ -265,7 +262,6 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
     runner.hub_manager = None
     try:
-        from gobby.config.skills import SkillsConfig
         from gobby.skills.hubs import (
             ClaudePluginsProvider,
             ClawdHubProvider,
@@ -276,7 +272,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         )
         from gobby.skills.hubs.manager import resolve_hub_api_keys
 
-        skills_config = runner.config.skills if hasattr(runner.config, "skills") else SkillsConfig()
+        skills_config = runner.startup_config.skills
         api_keys = resolve_hub_api_keys(skills_config.hubs, runner.secret_store)
 
         runner.hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
@@ -285,9 +281,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
         runner.hub_manager.register_provider_factory("github-collection", GitHubCollectionProvider)
         runner.hub_manager.register_provider_factory("github-topic", GitHubTopicProvider)
         runner.hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
-        runner.hub_manager._skill_description_config = (
-            runner.config.skill_description if hasattr(runner.config, "skill_description") else None
-        )
+        runner.hub_manager._skill_description_config = runner.startup_config.skill_description
         logger.debug("HubManager initialized with %s hubs", len(skills_config.hubs))
     except Exception as e:
         logger.warning("Failed to initialize HubManager: %s", e, exc_info=True)

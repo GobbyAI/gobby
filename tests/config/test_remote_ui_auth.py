@@ -1,13 +1,15 @@
 """Security validation for remotely bound web UI configuration."""
 
-from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.app import DaemonConfig, load_config
+from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.ui import is_loopback_bind_host
+from gobby.servers.http import HTTPServer
 
 pytestmark = pytest.mark.unit
 
@@ -74,14 +76,16 @@ def test_disabled_ui_allows_external_bind_with_disabled_auth() -> None:
     assert not config.ui.enabled
 
 
-def test_phase_two_startup_config_load_refuses_unauthenticated_remote_ui(
-    tmp_path: Path,
-) -> None:
-    bootstrap_path = tmp_path / "bootstrap.yaml"
-    bootstrap_path.write_text("auth_mode: disabled\nbind_host: 0.0.0.0\n")
-    bootstrap_path.chmod(0o600)
-    config_store = MagicMock()
-    config_store.get_all.return_value = {"ui.enabled": True}
+def test_http_server_rejects_remote_ui_when_bootstrap_disables_auth() -> None:
+    services = ServiceContainer(
+        database=MagicMock(),
+        session_manager=MagicMock(),
+        task_manager=MagicMock(),
+    )
 
-    with pytest.raises(ValueError, match="ui.enabled requires auth_mode='required'"):
-        load_config(str(bootstrap_path), config_store=config_store)
+    with pytest.raises(ValueError, match="ui.enabled requires bootstrap auth_mode='required'"):
+        HTTPServer(
+            services=services,
+            startup_config=DaemonConfig(ui={"enabled": True}),
+            bootstrap_config=BootstrapConfig(bind_host="0.0.0.0", auth_mode="disabled"),
+        )

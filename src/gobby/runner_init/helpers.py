@@ -9,14 +9,13 @@ import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Protocol
 
 import psycopg
 from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
-    HUB_BACKEND_POSTGRES_REQUIRED,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import BOOTSTRAP_POOL_SIZE
@@ -31,9 +30,11 @@ _POSTGRES_STARTUP_RETRY_DELAYS = (0.25, 0.5, 1.0, 2.0)
 class DatabasePathConfig(Protocol):
     """Configuration object exposing bootstrap database settings."""
 
-    hub_backend: Literal["postgres"]
-    database_url: str | None
-    postgres_pool: PostgresPoolConfig
+    @property
+    def database_url(self) -> str | None: ...
+
+    @property
+    def postgres_pool(self) -> PostgresPoolConfig: ...
 
 
 class _MigrationDatabase(Protocol):
@@ -78,11 +79,7 @@ def _ensure_headless_settings() -> None:
 
 def init_hub_database(config: DatabasePathConfig) -> Any:
     """Initialize the runtime hub database."""
-    if config.hub_backend != "postgres":
-        logger.warning("Only PostgreSQL is supported for the runtime hub")
-        raise ValueError(HUB_BACKEND_POSTGRES_REQUIRED)
-
-    database_url = getattr(config, "database_url", None)
+    database_url = config.database_url
     if not database_url:
         raise ValueError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 

@@ -791,7 +791,7 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.config.app.load_config", return_value=SimpleNamespace(daemon_port=1234)),
+        patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:1234"),
         patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
         patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.build_resume_target", new=AsyncMock()) as resume_target,

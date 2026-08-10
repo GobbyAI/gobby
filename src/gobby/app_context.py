@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai import TextGenerationService, ToolChatService
-from gobby.config.app import DaemonConfig
 from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
 from gobby.storage.clones import LocalCloneManager
@@ -42,7 +41,6 @@ class ServiceContainer:
     """Container for daemon services."""
 
     # Core Infrastructure
-    config: DaemonConfig | None
     database: HubDatabase
 
     # Core Managers
@@ -112,7 +110,6 @@ class ServiceContainer:
     code_indexer: Any | None = None  # CodeIndexContext
 
     # Config
-    config_store: Any | None = None  # ConfigStore
     config_runtime: ConfigRuntime | None = None
     config_documents_service: Any | None = None  # ConfigDocumentsService
     config_values_service: Any | None = None  # ConfigValuesService
@@ -238,6 +235,10 @@ class ServiceContainer:
             if execution_manager is None:
                 return None
 
+            runtime = self.config_runtime
+            pipeline_config = (
+                runtime.capture().snapshot.active.pipelines if runtime is not None else None
+            )
             pe = PipelineExecutor(
                 db=self.database,
                 execution_manager=execution_manager,
@@ -247,7 +248,7 @@ class ServiceContainer:
                 session_manager=self.session_manager,
                 completion_registry=self.completion_registry,
                 run_db=self.run_db,
-                pipeline_config=self.config.pipelines if self.config else None,
+                pipeline_config=pipeline_config,
             )
 
             # Wire event broadcasting via WebSocket

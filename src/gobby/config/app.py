@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import logging
 import os
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from gobby.config._loading import (
-    _reject_removed_file_config_sections,
-    _resolve_config_values,
-    _restore_bootstrap_pre_database_settings,
     apply_cli_overrides,
     deep_merge,
     expand_env_vars,
@@ -35,7 +31,6 @@ from gobby.config.communications import CommunicationsConfig
 from gobby.config.cron import CronConfig
 from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.database_concurrency import DatabaseConcurrencyConfig
-from gobby.config.embedding_keys import storage_embedding_config_entries_to_runtime
 from gobby.config.extensions import HookExtensionsConfig
 from gobby.config.feature_base import iter_feature_default_configs, validate_feature_candidates
 from gobby.config.features import (
@@ -104,7 +99,6 @@ __all__ = [
     "load_yaml",
     "apply_cli_overrides",
     "export_config_to_yaml",
-    "load_config",
 ]
 
 logger = logging.getLogger(__name__)
@@ -150,13 +144,9 @@ class DaemonConfig(BaseModel):
     """
     Main configuration for Gobby daemon.
 
-    Configuration is loaded with the following priority:
-    1. CLI arguments (highest)
-    2. DB config_store (runtime settings)
-    3. Pydantic defaults (lowest)
-
-    Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    database_url, and postgres_pool) are read from ~/.gobby/bootstrap.yaml.
+    ConfigRuntime owns revisioned runtime snapshots built from the registry and
+    database overrides. Restart-bound topology and authentication settings are
+    projected once from ~/.gobby/bootstrap.yaml during daemon startup.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
     """
@@ -543,91 +533,3 @@ class DaemonConfig(BaseModel):
             if candidates is not None:
                 feature_config.candidates = validate_feature_candidates(candidates)
         return self
-
-
-def load_config(
-    config_file: str | None = None,
-    cli_overrides: dict[str, Any] | None = None,
-    secret_resolver: Callable[[str], str | None] | None = None,
-    config_store: Any | None = None,
-    resolve_database_url: bool = False,
-) -> DaemonConfig:
-    """
-    Load configuration with hierarchy: CLI > DB > bootstrap > Pydantic defaults.
-
-    When config_store is provided (Phase 2), config is loaded from the database.
-    Otherwise reads bootstrap.yaml for pre-DB settings (Phase 1).
-
-    Args:
-        config_file: Path hint for locating bootstrap.yaml (default: ~/.gobby/)
-        cli_overrides: Dictionary of CLI argument overrides
-        secret_resolver: Optional callable for resolving secrets (checked before env vars)
-        config_store: Optional ConfigStore instance for DB-first resolution
-        resolve_database_url: Require bootstrap database_url for runtime DB startup
-
-    Returns:
-        Validated DaemonConfig instance
-
-    Raises:
-        ValueError: If configuration is invalid or required fields are missing
-    """
-    if config_store is not None:
-        # Phase 2: bootstrap → config file → DB → Pydantic defaults.
-        # Each layer overrides the previous one.
-        from gobby.config.bootstrap import load_bootstrap
-        from gobby.storage.config_store import unflatten_config
-
-        # Layer 1: bootstrap values (ports, db_path, bind_host, hub backend)
-        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
-        config_dict: dict[str, Any] = bootstrap.to_config_dict()
-
-        # Layer 2: config file values (non-bootstrap settings like test_mode,
-        # memory, logging, etc.). Only read if config_file points to a full
-        # config YAML (not bootstrap.yaml itself).
-        if config_file:
-            config_path = Path(config_file)
-            if config_path.exists() and config_path.name != "bootstrap.yaml":
-                try:
-                    file_dict = load_yaml(str(config_path), secret_resolver=secret_resolver)
-                except (OSError, ValueError) as e:
-                    logger.warning("Ignoring unreadable config file %s: %s", config_path, e)
-                else:
-                    _reject_removed_file_config_sections(file_dict, config_path)
-                    deep_merge(config_dict, file_dict)
-
-        # Layer 3: DB values (runtime overrides via config_store)
-        flat_db = config_store.get_all()
-        if flat_db:
-            db_dict = unflatten_config(storage_embedding_config_entries_to_runtime(flat_db))
-            # Resolve $secret:NAME and ${VAR} patterns in DB values
-            if secret_resolver is not None or any(
-                isinstance(v, str) and ("$secret:" in v or "${" in v) for v in flat_db.values()
-            ):
-                db_dict = _resolve_config_values(db_dict, secret_resolver)
-            # Deep merge: DB values override config file and bootstrap
-            deep_merge(config_dict, db_dict)
-        _restore_bootstrap_pre_database_settings(config_dict, bootstrap)
-    else:
-        # Phase 1: bootstrap.yaml for pre-DB settings (ports and hub connection).
-        from gobby.config.bootstrap import load_bootstrap
-
-        bootstrap = load_bootstrap(config_file, resolve_database_url=resolve_database_url)
-        config_dict = bootstrap.to_config_dict()
-
-    # Apply CLI argument overrides
-    config_dict = apply_cli_overrides(config_dict, cli_overrides)
-
-    # SAFETY SWITCH: Protect production resources during tests
-    # If GOBBY_TEST_PROTECT is set, force safe paths from environment
-    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
-        _apply_test_logging_overrides(config_dict)
-    # Validate and create config object
-    try:
-        config = DaemonConfig(**config_dict)
-        return config
-    except Exception as e:
-        source = "database" if config_store is not None else "bootstrap.yaml"
-        raise ValueError(
-            f"Configuration validation failed: {e}\n"
-            f"Please check your configuration source: {source}"
-        ) from e

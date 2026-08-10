@@ -275,10 +275,9 @@ class TestRunPipeline:
         client.call_http_api.return_value = response
 
         with (
-            patch("gobby.config.app.load_config") as mock_config,
+            patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:9999"),
             patch("gobby.utils.daemon_client.DaemonClient", return_value=client),
         ):
-            mock_config.return_value.daemon_port = 9999
             result = runner.invoke(pipelines, ["run", "deploy"])
 
         assert result.exit_code == 1
@@ -308,11 +307,10 @@ class TestRunPipeline:
         execution.outputs_json = None
 
         with (
-            patch("gobby.config.app.load_config") as mock_config,
+            patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:9999"),
             patch("gobby.utils.daemon_client.DaemonClient", return_value=client),
             patch("gobby.cli.pipelines.asyncio.run", return_value=execution),
         ):
-            mock_config.return_value.daemon_port = 9999
             result = runner.invoke(pipelines, ["run", "deploy"])
 
         assert result.exit_code == 0

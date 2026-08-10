@@ -108,7 +108,7 @@ class TestGobbyRunnerInit:
 
             runner = GobbyRunner(config_path=config_file, verbose=True)
 
-            assert runner.config == mock_config_with_websocket
+            assert runner.startup_config == mock_config_with_websocket
             assert runner.verbose is True
             assert runner.machine_id == "00000000-0000-4000-8000-000000000001"
             assert runner._shutdown_requested is False
@@ -119,11 +119,10 @@ class TestGobbyRunnerInit:
             mock_ws_cls.assert_called_once()
 
     def test_telemetry_uses_phase_two_config(self) -> None:
-        bootstrap_config = apply_safe_runner_config_defaults(MagicMock())
         runtime_config = apply_safe_runner_config_defaults(MagicMock())
         runtime_config.telemetry.exporter.otlp_endpoint = "https://collector.example/v1/traces"
         runtime_config.telemetry.exporter.otlp_headers = {"Authorization": "resolved-runtime-token"}
-        patches = create_base_patches(mock_config=bootstrap_config)
+        patches = create_base_patches(mock_config=runtime_config)
 
         with ExitStack() as stack:
             mocks = [stack.enter_context(p) for p in patches]
@@ -131,13 +130,11 @@ class TestGobbyRunnerInit:
                 patch_context.attribute: entered_mock
                 for patch_context, entered_mock in zip(patches, mocks, strict=True)
             }
-            mock_load_config = mocks_by_attribute["load_config"]
-            mock_load_config.side_effect = [bootstrap_config, runtime_config]
-
             runner = GobbyRunner()
 
+            bootstrap_defaults = DaemonConfig.model_validate(BootstrapConfig().to_config_dict())
             mocks_by_attribute["setup_file_logging"].assert_called_once_with(
-                bootstrap_config.logging,
+                bootstrap_defaults.logging,
                 verbose=False,
             )
             mocks_by_attribute["init_telemetry"].assert_called_once_with(
@@ -145,13 +142,12 @@ class TestGobbyRunnerInit:
                 runtime_config.logging,
                 verbose=False,
             )
-            assert runner.config is runtime_config
-            assert runner.config.telemetry.exporter.otlp_headers == {
+            assert runner.startup_config is runtime_config
+            assert runner.startup_config.telemetry.exporter.otlp_headers == {
                 "Authorization": "resolved-runtime-token"
             }
-            phase_two_call = mock_load_config.call_args_list[1]
-            assert phase_two_call.kwargs["config_store"] is runner.config_store
-            assert phase_two_call.kwargs["secret_resolver"] == runner.secret_store.get
+            repository = mocks_by_attribute["ConfigRepository"].return_value
+            repository.runtime_candidate.assert_called_once_with({})
 
     async def test_trace_export_broadcasts_from_worker_thread(
         self,
@@ -194,14 +190,12 @@ class TestGobbyRunnerInit:
         assert runner._pending_tasks == set()
 
     def test_secret_envelope_initialization_failure_aborts_startup(self) -> None:
-        mock_config = DaemonConfig(database_url="$secret:DB_URL")
         mock_db = MagicMock()
         mock_store = MagicMock()
         mock_store.ensure_ready.side_effect = RuntimeError("secret envelope initialization failed")
         mock_config_store = MagicMock()
 
         with (
-            patch("gobby.runner_init.storage.load_config", return_value=mock_config),
             patch(
                 "gobby.runner_init.storage.load_bootstrap",
                 return_value=BootstrapConfig(database_url="postgresql://localhost/gobby"),
@@ -260,7 +254,7 @@ class TestGobbyRunnerInit:
         from gobby.runner_init import services
 
         runner = SimpleNamespace(
-            config=SimpleNamespace(
+            startup_config=SimpleNamespace(
                 memory=SimpleNamespace(),
                 knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
                 embeddings=SimpleNamespace(
@@ -895,7 +889,7 @@ class TestGobbyRunnerInitialization:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
-            assert runner.config is mock_config
+            assert runner.startup_config is mock_config
             assert runner.agent_runner is None
             assert runner.memory_backup_manager is None
 

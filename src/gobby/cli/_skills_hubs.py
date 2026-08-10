@@ -123,10 +123,12 @@ def _store_hub_config(
     hub_config: dict[str, Any],
 ) -> None:
     try:
+        from gobby.storage.config_mutations import ConfigPatch
         from gobby.storage.config_store import ConfigStore
 
         store = ConfigStore(db)
-        existing = store.get(f"skills.hubs.{name}.type")
+        snapshot = store.read_snapshot()
+        existing = snapshot.overrides.get(f"skills.hubs.{name}.type")
         if existing is not None:
             click.echo(
                 f"Error: Hub '{name}' already exists. Use 'hub remove' first to replace it.",
@@ -134,8 +136,12 @@ def _store_hub_config(
             )
             sys.exit(1)
 
-        for key, value in hub_config.items():
-            store.set(f"skills.hubs.{name}.{key}", value, source="cli")
+        store.patch(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(
+                values={f"skills.hubs.{name}.{key}": value for key, value in hub_config.items()}
+            ),
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error: Failed to save hub config: {exc}", err=True)
         sys.exit(1)

@@ -146,7 +146,7 @@ def _service_environment(
     *,
     required_profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
 ) -> dict[str, str]:
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_repository import ConfigRepository
     from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
 
@@ -164,47 +164,34 @@ def _service_environment(
         ) from exc
 
     try:
-        store = ConfigStore(db)
         secret_store = SecretStore(db, gobby_home=gobby_home)
-        keys = set(store.list_keys())
+        snapshot = ConfigRepository(db, secret_store=secret_store).read(resolve_secrets=False)
+        config_values = snapshot.values
         values: dict[str, str] = {}
 
-        qdrant_keys = {"databases.qdrant.url", "databases.qdrant.port"}
-        present_qdrant = keys & qdrant_keys
         if "qdrant" in required_profiles:
-            if present_qdrant != qdrant_keys:
+            qdrant_url = config_values.get("databases.qdrant.url")
+            if not isinstance(qdrant_url, str) or not qdrant_url.strip():
                 raise ComposeEnvironmentError(
-                    "Qdrant config is required; databases.qdrant.url and "
-                    "databases.qdrant.port must both be set by `gobby install`"
+                    "Qdrant config is required; databases.qdrant.url must be set by `gobby install`"
                 )
             qdrant_port = _positive_port(
-                store.get("databases.qdrant.port"),
+                config_values.get("databases.qdrant.port"),
                 "databases.qdrant.port",
             )
             values["GOBBY_QDRANT_HTTP_PORT"] = str(qdrant_port)
             values["GOBBY_QDRANT_GRPC_PORT"] = str(qdrant_port + 1)
 
-        falkor_keys = {
-            "databases.falkordb.host",
-            "databases.falkordb.port",
-            "databases.falkordb.password",
-        }
-        present_falkor = keys & falkor_keys
         if "falkordb" in required_profiles:
-            if present_falkor != falkor_keys:
-                raise ComposeEnvironmentError(
-                    "FalkorDB config is required; host, port, and password must all be set "
-                    "by `gobby install`"
-                )
             falkor_port = _positive_port(
-                store.get("databases.falkordb.port"),
+                config_values.get("databases.falkordb.port"),
                 "databases.falkordb.port",
             )
-            falkor_host_value = store.get("databases.falkordb.host")
+            falkor_host_value = config_values.get("databases.falkordb.host")
             if not isinstance(falkor_host_value, str) or not falkor_host_value.strip():
                 raise ComposeEnvironmentError("databases.falkordb.host must be a non-empty string")
             falkor_host = falkor_host_value.strip()
-            password_ref = store.get("databases.falkordb.password")
+            password_ref = config_values.get("databases.falkordb.password")
             if not isinstance(password_ref, str) or not password_ref.startswith("$secret:"):
                 raise ComposeEnvironmentError(
                     "databases.falkordb.password must be a SecretStore reference"

@@ -36,8 +36,7 @@ from gobby.cli.installers.embedding import (
     _setup_lmstudio,
     _setup_ollama,
 )
-from gobby.config.app import load_config
-from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
+from gobby.config.app import DaemonConfig
 from gobby.github_triage.issue_index import issue_point_id
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
@@ -113,10 +112,10 @@ class SwitchRunReport:
         return self.error is not None
 
 
-def detect_provider_from_config(config_store: Any) -> str:
+def detect_provider_from_config(config: DaemonConfig) -> str:
     """Infer the provider from the active API base, matching the previous CLI behavior."""
-    current_api_base = config_store.get(AI_EMBEDDING_API_BASE_KEY)
-    if isinstance(current_api_base, str):
+    current_api_base = config.embeddings.api_base
+    if current_api_base:
         if "11434" in current_api_base:
             return "ollama"
         if "1234" in current_api_base:
@@ -149,7 +148,7 @@ class EmbeddingSwitchRunner:
         """Capture one configuration epoch for the entire switch run."""
         if self._run_config is None:
             if self.config_runtime is None:
-                self._run_config = load_config(config_store=self.config_store)
+                self._run_config = DaemonConfig()
             else:
                 snapshot = self.config_runtime.snapshot
                 self._run_config = (snapshot() if callable(snapshot) else snapshot).active

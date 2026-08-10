@@ -27,7 +27,6 @@ from gobby.ai.embedding_switch_service import (
     EmbeddingSwitchCoordinator,
     EmbeddingSwitchTaskActive,
 )
-from gobby.config.app import load_config
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_DIM_KEY,
@@ -247,7 +246,8 @@ async def test_switch_recovery_uses_runtime_snapshot(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config = load_config(config_store=ConfigStore(temp_db))
+    repository = ConfigRepository(temp_db)
+    config = repository.runtime_candidate(dict(repository.read().overrides))
 
     class Runtime:
         def __init__(self) -> None:
@@ -260,9 +260,8 @@ async def test_switch_recovery_uses_runtime_snapshot(
     runtime = Runtime()
     monkeypatch.setattr(
         embedding_switch_runner,
-        "load_config",
-        lambda **_kwargs: pytest.fail("switch recovery rebuilt configuration"),
-        raising=False,
+        "DaemonConfig",
+        lambda: pytest.fail("switch recovery rebuilt configuration"),
     )
     runner = EmbeddingSwitchRunner(ConfigStore(temp_db), temp_db, config_runtime=runtime)
 

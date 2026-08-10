@@ -33,10 +33,10 @@ def resolve_agent_name(
     if existing_agent_type and existing_agent_type != "default":
         return str(existing_agent_type)
 
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_repository import ConfigRepository
 
-    config_store = ConfigStore(handler._session_manager.db)
-    return config_store.get("default_agent") or "default"
+    values = ConfigRepository(handler._session_manager.db).read().values
+    return str(values.get("default_agent") or "default")
 
 
 def build_agent_changes(

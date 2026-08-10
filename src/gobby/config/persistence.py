@@ -170,13 +170,9 @@ class DatabasesConfig(BaseModel):
 def is_falkordb_enabled(databases: DatabasesConfig) -> bool:
     """Whether the FalkorDB knowledge-graph backend is active.
 
-    Activation signal: the installer wrote `databases.falkordb.password`
-    into config_store and `load_config(config_store=..., secret_resolver=...)`
-    successfully resolved it. Default `FalkorConfig.password = None` so the
-    truthy check distinguishes installed-and-resolved from unconfigured.
-
-    Pass a `DatabasesConfig` instance (e.g. `runner.config.databases`), NOT the
-    top-level config — `config` has no top-level `falkordb` attribute.
+    The resolved active projection supplies a non-empty FalkorDB password when
+    the backend is configured. ``FalkorConfig.password`` otherwise defaults to
+    ``None``.
     """
     return bool(databases.falkordb.password)
 

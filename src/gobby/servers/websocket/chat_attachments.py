@@ -9,7 +9,6 @@ import gobby.storage.chat_attachments as chat_attachments
 from gobby.servers.chat_attachment_limits import resolve_chat_attachment_limits
 from gobby.servers.websocket.db import run_db
 from gobby.storage.chat_attachments import ChatAttachmentRecord
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -122,10 +121,12 @@ def _attachment_db(owner: AttachmentOwner) -> HubDatabase:
 
 
 def _resolve_limits_sync(owner: AttachmentOwner) -> tuple[int, int, int]:
-    db = _attachment_db(owner)
+    daemon_config = owner.daemon_config
+    runtime = getattr(owner, "config_runtime", None)
+    if runtime is not None and runtime.ready:
+        daemon_config = runtime.capture().snapshot.active
     limits = resolve_chat_attachment_limits(
-        config_store=ConfigStore(db),
-        daemon_config=owner.daemon_config,
+        daemon_config=daemon_config,
     )
     return (
         limits.max_file_bytes,
@@ -186,6 +187,7 @@ async def prepare_message_attachments(
     if not attachment_ids:
         return PreparedMessageAttachments(records=[])
 
+    _attachment_db(owner)
     max_file_bytes, max_files_per_message, max_total_bytes = await run_db(
         owner, _resolve_limits_sync, owner
     )

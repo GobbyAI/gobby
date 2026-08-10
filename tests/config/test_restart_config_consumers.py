@@ -77,9 +77,8 @@ def _stored(revision: int, *, test_mode: bool) -> _StoredSnapshot:
     )
 
 
-def _services(config: DaemonConfig, database: HubDatabase) -> ServiceContainer:
+def _services(database: HubDatabase) -> ServiceContainer:
     return ServiceContainer(
-        config=config,
         database=database,
         session_manager=MagicMock(),
         task_manager=MagicMock(),
@@ -109,9 +108,10 @@ async def test_restart_changes_remain_pending() -> None:
     runtime = ConfigRuntime(cast(ConfigSnapshotRepository, repository), registry=_Registry())
     initial = await runtime.start()
     server = HTTPServer(
-        services=_services(initial.active, cast(HubDatabase, MagicMock())),
+        services=_services(cast(HubDatabase, MagicMock())),
         test_mode=initial.active.test_mode,
         bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        startup_config=initial.active,
     )
     middleware_before = tuple(server.app.user_middleware)
 
@@ -121,8 +121,8 @@ async def test_restart_changes_remain_pending() -> None:
     assert changed.desired.test_mode is True
     assert changed.active.test_mode is False
     assert changed.pending_restart_keys == frozenset({"test_mode"})
-    assert server.services.config is not None
-    assert server.services.config.test_mode is False
+    assert server.startup_config is not None
+    assert server.startup_config.test_mode is False
     assert tuple(server.app.user_middleware) == middleware_before
     await runtime.close()
 
@@ -150,20 +150,20 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
         _config_path: object,
         _verbose: bool,
     ) -> None:
-        runner.config = desired
+        runner.startup_config = desired
         runner.config_runtime = cast(ConfigRuntime, runtime)
 
     observed: list[DaemonConfig] = []
     monkeypatch.setattr(GobbyRunner, "_initialize_storage", initialize_storage)
-    monkeypatch.setattr(
-        GobbyRunner,
-        "_initialize_post_database_services",
-        lambda runner: observed.append(runner.config),
-    )
+
+    async def initialize_runtime_services(runner: GobbyRunner) -> None:
+        observed.append(runner.startup_config)
+
+    monkeypatch.setattr(GobbyRunner, "_initialize_runtime_services", initialize_runtime_services)
 
     runner = await GobbyRunner.create()
 
-    assert runner.config is active
+    assert runner.startup_config is active
     assert observed == [active]
 
 
@@ -171,13 +171,12 @@ def test_auth_mode_is_bootstrap_owned() -> None:
     with pytest.raises(UnknownConfigKeyError):
         CONFIG_REGISTRY.resolve("auth_mode")
 
-    services = _services(
-        DaemonConfig(auth_mode="required", ui={"enabled": False}),
-        cast(HubDatabase, MagicMock()),
-    )
+    startup_config = DaemonConfig(auth_mode="required", ui={"enabled": False})
+    services = _services(cast(HubDatabase, MagicMock()))
     server = HTTPServer(
         services=services,
         bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        startup_config=startup_config,
     )
 
     assert server.auth_service.enabled is False
@@ -203,7 +202,7 @@ def test_two_stage_pool_and_executor_sizing() -> None:
         reserved_connections=0,
     )
     runner = SimpleNamespace(
-        config=active,
+        startup_config=active,
         database=database,
         verbose=False,
     )

@@ -430,7 +430,6 @@ def _dispose_async(
 
 def _apply_stateful_services(runner: GobbyRunner) -> None:
     bundle = runner.config_runtime.capture()
-    runner.config = bundle.snapshot.active
     ai = bundle.services.get("ai_services")
     runner.text_generation_service = (
         ai.text_generation_service if isinstance(ai, AIServiceBundle) else None
@@ -465,17 +464,18 @@ def _init_llm_service(runner: GobbyRunner) -> None:
     runner.llm_service = None
     try:
         runner.text_generation_service = build_daemon_text_generation_service(
-            runner.config,
+            runner.startup_config,
         )
         runner.llm_service = create_llm_service(
-            runner.config,
+            runner.startup_config,
             text_generation=runner.text_generation_service,
         )
         runner.tool_chat_service = build_daemon_tool_chat_service(
-            runner.config,
+            runner.startup_config,
             credential_manager=runner.managed_credential_manager,
         )
-        logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
+        if runner.llm_service is not None:
+            logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
     except Exception:
         mark_service_degraded(runner, "llm_service")
         logger.exception("Failed to initialize LLM service")
@@ -529,10 +529,10 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
     runner.vector_store = None
     runner.memory_manager = None
-    if hasattr(runner.config, "memory"):
+    if hasattr(runner.startup_config, "memory"):
         try:
-            db_cfg = runner.config.databases
-            emb_cfg = runner.config.embeddings
+            db_cfg = runner.startup_config.databases
+            emb_cfg = runner.startup_config.embeddings
             embedding_api_key = _resolve_embedding_api_key(runner, emb_cfg)
             embeddings_enabled = False
             if runner.llm_service:
@@ -566,7 +566,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
             runner.memory_manager = MemoryManager(
                 runner.database,
-                runner.config.memory,
+                runner.startup_config.memory,
                 llm_service=runner.llm_service,
                 vector_store=runner.vector_store,
                 embed_fn=embed_fn,
@@ -581,7 +581,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 collection_prefix=db_cfg.qdrant.collection_prefix,
                 run_db=runner.db_executor.run,
                 max_graph_deterministic_attempts=(
-                    runner.config.knowledge_graph_queue.max_deterministic_attempts
+                    runner.startup_config.knowledge_graph_queue.max_deterministic_attempts
                 ),
                 project_write_fence=runner.project_write_fence,
             )
@@ -598,13 +598,13 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
 
 def _init_code_indexer(runner: GobbyRunner) -> None:
     runner.code_indexer = None
-    if hasattr(runner.config, "code_index") and runner.config.code_index.enabled:
+    if runner.startup_config.code_index.enabled:
         try:
             from gobby.code_index.context import CodeIndexContext
             from gobby.code_index.gcode_gateway import GcodeGateway
             from gobby.code_index.storage import CodeIndexStorage
 
-            ci_config = runner.config.code_index
+            ci_config = runner.startup_config.code_index
             ci_storage = CodeIndexStorage(runner.database)
             ci_gcode_gateway = GcodeGateway()
 
@@ -646,19 +646,21 @@ def _init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_proxy = MCPClientManager(
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
-        stdio_errlog_path=str(resolved_log_path(runner.config.logging, RUNTIME_LOG_FILENAME)),
+        stdio_errlog_path=str(
+            resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
+        ),
     )
 
 
 def _init_memory_backup(runner: GobbyRunner) -> None:
     runner.memory_backup_manager = None
-    if hasattr(runner.config, "memory_backup") and runner.config.memory_backup.enabled:
+    if runner.startup_config.memory_backup.enabled:
         if runner.memory_manager:
             try:
                 runner.memory_backup_manager = MemoryBackupManager(
                     db=runner.database,
                     memory_manager=runner.memory_manager,
-                    config=runner.config.memory_backup,
+                    config=runner.startup_config.memory_backup,
                 )
                 logger.debug("MemoryBackupManager initialized")
 
@@ -674,10 +676,10 @@ def _init_memory_backup(runner: GobbyRunner) -> None:
 
 def _init_message_processor(runner: GobbyRunner) -> None:
     runner.message_processor = None
-    if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
+    if runner.startup_config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(
             db=runner.database,
-            poll_interval=runner.config.message_tracking.poll_interval,
+            poll_interval=runner.startup_config.message_tracking.poll_interval,
             session_manager=runner.session_manager,
             run_db=runner.db_executor.run,
         )
@@ -686,7 +688,7 @@ def _init_message_processor(runner: GobbyRunner) -> None:
 def _init_task_validator(runner: GobbyRunner) -> None:
     runner.task_validator = None
 
-    gobby_tasks_config = runner.config.gobby_tasks
+    gobby_tasks_config = runner.startup_config.gobby_tasks
     if not gobby_tasks_config.validation.enabled:
         return
     if runner.llm_service is None:

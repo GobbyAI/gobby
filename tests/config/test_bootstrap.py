@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gobby.config.app import load_config
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
 
@@ -36,11 +35,11 @@ def test_auth_mode_rejects_unknown_value(tmp_path: Path) -> None:
         load_bootstrap(str(bootstrap_path))
 
 
-def test_auth_mode_flows_to_daemon_config(tmp_path: Path) -> None:
+def test_auth_mode_loads_from_bootstrap(tmp_path: Path) -> None:
     bootstrap_path = tmp_path / "bootstrap.yaml"
     _write_bootstrap(bootstrap_path, "auth_mode: disabled\n")
 
-    config = load_config(config_file=str(bootstrap_path))
+    config = load_bootstrap(str(bootstrap_path))
 
     assert config.auth_mode == "disabled"
 
@@ -112,11 +111,11 @@ def test_remote_mode_requires_full_postgresql_dsn(
         load_bootstrap(str(bootstrap_path), resolve_database_url=True)
 
 
-def test_datastore_mode_flows_to_daemon_config(tmp_path: Path) -> None:
+def test_datastore_mode_loads_from_bootstrap(tmp_path: Path) -> None:
     bootstrap_path = tmp_path / "bootstrap.yaml"
     _write_bootstrap(bootstrap_path, "datastore_mode: remote\n")
 
-    config = load_config(config_file=str(bootstrap_path))
+    config = load_bootstrap(str(bootstrap_path))
 
     assert config.datastore_mode == "remote"
 

@@ -6,17 +6,11 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.config_store import ConfigStore
-
 DEFAULT_ATTACHMENT_MAX_FILE_BYTES = 100_000_000
 DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE = 20
 DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE = (
     DEFAULT_ATTACHMENT_MAX_FILE_BYTES * DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE
 )
-
-_MAX_FILE_KEY = "chat.attachment_max_file_bytes"
-_MAX_TOTAL_KEY = "chat.attachment_max_total_bytes_per_message"
-_MAX_COUNT_KEY = "chat.attachment_max_files_per_message"
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +69,9 @@ def _config_default(daemon_config: Any, attr: str, fallback: int) -> int:
 
 def resolve_chat_attachment_limits(
     *,
-    config_store: Any | None = None,
     daemon_config: Any | None = None,
 ) -> ChatAttachmentLimits:
-    """Resolve chat attachment limits from DB config_store, then daemon defaults."""
+    """Resolve chat attachment limits from one typed runtime snapshot."""
     default_max_file = _config_default(
         daemon_config,
         "attachment_max_file_bytes",
@@ -95,32 +88,18 @@ def resolve_chat_attachment_limits(
         DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE,
     )
 
-    store_max_file = None
-    store_max_total = None
-    store_max_count = None
-    if config_store is not None:
-        store_max_file = config_store.get(_MAX_FILE_KEY)
-        store_max_total = config_store.get(_MAX_TOTAL_KEY)
-        store_max_count = config_store.get(_MAX_COUNT_KEY)
-
     return ChatAttachmentLimits(
-        max_file_bytes=_positive_int(store_max_file, default_max_file),
-        max_total_bytes_per_message=_positive_int(store_max_total, default_max_total),
-        max_files_per_message=_positive_int(store_max_count, default_max_count),
+        max_file_bytes=default_max_file,
+        max_total_bytes_per_message=default_max_total,
+        max_files_per_message=default_max_count,
     )
 
 
 def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
-    """Resolve attachment limits from a server's live config store and defaults."""
-    config_store = getattr(server.services, "config_store", None)
-    if config_store is None:
-        database = getattr(server.services, "database", None)
-        if database is not None:
-            config_store = ConfigStore(database)
+    """Resolve attachment limits from a server's current runtime epoch."""
+    runtime = getattr(server.services, "config_runtime", None)
+    if runtime is not None:
+        daemon_config = runtime.capture().snapshot.active
+        return resolve_chat_attachment_limits(daemon_config=daemon_config)
     daemon_config = getattr(server, "config", None)
-    if daemon_config is None:
-        daemon_config = getattr(server.services, "config", None)
-    return resolve_chat_attachment_limits(
-        config_store=config_store,
-        daemon_config=daemon_config,
-    )
+    return resolve_chat_attachment_limits(daemon_config=daemon_config)

@@ -90,12 +90,10 @@ class TestValidateCommandWithNewFlags:
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
     def test_validate_runs_one_read_only_criteria_review(
         self,
         mock_validator_cls: MagicMock,
-        mock_load_config: MagicMock,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
@@ -105,7 +103,6 @@ class TestValidateCommandWithNewFlags:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = DaemonConfig()
         verdict = CloseVerdict(
             status="valid",
             criteria=(CloseCriterionVerdict(1, "Tests pass", True, None),),
@@ -143,12 +140,10 @@ class TestValidateCommandWithNewFlags:
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
     def test_invalid_verdict_prints_actionable_gap(
         self,
         mock_validator_cls: MagicMock,
-        mock_load_config: MagicMock,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
@@ -158,7 +153,6 @@ class TestValidateCommandWithNewFlags:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = DaemonConfig()
         verdict = CloseVerdict(
             status="invalid",
             criteria=(
@@ -194,12 +188,10 @@ class TestValidateCommandWithNewFlags:
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
     def test_provider_error_is_reported_without_task_accounting(
         self,
         mock_validator_cls: MagicMock,
-        mock_load_config: MagicMock,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
@@ -210,7 +202,6 @@ class TestValidateCommandWithNewFlags:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = DaemonConfig()
 
         async def validate(*args: object, **kwargs: object) -> CloseVerdict:
             del args, kwargs
@@ -234,12 +225,10 @@ class TestValidateCommandWithNewFlags:
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
     def test_valid_verdict_never_prints_blocked_text(
         self,
         mock_validator_cls: MagicMock,
-        mock_load_config: MagicMock,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
         runner: CliRunner,
@@ -249,7 +238,6 @@ class TestValidateCommandWithNewFlags:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = DaemonConfig()
 
         async def validate(*args: object, **kwargs: object) -> CloseVerdict:
             del args, kwargs

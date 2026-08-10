@@ -22,6 +22,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import UnavailableService
+from gobby.config.ui import is_loopback_bind_host
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import (
@@ -61,6 +62,7 @@ class HTTPServer:
     def __init__(
         self,
         services: ServiceContainer,
+        startup_config: DaemonConfig | None = None,
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
@@ -71,6 +73,7 @@ class HTTPServer:
 
         Args:
             services: ServiceContainer holding all dependencies
+            startup_config: Immutable startup configuration projection
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             codex_client: CodexAppServerClient instance for Codex integration
@@ -88,11 +91,16 @@ class HTTPServer:
         effective_auth_mode = self.bootstrap_config.auth_mode
         if effective_auth_mode not in ("required", "disabled"):
             raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
-        self.startup_config = (
-            services.config.model_copy(deep=True)
-            if isinstance(services.config, DaemonConfig)
-            else services.config
-        )
+        self.startup_config = startup_config.model_copy(deep=True) if startup_config else None
+        if (
+            self.startup_config
+            and self.startup_config.ui.enabled
+            and effective_auth_mode != "required"
+            and not is_loopback_bind_host(self.bootstrap_config.bind_host)
+        ):
+            raise ValueError(
+                "ui.enabled requires bootstrap auth_mode='required' for a non-loopback bind_host"
+            )
         self.auth_service = AuthService(
             lambda: self.services.database,
             mode=effective_auth_mode,

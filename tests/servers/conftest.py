@@ -62,7 +62,6 @@ def create_http_server(
     task_mgr = MagicMock() if task_manager is _NOT_PROVIDED else task_manager
 
     services = ServiceContainer(
-        config=config,
         database=db,
         session_manager=sess_mgr,
         task_manager=task_mgr,
@@ -86,6 +85,7 @@ def create_http_server(
 
     return HTTPServer(
         services=services,
+        startup_config=config,
         port=port,
         test_mode=test_mode,
         codex_client=codex_client,
@@ -123,7 +123,6 @@ def http_server(
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

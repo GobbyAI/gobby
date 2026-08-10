@@ -127,13 +127,13 @@ def _resolve_falkordb_config_password(db: HubDatabase, value: Any | None) -> str
 def _read_falkordb_connection_config(
     db: HubDatabase,
 ) -> tuple[str | None, int | None, str | None]:
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_repository import ConfigRepository
 
-    store = ConfigStore(db)
-    host_value = store.get("databases.falkordb.host")
-    password_value = store.get("databases.falkordb.password")
+    values = ConfigRepository(db).read(resolve_secrets=False).values
+    host_value = values.get("databases.falkordb.host")
+    password_value = values.get("databases.falkordb.password")
     host = str(host_value) if host_value is not None else None
-    port = _coerce_falkordb_port(store.get("databases.falkordb.port"))
+    port = _coerce_falkordb_port(values.get("databases.falkordb.port"))
     password = _resolve_falkordb_config_password(db, password_value)
     return host, port, password
 
@@ -143,12 +143,15 @@ def is_falkordb_installed(
     db: HubDatabase,
 ) -> bool:
     """Check whether FalkorDB connection keys were recorded in config_store."""
-    from gobby.storage.config_store import ConfigStore
+    from gobby.storage.config_repository import ConfigRepository
 
-    store = ConfigStore(db)
+    snapshot = ConfigRepository(db).read(resolve_secrets=False)
+    password = snapshot.overrides.get("databases.falkordb.password")
     return (
-        store.get("databases.falkordb.host") is not None
-        and store.get("databases.falkordb.port") is not None
+        snapshot.values.get("databases.falkordb.host") is not None
+        and snapshot.values.get("databases.falkordb.port") is not None
+        and isinstance(password, str)
+        and password.startswith("$secret:")
     )
 
 

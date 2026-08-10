@@ -54,7 +54,6 @@ if TYPE_CHECKING:
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.concurrency import CoverageExecutor, DatabaseConcurrencyResolution
     from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
-    from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
     from gobby.storage.executor import DatabaseExecutor
     from gobby.storage.hub.protocol import HubDatabase
@@ -100,7 +99,6 @@ class GobbyRunner:
 
     # Phase 1: storage & config (init_storage_and_config)
     _config_file: str | None
-    config: DaemonConfig
     startup_config: DaemonConfig
     bootstrap_config: BootstrapConfig
     verbose: bool
@@ -153,7 +151,6 @@ class GobbyRunner:
     database_concurrency: DatabaseConcurrencyResolution
     database_watchdog: DatabaseSaturationWatchdog
     secret_store: SecretStore
-    config_store: ConfigStore
     config_runtime: ConfigRuntime
     session_manager: SessionManager
     task_manager: LocalTaskManager
@@ -231,7 +228,6 @@ class GobbyRunner:
             self._initialize_storage(config_path, verbose)
             startup_snapshot = await self.config_runtime.start()
             self.startup_config = startup_snapshot.active
-            self.config = self.startup_config
             await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)
@@ -253,7 +249,6 @@ class GobbyRunner:
         from gobby.runner_init import init_storage_and_config
 
         init_storage_and_config(self, config_path, verbose)
-        self.startup_config = self.config
 
     def _initialize_post_database_services(self) -> None:
         from gobby.runner_init import (

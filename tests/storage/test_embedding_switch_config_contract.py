@@ -16,7 +16,6 @@ from gobby.ai.embedding_switch import (
     record_switch_error,
     start_switch,
 )
-from gobby.config.app import load_config
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
     AI_EMBEDDING_MODEL_KEY,
@@ -24,6 +23,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
 )
 from gobby.storage.config_mutations import ConfigValidationError
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
@@ -51,7 +51,7 @@ def test_internal_switch_journal_is_real_but_invisible_to_public_reads(
     assert store.get(EMBEDDING_SWITCH_JOURNAL_KEY) is None
     assert EMBEDDING_SWITCH_JOURNAL_KEY not in store.get_all()
     assert EMBEDDING_SWITCH_JOURNAL_KEY not in store.list_keys()
-    assert load_config(config_store=store).embeddings is not None
+    assert ConfigRepository(temp_db).runtime_candidate({}).embeddings is not None
 
 
 def test_public_writes_reject_internal_lifecycle_key(temp_db: HubDatabase) -> None:

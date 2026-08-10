@@ -404,7 +404,28 @@
     },
     {
       "activation": "live",
-      "default": [],
+      "default": [
+        {
+          "openrouter_model_id": "anthropic/claude-haiku-4.5",
+          "provider": "droid",
+          "provider_model_id": "claude-haiku-4-5-20251001"
+        },
+        {
+          "openrouter_model_id": "deepseek/deepseek-v4-pro",
+          "provider": "droid",
+          "provider_model_id": "deepseek-v4-pro"
+        },
+        {
+          "openrouter_model_id": "x-ai/grok-4.5",
+          "provider": "droid",
+          "provider_model_id": "grok-4.5"
+        },
+        {
+          "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+          "provider": "droid",
+          "provider_model_id": "nemotron-3-ultra"
+        }
+      ],
       "description": "Provider-scoped aliases into the OpenRouter model metadata registry.",
       "key": "ai.model_metadata_aliases",
       "machineExport": false,
@@ -1203,7 +1224,7 @@
       "key": "databases.falkordb.password",
       "machineExport": false,
       "namespace": "databases",
-      "secrecy": "none",
+      "secrecy": "reference",
       "type": [
         "string",
         "null"

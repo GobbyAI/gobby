@@ -22,11 +22,6 @@ from gobby.ai.embedding_switch_runner import (
     _provider_api_base,
     detect_provider_from_config,
 )
-from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_BASE_KEY,
-    AI_EMBEDDING_CATALOG_KEY,
-    AI_EMBEDDING_DIM_KEY,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +98,8 @@ class EmbeddingSwitchCoordinator:
     async def start(self, catalog_key: str, provider: str | None) -> SwitchOperationStatus:
         async with self._lock:
             self._raise_if_active()
-            provider_name = provider or detect_provider_from_config(self.config_store)
+            config = self._active_config()
+            provider_name = provider or detect_provider_from_config(config)
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,
@@ -224,9 +220,10 @@ class EmbeddingSwitchCoordinator:
             raise EmbeddingSwitchTaskActive(f"Embedding switch {run_id} is already active")
 
     def _start_default_journal(self, _store: Any, catalog_key: str, provider: str) -> Any:
-        current_dim = self.config_store.get(AI_EMBEDDING_DIM_KEY)
-        current_catalog_id = self.config_store.get(AI_EMBEDDING_CATALOG_KEY)
-        current_api_base = self.config_store.get(AI_EMBEDDING_API_BASE_KEY)
+        config = self._active_config()
+        current_dim = config.embeddings.dim
+        current_catalog_id = config.embeddings.catalog_id
+        current_api_base = config.embeddings.api_base
         journal, _spec = start_switch(
             self.config_store,
             catalog_key,
@@ -239,6 +236,14 @@ class EmbeddingSwitchCoordinator:
             target_api_base=_provider_api_base(provider),
         )
         return journal
+
+    def _active_config(self) -> Any:
+        if self.config_runtime is None:
+            from gobby.config.app import DaemonConfig
+
+            return DaemonConfig()
+        snapshot = self.config_runtime.snapshot
+        return (snapshot() if callable(snapshot) else snapshot).active
 
 
 def _default_runner_factory(

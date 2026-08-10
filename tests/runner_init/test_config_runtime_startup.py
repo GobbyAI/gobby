@@ -66,7 +66,7 @@ def _patch_runner_phases(
 ) -> None:
     def storage(runner: GobbyRunner, _path: object, _verbose: bool) -> None:
         events.append("storage")
-        runner.config = DaemonConfig()
+        runner.startup_config = DaemonConfig()
         runner.config_runtime = cast(ConfigRuntime, runtime)
 
     async def services(_runner: GobbyRunner) -> None:
@@ -81,7 +81,6 @@ def _patch_runner_phases(
     def servers(runner: GobbyRunner) -> None:
         events.append("servers")
         container = ServiceContainer(
-            config=None,
             database=MagicMock(),
             session_manager=None,
             task_manager=MagicMock(),

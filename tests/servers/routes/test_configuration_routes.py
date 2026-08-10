@@ -46,6 +46,10 @@ class StubConfigRuntime(ConfigRuntime):
         self.current = snapshot
 
     @property
+    def ready(self) -> bool:
+        return False
+
+    @property
     def snapshot(self) -> ConfigSnapshot:
         return self.current
 
@@ -182,7 +186,7 @@ class TestSecretsEndpoints:
         self, server: Any, mock_machine_id: Any
     ) -> None:
         assert server.auth_service.enabled is False
-        assert server.services.config.bind_host == "localhost"
+        assert server.startup_config.bind_host == "localhost"
         assert server.auth_service.credentials_configured is False
         unauthenticated = TestClient(server.app)
 
@@ -257,8 +261,8 @@ class TestSecretsEndpoints:
             token_file=tmp_path / "non_loopback_token",
         )
         assert http_server.auth_service.enabled is False
-        assert http_server.services.config is not None
-        assert http_server.services.config.bind_host == "0.0.0.0"
+        assert http_server.startup_config is not None
+        assert http_server.startup_config.bind_host == "0.0.0.0"
 
         response = TestClient(http_server.app).post(
             "/api/config/secrets",

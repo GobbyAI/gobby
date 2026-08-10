@@ -144,12 +144,11 @@ def _doctor_payload(config: Any) -> dict[str, Any]:
 def _resolved_namespace() -> str | None:
     try:
         from gobby.cli.runtime import require_cli_database
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_repository import ConfigRepository
 
         # Diagnostic-only read: avoid mutating schema while reporting config health.
-        keys = set(
-            ConfigStore(require_cli_database()).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX)
-        )
+        snapshot = ConfigRepository(require_cli_database()).read(resolve_secrets=False)
+        keys = set(snapshot.overrides)
     except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.debug("Failed to resolve embedding config namespace: %s", exc, exc_info=True)
         return None

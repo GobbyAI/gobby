@@ -19,6 +19,7 @@ from gobby.cli._install_prompts import (
 from gobby.cli._install_state import empty_install_state
 from gobby.cli.install import install as install_command
 from gobby.config.skills import HubConfig, SkillsConfig
+from gobby.storage.config_mutations import ConfigPatch
 
 pytestmark = pytest.mark.unit
 
@@ -344,17 +345,17 @@ class TestVoiceInstall:
 
         with (
             patch("subprocess.run") as mock_subprocess_run,
-            patch("gobby.storage.config_store.ConfigStore") as mock_config_store,
+            patch("gobby.storage.config_mutations.ConfigMutations") as mock_mutations,
         ):
+            mock_mutations.return_value.repository.read.return_value.revision = 41
             _run_voice_install(results, voice_flag=True, db=db)
 
         mock_subprocess_run.assert_not_called()
-        mock_config_store.assert_called_once_with(db)
-        assert mock_config_store.call_count == 1
-        assert mock_config_store.call_args is not None
-        mock_config_store.return_value.set.assert_called_once_with("voice.enabled", True)
-        assert mock_config_store.return_value.set.call_count == 1
-        assert mock_config_store.return_value.set.call_args is not None
+        mock_mutations.assert_called_once_with(db)
+        mock_mutations.return_value.patch.assert_called_once_with(
+            expected_revision=41,
+            patch=ConfigPatch(values={"voice.enabled": True}),
+        )
         assert results["voice"]["success"] is True
 
     def test_reconfigure_can_disable_voice(self) -> None:
@@ -363,8 +364,9 @@ class TestVoiceInstall:
 
         with (
             patch("click.confirm", return_value=False),
-            patch("gobby.storage.config_store.ConfigStore") as config_store,
+            patch("gobby.storage.config_mutations.ConfigMutations") as mock_mutations,
         ):
+            mock_mutations.return_value.repository.read.return_value.revision = 42
             _run_voice_install(
                 results,
                 voice_flag=False,
@@ -374,7 +376,10 @@ class TestVoiceInstall:
                 current_enabled=True,
             )
 
-        config_store.return_value.set.assert_called_once_with("voice.enabled", False)
+        mock_mutations.return_value.patch.assert_called_once_with(
+            expected_revision=42,
+            patch=ConfigPatch(values={"voice.enabled": False}),
+        )
         assert results["voice"] == {"success": True, "enabled": False}
 
 

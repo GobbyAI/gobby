@@ -8,12 +8,8 @@ from collections.abc import Awaitable, Callable
 from threading import Lock
 from typing import Protocol
 
-from gobby.config.ai import model_metadata_alias_source_key
+from gobby.config.ai import ModelMetadataAlias, model_metadata_alias_source_key
 from gobby.llm.context_window_values import positive_context_window
-from gobby.providers.capabilities.metadata_aliases import (
-    AliasConfigReader,
-    load_model_metadata_aliases,
-)
 from gobby.providers.capabilities.models import ProviderSnapshot
 
 logger = logging.getLogger(__name__)
@@ -53,7 +49,7 @@ class ModelMetadataCoverageAuditor:
         self,
         capability_store: _CapabilityStore,
         model_metadata_store: _ModelMetadataStore,
-        config_store: AliasConfigReader,
+        model_metadata_aliases: list[ModelMetadataAlias],
         *,
         run_db: RunDatabase | None = None,
         excluded_models: ExcludedModels | None = None,
@@ -61,7 +57,7 @@ class ModelMetadataCoverageAuditor:
     ) -> None:
         self._capability_store = capability_store
         self._model_metadata_store = model_metadata_store
-        self._config_store = config_store
+        self._model_metadata_aliases = tuple(model_metadata_aliases)
         self._run_db = run_db
         self._excluded_models = excluded_models or _no_excluded_models
         self._excluded_providers = excluded_providers or _no_excluded_providers
@@ -74,7 +70,7 @@ class ModelMetadataCoverageAuditor:
         with self._lock:
             aliases = {
                 (alias.provider, alias.provider_model_id): alias.openrouter_model_id
-                for alias in load_model_metadata_aliases(self._config_store)
+                for alias in self._model_metadata_aliases
             }
             excluded_models = {
                 model_metadata_alias_source_key(provider, model)

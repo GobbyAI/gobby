@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
 from pydantic import TypeAdapter, ValidationError
+from pydantic_core import to_jsonable_python
 
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
@@ -514,7 +515,7 @@ class ConfigMutations:
                    updated_at = EXCLUDED.updated_at""",
             (
                 key,
-                json.dumps(value),
+                json.dumps(to_jsonable_python(value)),
                 source,
                 registry_is_secret(spec, key),
                 revision,

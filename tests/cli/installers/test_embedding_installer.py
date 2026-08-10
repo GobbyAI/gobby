@@ -651,20 +651,13 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_persists_embeddings_namespace_only(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path: Path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
-
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
 
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
@@ -698,20 +691,14 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_none_provider_clears_endpoints(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path: Path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)
@@ -826,20 +813,14 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_openai_provider_uses_unified_namespace(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path: Path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)

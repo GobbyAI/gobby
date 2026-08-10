@@ -1,12 +1,12 @@
 """Tests for tool-result offload configuration and schema."""
 
-from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.app import DaemonConfig, load_config
+from gobby.config.app import DaemonConfig
 from gobby.config.features import ToolResultOffloadConfig
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -30,14 +30,9 @@ def test_tool_result_offload_defaults_and_app_accessor() -> None:
     assert daemon_config.get_tool_result_offload_config() is daemon_config.tool_result_offload
 
 
-def test_tool_result_offload_threshold_config_store_override_wins(tmp_path: Path) -> None:
-    class DummyConfigStore:
-        def get_all(self) -> dict[str, object]:
-            return {"tool_result_offload.threshold_chars": 21_000}
-
-    config = load_config(
-        config_file=str(tmp_path / "missing.yaml"),
-        config_store=DummyConfigStore(),
+def test_tool_result_offload_threshold_runtime_override_wins(temp_db: HubDatabase) -> None:
+    config = ConfigRepository(temp_db).runtime_candidate(
+        {"tool_result_offload.threshold_chars": 21_000}
     )
 
     assert config.tool_result_offload.threshold_chars == 21_000

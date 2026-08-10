@@ -142,8 +142,9 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
     @router.post("/secrets", dependencies=[Depends(require_mutation_auth)])
     async def save_secret(request: SaveSecretRequest) -> JSONResponse:
         try:
-            info = context.get_config_store().set_named_secret(
-                context.get_secret_store(),
+            secret_store = context.get_secret_store()
+            info = ConfigStore(secret_store.db).set_named_secret(
+                secret_store,
                 name=request.name,
                 plaintext_value=request.value,
                 category=request.category,
@@ -161,8 +162,9 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
     @router.delete("/secrets/{name}", dependencies=[Depends(require_mutation_auth)])
     async def delete_secret(name: str) -> JSONResponse:
         try:
-            deleted = context.get_config_store().delete_named_secret(
-                context.get_secret_store(),
+            secret_store = context.get_secret_store()
+            deleted = ConfigStore(secret_store.db).delete_named_secret(
+                secret_store,
                 name,
             )
             if not deleted:

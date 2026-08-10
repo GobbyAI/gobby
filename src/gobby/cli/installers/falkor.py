@@ -76,24 +76,22 @@ def _resolve_falkordb_password(
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(home))
     try:
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_repository import ConfigRepository
         from gobby.storage.secrets import SecretStore
 
-        store = ConfigStore(db)
         secret_store = SecretStore(db, gobby_home=home)
-        keys = set(store.list_keys())
+        snapshot = ConfigRepository(db, secret_store=secret_store).read(resolve_secrets=False)
+        config_values = snapshot.overrides
         required = {
             "databases.falkordb.host",
             "databases.falkordb.port",
             "databases.falkordb.password",
         }
-        present = keys & required
+        present = set(config_values) & required
         if present:
-            if present != required:
-                raise ValueError(
-                    "stored FalkorDB config is incomplete; host, port, and password must all be set"
-                )
-            configured = store.get("databases.falkordb.password")
+            if "databases.falkordb.password" not in present:
+                raise ValueError("stored FalkorDB config is incomplete; password must be set")
+            configured = config_values.get("databases.falkordb.password")
             if not isinstance(configured, str) or not configured.startswith("$secret:"):
                 raise ValueError("stored FalkorDB password must be a SecretStore reference")
             secret_name = configured.removeprefix("$secret:")
@@ -343,26 +341,29 @@ def _update_config(*, port: int, password: str, gobby_home: Path) -> None:
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(gobby_home))
     try:
+        from gobby.storage.config_mutations import ConfigPatch, SecretUpdate
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
-        store = ConfigStore(db)
         secret_store = SecretStore(db, gobby_home=gobby_home)
-        configured_host = store.get("databases.published_host")
+        store = ConfigStore(db, secret_store=secret_store)
+        snapshot = store.read_snapshot()
+        configured_host = snapshot.values.get("databases.published_host")
         host = (
             configured_host.strip()
             if isinstance(configured_host, str) and configured_host.strip()
             else DEFAULT_FALKORDB_HOST
         )
-        with db.transaction():
-            store.set("databases.falkordb.host", host, source="install")
-            store.set("databases.falkordb.port", port, source="install")
-            store.set_secret(
-                "databases.falkordb.password",
-                password,
-                secret_store,
-                source="install",
-            )
+        store.patch(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(
+                values={
+                    "databases.falkordb.host": host,
+                    "databases.falkordb.port": port,
+                },
+                secrets={"databases.falkordb.password": SecretUpdate(password)},
+            ),
+        )
     finally:
         database_stack.close()
 
@@ -371,14 +372,25 @@ def _clear_config(*, gobby_home: Path) -> None:
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(gobby_home))
     try:
+        from gobby.storage.config_mutations import ConfigPatch
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
-        store = ConfigStore(db)
         secret_store = SecretStore(db, gobby_home=gobby_home)
-        store.clear_secret("databases.falkordb.password", secret_store)
-        for key in ("databases.falkordb.host", "databases.falkordb.port"):
-            store.delete(key)
+        store = ConfigStore(db, secret_store=secret_store)
+        snapshot = store.read_snapshot()
+        store.patch(
+            expected_revision=snapshot.revision,
+            patch=ConfigPatch(
+                unset=frozenset(
+                    {
+                        "databases.falkordb.host",
+                        "databases.falkordb.port",
+                        "databases.falkordb.password",
+                    }
+                )
+            ),
+        )
     except Exception as exc:
         logger.warning("Failed to clear FalkorDB config: %s", exc)
     finally:
