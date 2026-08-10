@@ -108,7 +108,7 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="overflow-y-auto border-b border-border" style={{ height: `${topHeight}%` }}>
         <div className="flex flex-col gap-3 p-3">
-          <div className="grid gap-2 [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] max-[560px]:grid-cols-1">
+          <div className="grid gap-2 [grid-template-columns:minmax(9rem,0.45fr)_minmax(12rem,1fr)_auto] mobile:grid-cols-1">
             <SelectField
               label="Hub"
               ariaLabel="Hub source"

@@ -97,11 +97,12 @@ const PIPELINE_SURFACE_FILES = [
 
 const BTN_CLASS = /(?<![\w-])btn(?:-[\w-]+)?\b/g
 const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
-// Viewport variants that hand-roll the mobile-tier breakpoint. The tier is
-// authored once in tailwind-theme.css (width <=767px OR height <=500px, 768px
-// desktop); components must use the shared `mobile:` variant. `@max-[...]`
-// container queries are element-scoped and exempt.
-const TIER_VARIANT = /(?<!@)max-\[76[78]px\]:/g
+// Viewport width variants hand-roll a breakpoint the responsive contract
+// forbids: the tier is authored once in tailwind-theme.css (width <=767px OR
+// height <=500px, 768px desktop) and per-component width thresholds collapse
+// into the shared `mobile:` variant. `@max-[...]` container queries are
+// element-scoped and exempt.
+const TIER_VARIANT = /(?<!@)max-\[\d+px\]:/g
 const IMPORTANT = /!\s*important\b/g
 const RAW_ELEMENTS: Record<RawElement, RegExp> = {
   button: /<button\b/g,
@@ -466,7 +467,7 @@ describe('style ratchet', () => {
     expect([...scan.clsConstant.entries()]).toEqual([])
   })
 
-  it('bans hand-rolled mobile-tier viewport variants', () => {
+  it('bans viewport width variants outside the shared tier', () => {
     expect([...scan.tierVariant.entries()]).toEqual([])
   })
 
