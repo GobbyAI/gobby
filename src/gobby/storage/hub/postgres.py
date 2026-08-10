@@ -134,6 +134,12 @@ class PostgresHubDatabase:
             connect_timeout=10,
             prepare_threshold=None,
             row_factory=dict_row,
+            # An idle LISTEN socket can die silently on NAT/firewall timeouts;
+            # keepalives surface the dead peer so the listener reconnects.
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
         )
         try:
             statement = psycopg_sql.SQL("SET ROLE {}").format(psycopg_sql.Identifier(runtime_role))

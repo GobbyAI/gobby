@@ -1,6 +1,7 @@
 {
   "codec": {
     "invalid": [
+      "",
       "%",
       "%2",
       "%GG",
@@ -9,6 +10,11 @@
       "%7E",
       "raw.dot",
       "raw space",
+      "bad+plus",
+      "bad=equals",
+      "%C0%AF",
+      "%E0%80%AF",
+      "%ED%A0%80",
       "é",
       "%FF"
     ],
@@ -17,6 +23,10 @@
       {
         "decoded": "plain",
         "encoded": "plain"
+      },
+      {
+        "decoded": "AZaz09-_~",
+        "encoded": "AZaz09-_~"
       },
       {
         "decoded": "dot.segment",

@@ -25,6 +25,7 @@ from gobby.storage.config_mutations import (
     ConfigPatch,
     ConfigRevisionExhaustedError,
     ConfigValidationError,
+    EmbeddingConfigMutationBlocked,
     SecretUpdate,
 )
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
@@ -114,6 +115,14 @@ class ConfigDocumentsService:
                 str(exc),
                 tuple(exc.key.split(".")) if exc.key else (),
             ) from exc
+        except EmbeddingConfigMutationBlocked as exc:
+            raise ConfigValuesError(
+                "embedding_mutation_blocked",
+                str(exc),
+                ("content",),
+                status_code=409,
+                retryable=True,
+            ) from exc
         return await self._reconcile(result)
 
     async def export_yaml(self) -> dict[str, object]:
@@ -140,7 +149,14 @@ class ConfigDocumentsService:
                 ("content",),
             )
         self._validate_mapping_keys(parsed)
-        flat = flatten_config(parsed)
+        try:
+            flat = flatten_config(parsed, registry=self.registry)
+        except ValueError as exc:
+            raise ConfigValuesError(
+                "validation_error",
+                str(exc),
+                ("content",),
+            ) from exc
         values: dict[str, object] = {}
         secrets: dict[str, SecretUpdate] = {}
         validation_values: dict[str, object] = {}

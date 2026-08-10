@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Collection, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -35,11 +37,13 @@ from gobby.storage.config_repository import (
     registry_is_secret,
 )
 from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.secret_names import normalize_secret_name
 from gobby.storage.secrets import SecretStore
 from gobby.utils.datetime import utc_now
 
 CONFIG_CHANGED_CHANNEL = "gobby_config_changed"
 _CONFIG_SECRET_NAMES = {"databases.falkordb.password": "falkordb_password"}
+_SECRET_NAME_SANITIZER = re.compile(r"[^a-z0-9_]+")
 
 
 class ConfigMutationError(RuntimeError):
@@ -137,12 +141,19 @@ def embedding_mutation_context(db: Any) -> AbstractContextManager[Transaction]:
 
 
 def config_key_to_secret_name(key: str) -> str:
-    """Return the canonical one-to-one SecretStore name for a config key."""
+    """Return the canonical one-to-one SecretStore name for a config key.
+
+    Secret names are lowercase ASCII identifiers while encoded key segments are
+    case-sensitive, so the sanitized readable part alone cannot be unique; a
+    short digest of the exact key carries the one-to-one guarantee.
+    """
     if secret_name := _CONFIG_SECRET_NAMES.get(key):
         return secret_name
     if secret_name := embedding_config_secret_name(key):
         return secret_name
-    return key.rsplit(".", 1)[-1]
+    sanitized = _SECRET_NAME_SANITIZER.sub("_", key.lower()).strip("_")
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+    return f"config_{sanitized}_{digest}"
 
 
 class ConfigMutations:
@@ -325,7 +336,9 @@ class ConfigMutations:
         omitted = {
             key
             for key in snapshot.overrides
-            if self._key_in_namespace(key, namespace) and key not in requested
+            if self._key_in_namespace(key, namespace)
+            and key not in requested
+            and self._resolve(key).activation is not ActivationPolicy.MANAGED
         }
         return ConfigPatch(
             values=patch.values,
@@ -471,14 +484,22 @@ class ConfigMutations:
         source: str,
         revision: int,
     ) -> None:
+        released: dict[str, set[str]] = {}
+
+        def release_binding(key: str) -> None:
+            binding = snapshot.secret_bindings.get(key)
+            if binding is not None:
+                name = normalize_secret_name(binding.reference.removeprefix("$secret:"))
+                released.setdefault(name, set()).add(key)
+
         for key in sorted(set(patch.unset) & set(changed)):
-            self._delete_secret_binding(key, snapshot)
+            release_binding(key)
             transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
         for key in sorted(set(values) & set(changed)):
             old_binding = snapshot.secret_bindings.get(key)
             new_value = values[key]
             if old_binding is not None and old_binding.reference != new_value:
-                self.secret_store.delete(old_binding.reference.removeprefix("$secret:"))
+                release_binding(key)
             self._upsert(transaction, key, new_value, source, revision)
         for key in sorted(set(patch.secrets) & set(changed)):
             update = patch.secrets[key]
@@ -492,7 +513,32 @@ class ConfigMutations:
             )
             self._upsert(transaction, key, reference, source, revision)
             if old_binding is not None and old_binding.reference != reference:
-                self.secret_store.delete(old_binding.reference.removeprefix("$secret:"))
+                release_binding(key)
+        self._delete_released_secrets(released, references, snapshot)
+
+    def _delete_released_secrets(
+        self,
+        released: Mapping[str, set[str]],
+        references: Mapping[str, str],
+        snapshot: ConfigReadSnapshot,
+    ) -> None:
+        """Delete a released secret only when no config row still references it."""
+        if not released:
+            return
+        holders: dict[str, set[str]] = {}
+        for key, binding in snapshot.secret_bindings.items():
+            name = normalize_secret_name(binding.reference.removeprefix("$secret:"))
+            holders.setdefault(name, set()).add(key)
+        retained = {
+            normalize_secret_name(reference.removeprefix("$secret:"))
+            for reference in references.values()
+        }
+        for name, releasing in released.items():
+            if name in retained:
+                continue
+            if holders.get(name, set()) - releasing:
+                continue
+            self.secret_store.delete(name)
 
     def _upsert(
         self,
@@ -522,11 +568,6 @@ class ConfigMutations:
                 utc_now(),
             ),
         )
-
-    def _delete_secret_binding(self, key: str, snapshot: ConfigReadSnapshot) -> None:
-        binding = snapshot.secret_bindings.get(key)
-        if binding is not None:
-            self.secret_store.delete(binding.reference.removeprefix("$secret:"))
 
     def _resolve(self, key: str) -> RegistrySpec:
         try:

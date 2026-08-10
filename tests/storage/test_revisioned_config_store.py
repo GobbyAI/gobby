@@ -24,6 +24,7 @@ from gobby.storage.config_mutations import (
     ConfigRevisionExhaustedError,
     ConfigValidationError,
     SecretUpdate,
+    config_key_to_secret_name,
     embedding_mutation_context,
 )
 from gobby.storage.config_repository import (
@@ -349,3 +350,170 @@ def test_facade_mutation_reuses_ambient_transaction(revision_db: HubDatabase) ->
         assert store.delete_all() == 1
 
     assert store.get_all() == {}
+
+
+def test_colliding_secret_key_names_stay_distinct(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    first = "ai.generation.endpoints.alpha.api_key"
+    second = "ai.generation.endpoints.beta.api_key"
+    result = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "ai.generation.endpoints.alpha.api_base": "https://alpha.example/v1",
+                "ai.generation.endpoints.alpha.model": "model-a",
+                "ai.generation.endpoints.beta.api_base": "https://beta.example/v1",
+                "ai.generation.endpoints.beta.model": "model-b",
+            },
+            secrets={
+                first: SecretUpdate("alpha-secret"),
+                second: SecretUpdate("beta-secret"),
+            },
+        ),
+    )
+
+    first_name = config_key_to_secret_name(first)
+    second_name = config_key_to_secret_name(second)
+    assert first_name != second_name
+    assert secret_store.get(first_name) == "alpha-secret"
+    assert secret_store.get(second_name) == "beta-secret"
+
+    mutations.patch(
+        expected_revision=result.revision,
+        patch=ConfigPatch(
+            unset=frozenset(
+                {
+                    first,
+                    "ai.generation.endpoints.alpha.api_base",
+                    "ai.generation.endpoints.alpha.model",
+                }
+            )
+        ),
+    )
+
+    assert secret_store.get(first_name) is None
+    assert secret_store.get(second_name) == "beta-secret"
+
+
+def test_shared_secret_reference_survives_partial_unset(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    first = "ai.generation.endpoints.alpha.api_key"
+    second = "ai.generation.endpoints.beta.api_key"
+    result = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "ai.generation.endpoints.alpha.api_base": "https://alpha.example/v1",
+                "ai.generation.endpoints.alpha.model": "model-a",
+                "ai.generation.endpoints.beta.api_base": "https://beta.example/v1",
+                "ai.generation.endpoints.beta.model": "model-b",
+            },
+            secrets={
+                first: SecretUpdate("shared-secret", name="shared_endpoint_key"),
+                second: SecretUpdate("shared-secret", name="shared_endpoint_key"),
+            },
+        ),
+    )
+
+    partial = mutations.patch(
+        expected_revision=result.revision,
+        patch=ConfigPatch(unset=frozenset({first})),
+    )
+    assert secret_store.get("shared_endpoint_key") == "shared-secret"
+
+    mutations.patch(
+        expected_revision=partial.revision,
+        patch=ConfigPatch(unset=frozenset({second})),
+    )
+    assert secret_store.get("shared_endpoint_key") is None
+
+
+def test_namespace_replacement_preserves_managed_embedding_keys(
+    mutations: ConfigMutations,
+) -> None:
+    seeded = mutations.patch_internal(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "ai.embeddings.model": "text-embedding-3-small",
+                "ai.embeddings.dim": 1536,
+                "ai.embeddings.api_base": "https://api.openai.example/v1",
+            }
+        ),
+        source="install",
+    )
+
+    replaced = mutations.replace_namespace(
+        namespace="daemon",
+        expected_revision=seeded.revision,
+        patch=ConfigPatch(values={"websocket.ping_interval": 22}),
+    )
+
+    snapshot = mutations.repository.read(resolve_secrets=False)
+    assert replaced.changed_keys == frozenset({"websocket.ping_interval"})
+    assert snapshot.overrides["ai.embeddings.model"] == "text-embedding-3-small"
+    assert snapshot.overrides["ai.embeddings.dim"] == 1536
+    assert snapshot.overrides["websocket.ping_interval"] == 22
+
+
+def test_facade_decision_snapshot_conflicts_are_detected(
+    revision_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ConfigStore(revision_db)
+    store.set("ui.enabled", True)
+    stale = store.repository.read(resolve_secrets=False)
+    store.set("rules.enforcement_enabled", False)
+
+    monkeypatch.setattr(
+        store.repository,
+        "read",
+        lambda *, resolve_secrets=True: stale,
+    )
+
+    with pytest.raises(ConfigConflictError):
+        store.delete("ui.enabled")
+
+
+def test_convenience_setter_retries_once_on_conflict(
+    revision_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ConfigStore(revision_db)
+    store.set("ui.enabled", True)
+
+    real_current_revision = store.mutations.repository.current_revision
+    calls = {"count": 0}
+
+    def stale_once() -> int:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return 0
+        return real_current_revision()
+
+    monkeypatch.setattr(store.mutations.repository, "current_revision", stale_once)
+
+    store.set("rules.enforcement_enabled", False)
+
+    assert calls["count"] == 2
+    assert store.get("rules.enforcement_enabled") is False
+
+
+def test_ambient_read_is_coherent(revision_db: HubDatabase) -> None:
+    store = ConfigStore(revision_db)
+
+    with embedding_mutation_context(revision_db):
+        empty = store.repository.read(resolve_secrets=False)
+    assert empty.revision == 0
+    assert dict(empty.overrides) == {}
+
+    store.set("ui.enabled", True)
+    with embedding_mutation_context(revision_db):
+        populated = store.repository.read(resolve_secrets=False)
+    assert populated.revision == 1
+    assert populated.overrides["ui.enabled"] is True
+    assert populated.row_revisions == {"ui.enabled": 1}

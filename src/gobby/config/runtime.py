@@ -22,6 +22,7 @@ from gobby.config.runtime_models import (
     RuntimeSecretBinding,
     UnavailableService,
 )
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,7 @@ class ConfigRuntime:
         statement_timeout_ms: int = 5_000,
         lock_timeout_ms: int = 5_000,
         reconnect_backoff: float = 0.1,
+        revision_poll_interval: float = 30.0,
         expected_secret_identity: str | None = None,
         secret_identity_verifier: Callable[[], str] | None = None,
         managed_resolver: Callable[[StoredConfigSnapshot], Mapping[str, object]] | None = None,
@@ -183,6 +185,7 @@ class ConfigRuntime:
         self._statement_timeout_ms = statement_timeout_ms
         self._lock_timeout_ms = lock_timeout_ms
         self._reconnect_backoff = reconnect_backoff
+        self._revision_poll_interval = revision_poll_interval
         self._expected_secret_identity = expected_secret_identity
         self._secret_identity_verifier = secret_identity_verifier
         self._managed_resolver = managed_resolver
@@ -190,6 +193,7 @@ class ConfigRuntime:
         self._max_requested_revision = -1
         self._bundle: RuntimeActiveBundle | None = None
         self._listener_task: asyncio.Task[None] | None = None
+        self._poll_task: asyncio.Task[None] | None = None
         self._revision_publisher: Callable[[int], Awaitable[None]] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ready = False
@@ -261,6 +265,11 @@ class ConfigRuntime:
                     self._listen(),
                     name="config-runtime-listener",
                 )
+                if callable(getattr(self._repository, "current_revision", None)):
+                    self._poll_task = asyncio.create_task(
+                        self._poll_revisions(),
+                        name="config-runtime-revision-poll",
+                    )
             return snapshot
         except BaseException:
             self._healthy = False
@@ -273,6 +282,7 @@ class ConfigRuntime:
             raise ValueError("Configuration revision must be non-negative")
         if self._closed:
             raise RuntimeError("ConfigRuntime is closed")
+        revision = min(revision, MAX_CONFIG_REVISION)
         self._max_requested_revision = max(self._max_requested_revision, revision)
         async with self._reconcile_lock:
             return await self._reconcile_locked(force=False)
@@ -394,7 +404,11 @@ class ConfigRuntime:
                 failures[key] = apply_failure
         return self._copy_snapshot(base, failed_live_keys=failures), services, handles, managed
 
+    _CONFIRMING_READS = 3
+    _CONFIRM_BACKOFF = 0.05
+
     async def _reconcile_locked(self, *, force: bool) -> ConfigSnapshot:
+        confirming_reads = 0
         while True:
             current_bundle = self.capture()
             current = current_bundle.snapshot
@@ -403,8 +417,23 @@ class ConfigRuntime:
                 return current
             stored, desired = await self._read_projection()
             if self._max_requested_revision > stored.revision:
-                await asyncio.sleep(0)
-                continue
+                if self._max_requested_revision != requested:
+                    confirming_reads = 0
+                    continue
+                confirming_reads += 1
+                if confirming_reads < self._CONFIRMING_READS:
+                    await asyncio.sleep(self._CONFIRM_BACKOFF * (2 ** (confirming_reads - 1)))
+                    continue
+                logger.warning(
+                    "Requested configuration revision %s was never observed in storage "
+                    "(stored revision %s) after %s confirming reads; adopting the "
+                    "stored revision",
+                    self._max_requested_revision,
+                    stored.revision,
+                    confirming_reads,
+                )
+                self._max_requested_revision = stored.revision
+            confirming_reads = 0
             if stored.revision <= current.revision:
                 return current
             changed_keys = _changed_keys(current, stored)
@@ -806,6 +835,33 @@ class ConfigRuntime:
     ) -> None:
         await self._run_disposer(resource.dispose, timeout=subscriber.dispose_timeout)
 
+    async def _poll_revisions(self) -> None:
+        """Heal a silently dead LISTEN socket with a low-frequency revision poll."""
+        current_revision = getattr(self._repository, "current_revision", None)
+        assert callable(current_revision)
+        while not self._closed:
+            await asyncio.sleep(self._revision_poll_interval)
+            if self._closed:
+                return
+            try:
+                observed = await self._run_db(current_revision)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("Configuration revision poll failed", exc_info=True)
+                continue
+            bundle = self._bundle
+            if bundle is not None and observed > bundle.snapshot.revision:
+                try:
+                    await self.reconcile_revision(observed)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning(
+                        "Configuration revision poll reconciliation failed",
+                        exc_info=True,
+                    )
+
     async def _listen(self) -> None:
         assert self._notifications is not None
         while not self._closed:
@@ -845,11 +901,11 @@ class ConfigRuntime:
         self._closed = True
         self._ready = False
         self._healthy = False
-        listener = self._listener_task
-        if listener is not None:
-            listener.cancel()
-            with suppress(asyncio.CancelledError):
-                await listener
+        for task in (self._listener_task, self._poll_task):
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
         if self._notifications is not None:
             with suppress(Exception):
                 await self._notifications.close()
@@ -929,6 +985,7 @@ __all__ = [
     "PreparedSubscriber",
     "PreparedValue",
     "RuntimeActiveBundle",
+    "RuntimeSecretBinding",
     "SecretIdentityMismatchError",
     "UnavailableService",
 ]

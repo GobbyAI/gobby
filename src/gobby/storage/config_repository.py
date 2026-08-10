@@ -98,8 +98,7 @@ class ConfigRepository:
         """Read a complete configuration snapshot in one read-only transaction."""
         ambient = ambient_transaction(self.db)
         if ambient is not None:
-            revision = self._read_revision(ambient)
-            rows = self._read_rows(ambient)
+            revision, rows = self._read_coherent(ambient)
             return self.snapshot_from_rows(
                 ambient,
                 revision,
@@ -183,6 +182,31 @@ class ConfigRepository:
         return transaction.execute(
             "SELECT key, value, is_secret, revision FROM config_store ORDER BY key"
         ).fetchall()
+
+    def _read_coherent(self, transaction: Transaction) -> tuple[int, list[Row]]:
+        """Read the revision and rows in one statement snapshot.
+
+        An ambient transaction may run READ COMMITTED, where two statements can
+        observe different committed states; a single joined statement cannot
+        tear.
+        """
+        rows = transaction.execute(
+            """SELECT state.revision AS global_revision,
+                      store.key, store.value, store.is_secret, store.revision
+                 FROM config_state AS state
+                 LEFT JOIN config_store AS store ON TRUE
+                WHERE state.id = %s
+                ORDER BY store.key""",
+            (True,),
+        ).fetchall()
+        if not rows:
+            raise ConfigRepositoryError("Configuration revision state is missing")
+        revision = int(rows[0]["global_revision"])
+        if not 0 <= revision <= MAX_CONFIG_REVISION:
+            raise ConfigRepositoryError(
+                f"Configuration revision is outside the safe domain: {revision}"
+            )
+        return revision, [row for row in rows if row["key"] is not None]
 
     def snapshot_from_rows(
         self,

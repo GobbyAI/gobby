@@ -27,6 +27,7 @@ from gobby.storage.config_mutations import (
     ConfigMutationResult,
     ConfigPatch,
     ConfigRevisionExhaustedError,
+    EmbeddingConfigMutationBlocked,
 )
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import flatten_config
@@ -353,6 +354,43 @@ def test_yaml_round_trips_codec_vectors() -> None:
     assert exported.json()["revision"] == 21
     assert exported_document["context_window_overrides"] == overrides
     assert flatten_config(exported_document) == values
+
+
+@pytest.mark.asyncio
+async def test_raw_dot_dynamic_segment_is_rejected() -> None:
+    mutations = _Mutations(revision=5)
+    service, _runtime, _writer = _service(_snapshot(5), mutations=mutations)
+
+    with pytest.raises(ConfigValuesError) as error:
+        await service.replace_yaml(
+            expected_revision=5,
+            content=yaml.safe_dump(
+                {"ai": {"generation": {"endpoints": {"foo.api_base": "https://x.example"}}}}
+            ),
+        )
+
+    assert error.value.code == "validation_error"
+    assert "canonically encoded" in error.value.message
+    assert mutations.calls == []
+
+
+def test_embedding_blocked_replacement_maps_to_conflict() -> None:
+    mutations = _Mutations(
+        revision=6,
+        error=EmbeddingConfigMutationBlocked(
+            "Embedding switch run-1 is active; config mutation is blocked"
+        ),
+    )
+    service, _runtime, _writer = _service(_snapshot(6), mutations=mutations)
+
+    response = _client(service).put(
+        "/api/config/template",
+        json={"expected_revision": 6, "content": "websocket:\n  ping_interval: 15\n"},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "embedding_mutation_blocked"
+    assert response.json()["error"]["retryable"] is True
 
 
 @pytest.mark.parametrize("revision", [True, 1.0, -1, 1 << 53])

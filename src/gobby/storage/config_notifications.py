@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Protocol
 
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
+
 
 class Notification(Protocol):
     @property
@@ -62,7 +64,7 @@ class ConfigNotificationListener:
             except ValueError:
                 continue
             if revision >= 0:
-                yield revision
+                yield min(revision, MAX_CONFIG_REVISION)
 
     async def close(self) -> None:
         connection = self._connection

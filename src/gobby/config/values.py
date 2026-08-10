@@ -18,6 +18,7 @@ from gobby.config.registry import (
     ConfigVisibility,
     UnknownConfigKeyError,
     config_key_secrecy,
+    decode_dynamic_segment,
 )
 from gobby.config.runtime import ConfigSnapshot
 from gobby.storage.config_mutations import (
@@ -245,6 +246,15 @@ class ConfigValuesService:
 
         def walk(current: Mapping[str, object], prefix: tuple[str, ...]) -> None:
             for segment, value in current.items():
+                if self.registry.dynamic_segment_follows(prefix):
+                    try:
+                        decode_dynamic_segment(segment)
+                    except ValueError as exc:
+                        raise ConfigValuesError(
+                            "validation_error",
+                            f"Dynamic configuration segment is not canonically encoded: {exc}",
+                            ("values", *prefix, segment),
+                        ) from exc
                 path = (*prefix, segment)
                 key = ".".join(path)
                 try:

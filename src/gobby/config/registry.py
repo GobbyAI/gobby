@@ -72,6 +72,7 @@ _UPPER_HEX = frozenset("0123456789ABCDEF")
 
 DYNAMIC_SEGMENT_CODEC_VECTORS: tuple[tuple[str, str], ...] = (
     ("plain", "plain"),
+    ("AZaz09-_~", "AZaz09-_~"),
     ("dot.segment", "dot%2Esegment"),
     ("percent%sign", "percent%25sign"),
     ("already%2Eencoded", "already%252Eencoded"),
@@ -86,6 +87,7 @@ DYNAMIC_SEGMENT_CODEC_VECTORS: tuple[tuple[str, str], ...] = (
 )
 
 INVALID_DYNAMIC_SEGMENTS: tuple[str, ...] = (
+    "",
     "%",
     "%2",
     "%GG",
@@ -94,6 +96,11 @@ INVALID_DYNAMIC_SEGMENTS: tuple[str, ...] = (
     "%7E",
     "raw.dot",
     "raw space",
+    "bad+plus",
+    "bad=equals",
+    "%C0%AF",
+    "%E0%80%AF",
+    "%ED%A0%80",
     "é",
     "%FF",
 )
@@ -101,8 +108,14 @@ INVALID_DYNAMIC_SEGMENTS: tuple[str, ...] = (
 
 def encode_dynamic_segment(value: str) -> str:
     """Encode one logical dynamic segment into its canonical UTF-8 form."""
+    if not value:
+        raise ValueError("Dynamic config segment must not be empty")
+    try:
+        raw = value.encode("utf-8")
+    except UnicodeEncodeError as error:
+        raise ValueError("Dynamic config segment is not encodable UTF-8") from error
     encoded: list[str] = []
-    for byte in value.encode("utf-8"):
+    for byte in raw:
         if byte in _SAFE_SEGMENT_BYTES:
             encoded.append(chr(byte))
         else:
@@ -112,6 +125,8 @@ def encode_dynamic_segment(value: str) -> str:
 
 def decode_dynamic_segment(value: str) -> str:
     """Decode a canonical segment and reject alternate or malformed spellings."""
+    if not value:
+        raise ValueError("Dynamic config segment must not be empty")
     decoded_bytes = bytearray()
     index = 0
     while index < len(value):
@@ -334,6 +349,19 @@ class ConfigRegistry:
             raise RegistryError(f"Ambiguous configuration key: {key}")
         raise UnknownConfigKeyError(key)
 
+    def dynamic_segment_follows(self, prefix: tuple[str, ...]) -> bool:
+        """Return True when any pattern puts a dynamic segment right after prefix."""
+        for pattern in self.pattern_specs:
+            parts = pattern.pattern.split(".")
+            if len(parts) <= len(prefix):
+                continue
+            if not _pattern_prefix_matches(parts, prefix):
+                continue
+            next_part = parts[len(prefix)]
+            if next_part.startswith("{") and next_part.endswith("}"):
+                return True
+        return False
+
     def for_visibility(self, visibility: ConfigVisibility) -> tuple[RegistrySpec, ...]:
         return tuple(spec for spec in self.specs if spec.visibility is visibility)
 
@@ -357,6 +385,19 @@ class ConfigRegistry:
             "additionalProperties": False,
             "properties": properties,
         }
+
+
+def _pattern_prefix_matches(pattern_parts: list[str], prefix: tuple[str, ...]) -> bool:
+    for index, segment in enumerate(prefix):
+        part = pattern_parts[index]
+        if part.startswith("{") and part.endswith("}"):
+            try:
+                decode_dynamic_segment(segment)
+            except ValueError:
+                return False
+        elif part != segment:
+            return False
+    return True
 
 
 def config_key_secrecy(spec: RegistrySpec, key: str) -> ConfigSecrecy:

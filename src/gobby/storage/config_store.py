@@ -21,7 +21,9 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
     validate_embedding_storage_config_key,
 )
+from gobby.config.registry import ConfigRegistry, decode_dynamic_segment
 from gobby.storage.config_mutations import (
+    ConfigConflictError,
     ConfigMutationResult,
     ConfigMutations,
     ConfigPatch,
@@ -174,7 +176,16 @@ class ConfigStore:
         source: str,
         secret_store: SecretStore | None = None,
         embedding_run_id: str | None = None,
+        expected_revision: int | None = None,
+        retry_on_conflict: bool = False,
     ) -> ConfigMutationResult:
+        """Apply one internal patch.
+
+        Callers that decided on a snapshot must thread that snapshot's revision
+        as ``expected_revision`` so the CAS protects the decision; convenience
+        setters without a decision snapshot pass ``retry_on_conflict`` instead
+        and re-read the revision once on conflict.
+        """
         structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
         patch_keys = set(patch.values) | set(patch.unset) | set(patch.secrets)
         if source not in {"embedding_switch", "install"} and patch_keys.intersection(
@@ -186,12 +197,24 @@ class ConfigStore:
                 key=key,
             )
         mutations = self._bind_secret_store(secret_store) if secret_store else self.mutations
-        return mutations.patch_internal(
-            expected_revision=mutations.repository.current_revision(),
-            patch=patch,
-            source=source,
-            embedding_run_id=embedding_run_id,
-        )
+        attempts = 2 if retry_on_conflict and expected_revision is None else 1
+        for attempt in range(attempts):
+            revision = (
+                expected_revision
+                if expected_revision is not None
+                else mutations.repository.current_revision()
+            )
+            try:
+                return mutations.patch_internal(
+                    expected_revision=revision,
+                    patch=patch,
+                    source=source,
+                    embedding_run_id=embedding_run_id,
+                )
+            except ConfigConflictError:
+                if attempt + 1 >= attempts:
+                    raise
+        raise AssertionError("unreachable")
 
     def get(self, key: str) -> Any | None:
         """Get a single config value, deserialized from JSON.
@@ -215,14 +238,22 @@ class ConfigStore:
         """Upsert a single config value (JSON-encoded)."""
         _validate_storage_config_key(key)
         _reject_plaintext_secret_value(key, value)
-        self._apply_internal(ConfigPatch(values={key: value}), source=source)
+        self._apply_internal(
+            ConfigPatch(values={key: value}),
+            source=source,
+            retry_on_conflict=True,
+        )
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
         for key, value in entries.items():
             _validate_storage_config_key(key)
             _reject_plaintext_secret_value(key, value)
-        result = self._apply_internal(ConfigPatch(values=entries), source=source)
+        result = self._apply_internal(
+            ConfigPatch(values=entries),
+            source=source,
+            retry_on_conflict=True,
+        )
         return len(result.changed_keys)
 
     def delete(self, key: str) -> bool:
@@ -236,7 +267,11 @@ class ConfigStore:
             return False
         if key in snapshot.secret_bindings:
             raise ValueError(f"Config key {key!r} is secret; use clear_secret")
-        result = self._apply_internal(ConfigPatch(unset=frozenset({key})), source="user")
+        result = self._apply_internal(
+            ConfigPatch(unset=frozenset({key})),
+            source="user",
+            expected_revision=snapshot.revision,
+        )
         return key in result.changed_keys
 
     def delete_all(
@@ -263,6 +298,7 @@ class ConfigStore:
             ConfigPatch(unset=keys),
             source="user",
             secret_store=secret_store,
+            expected_revision=snapshot.revision,
         )
         return len(result.changed_keys)
 
@@ -280,6 +316,7 @@ class ConfigStore:
             ConfigPatch(unset=keys),
             source="user",
             secret_store=secret_store,
+            expected_revision=snapshot.revision,
         )
         return len(result.changed_keys)
 
@@ -309,6 +346,7 @@ class ConfigStore:
                 ConfigPatch(values={key: value}),
                 source="embedding_switch",
                 embedding_run_id=new_run_id,
+                expected_revision=self.repository._read_revision(transaction, lock=True),
             )
 
     def delete_internal_lifecycle(self, key: str, run_id: str) -> bool:
@@ -325,6 +363,7 @@ class ConfigStore:
                 ConfigPatch(unset=frozenset({key})),
                 source="embedding_switch",
                 embedding_run_id=run_id,
+                expected_revision=self.repository._read_revision(transaction, lock=True),
             )
         return key in result.changed_keys
 
@@ -345,6 +384,7 @@ class ConfigStore:
                 ConfigPatch(values=entries),
                 source="embedding_switch",
                 embedding_run_id=run_id,
+                expected_revision=self.repository._read_revision(transaction, lock=True),
             )
         return len(result.changed_keys)
 
@@ -355,21 +395,26 @@ class ConfigStore:
         completed_key: str,
         completed_record: dict[str, object],
     ) -> int:
-        """Commit structural values and durable completion state in one revision."""
+        """Commit structural values and durable completion state in one revision.
+
+        The revision read and the CAS share one ambient mutation transaction so
+        no concurrent commit can slip between the decision and the write.
+        """
         if not entries or not set(entries).issubset(AI_EMBEDDING_CONFIG_KEY_SET):
             raise ValueError("Embedding switch owner may write only canonical embedding values")
-        snapshot = self.read_snapshot()
-        record = dict(completed_record)
-        record["committed_revision"] = snapshot.revision + 1
-        result = self.mutations.patch_internal(
-            expected_revision=snapshot.revision,
-            patch=ConfigPatch(
-                values={**entries, completed_key: record},
-                unset=frozenset({EMBEDDING_SWITCH_JOURNAL_KEY}),
-            ),
-            source="embedding_switch",
-            embedding_run_id=run_id,
-        )
+        with embedding_mutation_context(self.db) as transaction:
+            revision = self.repository._read_revision(transaction, lock=True)
+            record = dict(completed_record)
+            record["committed_revision"] = revision + 1
+            result = self.mutations.patch_internal(
+                expected_revision=revision,
+                patch=ConfigPatch(
+                    values={**entries, completed_key: record},
+                    unset=frozenset({EMBEDDING_SWITCH_JOURNAL_KEY}),
+                ),
+                source="embedding_switch",
+                embedding_run_id=run_id,
+            )
         return result.revision
 
     def set_embedding_bootstrap_values(
@@ -417,6 +462,7 @@ class ConfigStore:
                 ConfigPatch(values=entries, secrets=secrets),
                 source="install",
                 secret_store=secret_store,
+                expected_revision=self.repository._read_revision(transaction, lock=True),
             )
         return len(result.changed_keys)
 
@@ -434,7 +480,7 @@ class ConfigStore:
         with embedding_mutation_context(self.db) as transaction:
             if name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            revision = self.repository._read_revision(transaction)
+            revision = self.repository._read_revision(transaction, lock=True)
             rows = self.repository._read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             referencing = {
@@ -455,6 +501,7 @@ class ConfigStore:
                     ),
                     source="user",
                     secret_store=secret_store,
+                    expected_revision=snapshot.revision,
                 )
                 info = next((item for item in secret_store.list() if item.name == name), None)
                 if info is None:
@@ -473,7 +520,7 @@ class ConfigStore:
         with embedding_mutation_context(self.db) as transaction:
             if name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            revision = self.repository._read_revision(transaction)
+            revision = self.repository._read_revision(transaction, lock=True)
             rows = self.repository._read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             referencing = frozenset(
@@ -484,6 +531,7 @@ class ConfigStore:
                     ConfigPatch(unset=referencing),
                     source="user",
                     secret_store=secret_store,
+                    expected_revision=snapshot.revision,
                 )
                 return bool(result.changed_keys)
             return bool(secret_store.delete(name))
@@ -558,6 +606,7 @@ class ConfigStore:
             ),
             source=source,
             secret_store=secret_store,
+            retry_on_conflict=True,
         )
 
     def get_secret_keys(self) -> list[str]:
@@ -585,12 +634,16 @@ class ConfigStore:
         self._bind_secret_store(secret_store)
         snapshot = self.repository.read(resolve_secrets=False)
         if key not in snapshot.overrides:
-            secret_store.delete(config_key_to_secret_name(key))
+            name = config_key_to_secret_name(key)
+            reference = f"$secret:{name}"
+            if not any(value == reference for value in snapshot.overrides.values()):
+                secret_store.delete(name)
             return
         self._apply_internal(
             ConfigPatch(unset=frozenset({key})),
             source="user",
             secret_store=secret_store,
+            expected_revision=snapshot.revision,
         )
 
 
@@ -599,21 +652,38 @@ class ConfigStore:
 # =============================================================================
 
 
-def flatten_config(config_dict: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+def flatten_config(
+    config_dict: dict[str, Any],
+    prefix: str = "",
+    *,
+    registry: ConfigRegistry | None = None,
+) -> dict[str, Any]:
     """Flatten a nested config dict into dotted-path keys.
 
     Example:
         {"gobby-tasks": {"validation": {"profile": "mid"}}}
         → {"gobby-tasks.validation.profile": "mid"}
 
-    Lists and non-dict values are kept as leaf values.
+    Lists and non-dict values are kept as leaf values. With a registry, map
+    keys sitting at a dynamic position of a matching pattern prefix must be
+    canonically encoded segments; raw-dot or malformed keys would otherwise
+    splice into a different placeholder split when joined.
     """
     flat: dict[str, Any] = {}
+    prefix_parts = tuple(prefix.split(".")) if prefix else ()
     for key, value in config_dict.items():
+        if registry is not None and registry.dynamic_segment_follows(prefix_parts):
+            try:
+                decode_dynamic_segment(key)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Dynamic configuration segment {key!r} under "
+                    f"{prefix or '<root>'!r} is not canonically encoded: {exc}"
+                ) from exc
         full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
         if isinstance(value, dict):
             if value:
-                flat.update(flatten_config(value, full_key))
+                flat.update(flatten_config(value, full_key, registry=registry))
             else:
                 flat[full_key] = {}
         else:

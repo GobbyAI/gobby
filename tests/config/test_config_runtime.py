@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import cast
 
 import psycopg
@@ -21,6 +21,7 @@ from gobby.config.runtime import (
     UnavailableService,
 )
 from gobby.storage.config_notifications import ConfigNotificationListener, NotificationConnection
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 
@@ -755,3 +756,84 @@ async def test_first_initialization_failure_semantics() -> None:
     assert "ui.enabled" not in recovered.failed_live_keys
     assert optional_runtime.capture().services["optional"] == 1
     await optional_runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_bogus_revision_request_unwedges_and_adopts_stored() -> None:
+    repository = FakeRepository([stored_snapshot(0)])
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+    await runtime.start()
+
+    snapshot = await runtime.reconcile_revision(1 << 60)
+
+    assert snapshot.revision == 0
+    assert runtime._max_requested_revision == 0
+    assert repository.read_count <= 6
+
+    repository.snapshots.append(stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}))
+    repository.index = 1
+    reconciled = await runtime.reconcile_revision(1)
+    assert reconciled.revision == 1
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_listener_clamps_notification_payloads() -> None:
+    class _Conn:
+        autocommit = True
+
+        async def execute(self, command: str) -> object:
+            return None
+
+        def notifies(
+            self,
+            *,
+            timeout: float | None = None,
+            stop_after: int | None = None,
+        ) -> AsyncIterator[SimpleNamespace]:
+            async def _gen() -> AsyncIterator[SimpleNamespace]:
+                for payload in ("garbage", str(1 << 60), "7"):
+                    yield SimpleNamespace(payload=payload)
+
+            return _gen()
+
+        async def close(self) -> None:
+            return None
+
+    async def _factory() -> NotificationConnection:
+        return cast(NotificationConnection, _Conn())
+
+    listener = ConfigNotificationListener(_factory)
+    await listener.connect()
+    revisions = [revision async for revision in listener.revisions()]
+    await listener.close()
+
+    assert revisions == [MAX_CONFIG_REVISION, 7]
+
+
+@pytest.mark.asyncio
+async def test_revision_poll_heals_dead_listener() -> None:
+    class PollingRepository(FakeRepository):
+        def current_revision(self) -> int:
+            return self.snapshots[self.index].revision
+
+    repository = PollingRepository(
+        [
+            stored_snapshot(0),
+            stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}),
+        ]
+    )
+    notifications = FakeNotificationSource()
+    runtime = ConfigRuntime(
+        repository,
+        registry=FakeRegistry(),
+        notification_source=notifications,
+        revision_poll_interval=0.02,
+    )
+    await runtime.start()
+
+    repository.index = 1
+
+    await wait_until(lambda: runtime.capture().snapshot.revision == 1)
+    assert runtime.capture().snapshot.active.ui.enabled is True
+    await runtime.close()

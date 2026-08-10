@@ -453,3 +453,18 @@ def test_revision_domain_and_exhaustion_contract(revision: object) -> None:
         "path": ["expected_revision"],
         "retryable": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_nested_patch_rejects_raw_dot_dynamic_segment() -> None:
+    service, _runtime, mutations = _service(_snapshot(3))
+
+    with pytest.raises(Exception) as error:
+        await service.patch(
+            expected_revision=3,
+            values={"ai": {"generation": {"endpoints": {"foo.api_base": "https://x.example"}}}},
+        )
+
+    assert getattr(error.value, "code", None) == "validation_error"
+    assert "canonically encoded" in getattr(error.value, "message", "")
+    assert mutations.calls == []
