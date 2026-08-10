@@ -1,8 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createElement } from 'react'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import { AppearanceSection } from '../components/settings/sections/AppearanceSection'
 import {
   SettingsSectionContext,
@@ -10,21 +8,7 @@ import {
 } from '../components/settings/sections/SettingsSectionContext'
 import type { Settings, UseSettingsReturn } from '../hooks/useSettings'
 
-let styleElement: HTMLStyleElement
-
-beforeEach(() => {
-  styleElement = document.createElement('style')
-  styleElement.textContent = readFileSync(
-    resolve(process.cwd(), 'src/styles/settings-overlay.css'),
-    'utf8',
-  )
-  document.head.appendChild(styleElement)
-})
-
-afterEach(() => {
-  cleanup()
-  styleElement.remove()
-})
+afterEach(cleanup)
 
 function renderAppearanceSlider(): HTMLElement {
   const settings: Settings = {
@@ -74,20 +58,23 @@ function renderAppearanceSlider(): HTMLElement {
 }
 
 describe('settings slider focus treatment', () => {
-  it('has no resting outline and shows the accent ring on focus-visible', () => {
+  it('carries the accent focus-visible ring utilities with no resting outline', () => {
     const slider = renderAppearanceSlider()
-
-    expect(getComputedStyle(slider).outline).toBe('')
 
     slider.focus()
     expect(slider).toHaveFocus()
-    const focusRingRule = Array.from(styleElement.sheet?.cssRules ?? []).find(
-      (rule): rule is CSSStyleRule =>
-        rule instanceof CSSStyleRule &&
-        rule.selectorText === '.appearance-font-size__range:focus-visible',
+
+    expect(slider).toHaveClass(
+      'focus-visible:outline-2',
+      'focus-visible:outline-accent',
+      'focus-visible:outline-offset-[3px]',
+      'accent-accent',
+      'cursor-pointer',
     )
-    expect(focusRingRule).toBeDefined()
-    expect(slider.matches(focusRingRule?.selectorText ?? '')).toBe(true)
-    expect(focusRingRule?.style.outline).toBe('2px solid var(--accent)')
+    const restingOutlineTokens = slider.className
+      .split(/\s+/)
+      .filter((token) => token.startsWith('outline'))
+    expect(restingOutlineTokens).toEqual([])
+    expect(slider.className).not.toContain('appearance-font-size__range')
   })
 })
