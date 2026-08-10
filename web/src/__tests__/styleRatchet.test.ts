@@ -8,8 +8,7 @@ import {
   BTN_CLASS_ALLOWLIST,
   CLS_CONSTANT_ALLOWLIST,
   CSS_FILE_ALLOWLIST,
-  CSS_LINE_TIGHTEN_SLACK,
-  CSS_TOTAL_LINE_CEILING,
+  CSS_TOTAL_LINE_PIN,
   IMPORTANT_ALLOWLIST,
   RAW_ELEMENT_ALLOWLIST,
   type RawElement,
@@ -209,7 +208,7 @@ function ratchet(
 interface AllowlistSnapshot {
   counts: Map<string, number>
   cssFiles: Set<string>
-  cssTotalLineCeiling: number
+  cssTotalLinePin: number
 }
 
 function delimitedBody(
@@ -256,13 +255,15 @@ function parseAllowlistSnapshot(source: string): AllowlistSnapshot {
     [...delimitedBody(source, 'export const CSS_FILE_ALLOWLIST', '[', ']').matchAll(/'([^']+)'/g)]
       .map((match) => match[1]),
   )
-  const ceilingMatch = source.match(/export const CSS_TOTAL_LINE_CEILING\s*=\s*(\d+)/)
-  if (!ceilingMatch) throw new Error('Missing CSS_TOTAL_LINE_CEILING in style ratchet allowlist')
+  const linePinMatch = source.match(/export const CSS_TOTAL_LINE_(?:PIN|CEILING)\s*=\s*(\d+)/)
+  if (!linePinMatch) {
+    throw new Error('Missing CSS_TOTAL_LINE_PIN or legacy CSS_TOTAL_LINE_CEILING')
+  }
 
   return {
     counts,
     cssFiles,
-    cssTotalLineCeiling: Number(ceilingMatch[1]),
+    cssTotalLinePin: Number(linePinMatch[1]),
   }
 }
 
@@ -314,10 +315,10 @@ function targetBranchFailures(
       failures.push(`CSS_FILE_ALLOWLIST:${file}: new recorded stylesheet`)
     }
   }
-  if (current.cssTotalLineCeiling > target.cssTotalLineCeiling) {
+  if (current.cssTotalLinePin > target.cssTotalLinePin) {
     failures.push(
-      `CSS_TOTAL_LINE_CEILING: increased from ${target.cssTotalLineCeiling} ` +
-        `to ${current.cssTotalLineCeiling}`,
+      `CSS_TOTAL_LINE_PIN: increased from ${target.cssTotalLinePin} ` +
+        `to ${current.cssTotalLinePin}`,
     )
   }
   return failures
@@ -347,12 +348,12 @@ describe('style ratchet', () => {
     const target: AllowlistSnapshot = {
       counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/OldPanel.tsx', 2]]),
       cssFiles: new Set(['styles/old-panel.css']),
-      cssTotalLineCeiling: 10,
+      cssTotalLinePin: 10,
     }
     const current: AllowlistSnapshot = {
       counts: new Map([['RAW_ELEMENT_ALLOWLIST:select:src/NewPanel.tsx', 2]]),
       cssFiles: new Set(['styles/new-panel.css']),
-      cssTotalLineCeiling: 10,
+      cssTotalLinePin: 10,
     }
     const renames = new Map([
       ['src/NewPanel.tsx', 'src/OldPanel.tsx'],
@@ -367,15 +368,20 @@ describe('style ratchet', () => {
     ])
   })
 
-  it('keeps .btn class usage at or below the recorded per-file counts', () => {
-    expect(
-      ratchet(
-        scan.btnClass,
-        BTN_CLASS_ALLOWLIST,
-        'btn class tokens',
-        `Migrate onto <Button> from components/ui — see ${STYLE_GUIDE}.`,
-      ),
-    ).toEqual([])
+  it('parses legacy target-branch line ceilings as exact pins', () => {
+    const currentSource = readFileSync(ALLOWLIST, 'utf8')
+    const legacyTargetSource = `${currentSource.replace(
+      'CSS_TOTAL_LINE_PIN',
+      'CSS_TOTAL_LINE_CEILING',
+    )}\nexport const CSS_LINE_TIGHTEN_SLACK = 200\n`
+
+    expect(parseAllowlistSnapshot(currentSource).cssTotalLinePin).toBe(CSS_TOTAL_LINE_PIN)
+    expect(parseAllowlistSnapshot(legacyTargetSource).cssTotalLinePin).toBe(CSS_TOTAL_LINE_PIN)
+  })
+
+  it('bans .btn class usage', () => {
+    expect(BTN_CLASS_ALLOWLIST).toEqual({})
+    expect([...scan.btnClass.entries()]).toEqual([])
   })
 
   it('keeps raw interactive elements at or below the recorded per-file counts', () => {
@@ -384,7 +390,8 @@ describe('style ratchet', () => {
         scan.rawElements[element],
         RAW_ELEMENT_ALLOWLIST[element],
         `raw <${element}> elements`,
-        `Use the components/ui primitive instead of a raw <${element}> — see ${STYLE_GUIDE}.`,
+        `Use the components/ui primitive instead of a raw <${element}>; additions require an ` +
+          `explicit moat — see ${STYLE_GUIDE}.`,
       ),
     )
     expect(failures).toEqual([])
@@ -445,15 +452,9 @@ describe('style ratchet', () => {
     expect(scan.clsConstant.get('src/components/shared/executions/execution-utils.tsx') ?? 0).toBe(0)
   })
 
-  it('keeps *_CLS style constants at or below the recorded per-file counts', () => {
-    expect(
-      ratchet(
-        scan.clsConstant,
-        CLS_CONSTANT_ALLOWLIST,
-        '*_CLS constants',
-        `Style at the call site with Tailwind utilities (cva for variants) — see ${STYLE_GUIDE}.`,
-      ),
-    ).toEqual([])
+  it('bans *_CLS style constants', () => {
+    expect(CLS_CONSTANT_ALLOWLIST).toEqual({})
+    expect([...scan.clsConstant.entries()]).toEqual([])
   })
 
   it('bans stylesheets beyond the recorded set', () => {
@@ -484,17 +485,13 @@ describe('style ratchet', () => {
     ).toEqual([])
   })
 
-  it('holds the total CSS line ceiling and demands tightening as CSS shrinks', () => {
+  it('pins the exact total CSS line count', () => {
     expect(
       scan.cssTotalLines,
-      `Total CSS grew to ${scan.cssTotalLines} lines (ceiling ${CSS_TOTAL_LINE_CEILING}). ` +
-        `Move styling to Tailwind utilities instead of stylesheets — see ${STYLE_GUIDE}.`,
-    ).toBeLessThanOrEqual(CSS_TOTAL_LINE_CEILING)
-    expect(
-      scan.cssTotalLines,
-      `Total CSS shrank to ${scan.cssTotalLines} lines, more than ${CSS_LINE_TIGHTEN_SLACK} below ` +
-        `the ceiling ${CSS_TOTAL_LINE_CEILING}. Lower CSS_TOTAL_LINE_CEILING to ${scan.cssTotalLines} in ${ALLOWLIST}.`,
-    ).toBeGreaterThanOrEqual(CSS_TOTAL_LINE_CEILING - CSS_LINE_TIGHTEN_SLACK)
+      `Total CSS is ${scan.cssTotalLines} lines; the exact pin is ${CSS_TOTAL_LINE_PIN}. ` +
+        `Update CSS_TOTAL_LINE_PIN consciously in the same commit as any infra CSS change ` +
+        `(${ALLOWLIST}).`,
+    ).toBe(CSS_TOTAL_LINE_PIN)
   })
 })
 
