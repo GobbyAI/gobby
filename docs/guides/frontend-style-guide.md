@@ -19,9 +19,9 @@ motion, and no decorative gradients.
 
 The authoritative design contract is `.impeccable.md`; this guide is the
 implementation source of truth for how that contract is built. Its rules are
-enforced mechanically by the style-debt ratchet
+enforced mechanically by the style ratchet
 (`web/src/__tests__/styleRatchet.test.ts` — see
-[Style Debt Ratchet](#style-debt-ratchet)). The deployed product UI
+[Style Ratchet](#style-ratchet)). The deployed product UI
 tokens live in `web/src/styles/tokens.css` (`web/src/styles/index.css` only
 aggregates imports); Tailwind exposes the common tokens through the `@theme`
 blocks in `web/src/styles/tailwind-theme.css`, while `web/tailwind.config.ts`
@@ -178,15 +178,17 @@ Tailwind maps these as `font-normal`, `font-medium`, `font-semibold`, and
 Tailwind scans `./src/**/*.{ts,tsx}` and utilities win by cascade-layer order
 alone — the `important: true` era is over (plan 6.1). The cascade model:
 
-- Utilities live in `@layer utilities`; global resets (`base.css`,
-  `accessibility.css`) live in `@layer base`, which utilities out-rank.
-- The surviving hook sheets (`app-shell.css`, `segmented-control.css`,
-  `dropdown-caret.css`, `settings-overlay.css`) are un-layered, so their
-  declarations out-cascade utilities regardless of specificity. A hook rule
-  may therefore only style properties that no utility on the same element
-  sets, in any state or variant. To let a caller vary a hook-styled property,
-  expose a custom property (see `--segmented-option-px`) instead of expecting
-  a utility to win.
+- Utilities live in `@layer utilities`. `base.css` and `accessibility.css`
+  live entirely in `@layer base`, which utilities out-rank — a utility on an
+  element always beats a base-layer rule targeting it.
+- `markdown.css` is the only un-layered sheet. Un-layered declarations
+  out-cascade every layer regardless of specificity, so an un-layered rule may
+  only style properties no utility competes for; today that is the wikilink
+  styling inside rendered markdown, which no utility touches.
+- There are no un-layered hook sheets left. When a caller needs to vary a
+  component-owned value, the component exposes a custom property (see
+  `--segmented-option-px` on `SegmentedControl`) instead of expecting an
+  outside rule to out-cascade its utilities.
 
 Use semantic Tailwind colors where mappings exist.
 
@@ -269,19 +271,30 @@ under `src/components/ui/` may render raw `<button>`, `<input>`, `<select>`, or
 | `Button.tsx` | CVA button wrapper with Radix `Slot` support through `asChild` |
 | `buttonVariants.ts` | The `buttonVariants` CVA definition (variant/size/dense) |
 | `Badge.tsx` | Status badge variants |
+| `Card.tsx` / `cardVariants.ts` | Card shell; interactive cards render a real `<button>` host |
+| `Chip.tsx` / `chipVariants.ts` | Small labeled chip with tone variants |
 | `Dialog.tsx` | Radix dialog overlay, content, title, and description wrappers |
 | `dialogPrimitives.ts` | Re-exported Radix dialog root/trigger/close primitives |
 | `ConfirmDialog.tsx` | Confirmation dialog built from `Dialog` and `Button` |
 | `DropdownCaret.tsx` | Shared caret affordance for dropdown triggers |
+| `FormField.tsx` | Label/hint/error wrapper wiring ids and aria to a rendered control |
 | `Input.tsx` | Standard text input |
 | `Textarea.tsx` | Standard textarea |
 | `Select.tsx` | Radix select trigger, content, and item wrappers |
 | `selectPrimitives.ts` | Re-exported Radix select root/group/value/label primitives |
+| `NativeSelect.tsx` | Native `<select>` on the shared control contract |
 | `SegmentedControl.tsx` | Segmented control (mutually exclusive option row) |
+| `TabBar.tsx` | Keyboard-navigable tab strip with optional close affordances |
 | `ScrollArea.tsx` | Scroll area wrapper |
 | `Switch.tsx` | Toggle switch |
 | `Tooltip.tsx` | Radix tooltip content wrapper |
 | `tooltipPrimitives.ts` | Re-exported Radix tooltip provider/root/trigger/portal primitives |
+| `controlStyles.ts` | Shared control class fragments: surface/wrapper contract and the invisible coarse-pointer hit-area expansion |
+
+**Two select paths.** Toolbar and picker contexts use the Radix `Select.tsx`
+wrappers; form contexts use `NativeSelect.tsx`, composed through `SelectField`
+in `web/src/components/activity/fields/FieldPrimitives.tsx`. That split is the
+app-wide rule — do not hand-roll a third select.
 
 #### Button
 
@@ -321,9 +334,10 @@ keep its compact row height on touch — the app-header cluster and the
 status-bar/command-bar controls pinned to `--status-bar-control-height`.
 Content-area buttons stay non-dense.
 
-Surface-specific sizing hooks (`app-settings-cog`, `command-bar-btn`, …) stay as
-plain `className` hook classes; their rules live in the owning stylesheet
-(`app-shell.css`, `layout.css`).
+Surface-specific classes like `command-bar-btn` are markers only — no CSS rule
+targets them. Sizing comes from call-site utilities on the same element
+(`min-h-[var(--status-bar-control-height)]`); the marker exists so tests and
+tooling can find the control.
 
 #### Badge
 
@@ -425,23 +439,27 @@ Use semantic Tailwind mappings or CSS variables.
 
 Avoid raw hex and one-off color literals in components.
 
-### Legacy CSS Files
+### Stylesheets
 
-**New stylesheets are banned.** The ratchet records the exact set of existing
-CSS files and fails on any addition. New styling goes in Tailwind utilities at
-the call site, `cva` definitions for variants, or a `components/ui` primitive.
+**New stylesheets are banned.** The ratchet pins the exact set of CSS files
+and fails on any addition. New styling goes in Tailwind utilities at the call
+site, `cva` definitions for variants, or a `components/ui` primitive.
 
-The existing sheets (feature-scoped modules for integrations, agents,
-workflows, and chat tabs; global sheets under `web/src/styles/`, including
-the allowlisted `src/styles/dropdown-caret.css`) are tracked exceptions. They
-remain in the exact allowlist and do not permit new stylesheets.
-This legacy debt remains under a total line ceiling that only shrinks. When
-editing one:
+Exactly six infrastructure sheets remain, all under `web/src/styles/`:
 
-- Keep to its established BEM-style naming (`.my-feature__item--active`).
-- Prefer deleting rules by migrating the styled markup onto primitives and
-  utilities over adding rules.
-- When a sheet is emptied, delete it and remove its `CSS_FILE_ALLOWLIST` entry.
+| Sheet | Role |
+|-------|------|
+| `index.css` | Import aggregator — owns the ordered `@import` chain and nothing else |
+| `tokens.css` | Design tokens: palettes, type scale, weights, shadows |
+| `tailwind-theme.css` | `@theme` blocks mapping tokens to Tailwind keys, plus the settings-overlay keyframes |
+| `base.css` | `@layer base` resets, shared keyframes, the toast, and code-surface interop |
+| `accessibility.css` | `@layer base` reduced-motion override for the voice controls |
+| `markdown.css` | Wikilink styling for rendered markdown — the only un-layered sheet |
+
+The feature-scoped sheets are gone; their styling lives on the components that
+render the markup. The total line count across the six sheets is exact-pinned
+(`CSS_TOTAL_LINE_PIN`) — any infra CSS change updates the pin consciously in
+the same commit.
 
 ### Light Mode
 
@@ -463,33 +481,32 @@ tokens.
 background: color-mix(in srgb, var(--accent) 10%, transparent);
 ```
 
-## Style Debt Ratchet
+## Style Ratchet
 
 `web/src/__tests__/styleRatchet.test.ts` scans `web/src/` (skipping test
 directories, `.test.`/`.spec.` files, and `.d.ts`) and compares the result
-against the recorded debt in `web/src/__tests__/styleRatchet.allowlist.ts`.
+against the recorded state in `web/src/__tests__/styleRatchet.allowlist.ts`.
 
-**Attrition contract: allowlist entries may only be deleted or decreased.**
-Never add an entry, never increase a count, never raise the line ceiling. Every
-check fails in both directions — above the ceiling means new debt was
-introduced; below it means the allowlist is stale and must be tightened to the
-new, lower count. A passing run therefore proves the recorded debt is exact.
+The styling migration is complete, so the ratchet holds an end state rather
+than tracking debt: two checks are pure bans, the rest pin sanctioned floors
+exactly. **Entries may only be deleted or decreased — never add an entry,
+never increase a count.** Every check fails in both directions, so a passing
+run proves the recorded state is exact.
 
 The six checks:
 
-| Check | Rule | Current state |
-|-------|------|---------------|
-| `.btn` class tokens | `btn`/`btn-*` string literals in ts/tsx (comment-stripped; suffixed hook classes like `command-bar-btn` don't match) | Pure ban — `BTN_CLASS_ALLOWLIST` is empty; the `.btn` system is retired |
-| Raw interactive elements | `<button>`, `<input>`, `<select>`, `<textarea>` in tsx outside `src/components/ui/` | Per-file exact counts; migrate onto primitives to shrink them |
-| `*_CLS` constants | `const FOO_CLS = ...` style-string constants | Per-file exact counts; style at the call site instead |
-| Stylesheet set | Every `.css` file under `src/` must appear in `CSS_FILE_ALLOWLIST` | New CSS files are banned; deleted sheets must drop their entry |
-| `!important` | Per-file exact counts across ts/tsx/css | Never add one; fix specificity at the source |
-| Total CSS lines | Sum of all stylesheet lines vs `CSS_TOTAL_LINE_CEILING` | Ceiling only lowers; when total drops more than `CSS_LINE_TIGHTEN_SLACK` below it, the test demands lowering the ceiling |
+| Check | Rule | State |
+|-------|------|-------|
+| `.btn` class tokens | `btn`/`btn-*` string literals in ts/tsx (comment-stripped; suffixed marker classes like `command-bar-btn` don't match) | Pure ban — `BTN_CLASS_ALLOWLIST` is empty and the scan must find nothing |
+| `*_CLS` constants | `const FOO_CLS = ...` style-string constants | Pure ban — style at the call site or in a `cva` definition |
+| Raw interactive elements | `<button>`, `<input>`, `<select>`, `<textarea>` in tsx outside `src/components/ui/` | Pinned floor: the composer icon buttons (moat 05198494) and the WikiAskMode Ask surface (#19672). Additions require an explicit moat |
+| Stylesheet set | Every `.css` file under `src/` must appear in `CSS_FILE_ALLOWLIST` | Exactly the six infrastructure sheets (see [Stylesheets](#stylesheets)) |
+| `!important` | Per-file exact counts across ts/tsx/css | Pinned floor: `base.css` 5, `accessibility.css` 1, each justified in the allowlist. Never add one |
+| Total CSS lines | Scanner total vs `CSS_TOTAL_LINE_PIN` | Exact pin, both directions — any infra CSS change updates the pin consciously in the same commit |
 
-To pay down debt: migrate a call site (raw element → primitive, `*_CLS` →
-inline utilities, CSS rule → utility classes), run the ratchet, and tighten the
-allowlist entries it reports as stale. The failure messages name the exact file
-and remedy.
+Floors only shrink: when a pinned exception lands (for example the Ask surface
+in #19672), its entries drop and the ratchet forces the tightening. The
+failure messages name the exact file and remedy.
 
 ## Icons
 
@@ -550,9 +567,10 @@ Prefer property-specific transitions.
 }
 ```
 
-Current shared keyframes include `fade-in`, `pulse-glow`, and
-`reasoning-pulse` in `web/src/styles/base.css`; chat and reporting CSS define
-additional feature-local keyframes.
+Shared keyframes are `fade-in`, `pulse-glow`, and `reasoning-pulse` in
+`web/src/styles/base.css`, plus `settings-overlay-fade` and
+`settings-overlay-rise` in `web/src/styles/tailwind-theme.css` (exposed to
+utilities as `--animate-*` theme tokens).
 
 ## Dark And Light Mode
 
@@ -610,7 +628,7 @@ web/src/
 │   ├── agents/             # Agent portfolio and agent run UI
 │   ├── app/                # App shell helpers, navigation, lazy pages
 │   ├── auth/               # Login and auth surfaces
-│   ├── chat/               # Chat page, input, messages, chat-specific styles
+│   ├── chat/               # Chat page, input, and message components
 │   ├── code/               # Code graph/code page surfaces
 │   ├── code-graph/         # Code knowledge-graph visualization
 │   ├── command-browser/    # Slash command and tool/skill browser modals
@@ -627,12 +645,12 @@ web/src/
 │   ├── source-control/     # GitHub/source-control UI
 │   ├── tasks/              # Task management UI
 │   ├── traces/             # Trace UI
-│   ├── ui/                 # Standalone primitives (SegmentedControl, Switch)
+│   ├── ui/                 # Shared primitives (Button, Card, SegmentedControl, …)
 │   └── workflows/          # Workflow, agent, pipeline, and reports UI
 ├── contexts/               # React contexts used by cross-page surfaces
 ├── hooks/                  # Custom React hooks
 ├── lib/                    # API clients, color helpers, normalization, utils
-├── styles/                 # Global and cross-feature CSS
+├── styles/                 # The six infrastructure stylesheets
 ├── types/                  # TypeScript type definitions
 ├── App.tsx                 # Root app shell
 └── main.tsx                # React entry point
@@ -644,7 +662,7 @@ web/src/
 |------|------------|---------|
 | Component files | PascalCase | `AgentPortfolioPage.tsx`, `SessionsTab.tsx` |
 | Hook files | camelCase with `use` prefix | `useSettings.ts`, `useTasks.ts` |
-| CSS classes | kebab-case or BEM | `.sidebar-overlay`, `.sc-badge--green` |
+| CSS classes | kebab-case or BEM | `.app-toast`, `.command-bar-btn__label` |
 | TypeScript types | PascalCase | `ChatMessage`, `TaskCreateDefaults` |
 | Functions | camelCase | `handleSubmit`, `fetchDetail` |
 
@@ -664,15 +682,19 @@ web/src/
 
 ## Z-Index Scale
 
-Use the existing scale unless a component must sit above a known layer.
+Z-index is declared with Tailwind utilities at the call site; the only
+stylesheet z-index left is `.app-toast` (1000, `base.css`). Use the existing
+bands unless a component must sit above a known layer.
 
-| Z-index | Layer | Examples |
-|---------|-------|----------|
-| `50` | Sidebars and source-control panels | Sidebar surfaces |
-| `100` | Popovers and common modals | Skill/import modals |
-| `250` | Radix dialog overlay/content | `DialogOverlay`, `DialogContent` |
-| `999` | Sidebar overlay | `.sidebar-overlay` |
-| `1000` | Sidebar and critical toasts | `.sidebar`, `.app-toast` |
+| Band | Layer | Examples |
+|------|-------|----------|
+| `z-10`–`z-30` | Local stacking inside a panel | Sticky headers, in-panel chrome |
+| `z-50` | Sidebars and source-control panels | Sidebar surfaces |
+| `z-[90]`/`z-[91]` | Context-menu backdrops and menus, side-panel scrims | FilesTab and QuickMenu context menus |
+| `z-[100]` | App header, popovers, slide-in panels | App header, filter popovers, `AgentEditForm` |
+| `z-[200]` | Full-screen overlays | `SettingsOverlay`, mobile activity overlay |
+| `z-[250]`/`z-[260]` | Radix dialog overlay/content; tooltips | `DialogOverlay`, `DialogContent`, `Tooltip` |
+| `z-[1000]` | Critical toasts and topmost dropdowns | `.app-toast`, project-selector menu |
 
 ## Anti-Patterns
 
@@ -685,9 +707,9 @@ Do not:
 - Use gradients, gradient text, neon glows, or purple-blue AI-dashboard styling.
 - Add React Router; top-level navigation is hash-backed tab state.
 - Create broad global providers when a custom hook and local state will do.
-- Use `!important`; utilities own their properties by cascade-layer order — fix
-  specificity at the source, and never style a utility-owned property from a
-  hook sheet (see [Tailwind Usage](#tailwind-usage)).
+- Use `!important`; the only sanctioned occurrences are the reduced-motion and
+  code-surface overrides pinned in the ratchet allowlist — fix specificity at
+  the source (see [Tailwind Usage](#tailwind-usage)).
 - Use `btn`/`btn-*` classes — the `.btn` system is retired; use `<Button>` from `components/ui`.
 - Render raw `<button>`, `<input>`, `<select>`, or `<textarea>` outside `components/ui`; use the primitives.
 - Create new `.css` files or new `*_CLS` style-string constants (ratchet-enforced).
@@ -710,4 +732,4 @@ Do not:
 | String-concatenated class names | Use `cn()` |
 | New icon package | Add an inline SVG component |
 
-_Last verified: 2026-07-27_
+_Last verified: 2026-08-10_
