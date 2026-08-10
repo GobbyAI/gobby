@@ -232,7 +232,7 @@ describe('MarkdownBody typography ownership', () => {
     }
   })
 
-  it('leaves ToolCallCard, RichContentBlocks, and WikiAskMode direct consumers unchanged', () => {
+  it('leaves ToolCallCard and RichContentBlocks direct consumers unchanged', () => {
     const { container } = renderWithProviders(
       <ToolCallCards
         toolCalls={[
@@ -261,10 +261,6 @@ describe('MarkdownBody typography ownership', () => {
       ],
       'src/components/chat/Markdown.tsx': [
         "export { MarkdownBody as Markdown } from '../shared/MarkdownBody'",
-      ],
-      'src/components/activity/wiki/WikiAskMode.tsx': [
-        '<div className="max-w-[65ch] text-sm">',
-        '<MarkdownBody',
       ],
     }
     for (const [path, pins] of Object.entries(directConsumers)) {

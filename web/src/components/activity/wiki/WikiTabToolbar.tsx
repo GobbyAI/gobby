@@ -1,8 +1,8 @@
 /**
  * Toolbar for the wiki activity tab (plan wiki-obsidian-panel §2.2): mode
- * segmented control, search, graph button (browse modes only), and the
- * kebab action menu. Also exports the slim degraded-state banner rendered
- * directly under the toolbar.
+ * segmented control, search, graph button, and the kebab action menu. Also
+ * exports the slim degraded-state banner rendered directly under the
+ * toolbar.
  */
 
 import { cn } from "../../../lib/utils";
@@ -17,13 +17,11 @@ import type { WikiMode } from "./WikiTabModel";
 const MODE_OPTIONS: readonly SegmentedControlOption<WikiMode>[] = [
   { value: "wiki", label: "Wiki" },
   { value: "code", label: "Code" },
-  { value: "ask", label: "Ask" },
 ];
 
 const SEARCH_PLACEHOLDER: Record<WikiMode, string> = {
   wiki: "Filter pages",
   code: "Filter code pages",
-  ask: "Filter ask history",
 };
 
 export interface WikiToolbarActions {
@@ -72,7 +70,6 @@ export function WikiTabToolbar({
   actionsDisabled,
   actions,
 }: WikiTabToolbarProps) {
-  const showGraph = mode === "wiki" || mode === "code";
   const menuItems: QuickMenuItem[] = [
     // Quick-open and page creation land with the browse milestone (§3.1/§3.2).
     { label: "New page", disabled: true, onSelect: noop },
@@ -110,20 +107,18 @@ export function WikiTabToolbar({
         />
         {wide ? <div className="min-w-0 flex-1">{searchInput}</div> : null}
         <div className={cn("flex items-center gap-1", !wide && "ml-auto")}>
-          {showGraph ? (
-            <Button
-              type="button"
-              onClick={onOpenGraph}
-              aria-label="Open graph"
-              title="Open graph"
-              variant="secondary"
-              size="sm"
-              className={coarseHitAreaCls}
-            >
-              <GraphIcon />
-              Graph
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            onClick={onOpenGraph}
+            aria-label="Open graph"
+            title="Open graph"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
+          >
+            <GraphIcon />
+            Graph
+          </Button>
           <QuickMenu items={menuItems} menuLabel="Wiki actions" triggerLabel="Wiki actions" />
         </div>
       </div>
@@ -156,7 +151,7 @@ export function WikiDegradedBanner({ summary }: { summary: WikiStatusSummary }) 
     ? `Wiki gateway offline${summary.message ? ` — ${summary.message}` : ""}`
     : `Wiki degraded: ${summary.degradedServices.join(", ")}`;
   const detail = offline
-    ? "Browse and ask are unavailable until the gateway recovers."
+    ? "Browse is unavailable until the gateway recovers."
     : `${summary.brokenLinks} broken links · ${summary.stalePages} stale pages · ${summary.uncompiledSources} uncompiled sources`;
   return (
     <div role="status" className="flex items-start gap-2 bg-info-soft px-3 py-1.5 text-xs text-info">

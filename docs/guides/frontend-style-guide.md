@@ -499,14 +499,14 @@ The six checks:
 |-------|------|-------|
 | `.btn` class tokens | `btn`/`btn-*` string literals in ts/tsx (comment-stripped; suffixed marker classes like `command-bar-btn` don't match) | Pure ban — `BTN_CLASS_ALLOWLIST` is empty and the scan must find nothing |
 | `*_CLS` constants | `const FOO_CLS = ...` style-string constants | Pure ban — style at the call site or in a `cva` definition |
-| Raw interactive elements | `<button>`, `<input>`, `<select>`, `<textarea>` in tsx outside `src/components/ui/` | Pinned floor: the composer icon buttons (moat 05198494) and the WikiAskMode Ask surface (#19672). Additions require an explicit moat |
+| Raw interactive elements | `<button>`, `<input>`, `<select>`, `<textarea>` in tsx outside `src/components/ui/` | Pinned floor: the composer icon buttons (moat 05198494). Additions require an explicit moat |
 | Stylesheet set | Every `.css` file under `src/` must appear in `CSS_FILE_ALLOWLIST` | Exactly the six infrastructure sheets (see [Stylesheets](#stylesheets)) |
 | `!important` | Per-file exact counts across ts/tsx/css | Pinned floor: `base.css` 5, `accessibility.css` 1, each justified in the allowlist. Never add one |
 | Total CSS lines | Scanner total vs `CSS_TOTAL_LINE_PIN` | Exact pin, both directions — any infra CSS change updates the pin consciously in the same commit |
 
-Floors only shrink: when a pinned exception lands (for example the Ask surface
-in #19672), its entries drop and the ratchet forces the tightening. The
-failure messages name the exact file and remedy.
+Floors only shrink: when a pinned exception lands (as the Ask surface removal
+did), its entries drop and the ratchet forces the tightening. The failure
+messages name the exact file and remedy.
 
 ## Icons
 

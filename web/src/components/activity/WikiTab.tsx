@@ -1,9 +1,8 @@
 /**
- * Four-mode wiki shell (plan wiki-obsidian-panel §2.2): Wiki | Code | Ask |
- * Research with persisted mode/scope, dirty-guarded transitions, and the
- * kebab action surface. Wiki and Code render the §3.1 browse experience,
- * Ask renders the §5.1 grounded Q&A mode, and Research renders the §5.2
- * pipeline launch/monitor mode.
+ * Two-mode wiki shell (plan wiki-obsidian-panel §2.2): Wiki | Code with
+ * persisted mode/scope, dirty-guarded transitions, and the kebab action
+ * surface. Both modes render the §3.1 browse experience; grounded Q&A is
+ * agent-native (#19672), not a panel mode.
  */
 
 import {
@@ -21,16 +20,11 @@ import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import { Input } from "../ui/Input";
 import { useDirtyGuard } from "./dirtyGuard";
-import { WikiAskMode } from "./wiki/WikiAskMode";
 import { WikiBrowse } from "./wiki/WikiBrowse";
 import { WikiGraphView } from "./wiki/WikiGraphView";
 import { WikiSourcesManager } from "./wiki/WikiSourcesManager";
 import { useWikiTabActions, type WikiTabActions } from "./wiki/WikiTabActions";
-import {
-  summarizeWikiStatus,
-  type WikiFetchScope,
-  type WikiStatusSummary,
-} from "./wiki/WikiTabData";
+import { summarizeWikiStatus, type WikiFetchScope } from "./wiki/WikiTabData";
 import type { WikiMode } from "./wiki/WikiTabModel";
 import {
   loadStoredMode,
@@ -58,7 +52,6 @@ const noop = () => {};
 
 interface ModeBodyProps {
   mode: WikiMode;
-  summary: WikiStatusSummary;
   scope: WikiFetchScope;
   nav: WikiNav;
   search: string;
@@ -66,13 +59,10 @@ interface ModeBodyProps {
   actions: WikiTabActions;
   refreshSeq: number;
   onOpenGraph: () => void;
-  /** Unresolved-citation fallback (§5.1): wiki-mode vault search. */
-  onSearchVault: (query: string) => void;
 }
 
 function ModeBody({
   mode,
-  summary,
   scope,
   nav,
   search,
@@ -80,15 +70,7 @@ function ModeBody({
   actions,
   refreshSeq,
   onOpenGraph,
-  onSearchVault,
 }: ModeBodyProps) {
-  // Loading counts as offline for the ask composer until the gateway's state is known.
-  const offline = summary.state === "unavailable" || summary.state === "loading";
-  if (mode === "ask") {
-    return (
-      <WikiAskMode scope={scope} nav={nav} offline={offline} onSearchVault={onSearchVault} />
-    );
-  }
   return (
     <WikiBrowse
       mode={mode}
@@ -159,9 +141,7 @@ export const WikiTab = memo(function WikiTab({
     guardedRun: dirtyGuard.guardedRun,
     onNavigate: (entry) => {
       applyMode(entry.mode);
-      if (entry.mode === "wiki" || entry.mode === "code") {
-        storeLastPage(entry.mode, entry.path);
-      }
+      storeLastPage(entry.mode, entry.path);
     },
   });
 
@@ -181,16 +161,6 @@ export const WikiTab = memo(function WikiTab({
       requestPanelOverride();
     });
   }, [dirtyGuard, requestPanelOverride]);
-
-  // §5.1 unresolved-citation fallback: seed the toolbar search and flip to
-  // wiki mode so the flat match list takes over.
-  const handleSearchVault = useCallback(
-    (query: string) => {
-      setSearch(query);
-      void dirtyGuard.guardedRun(() => applyMode("wiki"));
-    },
-    [applyMode, dirtyGuard],
-  );
 
   const handleTopicSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -353,7 +323,6 @@ export const WikiTab = memo(function WikiTab({
 
       <ModeBody
         mode={mode}
-        summary={summary}
         scope={scope}
         nav={nav}
         search={search}
@@ -361,7 +330,6 @@ export const WikiTab = memo(function WikiTab({
         actions={actions}
         refreshSeq={browseRefreshSeq}
         onOpenGraph={handleOpenGraph}
-        onSearchVault={handleSearchVault}
       />
 
       <Input

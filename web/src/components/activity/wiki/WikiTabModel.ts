@@ -5,7 +5,7 @@
  * payload is only consumed by the lazy graph view.
  */
 
-export type WikiMode = "wiki" | "code" | "ask";
+export type WikiMode = "wiki" | "code";
 
 export interface WikiPageMeta {
   /** Vault-relative path including the .md suffix. */

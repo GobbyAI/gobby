@@ -17,7 +17,6 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 // primitives have to render the real element).
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
-    'src/components/activity/wiki/WikiAskMode.tsx': 7, // #19672: 4.11 Ask surface deferral
     'src/components/chat/ChatInput.tsx': 1, // moat 05198494: composer icon button
     'src/components/chat/ChatInputModelControls.tsx': 1, // moat 05198494: composer icon button
     'src/components/chat/ChatInputPrimaryButton.tsx': 1, // moat 05198494: composer icon button
@@ -25,9 +24,7 @@ export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> =
   },
   input: {},
   select: {},
-  textarea: {
-    'src/components/activity/wiki/WikiAskMode.tsx': 1, // #19672: 4.11 Ask surface deferral
-  },
+  textarea: {},
 }
 
 // `const *_CLS =` style-constant declarations per file.
