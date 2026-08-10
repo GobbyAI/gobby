@@ -575,7 +575,6 @@ def protect_production_resources(
             "gobby.cli",  # cli/__init__.py
             "gobby.cli.utils",
             "gobby.cli.tasks._utils",
-            "gobby.mcp_proxy.stdio",
             "gobby.runner_init.storage",
         ]
 

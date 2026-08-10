@@ -1,30 +1,41 @@
 import os
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 
-import gobby.mcp_proxy.stdio
 import gobby.runner
 import gobby.runner_init.storage
 import gobby.runner_maintenance
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
 
-def test_import_pathing_trap_is_fixed(protect_production_resources) -> None:
+def _get_storage_load_config() -> Callable[..., DaemonConfig]:
+    return cast(
+        Callable[..., DaemonConfig],
+        vars(gobby.runner_init.storage)["load_config"],
+    )
+
+
+def test_import_pathing_trap_is_fixed(protect_production_resources: None) -> None:
     """
     Verify that the protect_production_resources fixture successfully patches
     load_config in modules that have already imported it.
     """
-    # Check gobby.mcp_proxy.stdio.load_config
+    # Check gobby.runner_init.storage.load_config
     # It should be the 'safe_load_config' function defined in the fixture
-    assert gobby.mcp_proxy.stdio.load_config.__name__ == "safe_load_config", (
-        "gobby.mcp_proxy.stdio.load_config should be patched to safe_load_config"
+    load_config = _get_storage_load_config()
+    assert load_config.__name__ == "safe_load_config", (
+        "gobby.runner_init.storage.load_config should be patched to safe_load_config"
     )
 
     # Check its behavior
-    config = gobby.mcp_proxy.stdio.load_config()
+    config = load_config()
+    assert config.database_url is not None
     assert "test-safe-postgres" in config.database_url, (
         "Resulting config should point to safe test database"
     )
@@ -41,7 +52,10 @@ async def test_runner_uses_patched_config(
     # when other tests have already loaded numpy in this process.
     monkeypatch.setattr("gobby.runner_init.init_runtime_capacity", lambda self: None)
     monkeypatch.setattr("gobby.runner_init.init_services", lambda self: None)
-    monkeypatch.setattr("gobby.runner_init.init_orchestration", lambda self: None)
+    monkeypatch.setattr(
+        "gobby.runner_init.init_orchestration",
+        lambda _self, _startup_config: None,
+    )
     monkeypatch.setattr("gobby.runner_init.init_servers", lambda self: None)
 
     def _init_storage(
@@ -49,7 +63,7 @@ async def test_runner_uses_patched_config(
         _config_path: Path | None,
         _verbose: bool,
     ) -> None:
-        runner.config = gobby.runner_init.storage.load_config()
+        runner.config = _get_storage_load_config()()
         db = MagicMock()
         db.database_url = runner.config.database_url
         runner.database = db
@@ -62,11 +76,12 @@ async def test_runner_uses_patched_config(
     runner = gobby.runner.GobbyRunner()
 
     # Ensure it's using the safe DB
-    assert "test-safe-postgres" in str(runner.database.database_url)
-    assert runner.database.database_url == runner.config.database_url
+    database_url = cast(MagicMock, runner.database).database_url
+    assert "test-safe-postgres" in str(database_url)
+    assert database_url == runner.config.database_url
 
 
-def test_fixture_redirects_gobby_home(protect_production_resources) -> None:
+def test_fixture_redirects_gobby_home(protect_production_resources: None) -> None:
     """Fixture should keep daemon-path helpers out of ~/.gobby."""
     safe_home = Path(os.environ["GOBBY_HOME"]).resolve()
     real_home = (Path.home() / ".gobby").resolve()

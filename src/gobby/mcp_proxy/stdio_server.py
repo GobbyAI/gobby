@@ -10,7 +10,7 @@ from typing import Any, Protocol
 
 from mcp.server.fastmcp import FastMCP
 
-from gobby.config.app import load_config as _load_config
+from gobby.cli.runtime import CliRuntime
 from gobby.mcp_proxy.instructions import build_gobby_instructions as _build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries as _setup_internal_registries
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
@@ -50,7 +50,7 @@ class FastMcpFactory(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class StdioServerDependencies:
-    load_config: Callable[[], Any]
+    runtime_factory: Callable[[], CliRuntime]
     setup_internal_registries: SetupInternalRegistries
     build_gobby_instructions: Callable[[], str]
     fast_mcp_factory: FastMcpFactory
@@ -60,7 +60,7 @@ class StdioServerDependencies:
 
 def default_stdio_server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
-        load_config=_load_config,
+        runtime_factory=lambda: CliRuntime(None),
         setup_internal_registries=_setup_internal_registries,
         build_gobby_instructions=_build_gobby_instructions,
         fast_mcp_factory=FastMCP,
@@ -84,7 +84,11 @@ def create_stdio_mcp_server(
 ) -> FastMCP:
     """Create stdio MCP server."""
     effective_deps = deps or default_stdio_server_dependencies()
-    config = effective_deps.load_config()
+    runtime = effective_deps.runtime_factory()
+    try:
+        config = runtime.require_config(apply_migrations=False)
+    finally:
+        runtime.close()
 
     session_manager = None
     memory_manager = None
