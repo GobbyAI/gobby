@@ -35,7 +35,9 @@ function sourceFiles(dir: string): string[] {
 
 function collectDefinedTokens(files: string[]): Set<string> {
   const defined = new Set<string>()
-  const definitionPattern = /(?:^|[\s{;,])['"]?(--[A-Za-z0-9_-]+)['"]?\s*:/gm
+  // `[` admits Tailwind arbitrary-property definitions ([--token:value]);
+  // var() references stay excluded because `(` precedes their token.
+  const definitionPattern = /(?:^|[\s{;,[])['"]?(--[A-Za-z0-9_-]+)['"]?\s*:/gm
 
   for (const file of files) {
     const source = stripComments(readFileSync(file, 'utf8'))
