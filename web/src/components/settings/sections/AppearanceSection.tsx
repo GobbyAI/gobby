@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { SegmentedControl } from '../../ui/SegmentedControl'
 import { Button } from '../../ui/Button'
+import { Input } from '../../ui/Input'
 import type { SegmentedControlOption } from '../../ui/SegmentedControl'
 import type { Density, Theme, UseSettingsReturn } from '../../../hooks/useSettings'
 import type { PlanPendingVariant } from '../../chat/planPendingSurface'
@@ -100,9 +101,10 @@ function AppearanceControls({ client }: { client: UseSettingsReturn }) {
         description="Base size the whole type scale derives from."
       >
         <div className="appearance-font-size">
-          <input
+          <Input
             id={FONT_SIZE_FIELD_ID}
-            className="appearance-font-size__range"
+            wrapperClassName="w-auto"
+            className="appearance-font-size__range h-auto rounded-none border-0 bg-transparent p-0"
             type="range"
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}

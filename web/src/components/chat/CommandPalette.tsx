@@ -4,6 +4,7 @@ import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
 import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 
 export interface CommandPaletteAction {
   id: string
@@ -206,9 +207,10 @@ export function CommandPalette({
       >
         <div className="command-palette-input-wrap">
           <SearchIcon />
-          <input
+          <Input
             ref={inputRef}
-            className="command-palette-input"
+            wrapperClassName="flex-1"
+            className="command-palette-input h-auto rounded-none border-0 bg-transparent p-0"
             placeholder="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}

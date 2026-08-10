@@ -41,8 +41,10 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
   return (
     <>
       <div className="flex w-full justify-center py-2">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          dense
           className="group max-w-full cursor-zoom-in rounded-lg border border-border bg-muted/20 p-1 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           onClick={() => {
             setFitToScreen(true)
@@ -57,7 +59,7 @@ export function ToolResultImage({ src }: ToolResultImageProps) {
             decoding="async"
             className="block max-h-96 max-w-full rounded-md object-contain"
           />
-        </button>
+        </Button>
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

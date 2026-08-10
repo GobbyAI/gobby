@@ -38,8 +38,11 @@ export function CommandBar({
     <div className="command-bar">
       {/* Left cluster — Session context */}
       <div className="command-bar-left">
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
+          dense
           className="command-bar-session"
           data-testid="chat-session-selector"
           onClick={onOpenPalette}
@@ -57,7 +60,7 @@ export function CommandBar({
             {getSessionTitleText(title)}
           </span>
           <DropdownCaret />
-        </button>
+        </Button>
       </div>
 
       {/* Right cluster — Actions */}

@@ -729,8 +729,11 @@ export default function App() {
         )}
       </AppErrorBoundary>
       {visibleToastMessage && (
-        <button
+        <Button
           type="button"
+          variant="ghost"
+          size="sm"
+          dense
           className="app-toast"
           onClick={() => {
             setToastMessage(null);
@@ -739,7 +742,7 @@ export default function App() {
           aria-label={`Dismiss notification: ${visibleToastMessage}`}
         >
           {visibleToastMessage}
-        </button>
+        </Button>
       )}
     </div>
   );

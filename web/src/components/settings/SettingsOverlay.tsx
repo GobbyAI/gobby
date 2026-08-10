@@ -145,8 +145,10 @@ export function SettingsOverlay({
 
   return (
     <div className="settings-overlay-shell">
-      <button
+      <Button
         type="button"
+        variant="ghost"
+        dense
         className="settings-overlay-shell__backdrop"
         aria-label="Close settings"
         tabIndex={-1}
@@ -178,8 +180,11 @@ export function SettingsOverlay({
         </header>
         <div className="settings-overlay-shell__toolbar">
           <div className="settings-overlay-shell__section-select">
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              dense
               className="settings-overlay-shell__section-trigger"
               aria-haspopup="listbox"
               aria-expanded={sectionMenuOpen}
@@ -189,7 +194,7 @@ export function SettingsOverlay({
                 {section.label}
               </span>
               <ChevronDownIcon />
-            </button>
+            </Button>
             {sectionMenuOpen ? (
               <ActivityFilterDropdown<SettingsSectionId>
                 value={activeSection}

@@ -2,8 +2,10 @@ import { useState, useMemo, useRef, useEffect, useCallback, useId } from "react"
 import { createPortal } from "react-dom";
 import type { ProjectOption } from "../types/chat";
 import { cn } from "../lib/utils";
+import { Button } from "./ui/Button";
+import { Input } from "./ui/Input";
 import { SegmentedControl } from "./ui/SegmentedControl";
-import { inputFocusCls } from "./shared/focusStyles";
+import { coarseHitAreaCls } from "./ui/controlStyles";
 
 type ProjectMode = "personal" | "project";
 type PickerMode = "search" | "compact";
@@ -267,10 +269,13 @@ export function ProjectSelector({
         />
       </div>
       <div className="project-selector-compact-wrap">
-        <button
+        <Button
           ref={compactTriggerRef}
           type="button"
-          className="project-selector-compact-trigger"
+          variant="ghost"
+          size="sm"
+          dense
+          className={cn("project-selector-compact-trigger", coarseHitAreaCls)}
           onClick={toggleCompactMenu}
           onKeyDown={handleCompactTriggerKeyDown}
           disabled={disabled}
@@ -280,7 +285,7 @@ export function ProjectSelector({
           aria-controls={showCompactMenu ? listboxId : undefined}
         >
           <span className="project-selector-compact-label">{selectedLabel}</span>
-        </button>
+        </Button>
       </div>
       {pickerMode &&
         pickerPos &&
@@ -296,9 +301,9 @@ export function ProjectSelector({
             onKeyDown={handlePickerKeyDown}
           >
             {showProjectSearch && (
-              <input
+              <Input
                 ref={searchInputRef}
-                className={`w-full px-2 py-1.5 text-xs bg-transparent border-b border-border text-foreground placeholder:text-muted-foreground ${inputFocusCls}`}
+                className="h-auto rounded-none border-0 border-b border-border bg-transparent px-2 py-1.5 text-xs text-foreground placeholder:text-muted-foreground"
                 placeholder="Search"
                 value={projectSearch}
                 onChange={handleProjectSearchChange}
@@ -321,14 +326,19 @@ export function ProjectSelector({
               tabIndex={showCompactMenu ? -1 : undefined}
             >
               {pickerOptions.map((p, index) => (
-                <button
+                <Button
                   key={p.id}
                   id={`${listboxId}-option-${index}`}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
                   role="option"
                   aria-selected={isOptionSelected(p)}
                   tabIndex={-1}
                   className={cn(
-                    "w-full text-left px-2 py-1 text-xs hover:bg-muted",
+                    "min-h-0 w-full justify-start rounded-none border-0 px-2 py-1 text-left text-xs font-normal",
+                    coarseHitAreaCls,
                     isOptionSelected(p) && "bg-accent/20 text-accent",
                     (showProjectSearch || showCompactMenu) &&
                       index === boundedActiveOptionIndex &&
@@ -337,7 +347,7 @@ export function ProjectSelector({
                   onClick={() => handleProjectSelect(p.id)}
                 >
                   {p.name}
-                </button>
+                </Button>
               ))}
               {pickerOptions.length === 0 && (
                 <div className="px-2 py-1 text-xs text-muted-foreground">

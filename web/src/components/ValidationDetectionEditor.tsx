@@ -1,26 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { inputFocusCls } from './shared/focusStyles'
-
-// Class tokens hoisted from the now-deleted legacy configuration-page styles
-// module. This is the only surviving consumer (reused by the settings overlay's
-// ProjectsSessionsSection), so the few classes it needs live here directly.
-const FORM_SECTION_CLS =
-  'mb-5 overflow-hidden rounded-lg border border-[var(--border)]'
-const SECTION_HEADER_STATIC_CLS =
-  'flex select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5'
-const SECTION_TITLE_CLS =
-  'text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]'
-const SECTION_BODY_CLS = 'flex flex-col gap-3 px-3.5 py-3'
-const FORM_FIELD_CLS = 'flex flex-col gap-1'
-const FIELD_LABEL_CLS =
-  'text-[length:var(--text-md)] font-medium text-[var(--text-primary)]'
-const FIELD_HELP_CLS =
-  'text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]'
-const INPUT_CLS =
-  `rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)] pointer-coarse:min-h-11 ${inputFocusCls}`
-const TOOLBAR_BTN_CLS =
-  'flex cursor-pointer items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11'
+import { Button } from './ui/Button'
+import { Input } from './ui/Input'
+import { Textarea } from './ui/Textarea'
 
 const DEFAULT_DETECTION_CONFIG = {
   enabled: true,
@@ -125,22 +107,27 @@ export function ValidationDetectionEditor({
   }
 
   return (
-    <div className={FORM_SECTION_CLS}>
-      <div className={SECTION_HEADER_STATIC_CLS}>
-        <span className={SECTION_TITLE_CLS}>{title}</span>
+    <div className="mb-5 overflow-hidden rounded-lg border border-[var(--border)]">
+      <div className="flex select-none items-center justify-between border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3.5 py-2.5">
+        <span className="text-[length:var(--text-base)] font-semibold text-[var(--text-primary)]">
+          {title}
+        </span>
       </div>
-      <div className={SECTION_BODY_CLS}>
-        <div className={FORM_FIELD_CLS}>
-          <label className={FIELD_LABEL_CLS} htmlFor="validation-detection-json">
+      <div className="flex flex-col gap-3 px-3.5 py-3">
+        <div className="flex flex-col gap-1">
+          <label
+            className="text-[length:var(--text-md)] font-medium text-[var(--text-primary)]"
+            htmlFor="validation-detection-json"
+          >
             Matcher Config
           </label>
-          <span className={FIELD_HELP_CLS}>
+          <span className="text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]">
             JSON object with enabled, builtin_matchers_enabled, disabled_builtin_matcher_ids,
             recognized_wrappers, wrapper_rules, and custom_matchers.
           </span>
-          <textarea
+          <Textarea
             id="validation-detection-json"
-            className={`${INPUT_CLS} min-h-[220px] resize-y leading-5`}
+            className="min-h-[220px] resize-y rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] leading-5 text-[var(--text-primary)]"
             value={editorJsonText}
             spellCheck={false}
             onChange={(event) => handleJsonChange(event.target.value)}
@@ -148,29 +135,34 @@ export function ValidationDetectionEditor({
           {editorJsonError && <span className="text-[length:var(--text-sm)] text-[var(--color-error)]">{editorJsonError}</span>}
         </div>
 
-        <div className={FORM_FIELD_CLS}>
-          <label className={FIELD_LABEL_CLS} htmlFor="validation-detection-preview">
+        <div className="flex flex-col gap-1">
+          <label
+            className="text-[length:var(--text-md)] font-medium text-[var(--text-primary)]"
+            htmlFor="validation-detection-preview"
+          >
             Preview Command
           </label>
           <div className="flex gap-2 max-sm:flex-col">
-            <input
+            <Input
               id="validation-detection-preview"
-              className={`${INPUT_CLS} flex-1`}
+              wrapperClassName="flex-1"
+              className="rounded border border-[var(--border)] bg-[var(--bg-primary)] px-2.5 py-1.5 font-mono text-[length:var(--text-md)] text-[var(--text-primary)]"
               value={command}
               onChange={(event) => setCommand(event.target.value)}
               placeholder="cargo clippy --no-default-features -- -D warnings"
             />
-            <button
+            <Button
               type="button"
-              className={TOOLBAR_BTN_CLS}
+              size="sm"
+              className="cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]"
               onClick={() => { void previewCommand() }}
               disabled={!command.trim() || Boolean(editorJsonError)}
             >
               Preview
-            </button>
+            </Button>
           </div>
           {preview && (
-            <span className={FIELD_HELP_CLS}>
+            <span className="text-[length:var(--text-xs)] leading-[1.4] text-[var(--text-muted)]">
               {preview.matched
                 ? `Matched ${preview.matcher_id}: ${preview.label}`
                 : 'No validation matcher matched'}

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeBlock } from '../shared/CodeBlock'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
 
 export interface CodeProps {
   children?: React.ReactNode
@@ -52,14 +53,18 @@ export function CodeBlockInner({ children, className }: CodeProps) {
       <div className="flex items-center justify-between bg-muted/50 px-3 py-1.5 text-xs">
         <span className="text-muted-foreground font-mono">{language || 'text'}</span>
         <div className="flex items-center gap-1">
-          <button
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            dense
+            className="flex min-h-0 w-auto items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             onClick={handleCopy}
             title="Copy code"
             aria-label={copied ? 'Code copied to clipboard' : 'Copy code to clipboard'}
           >
             {copied ? <CheckIcon /> : <CopyIcon />}
-          </button>
+          </Button>
         </div>
       </div>
       <CodeBlock

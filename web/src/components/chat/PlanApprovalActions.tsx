@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { ApprovalOption } from '../../types/chat'
 import { Button } from '../ui/Button'
+import { Textarea } from '../ui/Textarea'
 import { cn } from '../../lib/utils'
 
 interface PlanApprovalActionsProps {
@@ -73,8 +74,8 @@ export function PlanApprovalActions({
   if (showFeedback) {
     return (
       <div className={cn('flex flex-col gap-2', className)}>
-        <textarea
-          className="min-h-[60px] w-full resize-none rounded-lg bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+        <Textarea
+          className="min-h-[60px] w-full resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
           placeholder="Add a comment (optional)…"
           value={feedback}
           onChange={(e) => setFeedback(e.target.value)}

@@ -6,6 +6,7 @@ import { SchemaSelectField, Subsection, SwitchConfigField } from './configFields
 import { asString, asTypedList } from './configAccessors'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import { useSettingsSectionContext } from './SettingsSectionContext'
+import { Input } from '../../ui/Input'
 
 /**
  * Tool Approvals settings section (audit IA section 13). Two surfaces live here:
@@ -138,7 +139,7 @@ function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
         <ul className="settings-list-field__items">
           {exemptions.map((rule, index) => (
             <li key={rule} className="settings-list-field__item">
-              <input
+              <Input
                 type="text"
                 className="settings-field__input"
                 value={rule}

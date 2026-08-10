@@ -17,64 +17,21 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 // primitives have to render the real element).
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
-    'src/App.tsx': 1,
-    'src/components/ProjectSelector.tsx': 2,
-    'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/wiki/WikiAskMode.tsx': 7, // 4.11 deferral: Ask surface replacement
-    'src/components/app/AppErrorBoundary.tsx': 2,
-    'src/components/auth/LoginPage.tsx': 1,
-    'src/components/chat/ActiveAgentIndicator.tsx': 1,
-    'src/components/chat/AgentPickerDropdown.tsx': 4,
-    'src/components/chat/BranchIndicator.tsx': 3,
-    'src/components/chat/ChatCommandPalette.tsx': 1,
     'src/components/chat/ChatInput.tsx': 1,
     'src/components/chat/ChatInputModelControls.tsx': 1,
     'src/components/chat/ChatInputPrimaryButton.tsx': 1,
     'src/components/chat/ChatInputQueuedFiles.tsx': 2,
-    'src/components/chat/CodeBlockRenderers.tsx': 1,
-    'src/components/chat/CommandBar.tsx': 1,
-    'src/components/chat/ProviderPicker.tsx': 3,
-    'src/components/chat/ResumeSessionModal.tsx': 1,
-    'src/components/chat/ToolCallCard.tsx': 2,
-    'src/components/chat/ToolResultImage.tsx': 1,
-    'src/components/command-browser/SkillBrowserModal.tsx': 3,
-    'src/components/command-browser/ToolBrowserModal.tsx': 4,
-    'src/components/settings/SettingsOverlay.tsx': 2,
-    'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
-    'src/components/shared/DiffBlock.tsx': 1,
-    'src/components/shared/MermaidBlock.tsx': 1,
   },
-  input: {
-    'src/components/ProjectSelector.tsx': 1,
-    'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/auth/LoginPage.tsx': 3,
-    'src/components/chat/ChatInputToolbar.tsx': 1,
-    'src/components/chat/CommandPalette.tsx': 1,
-    'src/components/chat/ResumeSessionModal.tsx': 2,
-    'src/components/chat/ToolCallCard.tsx': 1,
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/settings/sections/AppearanceSection.tsx': 1,
-    'src/components/settings/sections/McpToolsSection.tsx': 1,
-    'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
-    'src/components/settings/sections/ToolApprovalsSection.tsx': 1,
-  },
-  select: {
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
-  },
+  input: {},
+  select: {},
   textarea: {
-    'src/components/ValidationDetectionEditor.tsx': 1,
     'src/components/activity/wiki/WikiAskMode.tsx': 1, // 4.11 deferral: Ask surface replacement
-    'src/components/chat/ChatInput.tsx': 1,
-    'src/components/chat/PlanApprovalActions.tsx': 1,
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
   },
 }
 
 // `const *_CLS =` style-constant declarations per file.
-export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/ValidationDetectionEditor.tsx': 9,
-  'src/components/chat/AgentPickerDropdown.tsx': 11,
-}
+export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {}
 
 // The complete recorded stylesheet set. New .css files are banned outright.
 export const CSS_FILE_ALLOWLIST: readonly string[] = [

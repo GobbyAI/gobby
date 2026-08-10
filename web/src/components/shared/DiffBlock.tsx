@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo } from 'react'
 
+import { Button } from '../ui/Button'
 import { CodeBlock } from './CodeBlock'
 import {
   type DiffLine,
@@ -145,14 +146,17 @@ export function DiffBlock({
             {path}
           </span>
           {onCopy && (
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="sm"
+              dense
               onClick={onCopy}
               className="shrink-0 text-xs text-muted-foreground hover:text-foreground pointer-coarse:min-h-11 pointer-coarse:min-w-11"
               title="Copy diff"
             >
               Copy
-            </button>
+            </Button>
           )}
         </div>
         <div className="flex-1 min-h-0 overflow-auto">{body}</div>

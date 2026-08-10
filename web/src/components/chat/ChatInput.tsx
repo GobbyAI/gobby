@@ -12,6 +12,7 @@ import { ChatInputModelControls } from './ChatInputModelControls'
 import { ChatInputPrimaryButton } from './ChatInputPrimaryButton'
 import { ChatInputQueuedFiles } from './ChatInputQueuedFiles'
 import { ChatInputToolbar } from './ChatInputToolbar'
+import { Textarea } from '../ui/Textarea'
 import { useChatInputAttachments } from './useChatInputAttachments'
 import { useChatInputNarrow } from './useChatInputNarrow'
 import { useChatInputPrimaryAction } from './useChatInputPrimaryAction'
@@ -515,11 +516,12 @@ export function ChatInput({
         {/* Input row */}
         <div className="chat-input-shell">
           <div className="flex items-start gap-2">
-            <textarea
+            <Textarea
               ref={textareaRef}
               name="message"
               style={{ minHeight: 'var(--control-row-height)' }}
-              className="chat-input-textarea flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
+              wrapperClassName="flex-1"
+              className="chat-input-textarea min-h-[36px] flex-1 resize-none rounded-lg border-transparent bg-muted px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
               value={input}
               onChange={(e) => handleChange(e.target.value)}
               onKeyDown={handleKeyDown}

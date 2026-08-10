@@ -1,6 +1,8 @@
 import { useState, useCallback, type FormEvent } from 'react'
 import { GobbyLogo } from '../shared/GobbyLogo'
 import { Heading } from '../shared/Heading'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 
 interface LoginPageProps {
   credentialsConfigured: boolean
@@ -52,9 +54,10 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
 
         {error && <div style={styles.error}>{error}</div>}
 
-        <label style={styles.label}>
-          Username
-          <input
+        <div style={styles.label}>
+          <label htmlFor="login-username">Username</label>
+          <Input
+            id="login-username"
             type="text"
             value={username}
             onChange={e => setUsername(e.target.value)}
@@ -63,11 +66,12 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
             required
             style={styles.input}
           />
-        </label>
+        </div>
 
-        <label style={styles.label}>
-          Password
-          <input
+        <div style={styles.label}>
+          <label htmlFor="login-password">Password</label>
+          <Input
+            id="login-password"
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
@@ -75,19 +79,23 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
             required
             style={styles.input}
           />
-        </label>
+        </div>
 
-        <label style={styles.checkboxLabel}>
-          <input
+        <div style={styles.checkboxLabel}>
+          <Input
+            id="login-remember-me"
             type="checkbox"
+            wrapperClassName="w-auto shrink-0"
+            className="h-4 w-4 shrink-0 rounded border-border p-0 accent-accent"
             checked={rememberMe}
             onChange={e => setRememberMe(e.target.checked)}
           />
-          <span>Remember me for 30 days</span>
-        </label>
+          <label htmlFor="login-remember-me">Remember me for 30 days</label>
+        </div>
 
-        <button
+        <Button
           type="submit"
+          variant="primary"
           disabled={loading || !username || !password}
           style={{
             ...styles.button,
@@ -95,7 +103,7 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
           }}
         >
           {loading ? 'Signing in...' : 'Sign in'}
-        </button>
+        </Button>
       </form>
     </div>
   )

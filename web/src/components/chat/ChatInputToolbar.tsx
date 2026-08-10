@@ -3,6 +3,7 @@ import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import type { ChatMode, ChatModeInfo } from '../../types/chat'
 import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
 import { BranchIndicator } from './BranchIndicator'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
@@ -163,11 +164,12 @@ export function ChatInputToolbar({
             />
           </div>
         ) : null}
-        <input
+        <Input
           ref={fileInputRef}
           type="file"
           name="chat-attachments"
           multiple
+          wrapperClassName="hidden"
           className="hidden"
           onChange={(event) => {
             handleFilesSelected(event.target.files)

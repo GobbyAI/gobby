@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { TextField } from '../../activity/fields'
 import { Button } from '../../ui/Button'
+import { Input } from '../../ui/Input'
 import { BoundedSelectField } from '../fields'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import {
@@ -280,8 +281,9 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
           {entries.map(([key, hub], index) => (
             <li key={index} className="settings-hubs-field__item">
               <div className="settings-hubs-field__head">
-                <input
+                <Input
                   type="text"
+                  wrapperClassName="flex-1"
                   className="settings-field__input"
                   value={key}
                   placeholder="hub-name"

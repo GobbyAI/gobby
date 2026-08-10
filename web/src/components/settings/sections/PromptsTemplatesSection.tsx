@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { CodeMirrorEditor } from '../../shared/CodeMirrorEditor'
 import { DetailActionButton, SelectField } from '../../activity/fields'
+import { Button } from '../../ui/Button'
+import { Input } from '../../ui/Input'
 import type { FieldOption } from '../../activity/fields'
 import { Subsection } from './configFields'
 import { SettingsSection } from './SettingsSection'
@@ -286,9 +288,11 @@ function PromptOverridesGroup({
             <ul className="settings-typed-list__items">
               {filtered.map((prompt) => (
                 <li key={prompt.path}>
-                  <button
+                  <Button
                     type="button"
-                    className="settings-prompt-row"
+                    variant="ghost"
+                    dense
+                    className="settings-prompt-row items-stretch justify-start whitespace-normal font-normal"
                     aria-label={`Edit prompt ${prompt.path}`}
                     onClick={() => {
                       void openPrompt(prompt.path)
@@ -305,7 +309,7 @@ function PromptOverridesGroup({
                     <span className="settings-prompt-row__badge">
                       {prompt.has_override ? 'Overridden' : 'Bundled'}
                     </span>
-                  </button>
+                  </Button>
                 </li>
               ))}
             </ul>
@@ -531,11 +535,12 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
           disabled={busy}
         />
       </div>
-      <input
+      <Input
         ref={fileInputRef}
         type="file"
         accept=".json,application/json"
         aria-label="Import configuration file"
+        wrapperClassName="sr-only"
         className="sr-only"
         onChange={(event) => {
           void handleFileChange(event)
