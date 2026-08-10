@@ -121,7 +121,9 @@ function PromptOverridesGroup({
         title="Prompt overrides"
         hint="Customize the bundled prompt bodies the daemon ships with."
       >
-        <p className="settings-section__pending">Prompt editing is unavailable.</p>
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
+          Prompt editing is unavailable.
+        </p>
       </Subsection>
     )
   }
@@ -356,7 +358,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
         title="Full configuration template"
         hint="Edit the whole defaults-plus-overrides document as YAML."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           The template editor is unavailable.
         </p>
       </Subsection>
@@ -449,7 +451,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
         title="Backup & restore"
         hint="Export or import the full configuration bundle."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Backup and restore is unavailable.
         </p>
       </Subsection>

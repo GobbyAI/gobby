@@ -131,17 +131,20 @@ function PoliciesGroup({ fields }: { fields: SettingsSectionFields }) {
 function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
   const labelId = useId()
   return (
-    <div className="settings-field" role="group" aria-labelledby={labelId}>
-      <span id={labelId} className="settings-field__label">
+    <div className="flex flex-col gap-2" role="group" aria-labelledby={labelId}>
+      <span
+        id={labelId}
+        className="text-base font-medium leading-[1.3] text-foreground"
+      >
         Built-in exemptions
       </span>
       {exemptions.length > 0 ? (
-        <ul className="settings-list-field__items">
+        <ul className="m-0 flex list-none flex-col gap-2 p-0">
           {exemptions.map((rule, index) => (
-            <li key={rule} className="settings-list-field__item">
+            <li key={rule} className="flex items-center gap-2">
               <Input
                 type="text"
-                className="settings-field__input"
+                className="flex-1 text-foreground [font-family:inherit] pointer-coarse:min-h-11"
                 value={rule}
                 disabled
                 aria-label={`Built-in exemption ${index + 1}`}
@@ -150,9 +153,11 @@ function BuiltInExemptions({ exemptions }: { exemptions: string[] }) {
           ))}
         </ul>
       ) : (
-        <p className="settings-field__empty">None.</p>
+        <p className="text-sm leading-[1.4] text-foreground-muted">None.</p>
       )}
-      <p className="settings-field__hint">Always auto-allowed and read-only.</p>
+      <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
+        Always auto-allowed and read-only.
+      </p>
     </div>
   )
 }
@@ -189,7 +194,7 @@ function GlobalRulesGroup({
         title="Global auto-allow rules"
         hint="Tool patterns auto-allowed across providers for interactive web chat."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Global approval rules are unavailable.
         </p>
       </Subsection>
@@ -232,11 +237,11 @@ function GlobalRulesGroup({
         placeholder="tool:Write or mcp:gobby-tasks:*"
         disabled={saving}
       />
-      <p className="settings-field__hint">
+      <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
         Recommended defaults: {defaultRules.join(', ') || 'none'}
       </p>
       <BuiltInExemptions exemptions={builtInExemptions} />
-      <div className="settings-field__actions">
+      <div className="flex flex-wrap gap-2">
         <DetailActionButton
           label="Reset to defaults"
           variant="ghost"
@@ -256,7 +261,10 @@ function GlobalRulesGroup({
         />
       </div>
       {error ? (
-        <p className="settings-field__hint" role="alert">
+        <p
+          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          role="alert"
+        >
           {error}
         </p>
       ) : null}

@@ -39,10 +39,16 @@ export function Subsection({
   children: ReactNode
 }) {
   return (
-    <section className="settings-subsection">
-      <div className="settings-subsection__head">
-        <h4 className="settings-subsection__title">{title}</h4>
-        {hint ? <p className="settings-field__hint">{hint}</p> : null}
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h4 className="text-base font-semibold leading-[1.3] text-foreground">
+          {title}
+        </h4>
+        {hint ? (
+          <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
+            {hint}
+          </p>
+        ) : null}
       </div>
       {children}
     </section>

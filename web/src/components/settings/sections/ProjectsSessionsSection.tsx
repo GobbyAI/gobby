@@ -117,7 +117,7 @@ function ProjectSelectionGroup({
         title="Project selection"
         hint="The project new sessions and tasks attach to."
       >
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Project selection is unavailable.
         </p>
       </Subsection>

@@ -146,7 +146,7 @@ export function AppearanceSection() {
         clientSettings ? (
           <AppearanceControls client={clientSettings} />
         ) : (
-          <p className="settings-section__pending">
+          <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
             Appearance settings are unavailable — the settings provider is not mounted.
           </p>
         )

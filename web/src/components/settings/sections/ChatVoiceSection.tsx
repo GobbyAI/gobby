@@ -116,7 +116,7 @@ function ClientPreferences({ clientSettings }: { clientSettings?: UseSettingsRet
   if (!clientSettings) {
     return (
       <Subsection title="Voice & chat preferences">
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Voice and chat preferences are unavailable — the settings provider is not mounted.
         </p>
       </Subsection>
