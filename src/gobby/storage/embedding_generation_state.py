@@ -28,6 +28,12 @@ _SOURCE_COLLECTIONS = {
 _LEDGER_LOCK_CLASS = 0x474F4242
 _LEDGER_LOCK_ID = 1
 
+# Local lease deadlines run ahead of the database expiry so a daemon always
+# self-fences before its ack row lapses: 10% of the TTL, capped at 3 seconds
+# (the production 30s TTL uses the full 3.0s margin).
+_LEASE_DEADLINE_MARGIN_SECONDS = 3.0
+_LEASE_DEADLINE_MARGIN_FRACTION = 0.1
+
 
 class EmbeddingGenerationError(RuntimeError):
     """Base error for generation coordination failures."""
@@ -35,6 +41,14 @@ class EmbeddingGenerationError(RuntimeError):
 
 class EmbeddingGenerationLeaseLost(EmbeddingGenerationError):
     """Raised after a serving lease can no longer be trusted."""
+
+
+class EmbeddingGenerationLeaseRenewTransient(EmbeddingGenerationError):
+    """Raised when a lease renewal failed for a possibly transient reason.
+
+    The lease is not fenced: the database row may still record a live ack, so
+    callers retry with bounded backoff while the local deadline stays the
+    fence of last resort."""
 
 
 class EmbeddingGenerationNotCaughtUp(EmbeddingGenerationError):
@@ -74,9 +88,25 @@ class EmbeddingServingLease:
         self._activated = False
         self._fenced = False
 
+    @property
+    def generation(self) -> str:
+        return self._generation
+
+    @property
+    def revision(self) -> int:
+        return self._revision
+
+    def _deadline_from(self, write_started_at: float) -> float:
+        margin = min(
+            _LEASE_DEADLINE_MARGIN_SECONDS,
+            self._lease_seconds * _LEASE_DEADLINE_MARGIN_FRACTION,
+        )
+        return write_started_at + self._lease_seconds - margin
+
     def activate(self) -> None:
         if self._activated:
             return
+        write_started_at = time.monotonic()
         self._state.acknowledge(
             self._daemon_instance_id,
             self._generation,
@@ -85,7 +115,7 @@ class EmbeddingServingLease:
             caught_up_watermark=self._caught_up_watermark,
             required_watermark=self._required_watermark,
         )
-        self._deadline = time.monotonic() + self._lease_seconds
+        self._deadline = self._deadline_from(write_started_at)
         self._activated = True
 
     def fence(self) -> None:
@@ -93,6 +123,7 @@ class EmbeddingServingLease:
 
     def renew(self) -> None:
         self.assert_serving()
+        write_started_at = time.monotonic()
         try:
             self._state.renew(
                 self._daemon_instance_id,
@@ -100,10 +131,31 @@ class EmbeddingServingLease:
                 self._revision,
                 lease_seconds=self._lease_seconds,
             )
-        except Exception as exc:
+        except EmbeddingGenerationLeaseLost:
             self._fenced = True
-            raise EmbeddingGenerationLeaseLost("Embedding generation lease renewal failed") from exc
-        self._deadline = time.monotonic() + self._lease_seconds
+            raise
+        except Exception as exc:
+            raise EmbeddingGenerationLeaseRenewTransient(
+                "Embedding generation lease renewal failed transiently"
+            ) from exc
+        self._deadline = self._deadline_from(write_started_at)
+
+    def remaining_seconds(self) -> float:
+        """Seconds until the local deadline; 0.0 when fenced or unactivated."""
+        if self._fenced or not self._activated:
+            return 0.0
+        return max(0.0, self._deadline - time.monotonic())
+
+    def successor(self) -> EmbeddingServingLease:
+        """Fresh unactivated lease with identical identity and watermark proof."""
+        return self._state.prepare_serving_lease(
+            self._daemon_instance_id,
+            self._generation,
+            self._revision,
+            lease_seconds=self._lease_seconds,
+            caught_up_watermark=self._caught_up_watermark,
+            required_watermark=self._required_watermark,
+        )
 
     def assert_serving(self) -> None:
         if self._fenced:
@@ -239,6 +291,10 @@ class EmbeddingGenerationState:
         required_watermark: int | None = None,
     ) -> None:
         self._validate_lease_seconds(lease_seconds)
+        if acknowledged and required_watermark is None:
+            raise ValueError(
+                "Acknowledged embedding serving requires a required replay watermark proof"
+            )
         if required_watermark is not None and (
             caught_up_watermark is None or caught_up_watermark < required_watermark
         ):
@@ -286,23 +342,6 @@ class EmbeddingGenerationState:
         )
         if cursor.rowcount != 1:
             raise EmbeddingGenerationLeaseLost("Embedding generation lease no longer matches")
-
-    def serving_lease(
-        self,
-        daemon_instance_id: UUID,
-        generation: str,
-        revision: int,
-        *,
-        lease_seconds: float,
-    ) -> EmbeddingServingLease:
-        lease = self.prepare_serving_lease(
-            daemon_instance_id,
-            generation,
-            revision,
-            lease_seconds=lease_seconds,
-        )
-        lease.activate()
-        return lease
 
     def prepare_serving_lease(
         self,
@@ -371,6 +410,7 @@ class EmbeddingGenerationState:
 
 __all__ = [
     "EmbeddingGenerationLeaseLost",
+    "EmbeddingGenerationLeaseRenewTransient",
     "EmbeddingGenerationNotCaughtUp",
     "EmbeddingGenerationState",
     "EmbeddingServingLease",

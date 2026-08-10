@@ -29,8 +29,10 @@ from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationLeaseRenewTransient,
     EmbeddingGenerationState,
     EmbeddingServingLease,
 )
@@ -53,6 +55,10 @@ logger = logging.getLogger(__name__)
 
 _EMBEDDING_LEASE_SECONDS = 30.0
 _EMBEDDING_LEASE_RENEW_SECONDS = 10.0
+_EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS = 1.0
+_EMBEDDING_RENEW_BACKOFF_CAP_SECONDS = 5.0
+_EMBEDDING_REACQUIRE_POLL_SECONDS = 5.0
+_UNMANAGED_GENERATION_PREFIX = "config-revision:"
 
 
 def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
@@ -112,21 +118,29 @@ class MemoryServiceBundle:
 
 
 class _ManagedEmbeddingLease:
-    """Activate, renew, and fence one runtime bundle's serving lease."""
+    """Activate, renew, re-acquire, and fence one runtime bundle's serving lease."""
 
     def __init__(
         self,
         lease: EmbeddingServingLease,
         loop: asyncio.AbstractEventLoop,
+        *,
+        read_completed_record: Callable[[], CompletedSwitchRecord | None],
+        request_rebuild: Callable[[CompletedSwitchRecord | None], None],
     ) -> None:
         self.lease = lease
         self.loop = loop
+        self.read_completed_record = read_completed_record
+        self.request_rebuild = request_rebuild
         self.renewal: Future[None] | None = None
+
+    def assert_serving(self) -> None:
+        self.lease.assert_serving()
 
     def activate(self) -> None:
         self.lease.activate()
         self.renewal = asyncio.run_coroutine_threadsafe(
-            _renew_embedding_lease(self.lease),
+            _renew_embedding_lease(self),
             self.loop,
         )
 
@@ -136,15 +150,86 @@ class _ManagedEmbeddingLease:
             self.renewal.cancel()
 
 
-async def _renew_embedding_lease(lease: EmbeddingServingLease) -> None:
-    try:
-        while True:
-            await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
+async def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
+    while True:
+        await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
+        try:
+            renewed = await _renew_with_backoff(handle.lease)
+        except EmbeddingGenerationLeaseLost:
+            logger.error("Managed embedding generation lease was lost; serving fenced")
+            return
+        if renewed:
+            continue
+        if not await _reacquire_lease(handle):
+            return
+
+
+async def _renew_with_backoff(lease: EmbeddingServingLease) -> bool:
+    """Renew once, retrying transient failures until the local deadline nears.
+
+    Returns False after fencing because transient failures exhausted the
+    deadline budget. An authoritative ``EmbeddingGenerationLeaseLost``
+    propagates with the lease already fenced.
+    """
+    backoff = _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS
+    while True:
+        try:
             await asyncio.to_thread(lease.renew)
-    except asyncio.CancelledError:
-        raise
-    except EmbeddingGenerationLeaseLost:
-        logger.error("Managed embedding generation lease was lost; serving fenced")
+            return True
+        except EmbeddingGenerationLeaseRenewTransient:
+            if lease.remaining_seconds() <= backoff:
+                lease.fence()
+                logger.warning(
+                    "Embedding generation lease renewal kept failing transiently; serving fenced"
+                )
+                return False
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2.0, _EMBEDDING_RENEW_BACKOFF_CAP_SECONDS)
+
+
+async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
+    """After connectivity returns, re-acknowledge a matching lease or rebuild.
+
+    Re-acknowledgement is safe only while the current completed-switch record
+    still matches the fenced lease's generation and revision; the fresh lease
+    reuses the same watermark proof. On mismatch a newer switch completed, so
+    serving stays fenced and a full memory_services rebuild is requested via
+    reconcile."""
+    while True:
+        await asyncio.sleep(_EMBEDDING_REACQUIRE_POLL_SECONDS)
+        try:
+            record = await asyncio.to_thread(handle.read_completed_record)
+        except Exception:
+            logger.debug(
+                "Embedding lease re-acquisition probe failed; storage still unreachable",
+                exc_info=True,
+            )
+            continue
+        if not _lease_matches_record(handle.lease, record):
+            logger.warning(
+                "Embedding generation changed while serving was fenced; "
+                "requesting memory services rebuild"
+            )
+            handle.request_rebuild(record)
+            return False
+        successor = handle.lease.successor()
+        try:
+            await asyncio.to_thread(successor.activate)
+        except Exception:
+            logger.debug("Embedding lease re-acknowledgement failed", exc_info=True)
+            continue
+        handle.lease = successor
+        logger.info("Embedding generation serving lease re-acknowledged")
+        return True
+
+
+def _lease_matches_record(
+    lease: EmbeddingServingLease,
+    record: CompletedSwitchRecord | None,
+) -> bool:
+    if record is not None:
+        return record.run_id == lease.generation and record.committed_revision == lease.revision
+    return lease.generation.startswith(_UNMANAGED_GENERATION_PREFIX)
 
 
 def _init_stateful_dependencies(runner: GobbyRunner) -> None:
@@ -256,15 +341,11 @@ def _build_memory_services(
     emb_cfg = config.embeddings
     api_key = _resolve_embedding_api_key(runner, emb_cfg)
     generation_state = EmbeddingGenerationState(runner.database)
-    managed_record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
-    if isinstance(managed_record, CompletedSwitchRecord):
-        generation = managed_record.run_id
-        serving_revision = managed_record.committed_revision
-        caught_up_watermark = managed_record.caught_up_watermark
-    else:
-        generation = f"config-revision:{revision}"
-        serving_revision = revision
-        caught_up_watermark = None
+    generation, serving_revision, caught_up_watermark = _serving_lease_identity(
+        managed,
+        revision,
+        generation_state,
+    )
     lease = generation_state.prepare_serving_lease(
         UUID(runner.machine_id),
         generation,
@@ -273,14 +354,19 @@ def _build_memory_services(
         caught_up_watermark=caught_up_watermark,
         required_watermark=caught_up_watermark,
     )
-    lease_handle = _ManagedEmbeddingLease(lease, loop)
+    lease_handle = _ManagedEmbeddingLease(
+        lease,
+        loop,
+        read_completed_record=lambda: _read_completed_switch_record(runner),
+        request_rebuild=lambda record: _request_memory_services_rebuild(runner, loop, record),
+    )
     raw_vector_store = VectorStore(
         url=db_cfg.qdrant.url,
         api_key=db_cfg.qdrant.api_key,
         collection_name=_managed_embedding_collection(managed, "memories"),
         embedding_dim=emb_cfg.dim,
         generation_state=generation_state,
-        serving_guard=lease.assert_serving,
+        serving_guard=lease_handle.assert_serving,
     )
     vector_store = cast(
         VectorStore,
@@ -351,6 +437,62 @@ def _build_memory_services(
         dispose,
         lease_handle.activate,
     )
+
+
+def _serving_lease_identity(
+    managed: Mapping[str, object],
+    revision: int,
+    generation_state: EmbeddingGenerationState,
+) -> tuple[str, int, int]:
+    """Resolve (generation, revision, watermark proof) for one serving lease.
+
+    A managed completed switch carries its own catch-up proof; the unmanaged
+    path proves catch-up against the ledger watermark captured here, in the
+    builder thread, before the bundle starts serving."""
+    record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if isinstance(record, CompletedSwitchRecord):
+        return record.run_id, record.committed_revision, record.caught_up_watermark
+    return (
+        f"{_UNMANAGED_GENERATION_PREFIX}{revision}",
+        revision,
+        generation_state.watermark(),
+    )
+
+
+def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord | None:
+    """Read the current completed-switch record; None when absent or malformed."""
+    raw = ConfigStore(runner.database).get_internal_lifecycle(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return CompletedSwitchRecord.from_dict(raw)
+    except TypeError:
+        return None
+
+
+_pending_rebuild_reconciles: set[asyncio.Task[None]] = set()
+
+
+def _request_memory_services_rebuild(
+    runner: GobbyRunner,
+    loop: asyncio.AbstractEventLoop,
+    record: CompletedSwitchRecord | None,
+) -> None:
+    """Schedule a reconcile that rebuilds memory services past a stale lease."""
+    runtime = runner.config_runtime
+    target_revision = (
+        record.committed_revision if record is not None else runtime.snapshot.revision + 1
+    )
+
+    async def _reconcile() -> None:
+        try:
+            await runtime.reconcile_revision(target_revision)
+        except Exception:
+            logger.exception("Embedding lease rebuild reconcile failed")
+
+    task = loop.create_task(_reconcile())
+    _pending_rebuild_reconciles.add(task)
+    task.add_done_callback(_pending_rebuild_reconciles.discard)
 
 
 def _managed_embedding_collection(managed: Mapping[str, object], kind: str) -> str:

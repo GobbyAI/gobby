@@ -41,6 +41,7 @@ from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationLeaseRenewTransient,
     EmbeddingGenerationNotCaughtUp,
     EmbeddingGenerationState,
     ProjectionChange,
@@ -364,9 +365,13 @@ async def test_generation_gc_waits_for_acknowledgements(
     state.acknowledge(first, "old", 1, lease_seconds=30, acknowledged=False)
     state.acknowledge(second, "old", 1, lease_seconds=30, acknowledged=False)
 
-    state.acknowledge(first, "new", 2, lease_seconds=30)
+    state.acknowledge(
+        first, "new", 2, lease_seconds=30, caught_up_watermark=0, required_watermark=0
+    )
     assert not state.can_collect("new", 2)
-    state.acknowledge(second, "new", 2, lease_seconds=30)
+    state.acknowledge(
+        second, "new", 2, lease_seconds=30, caught_up_watermark=0, required_watermark=0
+    )
     assert state.can_collect("new", 2)
 
     prepared_lease = state.prepare_serving_lease(
@@ -382,13 +387,29 @@ async def test_generation_gc_waits_for_acknowledgements(
     prepared_lease.activate()
     prepared_lease.assert_serving()
 
-    lease = state.serving_lease(first, "new", 2, lease_seconds=30)
+    lease = state.prepare_serving_lease(
+        first,
+        "new",
+        2,
+        lease_seconds=30,
+        caught_up_watermark=4,
+        required_watermark=4,
+    )
+    lease.activate()
 
-    def fail_renew(*_args: object, **_kwargs: object) -> None:
+    def fail_renew_transient(*_args: object, **_kwargs: object) -> None:
         raise ConnectionError("database unavailable")
 
-    monkeypatch.setattr(state, "renew", fail_renew)
-    with pytest.raises(EmbeddingGenerationLeaseLost, match="renew"):
+    monkeypatch.setattr(state, "renew", fail_renew_transient)
+    with pytest.raises(EmbeddingGenerationLeaseRenewTransient):
+        lease.renew()
+    lease.assert_serving()
+
+    def fail_renew_lost(*_args: object, **_kwargs: object) -> None:
+        raise EmbeddingGenerationLeaseLost("Embedding generation lease no longer matches")
+
+    monkeypatch.setattr(state, "renew", fail_renew_lost)
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="no longer matches"):
         lease.renew()
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
         lease.assert_serving()

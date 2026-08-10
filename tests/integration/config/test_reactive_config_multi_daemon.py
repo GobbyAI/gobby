@@ -247,7 +247,8 @@ def test_restart_pending_state_across_daemons(two_daemons: TwoDaemonCluster) -> 
 
 def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster) -> None:
     daemon_id = uuid4()
-    lease_seconds = 0.6
+    lease_seconds = 1.0
+    activated = time.monotonic()
     two_daemons.first.lease_activate(
         daemon_id,
         "old-generation",
@@ -267,8 +268,19 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
     with pytest.raises(RuntimeError, match="lease renewal failed"):
         two_daemons.first.lease_renew()
     assert time.monotonic() - started < lease_seconds
-    with pytest.raises(RuntimeError, match="serving is fenced"):
+    if time.monotonic() - activated < lease_seconds * 0.5:
+        # A transient renewal failure alone does not fence; the local
+        # deadline (TTL minus margin) is the fence of last resort.
         two_daemons.first.lease_assert()
+    fence_deadline = time.monotonic() + lease_seconds + 1.0
+    while True:
+        try:
+            two_daemons.first.lease_assert()
+        except RuntimeError as exc:
+            assert "lease expired" in str(exc) or "serving is fenced" in str(exc)
+            break
+        assert time.monotonic() < fence_deadline, "partitioned lease never self-fenced"
+        time.sleep(0.05)
 
     assert (
         two_daemons.second.wait_until_collectible(
