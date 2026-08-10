@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { GobbyTaskDetail } from "../../../types/tasks";
 import { Button } from "../../ui/Button";
 import { relativeTime } from "../../../utils/formatTime";
+import { cn } from "../../../lib/utils";
 import type { TaskDetailComputed } from "./taskDetailFormat";
 
 /**
@@ -57,50 +58,64 @@ export function TaskDetailStatusLine({
   const showClaim = !claimed && !taskState.is_closed && Boolean(onClaim);
 
   return (
-    <div className="activity-task-detail-statusline">
+    <div className="flex flex-wrap items-center gap-[0.45rem] border-b border-border bg-[var(--bg-primary)] px-4 py-[0.55rem] text-[length:var(--text-sm)] text-[var(--text-muted)]">
       {isActive && (
         <span
-          className="activity-task-detail-statusline__pulse"
+          className="size-[0.45rem] shrink-0 rounded-full bg-accent"
           aria-hidden="true"
         />
       )}
       <span
-        className={`activity-task-detail-statusline__stage activity-task-detail-statusline__stage--${stageVariant}`}
+        className={cn(
+          "font-[var(--font-weight-medium)] text-[var(--text-primary)]",
+          stageVariant === "active" && "text-accent",
+          (stageVariant === "blocked" || stageVariant === "escalated") &&
+            "text-[var(--color-error)]",
+          stageVariant === "closed" && "text-[var(--color-inactive)]",
+        )}
       >
         {stageLabel}
       </span>
-      <span className="activity-task-detail-statusline__sep" aria-hidden="true">
+      <span className="text-[var(--text-muted)]" aria-hidden="true">
         ·
       </span>
       {owner.label ? (
-        <span className="activity-task-detail-statusline__owner">
+        <span
+          className="inline-flex min-w-0 items-baseline gap-[0.35rem]"
+          data-task-owner
+        >
           <span
-            className={
-              owner.mono
-                ? "activity-task-detail-statusline__owner-ref activity-task-detail-statusline__owner-ref--mono"
-                : "activity-task-detail-statusline__owner-ref"
-            }
+            className={cn(
+              "text-[var(--text-secondary)]",
+              owner.mono && "font-mono",
+            )}
+            data-task-owner-ref
           >
             {owner.label}
           </span>
           {owner.source && (
-            <span className="activity-task-detail-statusline__owner-source">
+            <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
               {owner.source}
             </span>
           )}
         </span>
       ) : (
-        <span className="activity-task-detail-statusline__owner activity-task-detail-statusline__owner--unassigned">
+        <span
+          className="inline-flex min-w-0 items-baseline gap-[0.35rem] italic text-[var(--text-muted)]"
+          data-task-owner
+        >
           Unassigned
         </span>
       )}
-      <span className="activity-task-detail-statusline__time">{timeLabel}</span>
+      <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
+        {timeLabel}
+      </span>
       {(showClaim || showRelease) && (
         <Button
           type="button"
           variant="accent"
           size="sm"
-          className="activity-task-detail-statusline__action"
+          className="ml-auto shrink-0"
           disabled={claimBusy}
           onClick={showRelease ? onRelease : onClaim}
         >

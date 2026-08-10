@@ -30,9 +30,15 @@ describe("FilterPrimitives", () => {
     expect(screen.getByRole("combobox")).toBeInTheDocument();
   });
 
-  it("keeps the activity filter badge styling hook on the trigger", () => {
+  it("styles the active-filter count on the trigger", () => {
     render(<FilterDropdownTrigger open={false} activeCount={2} />);
 
-    expect(screen.getByText("2")).toHaveClass("activity-filter-badge");
+    expect(screen.getByText("2")).toHaveClass(
+      "absolute",
+      "-right-1",
+      "-top-1",
+      "bg-accent",
+      "text-accent-foreground",
+    );
   });
 });

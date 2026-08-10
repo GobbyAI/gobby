@@ -40,7 +40,7 @@ export function TasksTabToolbar({
         open={showFilterDropdown}
         activeCount={activeFilterCount}
         onClick={onToggleFilterDropdown}
-        className="activity-filter-button ml-auto"
+        className="ml-auto"
         title="Filter by task state"
         aria-label="Filter tasks"
         icon={

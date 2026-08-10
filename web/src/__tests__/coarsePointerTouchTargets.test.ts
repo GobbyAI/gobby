@@ -12,6 +12,7 @@ const targets = [
   'queued-file remove',
   'code copy',
   'session actions',
+  'task row',
   'task actions',
   'task expand',
   'activity menu item',
@@ -42,6 +43,32 @@ const SESSION_ACTION_TOUCH_CANDIDATES = [
   'pointer-coarse:min-w-11',
 ] as const
 
+const TASK_ACTION_TOUCH_CANDIDATES = [
+  'pointer-coarse:size-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_ROW_TOUCH_CANDIDATES = [
+  'w-full',
+  'min-h-[var(--activity-panel-row-height)]',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_EXPAND_TOUCH_CANDIDATES = [
+  'h-6',
+  'w-6',
+  'pointer-coarse:size-11',
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
+const TASK_ERROR_DISMISS_TOUCH_CANDIDATES = [
+  'pointer-coarse:min-h-11',
+  'pointer-coarse:min-w-11',
+] as const
+
 const ACTIVITY_TAB_TOUCH_CANDIDATES = [
   'min-h-[var(--activity-panel-row-height)]',
   'pointer-coarse:min-h-11',
@@ -60,15 +87,15 @@ async function emulateCoarsePointer(): Promise<HTMLStyleElement> {
     ...CHAT_INPUT_TOUCH_CANDIDATES,
     ...ACTIVITY_MENU_TOUCH_CANDIDATES,
     ...SESSION_ACTION_TOUCH_CANDIDATES,
+    ...TASK_ROW_TOUCH_CANDIDATES,
+    ...TASK_ACTION_TOUCH_CANDIDATES,
+    ...TASK_EXPAND_TOUCH_CANDIDATES,
+    ...TASK_ERROR_DISMISS_TOUCH_CANDIDATES,
     ...ACTIVITY_TAB_TOUCH_CANDIDATES,
     'pointer-coarse:min-h-11',
     'pointer-coarse:min-w-11',
   ])
-  const cssSources = [
-    tailwindCss,
-    readFileSync(join(srcRoot, 'components/tasks/task-execution.css'), 'utf8'),
-    readFileSync(join(srcRoot, 'components/activity/taskdetail/task-detail.css'), 'utf8'),
-  ]
+  const cssSources = [tailwindCss]
   const coarseRules: string[] = []
   let spacing: string | undefined
   for (const css of cssSources) {
@@ -264,6 +291,26 @@ describe('coarse-pointer touch targets', () => {
     )
     expect(pipelinesSource).toContain('pointer-coarse:min-h-11')
     expect(pipelinesSource).toContain('pointer-coarse:min-w-11')
+    const taskRowSource = readFileSync(
+      join(srcRoot, 'components/activity/TaskTreeRow.tsx'),
+      'utf8',
+    )
+    const taskDetailSource = readFileSync(
+      join(srcRoot, 'components/activity/TasksTabDetailPanel.tsx'),
+      'utf8',
+    )
+    for (const candidate of TASK_ROW_TOUCH_CANDIDATES) {
+      expect(taskRowSource).toContain(candidate)
+    }
+    for (const candidate of [
+      ...TASK_ACTION_TOUCH_CANDIDATES,
+      ...TASK_EXPAND_TOUCH_CANDIDATES,
+    ]) {
+      expect(taskRowSource).toContain(candidate)
+    }
+    for (const candidate of TASK_ERROR_DISMISS_TOUCH_CANDIDATES) {
+      expect(taskDetailSource).toContain(candidate)
+    }
 
     await emulateCoarsePointer()
     document.body.innerHTML = `
@@ -271,12 +318,13 @@ describe('coarse-pointer touch targets', () => {
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
       <button data-target="session actions" class="session-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
-      <button data-target="task actions" class="task-more-btn ${SESSION_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
-      <button data-target="task expand" class="activity-task-row-toggle">›</button>
+      <div data-target="task row" class="${TASK_ROW_TOUCH_CANDIDATES.join(' ')}">Task</div>
+      <button data-target="task actions" class="${TASK_ACTION_TOUCH_CANDIDATES.join(' ')}">⋮</button>
+      <button data-target="task expand" class="${TASK_EXPAND_TOUCH_CANDIDATES.join(' ')}">›</button>
       <button data-target="activity menu item" class="activity-panel-mobile-menu__item ${ACTIVITY_MENU_TOUCH_CANDIDATES.join(' ')}">Sessions</button>
       <label data-target="filter option" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Filter</label>
       <label data-target="session role filter" class="flex pointer-coarse:min-h-11 pointer-coarse:min-w-11"><input type="checkbox"> Parent</label>
-      <button data-target="error dismiss" class="activity-task-detail-edit-error__dismiss">×</button>
+      <button data-target="error dismiss" class="${TASK_ERROR_DISMISS_TOUCH_CANDIDATES.join(' ')}">×</button>
       <button data-target="pipeline row" class="${ACTIVITY_TAB_TOUCH_CANDIDATES.join(' ')}">Run</button>
     `
 

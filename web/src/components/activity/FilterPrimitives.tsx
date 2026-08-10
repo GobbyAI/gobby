@@ -35,7 +35,11 @@ export const FilterDropdownTrigger = forwardRef<
       type="button"
       variant="accent"
       size="sm"
-      className={cn(coarseHitAreaCls, className)}
+      className={cn(
+        coarseHitAreaCls,
+        "relative aria-expanded:border-[color-mix(in_srgb,var(--accent)_60%,transparent)] aria-expanded:bg-[color-mix(in_srgb,var(--accent)_22%,transparent)] in-data-[theme=light]:aria-expanded:border-accent in-data-[theme=light]:aria-expanded:bg-accent in-data-[theme=light]:aria-expanded:text-accent-foreground",
+        className,
+      )}
       aria-expanded={open}
     >
       {icon}
@@ -43,7 +47,12 @@ export const FilterDropdownTrigger = forwardRef<
         {label}
       </span>
       {activeCount > 0 && (
-        <span className="activity-filter-badge">{activeCount}</span>
+        <span
+          className="pointer-events-none absolute -right-1 -top-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[length:var(--text-2xs)] font-semibold leading-none text-accent-foreground"
+          data-filter-active-count
+        >
+          {activeCount}
+        </span>
       )}
       <DropdownCaret open={open} />
     </Button>

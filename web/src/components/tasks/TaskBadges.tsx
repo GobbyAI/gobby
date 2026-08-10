@@ -1,8 +1,6 @@
 // Shared badge components for the task system.
 // Reusable across the task tree, board cards, and the detail panel.
 
-import './task-execution.css'
-
 import type { TaskStateLike } from '../../lib/taskState'
 import {
   getTaskDisplayState,
@@ -170,7 +168,7 @@ export function PriorityGlyph({ priority }: { priority: number }) {
   const filled = p <= 1;
   return (
     <span
-      className="priority-glyph"
+      className="inline-flex h-4 w-[0.85rem] items-center justify-center"
       style={{ color: style.color }}
       title={`${label} priority`}
       aria-label={`${label} priority`}

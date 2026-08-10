@@ -34,7 +34,7 @@ function DepList({
   onSelectTask?: (id: string) => void;
 }) {
   return (
-    <div className="activity-task-detail-deplist">
+    <div className="flex min-w-0 flex-col gap-[0.2rem]">
       {nodes.map((node) => {
         const { ref, title } = depLabel(node);
         const select = onSelectTask
@@ -46,21 +46,25 @@ function DepList({
             type="button"
             variant="ghost"
             size="sm"
-            className={`activity-task-detail-parent-link activity-task-detail-deplist__item ${coarseHitAreaCls}`}
+            className={`inline-flex max-w-full min-w-0 items-baseline gap-[0.4rem] rounded p-0 text-left text-[var(--text-secondary)] transition-colors hover:text-[var(--text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${coarseHitAreaCls}`}
             onClick={select}
             title={title}
           >
-            <span className="activity-task-detail-parent-ref">{ref}</span>
-            <span className="activity-task-detail-parent-title">{title}</span>
+            <span className="shrink-0 font-mono text-[length:var(--text-sm)] font-semibold text-accent">
+              {ref}
+            </span>
+            <span className="whitespace-normal">{title}</span>
           </Button>
         ) : (
           <span
             key={node.id}
-            className="activity-task-detail-deplist__item"
+            className="inline-flex max-w-full min-w-0 items-baseline gap-[0.4rem]"
             title={title}
           >
-            <span className="activity-task-detail-parent-ref">{ref}</span>{" "}
-            <span className="activity-task-detail-parent-title">{title}</span>
+            <span className="shrink-0 font-mono text-[length:var(--text-sm)] font-semibold text-accent">
+              {ref}
+            </span>{" "}
+            <span className="whitespace-normal">{title}</span>
           </span>
         );
       })}
@@ -104,8 +108,10 @@ export function TaskDetailRelationships({
   if (!hasRelationships) return null;
 
   return (
-    <section className="activity-task-detail-kv">
-      <h3 className="activity-task-detail-kv__title">Relationships</h3>
+    <section className="flex flex-col border-b border-border bg-[var(--bg-primary)] px-4 pb-[0.95rem] pt-[0.4rem]">
+      <h3 className="mb-[0.35rem] mt-[0.55rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)]">
+        Relationships
+      </h3>
       {parentTask && (
         <ParentKVRow parent={parentTask} onSelect={onSelectTask} />
       )}
@@ -121,14 +127,14 @@ export function TaskDetailRelationships({
       )}
       {subtaskTotal > 0 && (
         <MetaKVRow label={`Subtasks (${subtaskTotal})`}>
-          <div className="activity-task-detail-pillrow">
+          <div className="flex flex-wrap gap-[0.4rem]">
             {SUBTASK_STATE_ORDER.map((s) => {
               const count = subtaskBuckets[s] ?? 0;
               if (count === 0) return null;
               return (
                 <span
                   key={s}
-                  className="activity-task-detail-pill"
+                  className="inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]"
                   title={`${TASK_STATE_LABELS[s]} subtasks`}
                 >
                   <strong>{count}</strong> {TASK_STATE_LABELS[s].toLowerCase()}

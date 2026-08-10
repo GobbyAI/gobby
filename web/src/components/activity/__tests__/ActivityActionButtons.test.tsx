@@ -72,7 +72,7 @@ describe("ActivityActionButtons", () => {
 
     const button = screen.getByRole("button", { name: "Filter sessions" });
     expect(button).toHaveAttribute("aria-expanded", "true");
-    expect(button.querySelector(".activity-filter-badge")?.textContent).toBe("2");
+    expect(button.querySelector("[data-filter-active-count]")?.textContent).toBe("2");
     fireEvent.click(button);
     expect(onToggle).toHaveBeenCalledTimes(1);
   });
@@ -83,7 +83,7 @@ describe("ActivityActionButtons", () => {
     });
     const button = screen.getByRole("button", { name: "Filter sessions" });
     expect(button).toHaveAttribute("aria-expanded", "false");
-    expect(button.querySelector(".activity-filter-badge")).toBeNull();
+    expect(button.querySelector("[data-filter-active-count]")).toBeNull();
   });
 
   it("renders Search as a toggle with expanded state", () => {

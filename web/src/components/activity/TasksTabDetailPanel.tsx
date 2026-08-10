@@ -1,5 +1,3 @@
-import "./taskdetail/task-detail.css";
-
 import type {
   DependencyTree,
   GobbyTask,
@@ -78,7 +76,7 @@ export function TasksTabDetailPanel({
   const editError = edit?.errorFor(task.id) ?? null;
 
   return (
-    <div className="activity-task-detail-card">
+    <div className="flex min-h-0 flex-col overflow-y-auto bg-[var(--bg-primary)]">
       <TaskDetailHeader task={task} edit={edit} />
 
       <TaskDetailStatusLine
@@ -90,13 +88,16 @@ export function TasksTabDetailPanel({
       />
 
       {editError && (
-        <div className="activity-task-detail-edit-error" role="alert">
+        <div
+          className="flex items-start gap-2 border-b border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] bg-[var(--color-error-soft)] px-4 py-[0.55rem] text-[length:var(--text-sm)] text-[var(--color-error)] [&_span]:min-w-0 [&_span]:flex-auto"
+          role="alert"
+        >
           <span>{editError}</span>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className={`activity-task-detail-edit-error__dismiss ${coarseHitAreaCls}`}
+            className={`shrink-0 cursor-pointer px-1 text-[length:var(--text-base)] leading-none text-inherit focus-visible:rounded-[0.2rem] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${coarseHitAreaCls} pointer-coarse:min-h-11 pointer-coarse:min-w-11`}
             aria-label="Dismiss error"
             onClick={() => edit?.clearError(task.id)}
           >
@@ -106,11 +107,14 @@ export function TasksTabDetailPanel({
       )}
 
       {computed.isEscalated && (
-        <div className="activity-task-detail-section activity-task-detail-section--escalated">
-          <div className="activity-task-detail-section-title">
+        <div
+          className="border-b border-[color-mix(in_srgb,var(--color-error)_35%,transparent)] bg-[var(--color-error-soft)] px-4 py-[0.9rem]"
+          data-task-detail-escalation
+        >
+          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.08em] text-[var(--color-error)]">
             Escalated
             {task.escalated_at && (
-              <span className="activity-task-detail-section-count">
+              <span className="ml-[0.4rem] font-medium normal-case tracking-normal text-[var(--text-muted)]">
                 {formatTaskDetailDate(task.escalated_at)}
               </span>
             )}
@@ -119,7 +123,7 @@ export function TasksTabDetailPanel({
             <MetaKVRow label="From">{preEscalationStatus}</MetaKVRow>
           )}
           {escalationReason && (
-            <div className="activity-task-detail-escalation-reason">
+            <div className="mt-2 whitespace-pre-wrap text-[length:var(--text-base)] leading-normal text-[var(--text-secondary)] [overflow-wrap:anywhere]">
               {escalationReason}
             </div>
           )}
@@ -136,12 +140,12 @@ export function TasksTabDetailPanel({
       <TaskDetailEditableCore task={task} edit={edit} />
 
       {showValidationFeedback && validationFeedback && (
-        <div className="activity-task-detail-section activity-task-detail-section--failed">
-          <div className="activity-task-detail-section-title">
+        <div className="border-b border-border bg-[color-mix(in_srgb,var(--color-error)_6%,transparent)] px-4 py-[0.9rem]">
+          <div className="mb-[0.45rem] text-[length:var(--text-sm)] font-semibold uppercase tracking-[0.08em] text-[var(--color-error)]">
             Validation feedback
           </div>
           <div
-            className={`activity-task-detail-markdown message-content ${markdownBodyClassName}`}
+            className={`message-content text-[length:var(--text-base)] leading-[1.6] text-[var(--text-secondary)] ${markdownBodyClassName}`}
           >
             <Markdown content={validationFeedback} id={`task-vf-${task.id}`} />
           </div>

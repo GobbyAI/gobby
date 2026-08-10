@@ -58,7 +58,7 @@ export function TaskCloseDialog({
       }}
     >
       <DialogContent
-        className="activity-task-close-dialog"
+        className="w-[min(24rem,100%)] border-border bg-[var(--bg-secondary)] p-4 text-[var(--text-primary)] shadow-lg [&_h2]:m-0 [&_h2]:text-[length:var(--text-lg)] [&_h2]:font-semibold [&_label]:mb-[0.35rem] [&_label]:block [&_label]:text-[length:var(--text-xs)] [&_label]:font-semibold [&_label]:text-[var(--text-secondary)] [&_p]:mb-3 [&_p]:mt-1 [&_p]:text-[length:var(--text-sm)] [&_p]:text-[var(--text-secondary)]"
         {...(showReasonError
           ? { "aria-describedby": "activity-task-close-error" }
           : {})}
@@ -77,7 +77,7 @@ export function TaskCloseDialog({
               <>
                 <Textarea
                   id={id}
-                  className="activity-task-close-reason"
+                  className="min-h-[5.5rem] resize-y bg-[var(--bg-primary)] p-2 text-[length:var(--text-sm)] text-[var(--text-primary)] focus:border-accent focus:outline-none"
                   value={reason}
                   error={showReasonError}
                   aria-describedby={
@@ -96,7 +96,7 @@ export function TaskCloseDialog({
                 {showReasonError && (
                   <div
                     id="activity-task-close-error"
-                    className="activity-task-close-error"
+                    className="mt-[0.4rem] text-[length:var(--text-xs)] text-[var(--color-error)]"
                     role="alert"
                   >
                     Reason is required.
@@ -105,7 +105,7 @@ export function TaskCloseDialog({
               </>
             )}
           </FormField>
-          <div className="activity-task-close-actions">
+          <div className="mt-3 flex justify-end gap-2">
             <Button
               type="button"
               size="sm"
@@ -118,7 +118,7 @@ export function TaskCloseDialog({
             <Button
               type="submit"
               size="sm"
-              className={`${coarseHitAreaCls} activity-task-close-submit`}
+              className={`${coarseHitAreaCls} text-[var(--color-error)]`}
               disabled={isSubmitting}
             >
               Close

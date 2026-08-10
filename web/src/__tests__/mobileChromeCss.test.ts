@@ -309,6 +309,22 @@ describe('mobile chrome CSS', () => {
     )
   })
 
+  it('retires the task execution and detail sheets with their owner imports', () => {
+    for (const sheet of [
+      'src/components/tasks/task-execution.css',
+      'src/components/activity/taskdetail/task-detail.css',
+    ]) {
+      expect(existsSync(join(resolveWebPackageRoot(), sheet))).toBe(false)
+    }
+
+    expect(
+      importSpecifiers(readSource('src/components/tasks/TaskBadges.tsx')),
+    ).not.toContain('./task-execution.css')
+    expect(
+      importSpecifiers(readSource('src/components/activity/TasksTabDetailPanel.tsx')),
+    ).not.toContain('./taskdetail/task-detail.css')
+  })
+
   it('retires the chat input stylesheet family in favor of component utilities', () => {
     const retiredSheets = [
       'input-base.css',

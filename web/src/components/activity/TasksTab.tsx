@@ -667,14 +667,14 @@ export const TasksTab = memo(function TasksTab({
       )}
 
       {showDetail && (
-        <div className="activity-task-detail-shell">
-          <div className="activity-task-pane-bar activity-task-pane-bar--detail">
-            <span className="activity-task-pane-bar__title">
+        <div className="flex min-h-0 flex-1 flex-col bg-[var(--bg-primary)]">
+          <div className="flex min-h-[var(--activity-panel-bar-height,2.5rem)] shrink-0 items-center justify-between gap-2 border-b border-border bg-[var(--bg-secondary)] px-3">
+            <span className="min-w-0 flex-auto truncate text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)]">
               Task {headerRef ?? "—"}
             </span>
           </div>
           {detailLoading && taskDetail === null ? (
-            <p className="activity-task-detail-loading">
+            <p className="p-4 text-[length:var(--text-md)] text-[var(--text-muted)]">
               Loading...
             </p>
           ) : taskDetail ? (
@@ -690,7 +690,7 @@ export const TasksTab = memo(function TasksTab({
               claimBusy={activeTaskAction?.taskId === taskDetail.id}
             />
           ) : (
-            <p className="activity-task-detail-empty">
+            <p className="p-4 text-[length:var(--text-md)] text-[var(--text-muted)]">
               Task not found
             </p>
           )}

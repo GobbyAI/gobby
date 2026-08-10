@@ -73,7 +73,7 @@ describe('activity-panel typography ladder (#14245)', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
     const mcpDetailSource = readSource('src/components/activity/mcp/McpDetailPanel.tsx')
-    const taskSource = readSource('src/components/tasks/task-execution.css')
+    const taskSource = readSource('src/components/activity/TasksTab.tsx')
     const sessionsSource = readSessionsSurfaceSource()
 
     // Canonical token lives in :root (src/styles/tokens.css) so .command-bar,
@@ -93,8 +93,8 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(mcpDetailSource).toContain('min-h-[var(--activity-panel-bar-height)]')
     expect(mcpDetailSource).toContain('text-[length:var(--text-base)]')
     expect(mcpDetailSource).toContain('font-[var(--font-weight-medium)]')
-    expect(taskSource).toMatch(
-      /\.activity-task-pane-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height,\s*2\.5rem\)/,
+    expect(taskSource).toContain(
+      'min-h-[var(--activity-panel-bar-height,2.5rem)]',
     )
     expect(sessionsSource).toContain('activity-panel-status-bar__title')
   })
@@ -104,7 +104,6 @@ describe('activity-panel typography ladder (#14245)', () => {
     const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
     const tasksToolbarSource = readSource('src/components/activity/TasksTabToolbar.tsx')
     const filterPrimitivesSource = readSource('src/components/activity/FilterPrimitives.tsx')
-    const taskStyles = readSource('src/components/tasks/task-execution.css')
     const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
@@ -115,18 +114,15 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(commandBarSource).toContain('min-h-[var(--status-bar-control-height)]')
     expect(activitySource).toContain('activity-panel-tabs')
     expect(activitySource).toContain('px-3')
-    expect(tasksToolbarSource).toContain('activity-filter-button')
     expect(tasksToolbarSource).toContain('ml-auto')
-    expect(filterPrimitivesSource).toContain('activity-filter-badge')
-    expect(taskStyles).toMatch(/\.activity-filter-button\s*{/)
-    expect(taskStyles).toMatch(/\.activity-filter-badge\s*{/)
+    expect(filterPrimitivesSource).toContain('relative aria-expanded:border-')
+    expect(filterPrimitivesSource).toContain('data-filter-active-count')
+    expect(filterPrimitivesSource).toContain('absolute -right-1 -top-1')
 
     const filterButtonAuthors = readTsxSources('src')
       .filter(([, source]) => source.includes('activity-filter-button'))
       .map(([path]) => path)
-    expect(filterButtonAuthors).toEqual([
-      'src/components/activity/TasksTabToolbar.tsx',
-    ])
+    expect(filterButtonAuthors).toEqual([])
   })
 
   it('keeps chat status-bar typography on the shared component utility ladder', () => {
@@ -138,17 +134,12 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('locks the tasks row title to --text-base / medium', () => {
-    const source = readSource('src/components/tasks/task-execution.css')
+    const source = readSource('src/components/activity/TaskTreeRow.tsx')
 
-    expect(source).toMatch(
-      /\.activity-task-row-title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-task-row-ref\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-task-row\s*{[^}]*font-size:\s*var\(--text-base\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-medium)]')
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).toContain('pointer-coarse:min-h-11')
   })
 
   it('keeps high/critical priority tasks bold while raising the default to medium', () => {
