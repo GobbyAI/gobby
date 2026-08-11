@@ -31,6 +31,7 @@ from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseExpired,
     EmbeddingGenerationLeaseLost,
     EmbeddingGenerationLeaseRenewTransient,
     EmbeddingGenerationState,
@@ -156,8 +157,13 @@ async def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
         await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
         try:
             renewed = await _renew_with_backoff(handle.lease)
+        except EmbeddingGenerationLeaseExpired:
+            logger.warning("Managed embedding generation lease was lost; attempting re-acquisition")
+            if not await _reacquire_lease(handle):
+                return
+            continue
         except EmbeddingGenerationLeaseLost:
-            logger.error("Managed embedding generation lease was lost; serving fenced")
+            logger.error("Managed embedding generation lease no longer matches; serving fenced")
             return
         if renewed:
             continue
@@ -230,7 +236,7 @@ def _lease_matches_record(
 ) -> bool:
     if record is not None:
         return record.run_id == lease.generation and record.committed_revision == lease.revision
-    return lease.generation.startswith(_UNMANAGED_GENERATION_PREFIX)
+    return lease.generation == f"{_UNMANAGED_GENERATION_PREFIX}{lease.revision}"
 
 
 def _init_stateful_dependencies(runner: GobbyRunner) -> None:
@@ -470,7 +476,7 @@ def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord 
         return None
     try:
         return CompletedSwitchRecord.from_dict(raw)
-    except TypeError:
+    except (TypeError, ValueError):
         return None
 
 
@@ -484,13 +490,17 @@ def _request_memory_services_rebuild(
 ) -> None:
     """Schedule a reconcile that rebuilds memory services past a stale lease."""
     runtime = runner.config_runtime
-    target_revision = (
-        record.committed_revision if record is not None else runtime.snapshot.revision + 1
-    )
+    try:
+        current_revision = runtime.capture().snapshot.revision
+    except RuntimeError:
+        logger.debug("Embedding lease rebuild skipped before config runtime startup")
+        return
+    target_revision = record.committed_revision if record is not None else current_revision
 
     async def _reconcile() -> None:
         try:
             await runtime.reconcile_revision(target_revision)
+            await runtime.reprepare_subscriber("memory_services")
         except Exception:
             logger.exception("Embedding lease rebuild reconcile failed")
 

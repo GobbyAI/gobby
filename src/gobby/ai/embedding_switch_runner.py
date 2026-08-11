@@ -283,7 +283,7 @@ class EmbeddingSwitchRunner:
         # watermark does not cover; only then persist the caught-up bound.
         journal.physical_names = dict(physical_names)
         persist_journal(self.config_store, journal)
-        journal.caught_up_watermark = self.generation_state.watermark()
+        journal.caught_up_watermark = await asyncio.to_thread(self.generation_state.watermark)
         persist_journal(self.config_store, journal)
 
         count = 0
@@ -338,15 +338,21 @@ class EmbeddingSwitchRunner:
         # A failed wait must journal as gc so --resume re-enters this phase.
         journal.phase = PHASE_GC
         deadline = time.monotonic() + self.gc_wait_seconds
-        while not self.generation_state.can_collect(record.run_id, record.committed_revision):
+        while not await asyncio.to_thread(
+            self.generation_state.can_collect,
+            record.run_id,
+            record.committed_revision,
+        ):
             if self.control.abort_requested.is_set():
                 raise EmbeddingSwitchRunError(
                     "Embedding switch GC wait aborted; run --resume once serving "
                     "daemons acknowledge the new generation"
                 )
             if time.monotonic() >= deadline:
-                blockers = self.generation_state.incompatible_serving_acks(
-                    record.run_id, record.committed_revision
+                blockers = await asyncio.to_thread(
+                    self.generation_state.incompatible_serving_acks,
+                    record.run_id,
+                    record.committed_revision,
                 )
                 rendered = "; ".join(blockers) or "none visible"
                 raise EmbeddingSwitchRunError(
@@ -387,8 +393,12 @@ class EmbeddingSwitchRunner:
         """
         projected = 0
         for _ in range(_REPLAY_MAX_PASSES):
-            up_to = self.generation_state.watermark()
-            changes = self.generation_state.changes_after(journal.caught_up_watermark, up_to=up_to)
+            up_to = await asyncio.to_thread(self.generation_state.watermark)
+            changes = await asyncio.to_thread(
+                self.generation_state.changes_after,
+                journal.caught_up_watermark,
+                up_to=up_to,
+            )
             if not changes:
                 return projected
             latest = {(change.source_kind, change.source_id): change for change in changes}

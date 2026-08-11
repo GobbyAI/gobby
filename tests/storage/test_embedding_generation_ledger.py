@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import threading
-import time
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
 from gobby.projects.purge import ProjectPurgeService
-from gobby.storage.embedding_generation_state import EmbeddingGenerationState
+from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationState,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.memories import LocalMemoryManager
@@ -34,6 +36,7 @@ def test_watermark_waits_for_inflight_producers(temp_db: HubDatabase) -> None:
     release = threading.Event()
     allocated: list[int] = []
     watermarks: list[int] = []
+    reader_started = threading.Event()
 
     def producer() -> None:
         with temp_db.transaction() as conn:
@@ -42,6 +45,7 @@ def test_watermark_waits_for_inflight_producers(temp_db: HubDatabase) -> None:
             assert release.wait(timeout=5)
 
     def reader() -> None:
+        reader_started.set()
         watermarks.append(state.watermark())
 
     producer_thread = threading.Thread(target=producer)
@@ -49,7 +53,7 @@ def test_watermark_waits_for_inflight_producers(temp_db: HubDatabase) -> None:
     assert started.wait(timeout=5)
     reader_thread = threading.Thread(target=reader)
     reader_thread.start()
-    time.sleep(0.2)
+    assert reader_started.wait(timeout=5)
     # The exclusive watermark read must wait out the in-flight shared allocator.
     assert not watermarks
     release.set()
@@ -82,7 +86,7 @@ def test_dream_visibility_producers_append_events(temp_db: HubDatabase) -> None:
     manager.restore_memory(memory.id)
     assert _events(temp_db, memory.id)[-1] == ("memory", False)
 
-    manager.mark_dreamed(memory.id, hidden_as="delete")
+    manager.mark_dreamed(memory.id, hidden_as="delete", when="2000-01-01T00:00:00+00:00")
     purged = manager.purge_dream_hidden("delete", 0)
     assert memory.id in purged
     assert _events(temp_db, memory.id)[-1] == ("memory", True)
@@ -156,8 +160,9 @@ def test_expired_serving_ack_unblocks_collection(temp_db: HubDatabase) -> None:
 
     state = EmbeddingGenerationState(temp_db)
     watermark = state.watermark()
+    daemon_instance_id = uuid4()
     lease = state.prepare_serving_lease(
-        uuid4(),
+        daemon_instance_id,
         "old-generation",
         0,
         lease_seconds=0.2,
@@ -168,8 +173,46 @@ def test_expired_serving_ack_unblocks_collection(temp_db: HubDatabase) -> None:
 
     assert state.can_collect("new-generation", 1) is False
 
-    deadline = time.monotonic() + 3.0
-    while state.can_collect("new-generation", 1) is False:
-        assert time.monotonic() < deadline, "expired ack never became collectible"
-        time.sleep(0.05)
+    temp_db.execute(
+        "UPDATE embedding_generation_acks "
+        "SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' "
+        "WHERE daemon_instance_id = %s",
+        (daemon_instance_id,),
+    )
     assert state.can_collect("new-generation", 1) is True
+
+
+def test_stale_activation_cannot_overwrite_successor_ack(temp_db: HubDatabase) -> None:
+    from uuid import uuid4
+
+    state = EmbeddingGenerationState(temp_db)
+    daemon_instance_id = uuid4()
+    successor = state.prepare_serving_lease(
+        daemon_instance_id,
+        "new-generation",
+        9,
+        lease_seconds=30,
+        caught_up_watermark=0,
+        required_watermark=0,
+    )
+    stale = state.prepare_serving_lease(
+        daemon_instance_id,
+        "old-generation",
+        7,
+        lease_seconds=30,
+        caught_up_watermark=0,
+        required_watermark=0,
+    )
+    successor.activate()
+
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="newer serving lease"):
+        stale.activate()
+
+    row = temp_db.fetchone(
+        "SELECT generation, committed_revision FROM embedding_generation_acks "
+        "WHERE daemon_instance_id = %s",
+        (daemon_instance_id,),
+    )
+    assert row is not None
+    assert row["generation"] == "new-generation"
+    assert row["committed_revision"] == 9

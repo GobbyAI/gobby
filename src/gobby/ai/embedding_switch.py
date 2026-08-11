@@ -480,10 +480,9 @@ def _verify_completed_record_rows(
 ) -> CompletedSwitchRecord:
     """Verify a completed record against any later coherent snapshot.
 
-    Sound because complete_embedding_switch writes all five structural keys and
-    the completed record in one patch_internal revision, and structural keys
-    only accept source="embedding_switch"|"install" writes — a later benign
-    config mutation advances the global revision without touching these rows.
+    Sound because the five values must still match and managed structural rows
+    cannot be externally rewritten. Rows unchanged by the completing patch may
+    retain an older revision; a later tampering write would exceed committed.
     """
     committed = record.committed_revision
     if not 0 < committed <= snapshot.revision:
@@ -493,8 +492,11 @@ def _verify_completed_record_rows(
     expected = _expected_completed_values(record)
     if any(snapshot.values.get(key) != value for key, value in expected.items()):
         raise SwitchJournalStateError("Completed embedding switch values do not match storage")
-    if any(snapshot.row_revisions.get(key) != committed for key in _COMPLETED_RECORD_ROW_KEYS):
-        raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
+    if any(
+        snapshot.row_revisions.get(key, committed + 1) > committed
+        for key in _COMPLETED_RECORD_ROW_KEYS
+    ):
+        raise SwitchJournalStateError("Completed embedding switch rows postdate the commit")
     return record
 
 

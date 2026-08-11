@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -24,7 +24,9 @@ _SOURCE_COLLECTIONS = {
 # Transaction-scoped advisory lock coordinating ledger sequence visibility:
 # producers hold it SHARED across sequence allocation, the watermark read takes
 # it EXCLUSIVE, so a returned watermark can never be undercut by an in-flight
-# allocator committing later ("GOBB" = 0x474F4242).
+# allocator committing later. The ledger identity sequence must use CACHE 1;
+# larger caches can allocate a later-committing value below the watermark
+# ("GOBB" = 0x474F4242).
 _LEDGER_LOCK_CLASS = 0x474F4242
 _LEDGER_LOCK_ID = 1
 
@@ -66,6 +68,10 @@ class EmbeddingGenerationError(RuntimeError):
 
 class EmbeddingGenerationLeaseLost(EmbeddingGenerationError):
     """Raised after a serving lease can no longer be trusted."""
+
+
+class EmbeddingGenerationLeaseExpired(EmbeddingGenerationLeaseLost):
+    """Raised when a serving lease reaches its local safety deadline."""
 
 
 class EmbeddingGenerationLeaseRenewTransient(EmbeddingGenerationError):
@@ -132,7 +138,7 @@ class EmbeddingServingLease:
         if self._activated:
             return
         write_started_at = time.monotonic()
-        self._state.acknowledge(
+        acknowledged = self._state.acknowledge(
             self._daemon_instance_id,
             self._generation,
             self._revision,
@@ -140,6 +146,11 @@ class EmbeddingServingLease:
             caught_up_watermark=self._caught_up_watermark,
             required_watermark=self._required_watermark,
         )
+        if not acknowledged:
+            self._fenced = True
+            raise EmbeddingGenerationLeaseLost(
+                "Embedding generation activation cannot replace a newer serving lease"
+            )
         self._deadline = self._deadline_from(write_started_at)
         self._activated = True
 
@@ -191,7 +202,7 @@ class EmbeddingServingLease:
             )
         if time.monotonic() >= self._deadline:
             self._fenced = True
-            raise EmbeddingGenerationLeaseLost("Embedding generation serving lease expired")
+            raise EmbeddingGenerationLeaseExpired("Embedding generation serving lease expired")
 
 
 class EmbeddingGenerationState:
@@ -293,17 +304,6 @@ class EmbeddingGenerationState:
                 targets.append(target)
         return tuple(targets)
 
-    def replay_after(
-        self,
-        sequence: int,
-        projector: Callable[[ProjectionChange], object],
-    ) -> int:
-        caught_up = sequence
-        for change in self.changes_after(sequence):
-            projector(change)
-            caught_up = change.sequence
-        return caught_up
-
     def acknowledge(
         self,
         daemon_instance_id: UUID,
@@ -314,7 +314,7 @@ class EmbeddingGenerationState:
         acknowledged: bool = True,
         caught_up_watermark: int | None = None,
         required_watermark: int | None = None,
-    ) -> None:
+    ) -> bool:
         self._validate_lease_seconds(lease_seconds)
         if acknowledged and required_watermark is None:
             raise ValueError(
@@ -327,7 +327,7 @@ class EmbeddingGenerationState:
                 f"Embedding generation replay reached {caught_up_watermark or 0}; "
                 f"required {required_watermark}"
             )
-        self.db.execute(
+        cursor = self.db.execute(
             """
             INSERT INTO embedding_generation_acks (
                 daemon_instance_id, generation, committed_revision,
@@ -340,9 +340,15 @@ class EmbeddingGenerationState:
                 acknowledged = EXCLUDED.acknowledged,
                 lease_expires_at = EXCLUDED.lease_expires_at,
                 updated_at = EXCLUDED.updated_at
+            WHERE embedding_generation_acks.committed_revision < EXCLUDED.committed_revision
+               OR (
+                    embedding_generation_acks.committed_revision = EXCLUDED.committed_revision
+                AND embedding_generation_acks.generation = EXCLUDED.generation
+               )
             """,
             (daemon_instance_id, generation, revision, acknowledged, lease_seconds),
         )
+        return cursor.rowcount == 1
 
     def renew(
         self,

@@ -622,14 +622,23 @@ class MCPServerStorageMixin:
             return False
 
         secret_store = SecretStore(self.db)
-        with self.db.transaction():
+        generation_state = EmbeddingGenerationState(self.db)
+        with self.db.transaction() as conn:
+            for server in servers:
+                stale_tool_rows = conn.execute(
+                    "SELECT id FROM tools WHERE mcp_server_id = %s", (server.id,)
+                ).fetchall()
+                for stale_row in stale_tool_rows:
+                    generation_state.append_change(
+                        "tool", str(stale_row["id"]), is_tombstone=True, transaction=conn
+                    )
             if is_bundled_external_mcp_server(name):
-                cursor = self.db.execute(
+                cursor = conn.execute(
                     "DELETE FROM mcp_servers WHERE name = %s",
                     (name,),
                 )
             else:
-                cursor = self.db.execute(
+                cursor = conn.execute(
                     "DELETE FROM mcp_servers WHERE name = %s AND project_id = %s",
                     (name, project_id),
                 )

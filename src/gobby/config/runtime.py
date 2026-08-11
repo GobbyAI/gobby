@@ -221,6 +221,67 @@ class ConfigRuntime:
         async with self._reconcile_lock:
             return await self._reconcile_locked(force=False)
 
+    async def reprepare_subscriber(self, name: str) -> ConfigSnapshot:
+        """Force one subscriber replacement at the currently adopted revision."""
+        if self._closed:
+            raise RuntimeError("ConfigRuntime is closed")
+        subscriber = next(
+            (candidate for candidate in self._subscribers if candidate.name == name),
+            None,
+        )
+        if subscriber is None:
+            raise ValueError(f"Unknown configuration subscriber: {name}")
+        async with self._reconcile_lock:
+            while True:
+                bundle = self.capture()
+                snapshot = bundle.snapshot
+                stored, desired = await self._read_projection()
+                if stored.revision != snapshot.revision:
+                    self._max_requested_revision = max(
+                        self._max_requested_revision,
+                        stored.revision,
+                    )
+                    await self._reconcile_locked(force=False)
+                    continue
+                desired_bindings = _runtime_bindings(stored.secret_bindings)
+                managed = self._resolve_managed(stored)
+                change = ConfigChange(
+                    revision=snapshot.revision,
+                    changed_keys=subscriber.keys,
+                    previous=snapshot,
+                    desired=desired,
+                    _desired_bindings=desired_bindings,
+                    managed=managed,
+                )
+                prepared, failure = await self._prepare_one(subscriber, change)
+                if self._max_requested_revision > snapshot.revision:
+                    if prepared is not None:
+                        await self._dispose(prepared, subscriber)
+                    await self._reconcile_locked(force=False)
+                    continue
+                if failure is not None:
+                    raise RuntimeError(str(failure.error)) from failure.error
+                assert prepared is not None
+                snapshot, services, handles, old_handles = self._activate(
+                    bundle,
+                    stored,
+                    desired,
+                    desired_bindings,
+                    subscriber.keys,
+                    subscriber.keys,
+                    {name: prepared},
+                    None,
+                )
+                self._bundle = RuntimeActiveBundle(
+                    snapshot,
+                    MappingProxyType(services),
+                    MappingProxyType(handles),
+                    managed,
+                )
+                await self._dispose_replaced(old_handles)
+                await self._activate_many({name: prepared}, (subscriber,))
+                return snapshot
+
     async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
         """Await immediate reconciliation for a locally committed PATCH."""
         return await self.reconcile_revision(revision)

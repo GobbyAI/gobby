@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, cast
@@ -329,14 +330,17 @@ async def test_build_replays_changes_after_enumeration_watermark(
     class GenerationState:
         def __init__(self) -> None:
             self.watermark_calls = 0
+            self.db_threads: list[int] = []
 
         def watermark(self) -> int:
+            self.db_threads.append(threading.get_ident())
             self.watermark_calls += 1
             return 7 if self.watermark_calls == 1 else 9
 
         def changes_after(
             self, sequence: int, *, up_to: int | None = None
         ) -> list[ProjectionChange]:
+            self.db_threads.append(threading.get_ident())
             changes = [
                 ProjectionChange(8, "tool", "tool-1", False),
                 ProjectionChange(9, "memory", "memory-1", True),
@@ -370,6 +374,10 @@ async def test_build_replays_changes_after_enumeration_watermark(
     assert builds == ["memory", "tool", "github_issue"]
     assert projected == [("tool", "tool-1")]
     assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
+    assert all(
+        thread_id != threading.get_ident()
+        for thread_id in cast(Any, runner.generation_state).db_threads
+    )
 
 
 @pytest.mark.asyncio
@@ -577,10 +585,15 @@ async def test_gc_timeout_surfaces_incompatible_acks(
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     class BlockedGenerationState:
+        def __init__(self) -> None:
+            self.db_threads: list[int] = []
+
         def can_collect(self, generation: str, revision: int) -> bool:
+            self.db_threads.append(threading.get_ident())
             return False
 
         def incompatible_serving_acks(self, generation: str, revision: int) -> list[str]:
+            self.db_threads.append(threading.get_ident())
             return ["daemon-a (generation=old, revision=1, acknowledged=True)"]
 
     cast(Any, runner).generation_state = BlockedGenerationState()
@@ -601,6 +614,10 @@ async def test_gc_timeout_surfaces_incompatible_acks(
     with pytest.raises(EmbeddingSwitchRunError, match="daemon-a"):
         await runner.gc(journal)
     assert journal.phase == PHASE_GC
+    assert all(
+        thread_id != threading.get_ident()
+        for thread_id in cast(Any, runner.generation_state).db_threads
+    )
 
 
 @pytest.mark.asyncio

@@ -467,12 +467,10 @@ async def test_write_catchup_replays_into_promoted_generation(temp_db: HubDataba
     state.append_change("memory", "memory-1", is_tombstone=True)
     projected: list[tuple[str, str, bool]] = []
 
-    caught_up = state.replay_after(
-        enumeration_watermark,
-        lambda change: projected.append(
-            (change.source_kind, change.source_id, change.is_tombstone)
-        ),
-    )
+    changes = state.changes_after(enumeration_watermark)
+    for change in changes:
+        projected.append((change.source_kind, change.source_id, change.is_tombstone))
+    caught_up = changes[-1].sequence
 
     assert projected == [
         ("tool", "tool-2", False),
@@ -617,3 +615,28 @@ def test_managed_projection_survives_post_switch_mutation(temp_db: HubDatabase) 
     completed = projected[EMBEDDING_SWITCH_COMPLETED_KEY]
     assert isinstance(completed, CompletedSwitchRecord)
     assert completed.committed_revision == revision
+
+
+def test_managed_projection_accepts_unchanged_structural_row_revisions(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    store.set_many(
+        {
+            AI_EMBEDDING_CATALOG_KEY: "qwen3-8b-q8",
+            AI_EMBEDDING_DIM_KEY: 4096,
+        },
+        source="install",
+    )
+    structural_revision = store.read_snapshot().revision
+    _journal, committed_revision = _complete_managed_switch(store)
+
+    store.set("ui.enabled", True)
+
+    snapshot = store.read_snapshot()
+    assert snapshot.row_revisions[AI_EMBEDDING_CATALOG_KEY] == structural_revision
+    assert snapshot.row_revisions[AI_EMBEDDING_DIM_KEY] == structural_revision
+    assert structural_revision < committed_revision < snapshot.revision
+    completed = managed_embedding_projection(snapshot)[EMBEDDING_SWITCH_COMPLETED_KEY]
+    assert isinstance(completed, CompletedSwitchRecord)
+    assert completed.committed_revision == committed_revision
