@@ -125,9 +125,11 @@ body {
   }
 }
 
-/* Scrollbar */
+/* Scrollbar — height styles the horizontal bar on intentional inner
+   scrollers (code blocks, tables) to match the vertical treatment. */
 ::-webkit-scrollbar {
   width: 0.5rem;
+  height: 0.5rem;
 }
 
 ::-webkit-scrollbar-track {

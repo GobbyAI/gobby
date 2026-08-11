@@ -145,7 +145,7 @@ export function MessagesView({ channel, onClose }: MessagesViewProps) {
               </Button>
             </div>
 
-            <ol className="grid gap-2" aria-label={`Messages for ${channel.name}`}>
+            <ol className="grid grid-cols-1 gap-2" aria-label={`Messages for ${channel.name}`}>
               {sortedMessages.map((message) => {
                 const isOutbound = message.direction === "outbound";
                 return (

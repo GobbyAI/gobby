@@ -244,7 +244,7 @@ export function ChannelDetailPanel({
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <div className="grid gap-3">
+        <div className="grid grid-cols-1 gap-3">
           {mode === "edit" && (
             <div className="rounded-lg border border-border bg-[var(--bg-secondary)] p-3">
               <div className="flex items-center justify-between gap-3">
@@ -260,7 +260,7 @@ export function ChannelDetailPanel({
                 </Chip>
               </div>
               {status && (
-                <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+                <div className="mt-3 grid grid-cols-1 gap-2 text-xs text-muted-foreground">
                   <div className="flex justify-between gap-3">
                     <span>Webhooks</span>
                     <span>{status.supports_webhooks ? "Supported" : "Not supported"}</span>
@@ -280,7 +280,7 @@ export function ChannelDetailPanel({
             </div>
           )}
 
-          <div className="grid gap-3">
+          <div className="grid grid-cols-1 gap-3">
             <SelectField
               label="Platform"
               ariaLabel="Platform"
@@ -310,7 +310,7 @@ export function ChannelDetailPanel({
               No additional configuration required.
             </div>
           ) : (
-            <div className="grid gap-3">
+            <div className="grid grid-cols-1 gap-3">
               {fields.map((field) => {
                 if (field.secret) {
                   return (

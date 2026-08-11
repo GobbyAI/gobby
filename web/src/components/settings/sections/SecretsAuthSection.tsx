@@ -220,10 +220,13 @@ function SecretStoreGroup({
                 className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-3.5 py-3"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-sm font-medium leading-[1.6] text-muted-foreground">
+                  <span
+                    className="min-w-0 flex-1 truncate text-sm font-medium leading-[1.6] text-muted-foreground"
+                    title={secret.name}
+                  >
                     <code>{secret.name}</code>
                   </span>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex shrink-0 flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="ghost"

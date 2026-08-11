@@ -26,7 +26,7 @@ export function RulesTabList({
   onDelete,
 }: RulesTabListProps) {
   return (
-    <div className="grid" role="list" aria-label="Rules">
+    <div className="flex flex-col" role="list" aria-label="Rules">
       {rules.map((rule) => {
         const isSelected = rule.name === selectedName;
         const isBusy = rule.name === busyRuleName;

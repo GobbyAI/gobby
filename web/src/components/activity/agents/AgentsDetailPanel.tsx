@@ -135,7 +135,7 @@ export function AgentsDetailPanel({
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <div className="grid gap-3 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <TextField
             label="Name"
             ariaLabel="Name"
@@ -207,7 +207,7 @@ export function AgentsDetailPanel({
           />
         </div>
 
-        <div className="mt-4 grid gap-4">
+        <div className="mt-4 grid grid-cols-1 gap-4">
           <TextAreaField
             label="Role"
             ariaLabel="Role"
