@@ -19,6 +19,7 @@ from gobby.cli.hub_backup._manifest import (
 )
 from gobby.cli.hub_backup._stores import collect_postgres_identity
 from gobby.cli.hub_maintenance import CampaignExecutor, register_campaign_executor
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.paths import get_gobby_home
 from gobby.storage.hub.runtime import apply_destructive_batch
@@ -35,6 +36,14 @@ from gobby.storage.schema_contract import latest_schema_version
 
 class SchemaGateError(RuntimeError):
     """Raised when backup or maintenance evidence cannot authorize schema mutation."""
+
+
+def _hub_bootstrap() -> tuple[str, PostgresPoolConfig]:
+    """Resolve the hub DSN and pool from bootstrap.yaml, the pre-DB authority."""
+    bootstrap = load_bootstrap(resolve_database_url=True)
+    if not bootstrap.database_url:
+        raise SchemaGateError("Hub database URL is unavailable")
+    return bootstrap.database_url, bootstrap.postgres_pool
 
 
 def validate_destructive_manifest(
@@ -107,26 +116,27 @@ def apply_schema(
         click.echo(f"Schema is at version {latest_schema_version()}")
         return
 
-    config = runtime.require_config(apply_migrations=False)
-    if config.database_url is None:
-        raise click.ClickException("Hub database URL is unavailable")
-    epoch = discover_active_maintenance_epoch(config.database_url)
+    try:
+        database_url, pool_config = _hub_bootstrap()
+    except (BootstrapConfigError, SchemaGateError) as exc:
+        raise click.ClickException(str(exc)) from exc
+    epoch = discover_active_maintenance_epoch(database_url)
     if epoch is None:
         raise click.ClickException(
             "No maintenance epoch is open; run `gobby hub-maintenance run schema-apply`."
         )
     try:
         epoch = require_orchestrator_epoch(
-            config.database_url,
+            database_url,
             epoch.id,
             campaign="schema-apply",
         )
-        batch = get_destructive_batch(config.database_url, epoch.id)
+        batch = get_destructive_batch(database_url, epoch.id)
         if batch is None:
             raise SchemaGateError("Open maintenance epoch has no destructive batch intent")
         _apply_verified_batch(
-            config.database_url,
-            config.postgres_pool,
+            database_url,
+            pool_config,
             epoch,
             batch,
             max_age_hours=max_age_hours,
@@ -192,27 +202,19 @@ def _file_sha256(path: Path) -> str:
 
 class _SchemaApplyExecutor(CampaignExecutor):
     def apply(self, epoch: MaintenanceEpoch, batch: DestructiveBatch) -> None:
-        from gobby.cli.runtime import get_cli_runtime
-
-        config = get_cli_runtime().require_config(apply_migrations=False)
-        if config.database_url is None:
-            raise SchemaGateError("Hub database URL is unavailable")
+        database_url, pool_config = _hub_bootstrap()
         _apply_verified_batch(
-            config.database_url,
-            config.postgres_pool,
+            database_url,
+            pool_config,
             epoch,
             batch,
             max_age_hours=DEFAULT_MAX_AGE_HOURS,
         )
 
     def verify(self, epoch: MaintenanceEpoch, batch: DestructiveBatch) -> None:
-        from gobby.cli.runtime import get_cli_runtime
-
-        config = get_cli_runtime().require_config(apply_migrations=False)
-        if config.database_url is None:
-            raise SchemaGateError("Hub database URL is unavailable")
+        database_url, _pool_config = _hub_bootstrap()
         _identity, current_head = collect_postgres_identity(
-            bind_maintenance_epoch(config.database_url, epoch.id)
+            bind_maintenance_epoch(database_url, epoch.id)
         )
         expected_version = latest_schema_version()
         if current_head != expected_version:

@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
+from gobby.config._loading import deep_merge
 from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import load_bootstrap
+from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
 from gobby.paths import get_gobby_home
 from gobby.runner_init.helpers import (
     _ensure_headless_settings,
@@ -95,6 +96,17 @@ def init_runtime_capacity(runner: GobbyRunner) -> None:
     runner.database_watchdog.start()
 
 
+def bootstrap_overlaid_config(candidate: DaemonConfig, bootstrap: BootstrapConfig) -> DaemonConfig:
+    """Overlay bootstrap-owned facts (ports, bind, DSN) onto a DB-backed projection.
+
+    The DB registry does not store bootstrap fields, so a projection built from
+    stored overrides carries only their defaults.
+    """
+    merged = candidate.model_dump(mode="python", by_alias=False)
+    deep_merge(merged, bootstrap.to_config_dict())
+    return DaemonConfig.model_validate(merged)
+
+
 def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbose: bool) -> None:
     """Initialize config, telemetry, database, secrets, and core managers."""
     if config_path is not None and not config_path.exists():
@@ -174,7 +186,10 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     )
     config_repository.reconcile_registry()
     stored_config = config_repository.read()
-    runner.startup_config = config_repository.runtime_candidate(dict(stored_config.overrides))
+    runner.startup_config = bootstrap_overlaid_config(
+        config_repository.runtime_candidate(dict(stored_config.overrides)),
+        runner.bootstrap_config,
+    )
     _warn_missing_terminal_dependency(runner.startup_config)
     runner.config_runtime = ConfigRuntime(
         config_repository,

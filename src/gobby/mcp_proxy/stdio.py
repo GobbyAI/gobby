@@ -147,6 +147,7 @@ def register_proxy_tools(mcp: FastMCP, proxy: _DaemonProxy) -> None:
 def _server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
         runtime_factory=lambda: CliRuntime(None),
+        load_bootstrap=lambda: load_bootstrap(resolve_database_url=False),
         setup_internal_registries=setup_internal_registries,
         build_gobby_instructions=build_gobby_instructions,
         fast_mcp_factory=FastMCP,

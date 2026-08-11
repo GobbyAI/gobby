@@ -208,26 +208,31 @@ def _restore_compose_state(
 
 
 def _commit_shared_endpoints(gobby_home: Path, published_host: str) -> None:
+    from gobby.cli.config_writes import apply_cas_config_patch
     from gobby.storage.config_mutations import ConfigPatch
+    from gobby.storage.config_repository import ConfigReadSnapshot
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.runtime import runtime_hub_database
+
+    def build_patch(snapshot: ConfigReadSnapshot) -> ConfigPatch:
+        qdrant_port = _config_port(snapshot.values.get("databases.qdrant.port"), 6333)
+        return ConfigPatch(
+            values={
+                "databases.published_host": published_host,
+                "databases.qdrant.url": f"http://{published_host}:{qdrant_port}",
+                "databases.falkordb.host": published_host,
+            }
+        )
 
     with runtime_hub_database(
         str(gobby_home / "bootstrap.yaml"),
         apply_migrations=False,
     ) as database:
         store = ConfigStore(database)
-        snapshot = store.read_snapshot()
-        qdrant_port = _config_port(snapshot.values.get("databases.qdrant.port"), 6333)
-        store.patch(
-            expected_revision=snapshot.revision,
-            patch=ConfigPatch(
-                values={
-                    "databases.published_host": published_host,
-                    "databases.qdrant.url": f"http://{published_host}:{qdrant_port}",
-                    "databases.falkordb.host": published_host,
-                }
-            ),
+        apply_cas_config_patch(
+            read_snapshot=store.read_snapshot,
+            build_patch=build_patch,
+            patch=store.patch,
         )
 
 

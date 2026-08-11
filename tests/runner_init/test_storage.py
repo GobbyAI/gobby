@@ -9,7 +9,11 @@ from typing import cast
 import pytest
 
 from gobby.config.app import DaemonConfig
-from gobby.runner_init.storage import _warn_missing_terminal_dependency
+from gobby.config.bootstrap import BootstrapConfig
+from gobby.runner_init.storage import (
+    _warn_missing_terminal_dependency,
+    bootstrap_overlaid_config,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -43,3 +47,43 @@ def test_enabled_tmux_warns_when_unavailable(
         _warn_missing_terminal_dependency(config)
 
     assert "tmux is not installed. Agent spawning in terminal mode will not work." in caplog.text
+
+
+def test_bootstrap_overlay_wins_for_bootstrap_owned_fields() -> None:
+    bootstrap = BootstrapConfig(
+        daemon_port=61111,
+        bind_host="0.0.0.0",
+        websocket_port=61112,
+        ui_port=61113,
+        auth_mode="disabled",
+        datastore_mode="remote",
+        database_url="postgresql://gobby:pw@db.example:5432/hub",
+    )
+
+    merged = bootstrap_overlaid_config(DaemonConfig(), bootstrap)
+
+    assert merged.daemon_port == 61111
+    assert merged.bind_host == "0.0.0.0"
+    assert merged.websocket.port == 61112
+    assert merged.ui.port == 61113
+    assert merged.auth_mode == "disabled"
+    assert merged.datastore_mode == "remote"
+    assert merged.database_url == "postgresql://gobby:pw@db.example:5432/hub"
+
+
+def test_bootstrap_overlay_preserves_stored_projection_values() -> None:
+    candidate = DaemonConfig.model_validate(
+        {
+            "voice": {"enabled": True},
+            "websocket": {"ping_interval": 45},
+        }
+    )
+    bootstrap = BootstrapConfig(daemon_port=61111, websocket_port=61112)
+
+    merged = bootstrap_overlaid_config(candidate, bootstrap)
+
+    assert merged.voice.enabled is True
+    # The nested overlay merges deep: the bootstrap port lands without
+    # clobbering sibling websocket settings from the stored projection.
+    assert merged.websocket.port == 61112
+    assert merged.websocket.ping_interval == 45

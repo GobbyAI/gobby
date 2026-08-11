@@ -341,28 +341,33 @@ def _update_config(*, port: int, password: str, gobby_home: Path) -> None:
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(gobby_home))
     try:
+        from gobby.cli.config_writes import apply_cas_config_patch
         from gobby.storage.config_mutations import ConfigPatch, SecretUpdate
+        from gobby.storage.config_repository import ConfigReadSnapshot
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
-        secret_store = SecretStore(db, gobby_home=gobby_home)
-        store = ConfigStore(db, secret_store=secret_store)
-        snapshot = store.read_snapshot()
-        configured_host = snapshot.values.get("databases.published_host")
-        host = (
-            configured_host.strip()
-            if isinstance(configured_host, str) and configured_host.strip()
-            else DEFAULT_FALKORDB_HOST
-        )
-        store.patch(
-            expected_revision=snapshot.revision,
-            patch=ConfigPatch(
+        def build_patch(snapshot: ConfigReadSnapshot) -> ConfigPatch:
+            configured_host = snapshot.values.get("databases.published_host")
+            host = (
+                configured_host.strip()
+                if isinstance(configured_host, str) and configured_host.strip()
+                else DEFAULT_FALKORDB_HOST
+            )
+            return ConfigPatch(
                 values={
                     "databases.falkordb.host": host,
                     "databases.falkordb.port": port,
                 },
                 secrets={"databases.falkordb.password": SecretUpdate(password)},
-            ),
+            )
+
+        secret_store = SecretStore(db, gobby_home=gobby_home)
+        store = ConfigStore(db, secret_store=secret_store)
+        apply_cas_config_patch(
+            read_snapshot=store.read_snapshot,
+            build_patch=build_patch,
+            patch=store.patch,
         )
     finally:
         database_stack.close()
@@ -372,16 +377,16 @@ def _clear_config(*, gobby_home: Path) -> None:
     database_stack = ExitStack()
     db = database_stack.enter_context(_config_db(gobby_home))
     try:
+        from gobby.cli.config_writes import apply_cas_config_patch
         from gobby.storage.config_mutations import ConfigPatch
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
 
         secret_store = SecretStore(db, gobby_home=gobby_home)
         store = ConfigStore(db, secret_store=secret_store)
-        snapshot = store.read_snapshot()
-        store.patch(
-            expected_revision=snapshot.revision,
-            patch=ConfigPatch(
+        apply_cas_config_patch(
+            read_snapshot=store.read_snapshot,
+            build_patch=lambda _snapshot: ConfigPatch(
                 unset=frozenset(
                     {
                         "databases.falkordb.host",
@@ -390,6 +395,7 @@ def _clear_config(*, gobby_home: Path) -> None:
                     }
                 )
             ),
+            patch=store.patch,
         )
     except Exception as exc:
         logger.warning("Failed to clear FalkorDB config: %s", exc)

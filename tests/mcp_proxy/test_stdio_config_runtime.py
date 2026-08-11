@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import fields
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -28,6 +28,7 @@ def test_stdio_dependencies_use_runtime_access() -> None:
     assert "bootstrap" in startup_fields
     assert "runtime_factory" in proxy_fields
     assert "runtime_factory" in server_fields
+    assert "load_bootstrap" in server_fields
 
 
 @pytest.mark.asyncio
@@ -69,18 +70,12 @@ async def test_stdio_daemon_config_boundary() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stdio_operation_reads_one_revision() -> None:
+async def test_stdio_proxy_caches_tool_timeouts_for_proxy_lifetime() -> None:
     first = DaemonConfig.model_validate(
-        {
-            "daemon_port": 61041,
-            "mcp_client_proxy": {"tool_timeouts": {"custom_tool": 12.0}},
-        }
+        {"mcp_client_proxy": {"tool_timeouts": {"custom_tool": 12.0}}}
     )
     second = DaemonConfig.model_validate(
-        {
-            "daemon_port": 61042,
-            "mcp_client_proxy": {"tool_timeouts": {"custom_tool": 24.0}},
-        }
+        {"mcp_client_proxy": {"tool_timeouts": {"custom_tool": 24.0}}}
     )
     proxy_runtime_factory = MagicMock(
         side_effect=(CliRuntime(None, first), CliRuntime(None, second))
@@ -96,26 +91,63 @@ async def test_stdio_operation_reads_one_revision() -> None:
     request = AsyncMock(return_value={"success": True})
 
     with patch.object(proxy, "_request", new=request):
-        result = await proxy.call_tool("gobby-tasks", "custom_tool")
+        results = [
+            await proxy.call_tool("gobby-tasks", "custom_tool"),
+            await proxy.call_tool("gobby-tasks", "custom_tool"),
+        ]
 
-    assert result == {"success": True}
+    assert results == [{"success": True}, {"success": True}]
+    # One config read per proxy lifetime: the second call reuses the cached
+    # timeout map instead of opening another hub connection.
     proxy_runtime_factory.assert_called_once_with()
-    request.assert_awaited_once_with(
+    expected_request = call(
         "POST",
         "/api/mcp/gobby-tasks/tools/custom_tool",
         json={},
         timeout=12.0,
         preflight=True,
     )
+    assert request.await_args_list == [expected_request, expected_request]
 
-    server_runtime_factory = MagicMock(
-        side_effect=(CliRuntime(None, first), CliRuntime(None, second))
+
+@pytest.mark.asyncio
+async def test_stdio_proxy_caches_timeout_read_failure() -> None:
+    logger = MagicMock()
+    runtime = MagicMock()
+    runtime.require_config.side_effect = RuntimeError("hub is down")
+    proxy_runtime_factory = MagicMock(return_value=runtime)
+    proxy_deps = DaemonProxyDependencies(
+        runtime_factory=proxy_runtime_factory,
+        check_daemon_http_health=AsyncMock(return_value=True),
+        read_project_id=lambda: None,
+        http_client_factory=httpx.AsyncClient,
+        logger=logger,
     )
+    proxy = DaemonProxy(61041, deps_factory=lambda: proxy_deps)
+    request = AsyncMock(return_value={"success": True})
+
+    with patch.object(proxy, "_request", new=request):
+        first = await proxy.call_tool("gobby-tasks", "custom_tool")
+        second = await proxy.call_tool("gobby-tasks", "custom_tool")
+
+    assert first == {"success": True}
+    assert second == {"success": True}
+    proxy_runtime_factory.assert_called_once_with()
+    runtime.close.assert_called_once_with()
+    assert request.await_count == 2
+    assert all(item.kwargs["timeout"] == 30.0 for item in request.await_args_list)
+
+
+def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
+    config = DaemonConfig.model_validate({"daemon_port": 61041})
+    runtime_factory = MagicMock(return_value=CliRuntime(None, config))
     setup_registries = MagicMock()
+    proxy = MagicMock()
     proxy_factory = MagicMock(return_value=proxy)
     mcp_server = MagicMock()
     server_deps = StdioServerDependencies(
-        runtime_factory=server_runtime_factory,
+        runtime_factory=runtime_factory,
+        load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
         setup_internal_registries=setup_registries,
         build_gobby_instructions=lambda: "instructions",
         fast_mcp_factory=MagicMock(return_value=mcp_server),
@@ -126,10 +158,39 @@ async def test_stdio_operation_reads_one_revision() -> None:
     server = create_stdio_mcp_server(deps=server_deps)
 
     assert server is mcp_server
-    server_runtime_factory.assert_called_once_with()
+    runtime_factory.assert_called_once_with()
     setup_registries.assert_called_once_with(
-        _config=first,
+        _config=config,
         session_manager=None,
-        memory_manager=None,
+        memory_manager_resolver=None,
     )
-    proxy_factory.assert_called_once_with(61041)
+    # The dial port comes from bootstrap.yaml, never the DB-backed projection.
+    proxy_factory.assert_called_once_with(61031)
+
+
+def test_stdio_server_starts_when_hub_is_down() -> None:
+    runtime = MagicMock()
+    runtime.require_config.side_effect = RuntimeError("hub is down")
+    setup_registries = MagicMock()
+    proxy_factory = MagicMock(return_value=MagicMock())
+    mcp_server = MagicMock()
+    server_deps = StdioServerDependencies(
+        runtime_factory=MagicMock(return_value=runtime),
+        load_bootstrap=lambda: BootstrapConfig(daemon_port=61031),
+        setup_internal_registries=setup_registries,
+        build_gobby_instructions=lambda: "instructions",
+        fast_mcp_factory=MagicMock(return_value=mcp_server),
+        proxy_factory=proxy_factory,
+        register_proxy_tools=MagicMock(),
+    )
+
+    server = create_stdio_mcp_server(deps=server_deps)
+
+    assert server is mcp_server
+    runtime.close.assert_called_once_with()
+    setup_registries.assert_called_once_with(
+        _config=None,
+        session_manager=None,
+        memory_manager_resolver=None,
+    )
+    proxy_factory.assert_called_once_with(61031)

@@ -35,7 +35,7 @@ def resolve_agent_name(
 
     from gobby.storage.config_repository import ConfigRepository
 
-    values = ConfigRepository(handler._session_manager.db).read().values
+    values = ConfigRepository(handler._session_manager.db).read(resolve_secrets=False).values
     return str(values.get("default_agent") or "default")
 
 

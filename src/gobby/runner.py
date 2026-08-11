@@ -227,7 +227,11 @@ class GobbyRunner:
         try:
             self._initialize_storage(config_path, verbose)
             startup_snapshot = await self.config_runtime.start()
-            self.startup_config = startup_snapshot.active
+            from gobby.runner_init.storage import bootstrap_overlaid_config
+
+            self.startup_config = bootstrap_overlaid_config(
+                startup_snapshot.active, self.bootstrap_config
+            )
             await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)

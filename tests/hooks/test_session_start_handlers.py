@@ -1402,3 +1402,26 @@ class TestSessionStartNewSession:
         assert "Active Task Context" in response.context
         assert "task-789" in response.context
         assert "Implement feature X" in response.context
+
+
+def test_resolve_agent_name_reads_config_without_resolving_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.hooks.event_handlers._session_start.agents import resolve_agent_name
+
+    handler = SimpleNamespace(_session_manager=SimpleNamespace(db=MagicMock()))
+    variables = MagicMock()
+    variables.get_variables.return_value = {}
+    monkeypatch.setattr(
+        "gobby.workflows.state_manager.SessionVariableManager",
+        MagicMock(return_value=variables),
+    )
+    repository = MagicMock()
+    repository.read.return_value = SimpleNamespace(values={"default_agent": "gobby"})
+    monkeypatch.setattr(
+        "gobby.storage.config_repository.ConfigRepository",
+        MagicMock(return_value=repository),
+    )
+
+    assert resolve_agent_name(handler, "session-1", None) == "gobby"
+    repository.read.assert_called_once_with(resolve_secrets=False)

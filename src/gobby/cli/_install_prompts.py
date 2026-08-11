@@ -546,14 +546,15 @@ def _run_voice_install(
     click.echo("-" * 40)
 
     try:
+        from gobby.cli.config_writes import apply_cas_config_patch
         from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
         with _ensure_db_and_secrets(db, None) as (_db, _store):
             mutations = ConfigMutations(_db)
-            snapshot = mutations.repository.read(resolve_secrets=False)
-            mutations.patch(
-                expected_revision=snapshot.revision,
-                patch=ConfigPatch(values={"voice.enabled": install_voice}),
+            apply_cas_config_patch(
+                read_snapshot=lambda: mutations.repository.read(resolve_secrets=False),
+                build_patch=lambda _snapshot: ConfigPatch(values={"voice.enabled": install_voice}),
+                patch=mutations.patch,
             )
         state = "enabled" if install_voice else "disabled"
         click.echo(f"Voice {state} in daemon config")

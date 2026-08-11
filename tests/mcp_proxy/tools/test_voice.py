@@ -259,3 +259,110 @@ class TestPersistence:
             expected_revision=7,
             values={"voice.whisper_vocabulary": []},
         )
+
+
+# ---------------------------------------------------------------------------
+# Desired-epoch RMW and structured errors
+# ---------------------------------------------------------------------------
+
+
+def _snapshot_with(desired: DaemonConfig, active: DaemonConfig) -> ConfigSnapshot:
+    return ConfigSnapshot(
+        revision=7,
+        desired=desired,
+        active=active,
+        row_revisions={},
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
+        desired_values={},
+        active_values={},
+    )
+
+
+class _UnstartedRuntime:
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        raise RuntimeError("ConfigRuntime has not started")
+
+
+class TestDesiredEpochAndErrors:
+    async def test_add_bases_rmw_on_desired_values(self) -> None:
+        desired = DaemonConfig(voice={"whisper_vocabulary": ["Gobby", "Pending"]})
+        active = DaemonConfig(voice={"whisper_vocabulary": ["Gobby"]})
+        runtime = MagicMock()
+        runtime.snapshot = _snapshot_with(desired, active)
+        service = MagicMock()
+        service.runtime = runtime
+        service.patch_flat = AsyncMock(return_value={})
+        registry = create_voice_registry(lambda: service)
+
+        result = await _call_tool(registry, "add_vocab", terms="NewTerm")
+
+        assert result["success"] is True
+        service.patch_flat.assert_awaited_once_with(
+            expected_revision=7,
+            values={"voice.whisper_vocabulary": ["Gobby", "Pending", "NewTerm"]},
+        )
+
+    async def test_remove_bases_rmw_on_desired_values(self) -> None:
+        desired = DaemonConfig(voice={"whisper_vocabulary": ["Gobby", "Pending"]})
+        active = DaemonConfig(voice={"whisper_vocabulary": ["Gobby"]})
+        runtime = MagicMock()
+        runtime.snapshot = _snapshot_with(desired, active)
+        service = MagicMock()
+        service.runtime = runtime
+        service.patch_flat = AsyncMock(return_value={})
+        registry = create_voice_registry(lambda: service)
+
+        result = await _call_tool(registry, "remove_vocab", terms="Gobby")
+
+        assert result == {"success": True, "removed": 1, "not_found": 0, "total": 1}
+        service.patch_flat.assert_awaited_once_with(
+            expected_revision=7,
+            values={"voice.whisper_vocabulary": ["Pending"]},
+        )
+
+    async def test_patch_conflict_returns_structured_error(self) -> None:
+        from gobby.config.values import ConfigValuesError
+
+        registry, service = _make_registry(vocab=["Gobby"])
+        service.patch_flat = AsyncMock(
+            side_effect=ConfigValuesError(
+                "revision_conflict",
+                "Configuration revision is stale",
+                ("expected_revision",),
+                status_code=409,
+                retryable=True,
+                expected_revision=7,
+                actual_revision=9,
+            )
+        )
+
+        result = await _call_tool(registry, "add_vocab", terms="NewTerm")
+
+        assert result["error"]["code"] == "revision_conflict"
+        assert result["error"]["retryable"] is True
+        assert result["error"]["actual_revision"] == 9
+
+    @pytest.mark.parametrize(
+        ("tool", "kwargs"),
+        [
+            ("add_vocab", {"terms": "NewTerm"}),
+            ("remove_vocab", {"terms": "Gobby"}),
+            ("list_vocab", {}),
+            ("clear_vocab", {}),
+        ],
+    )
+    async def test_unstarted_runtime_returns_structured_error(
+        self, tool: str, kwargs: dict[str, str]
+    ) -> None:
+        service = MagicMock()
+        service.runtime = _UnstartedRuntime()
+        service.patch_flat = AsyncMock(return_value={})
+        registry = create_voice_registry(lambda: service)
+
+        result = await _call_tool(registry, tool, **kwargs)
+
+        assert result["error"]["code"] == "runtime_unavailable"
+        assert result["error"]["retryable"] is True
+        service.patch_flat.assert_not_awaited()

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
@@ -196,6 +197,7 @@ def _create_server_with_proxy(proxy: DaemonProxy) -> FastMCP:
     runtime.require_config.return_value = MagicMock(daemon_port=60887)
     dependencies = StdioServerDependencies(
         runtime_factory=lambda: runtime,
+        load_bootstrap=lambda: BootstrapConfig(daemon_port=60887),
         setup_internal_registries=MagicMock(),
         build_gobby_instructions=lambda: "instructions",
         fast_mcp_factory=FastMCP,

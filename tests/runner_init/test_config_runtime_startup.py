@@ -11,6 +11,7 @@ import pytest
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
 from gobby.app_context import ServiceContainer, clear_app_context, get_app_context, set_app_context
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import ConfigRuntime
 from gobby.runner import GobbyRunner
 from gobby.shutdown_intent import ShutdownIntent
@@ -67,6 +68,7 @@ def _patch_runner_phases(
     def storage(runner: GobbyRunner, _path: object, _verbose: bool) -> None:
         events.append("storage")
         runner.startup_config = DaemonConfig()
+        runner.bootstrap_config = BootstrapConfig()
         runner.config_runtime = cast(ConfigRuntime, runtime)
 
     async def services(_runner: GobbyRunner) -> None:

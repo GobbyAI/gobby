@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -110,6 +111,36 @@ class DaemonProxy:
         self._last_health_ok_at = 0.0
         self._auth_headers = daemon_auth_headers()
         self._client: httpx.AsyncClient | None = None
+        self._tool_timeouts: dict[str, float] | None = None
+        self._tool_timeouts_lock = asyncio.Lock()
+
+    async def _get_tool_timeouts(self) -> dict[str, float]:
+        """Read the configured tool-timeout map once per proxy lifetime."""
+        if self._tool_timeouts is not None:
+            return self._tool_timeouts
+        async with self._tool_timeouts_lock:
+            if self._tool_timeouts is not None:
+                return self._tool_timeouts
+
+            def read() -> dict[str, float]:
+                deps = self._deps_factory()
+                runtime = deps.runtime_factory()
+                try:
+                    config = runtime.require_config(apply_migrations=False)
+                    return dict(config.mcp_client_proxy.tool_timeouts)
+                finally:
+                    runtime.close()
+
+            try:
+                self._tool_timeouts = await asyncio.to_thread(read)
+            except Exception as exc:
+                # Cache the failure too: retrying every call is exactly the
+                # per-call pool churn this cache removes.
+                self._deps_factory().logger.warning(
+                    "Failed to capture MCP tool timeout configuration: %s", exc
+                )
+                self._tool_timeouts = {}
+        return self._tool_timeouts
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -279,18 +310,7 @@ class DaemonProxy:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
 
-        deps = self._deps_factory()
-        runtime: CliRuntime | None = None
-        try:
-            runtime = deps.runtime_factory()
-            config = runtime.require_config(apply_migrations=False)
-            tool_timeouts = config.mcp_client_proxy.tool_timeouts
-        except Exception as exc:
-            deps.logger.warning("Failed to capture MCP tool timeout configuration: %s", exc)
-            tool_timeouts = {}
-        finally:
-            if runtime is not None:
-                runtime.close()
+        tool_timeouts = await self._get_tool_timeouts()
 
         timeout = 30.0
         if tool_timeouts and tool_name in tool_timeouts:
