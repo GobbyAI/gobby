@@ -6,6 +6,7 @@ import {
   getModelLabel,
   getModelsForProvider,
   getModelsForSelection,
+  isHiddenProvider,
   modelSupportsImageInput,
   getOrderedProviders,
   getPreferredModelForProvider,
@@ -722,6 +723,37 @@ describe("providerModels", () => {
     }));
 
     await expect(fetchProviderModelCatalog()).resolves.toEqual([unknownEntry]);
+  });
+
+  it("drops hidden providers from the catalog while keeping display support (#20049)", async () => {
+    const codexEntry = {
+      provider: "codex",
+      available: true,
+      source: "live",
+      models: [{ value: "gpt-5.4", label: "GPT-5.4" }],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          codexEntry,
+          {
+            provider: "agy",
+            available: true,
+            source: "live",
+            models: [{ value: "agy-1", label: "AGY 1" }],
+          },
+        ],
+      }),
+    }));
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([codexEntry]);
+    // Rendering support for existing AGY sessions stays intact.
+    expect(isHiddenProvider("agy")).toBe(true);
+    expect(isHiddenProvider("AGY")).toBe(true);
+    expect(isHiddenProvider("codex")).toBe(false);
+    expect(isHiddenProvider(null)).toBe(false);
+    expect(getProviderDisplayName("agy")).toBe("AGY");
   });
 
   it("preserves nonblank execution-provider metadata and catalog identity", async () => {

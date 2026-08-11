@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { isHiddenProvider } from "../../lib/providerModels";
+
 const NON_PROVIDER_SOURCES = new Set(["cron", "pipeline", "system"]);
 
 type ProviderRegistryResponse = {
@@ -18,7 +20,12 @@ export function providerNamesFromRegistry(data: unknown): string[] {
           const name = (provider as { name?: unknown }).name;
           return typeof name === "string" ? name.trim() : "";
         })
-        .filter((name) => name.length > 0 && !NON_PROVIDER_SOURCES.has(name)),
+        .filter(
+          (name) =>
+            name.length > 0 &&
+            !NON_PROVIDER_SOURCES.has(name) &&
+            !isHiddenProvider(name),
+        ),
     ),
   );
 }
