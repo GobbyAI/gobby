@@ -115,7 +115,7 @@ class DaemonProxy:
         self._tool_timeouts_lock = asyncio.Lock()
 
     async def _get_tool_timeouts(self) -> dict[str, float]:
-        """Read the configured tool-timeout map once per proxy lifetime."""
+        """Cache the configured tool-timeout map after a successful read."""
         if self._tool_timeouts is not None:
             return self._tool_timeouts
         async with self._tool_timeouts_lock:
@@ -134,12 +134,10 @@ class DaemonProxy:
             try:
                 self._tool_timeouts = await asyncio.to_thread(read)
             except Exception as exc:
-                # Cache the failure too: retrying every call is exactly the
-                # per-call pool churn this cache removes.
                 self._deps_factory().logger.warning(
                     "Failed to capture MCP tool timeout configuration: %s", exc
                 )
-                self._tool_timeouts = {}
+                return {}
         return self._tool_timeouts
 
     def _get_client(self) -> httpx.AsyncClient:

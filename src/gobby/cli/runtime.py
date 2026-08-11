@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import ExitStack
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import load_bootstrap
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import runtime_hub_database
@@ -50,6 +52,21 @@ class CliRuntime:
     @config.setter
     def config(self, value: DaemonConfig) -> None:
         self._config = value
+
+    @property
+    def operational_config(self) -> DaemonConfig:
+        """Overlay bootstrap-owned process settings onto the DB projection."""
+        config = deepcopy(self.config)
+        bootstrap = load_bootstrap(self.config_file)
+        config.daemon_port = bootstrap.daemon_port
+        config.bind_host = bootstrap.bind_host
+        config.websocket.port = bootstrap.websocket_port
+        config.ui.port = bootstrap.ui_port
+        config.auth_mode = bootstrap.auth_mode
+        config.datastore_mode = bootstrap.datastore_mode
+        config.database_url = bootstrap.database_url
+        config.postgres_pool = bootstrap.postgres_pool
+        return config
 
     def require_config(self, *, apply_migrations: bool = True) -> DaemonConfig:
         """Return configuration, controlling migrations on its first database open."""

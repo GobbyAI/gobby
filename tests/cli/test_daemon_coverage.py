@@ -359,7 +359,7 @@ class TestStatusCommand:
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
         assert _fmt.call_args.kwargs["control_plane_error"] == (
-            "HTTP control plane unavailable at localhost:60888; "
+            "HTTP control plane unavailable at localhost:60887; "
             "PID exists but /api/admin/status did not respond"
         )
 

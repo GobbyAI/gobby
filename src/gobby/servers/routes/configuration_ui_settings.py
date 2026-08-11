@@ -8,6 +8,7 @@ from typing import Any
 import psycopg
 from fastapi import APIRouter, HTTPException
 
+from gobby.config.values import ConfigValuesError
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 
@@ -36,13 +37,15 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
     async def get_ui_settings() -> JSONResponse:
         """Return persisted UI settings."""
         try:
-            stored = context.get_config_runtime().snapshot.active_values
+            stored = context.get_config_snapshot().active_values
             result: dict[str, Any] = {}
             for key in UI_SETTINGS_KEYS:
                 value = stored.get(f"{UI_SETTINGS_PREFIX}{key}")
                 if value is not None:
                     result[key] = value
             return JSONResponse(content=result)
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         except HTTPException:
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:

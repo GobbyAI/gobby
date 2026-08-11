@@ -119,6 +119,23 @@ async def test_call_tool_sends_intent_on_each_http_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_timeout_read_failure_is_retried() -> None:
+    deps = MagicMock()
+    failed_runtime = MagicMock()
+    failed_runtime.require_config.side_effect = RuntimeError("hub unavailable")
+    recovered_runtime = MagicMock()
+    recovered_runtime.require_config.return_value = MagicMock(
+        mcp_client_proxy=MagicMock(tool_timeouts={"gobby-tasks:close_task": 47.0})
+    )
+    deps.runtime_factory.side_effect = [failed_runtime, recovered_runtime]
+    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+
+    assert await proxy._get_tool_timeouts() == {}
+    assert await proxy._get_tool_timeouts() == {"gobby-tasks:close_task": 47.0}
+    assert deps.runtime_factory.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
     http_envelope = {
         "success": True,

@@ -7,6 +7,7 @@ import logging
 import psycopg
 from fastapi import APIRouter, HTTPException
 
+from gobby.config.values import ConfigValuesError
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.tool_approvals import (
@@ -27,7 +28,7 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
     async def get_global_tool_approval_rules() -> JSONResponse:
         """Return daemon-wide approval rules plus read-only built-in exemptions."""
         try:
-            rules = get_global_approval_rules(context.get_config_runtime().snapshot)
+            rules = get_global_approval_rules(context.get_config_snapshot())
             return JSONResponse(
                 content={
                     "rules": rules,
@@ -35,6 +36,8 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
                     "built_in_exemptions": list(BUILT_IN_EXEMPTION_LABELS),
                 }
             )
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         except _APPROVAL_STORAGE_ERRORS as e:
             logger.exception("Failed to get global tool approval rules: %s", e)
             raise HTTPException(status_code=500, detail="Failed to load approval rules") from e

@@ -1971,7 +1971,7 @@ class TestDaemonCommandsIntegration:
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch(
                 "gobby.cli.runtime.get_cli_runtime",
-                return_value=MagicMock(config=mock_daemon_config),
+                return_value=MagicMock(operational_config=mock_daemon_config),
             ),
             patch(
                 "gobby.cli.runtime.CliRuntime.require_database",

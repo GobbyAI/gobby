@@ -50,6 +50,27 @@ def _async_stream(*items: Any):
 
 
 class TestWebChatRuntimeManager:
+    def test_sandbox_policy_reads_live_config_for_new_sessions(self) -> None:
+        current = [DaemonConfig(web_chat_sandbox={"enabled": False})]
+        manager = WebChatRuntimeManager(
+            codex_client=None,
+            daemon_config=current[0],
+            config_resolver=lambda: current[0],
+        )
+        initial_hash = manager.sandbox_policy_hash
+
+        current[0] = DaemonConfig(
+            web_chat_sandbox={"enabled": True, "extra_read_paths": ["/tmp/live"]}
+        )
+        session = manager.create_session(provider="claude", conversation_id="live-config")
+
+        assert manager.sandbox_config.enabled is True
+        assert manager.sandbox_config.extra_read_paths == ["/tmp/live"]
+        assert manager.sandbox_policy_hash != initial_hash
+        assert isinstance(session, ChatSession)
+        assert session.sandbox_config is not None
+        assert session.sandbox_config.enabled is True
+
     def test_create_session_routes_by_provider(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,

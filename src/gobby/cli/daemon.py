@@ -320,7 +320,7 @@ def start(ctx: click.Context, verbose: bool) -> None:
         _step("Docker services started")
 
     # DB-backed configuration becomes available only after local PostgreSQL is healthy.
-    config = get_cli_runtime(ctx).config
+    config = get_cli_runtime(ctx).operational_config
     sandbox = config.agent_sandbox
     if sandbox.enabled and sandbox.backend == "srt":
         from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
@@ -501,7 +501,7 @@ def _do_stop(
     """Stop the daemon and return whether shutdown succeeded."""
     from gobby.cli.runtime import get_cli_runtime
 
-    config = get_cli_runtime(ctx).config
+    config = get_cli_runtime(ctx).operational_config
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
@@ -604,7 +604,7 @@ def status(ctx: click.Context) -> None:
         click.echo(format_status_message(running=False, unsupported_platform=True))
         sys.exit(0)
 
-    config = get_cli_runtime(ctx).config
+    config = get_cli_runtime(ctx).operational_config
     gobby_home = get_gobby_home()
     log_dir = resolved_logs_dir(config.logging)
 
@@ -773,7 +773,7 @@ def health(ctx: click.Context) -> None:
     """Quick one-line daemon health check."""
     from gobby.cli.runtime import get_cli_runtime
 
-    config = get_cli_runtime(ctx).config
+    config = get_cli_runtime(ctx).operational_config
     http_port = config.daemon_port
     pid_file = get_gobby_home() / "gobby.pid"
 

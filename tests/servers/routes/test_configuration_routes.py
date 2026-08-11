@@ -8,12 +8,13 @@ backed by a real temp_db.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.auth_service import AuthService
@@ -102,6 +103,33 @@ def client(server: Any) -> TestClient:
         server.app,
         headers={"X-Gobby-Local-Token": LOCAL_RUNTIME_TOKEN},
     )
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "payload"),
+    (
+        ("GET", "/api/config/template", None),
+        ("GET", "/api/config/ui-settings", None),
+        ("GET", "/api/config/tool-approvals/global", None),
+        ("POST", "/api/config/validation-detection/preview", {"command": "pytest"}),
+    ),
+)
+def test_config_reads_return_retryable_503_during_startup(
+    server: Any,
+    client: TestClient,
+    method: str,
+    path: str,
+    payload: dict[str, object] | None,
+) -> None:
+    runtime = MagicMock(spec=ConfigRuntime)
+    type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("ConfigRuntime has not started"))
+    server.services.config_runtime = runtime
+
+    response = client.request(method, path, json=payload)
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "runtime_unavailable"
+    assert response.json()["error"]["retryable"] is True
 
 
 class TestUISettingsRoundTrip:

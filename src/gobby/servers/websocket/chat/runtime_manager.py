@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -51,7 +52,9 @@ class WebChatRuntimeManager:
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
         daemon_config: DaemonConfig | None = None,
+        config_resolver: Callable[[], DaemonConfig | None] | None = None,
     ) -> None:
+        self._config_resolver = config_resolver
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
         self._generation_endpoints: dict[str, GenerationEndpointConfig] = {}
@@ -119,12 +122,13 @@ class WebChatRuntimeManager:
 
     @property
     def sandbox_config(self) -> SandboxConfig:
-        """Return the startup-snapshotted daemon-owned web-chat sandbox config."""
-        return self._sandbox_config.model_copy(deep=True)
+        """Return current daemon-owned web-chat sandbox config."""
+        return self._refresh_sandbox_config().model_copy(deep=True)
 
     @property
     def sandbox_policy_hash(self) -> str:
-        """Return the startup-snapshotted web-chat sandbox policy hash."""
+        """Return current web-chat sandbox policy hash."""
+        self._refresh_sandbox_config()
         return self._sandbox_policy_hash
 
     def policy_mismatch_reason(self, session: Any) -> str | None:
@@ -136,7 +140,7 @@ class WebChatRuntimeManager:
         if (
             isinstance(stored_policy_hash, str)
             and stored_policy_hash
-            and stored_policy_hash != self._sandbox_policy_hash
+            and stored_policy_hash != self.sandbox_policy_hash
         ):
             return web_chat_policy_mismatch_message()
 
@@ -244,12 +248,13 @@ class WebChatRuntimeManager:
         reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
+        sandbox_config = self._refresh_sandbox_config()
         if provider not in {"claude", "codex", "droid", "grok", "qwen", "agy"}:
             raise RuntimeError(f"Unsupported web chat provider: {provider}")
         if provider == "agy":
             raise RuntimeError("AGY has no documented machine transport for live web chat yet")
         if (
-            self._sandbox_config.enabled
+            sandbox_config.enabled
             and not provider_capabilities(provider).sensitive_path_enforcement
         ):
             raise RuntimeError(f"{provider} cannot prove the sensitive-root contract")
@@ -294,6 +299,23 @@ class WebChatRuntimeManager:
         if isinstance(session, ChatSession):
             session.reasoning_effort = reasoning_effort
         return session
+
+    def _refresh_sandbox_config(self) -> SandboxConfig:
+        if self._config_resolver is None:
+            return self._sandbox_config
+        daemon_config = self._config_resolver()
+        if daemon_config is None:
+            return self._sandbox_config
+        self._sandbox_config = web_chat_sandbox_config(daemon_config)
+        self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
+        self._claude_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        self._codex_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        for backend in self._codex_endpoint_backends.values():
+            backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        self._grok_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        self._qwen_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        self._droid_backend._sandbox_config = self._sandbox_config.model_copy(deep=True)
+        return self._sandbox_config
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:
         selector = parse_endpoint_model_selector(model)

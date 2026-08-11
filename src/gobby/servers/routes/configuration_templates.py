@@ -21,6 +21,8 @@ def register_template_routes(router: APIRouter, context: ConfigurationRouteConte
     async def get_config_template() -> JSONResponse:
         try:
             result = await context.get_config_documents_service().export_yaml()
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         except Exception:
             logger.exception("Configuration YAML export failed")
             return _indeterminate_response("Configuration export failed")

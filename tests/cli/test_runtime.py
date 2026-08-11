@@ -13,6 +13,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.runtime import CliRuntime, require_cli_database, resolve_cli_project
+from gobby.config.app import DaemonConfig
 
 
 def test_subcommand_help_does_not_open_runtime_database(
@@ -97,6 +98,25 @@ def test_runtime_memoizes_database_and_closes_once(monkeypatch: pytest.MonkeyPat
     runtime.close()
 
     database.close.assert_called_once_with()
+
+
+def test_operational_config_overlays_bootstrap_owned_fields(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "daemon_port: 61999\nwebsocket_port: 62000\nbind_host: 127.0.0.2\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    runtime = CliRuntime(
+        config_file=str(bootstrap_path),
+        config=DaemonConfig(daemon_port=60887, bind_host="127.0.0.1"),
+    )
+
+    config = runtime.operational_config
+
+    assert config.daemon_port == 61999
+    assert config.websocket.port == 62000
+    assert config.bind_host == "127.0.0.2"
 
 
 @pytest.mark.parametrize("mode", ["success", "failure", "abort", "early_exit"])

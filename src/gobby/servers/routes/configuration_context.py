@@ -9,8 +9,8 @@ from typing import TYPE_CHECKING, cast
 from fastapi import HTTPException
 
 from gobby.config.documents import ConfigDocumentsService
-from gobby.config.runtime import ConfigRuntime
-from gobby.config.values import ConfigValuesService
+from gobby.config.runtime import ConfigRuntime, ConfigSnapshot
+from gobby.config.values import ConfigValuesError, ConfigValuesService
 from gobby.prompts.loader import PromptLoader
 from gobby.servers.routes._database import require_hub_database
 from gobby.storage.config_mutations import ConfigMutations
@@ -37,6 +37,19 @@ class ConfigurationRouteContext:
         if not isinstance(runtime, ConfigRuntime):
             raise HTTPException(status_code=503, detail="Config runtime not available")
         return runtime
+
+    def get_config_snapshot(self) -> ConfigSnapshot:
+        """Return the current snapshot or a retryable startup error."""
+        try:
+            return self.get_config_runtime().snapshot
+        except RuntimeError as exc:
+            raise ConfigValuesError(
+                "runtime_unavailable",
+                "Configuration runtime is still starting",
+                (),
+                status_code=503,
+                retryable=True,
+            ) from exc
 
     def get_config_service(self) -> ConfigValuesService:
         service = getattr(self.server.services, "config_values_service", None)
