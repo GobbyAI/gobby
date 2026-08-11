@@ -56,3 +56,28 @@ export function useIsMobile(): boolean {
 
   return isMobile
 }
+
+function createCoarsePointerMediaQuery(): MediaQueryList | null {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null
+  return window.matchMedia('(pointer: coarse)')
+}
+
+/**
+ * Reactive hook that returns true when the primary pointer is coarse (touch).
+ * Keyboard behavior (e.g. Enter-to-submit) must key off input modality, not
+ * the viewport tier: a short desktop window sits in the mobile tier but still
+ * has a hardware keyboard.
+ */
+export function useCoarsePointer(): boolean {
+  const [mediaQuery] = useState<MediaQueryList | null>(createCoarsePointerMediaQuery)
+  const [coarse, setCoarse] = useState(mediaQuery?.matches ?? false)
+
+  useEffect(() => {
+    if (!mediaQuery) return
+    const handler = (e: MediaQueryListEvent) => setCoarse(e.matches)
+    mediaQuery.addEventListener('change', handler)
+    return () => mediaQuery.removeEventListener('change', handler)
+  }, [mediaQuery])
+
+  return coarse
+}

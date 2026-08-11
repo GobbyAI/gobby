@@ -158,7 +158,6 @@ export function ChatPage({
           chat={chat}
           voice={voice}
           projectId={projectId}
-          isMobile={isMobile}
           panelVisible={panelVisible}
           effectiveSessionRef={routing.effectiveSessionRef}
           activeTitle={routing.activeTitle}

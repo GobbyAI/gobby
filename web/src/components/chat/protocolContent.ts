@@ -26,6 +26,8 @@ const PROTOCOL_TOOL_TAGS = [
   'skills_instructions',
   'plugins_instructions',
   'plugin_instructions',
+  'apps_instructions',
+  'recommended_plugins',
 ] as const
 
 const INLINE_WRAPPER_PROTOCOL_TAGS = [

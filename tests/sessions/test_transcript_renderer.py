@@ -288,6 +288,38 @@ def test_render_transcript_renders_instruction_wrappers_as_protocol_tools_case_i
     ]
 
 
+def test_render_transcript_collapses_codex_apps_and_plugin_blocks() -> None:
+    # #20079: Codex injects <apps_instructions> in system bootstrap and
+    # <recommended_plugins> in a user-role turn; both must collapse to
+    # protocol tools instead of leaking as visible text.
+    msgs = [
+        make_msg(
+            0,
+            "system",
+            "<apps_instructions>Apps (Connectors) can be triggered.</apps_instructions>",
+        ),
+        make_msg(
+            1,
+            "user",
+            "<recommended_plugins>Plugins available but not installed.</recommended_plugins>",
+        ),
+    ]
+    rendered = render_transcript(msgs)
+    assert len(rendered) == 2
+    for msg, tag, body in (
+        (rendered[0], "apps_instructions", "Apps (Connectors) can be triggered."),
+        (rendered[1], "recommended_plugins", "Plugins available but not installed."),
+    ):
+        assert msg.content == ""
+        assert len(msg.content_blocks) == 1
+        block = msg.content_blocks[0]
+        assert block.type == "tool_chain"
+        assert block.tool_calls is not None
+        assert block.tool_calls[0].arguments == {"tag": tag}
+        assert block.tool_calls[0].result is not None
+        assert block.tool_calls[0].result.content == body
+
+
 def test_render_transcript_collapses_nested_protocol_tags_without_visible_leak():
     content = "\n".join(
         [
@@ -514,7 +546,7 @@ def test_extract_result_metadata():
     assert extract_result_metadata("unknown", "something") == {}
 
 
-def test_render_transcript_metadata_integration():
+def test_render_transcript_metadata_integration() -> None:
     msgs = [
         make_msg(
             0,

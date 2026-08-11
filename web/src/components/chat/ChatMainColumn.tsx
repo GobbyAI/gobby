@@ -29,7 +29,6 @@ interface ChatMainColumnProps extends AgentPickerProps {
   chat: ChatState;
   voice: VoiceProps;
   projectId?: string | null;
-  isMobile: boolean;
   panelVisible: boolean;
   effectiveSessionRef: string | null;
   activeTitle: string | null;
@@ -53,7 +52,6 @@ export function ChatMainColumn({
   chat,
   voice,
   projectId,
-  isMobile,
   panelVisible,
   effectiveSessionRef,
   activeTitle,
@@ -232,7 +230,6 @@ export function ChatMainColumn({
             onSttEnabledChange={onSttEnabledChange}
             onTtsEnabledChange={onTtsEnabledChange}
             onVoiceInputModeChange={onVoiceInputModeChange}
-            isMobile={isMobile}
             onScrollToBottom={() => messageListRef.current?.scrollToBottom()}
             provider={effectiveInputProvider}
             availableProviders={availableProviders}

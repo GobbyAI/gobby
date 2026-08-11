@@ -51,6 +51,10 @@ _PROTOCOL_TOOL_TAGS: tuple[str, ...] = (
     "system_instructions",
     "instructions",
     "skills_instructions",
+    "plugins_instructions",
+    "plugin_instructions",
+    "apps_instructions",
+    "recommended_plugins",
 )
 
 _INLINE_WRAPPER_PROTOCOL_TAGS: tuple[str, ...] = (

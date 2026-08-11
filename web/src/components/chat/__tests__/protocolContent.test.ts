@@ -114,6 +114,33 @@ describe('protocolContent', () => {
     }
   })
 
+  // #20079: Codex injects <apps_instructions> (system bootstrap) and
+  // <recommended_plugins> (user-role turn) blocks; both must collapse to
+  // Protocol rows instead of leaking as raw text or a "You" message.
+  it('collapses upstream <apps_instructions> and <recommended_plugins> blocks without visible leaks', () => {
+    for (const [tag, body] of [
+      ['apps_instructions', 'Apps (Connectors) can be explicitly triggered in user messages.'],
+      ['recommended_plugins', 'Here is a list of plugins that are available but not installed.'],
+    ] as const) {
+      const content = [`<${tag}>`, body, `</${tag}>`].join('\n')
+
+      const segments = splitProtocolContent(content, `msg-${tag}`)
+      const visibleText = segments
+        .map((segment) => (segment.type === 'text' ? segment.content : ''))
+        .join('\n')
+
+      expect(segments).toHaveLength(1)
+      const [segment] = segments
+      expect(segment.type).toBe('tool_call')
+      if (segment.type !== 'tool_call') {
+        throw new Error('Expected protocol tool call')
+      }
+      expect(segment.call.tool_name).toBe('protocol_context')
+      expect(String(segment.call.result?.content)).toContain(body)
+      expect(visibleText.trim()).toBe('')
+    }
+  })
+
   it('treats unterminated protocol tags as plain text', () => {
     const content = '<environment_context><workspace>'
     const [segment] = splitProtocolContent(content, 'msg-2')

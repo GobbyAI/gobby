@@ -6,6 +6,7 @@ import type {
   ChatSendOptions,
 } from '../../types/chat'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
+import { useCoarsePointer } from '../../hooks/useIsMobile'
 import type { VoiceInputMode } from '../../hooks/useSettings'
 import { cn } from '../../lib/utils'
 import { ChatCommandPalette } from './ChatCommandPalette'
@@ -72,7 +73,6 @@ interface ChatInputProps {
   agentShowScopeToggle?: boolean
   agentHasGlobal?: boolean
   agentHasProject?: boolean
-  isMobile?: boolean
   onScrollToBottom?: () => void
   provider?: string | null
   availableProviders?: string[]
@@ -178,7 +178,6 @@ export function ChatInput({
   agentShowScopeToggle = false,
   agentHasGlobal = false,
   agentHasProject = false,
-  isMobile = false,
   onScrollToBottom,
   provider,
   availableProviders = [],
@@ -207,6 +206,7 @@ export function ChatInput({
   const paletteRef = useRef<HTMLDivElement>(null)
   const metaRef = useRef<HTMLDivElement>(null)
   const isNarrow = useChatInputNarrow(metaRef)
+  const coarsePointer = useCoarsePointer()
   const {
     clearQueuedFiles,
     handleFilesSelected,
@@ -359,12 +359,15 @@ export function ChatInput({
         }
       }
     }
-    if (isMobile) {
+    // Submit mapping follows pointer modality, not the viewport tier: a short
+    // desktop window is still a hardware keyboard (Enter submits), while touch
+    // keyboards keep Enter as newline with the send button as primary submit.
+    if (coarsePointer) {
       if (e.key === 'Enter' && e.shiftKey) { e.preventDefault(); handleSubmit() }
     } else {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
     }
-  }, [handleChange, handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, isMobile])
+  }, [handleChange, handleSubmit, input, isStreaming, onStop, proxySlashMode, showPalette, paletteItems, selectedIndex, handlePaletteSelect, coarsePointer])
 
   const hasInput = input.trim().length > 0 || queuedFiles.length > 0
   const pttEnabled = sttEnabled && voiceInputMode === 'ptt'

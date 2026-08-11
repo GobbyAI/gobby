@@ -785,18 +785,37 @@ describe('ChatInput', () => {
     expect(screen.getByRole('option', { name: /\/help/ })).toHaveAttribute('type', 'button')
   })
 
-  it('on mobile, Shift+Enter sends', async () => {
+  // #20079: the submit mapping follows pointer modality, not the viewport
+  // tier — a short desktop window keeps Enter=submit (covered by the desktop
+  // tests above), while touch keyboards keep Enter as newline.
+  it('with a coarse pointer, Enter inserts a newline and Shift+Enter sends', async () => {
     const onSend = vi.fn()
-    render(<ChatInput {...defaultProps} onSend={onSend} isMobile={true} />)
+    vi.stubGlobal('matchMedia', (query: string): MediaQueryList => ({
+      matches: query === '(pointer: coarse)',
+      media: query,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    }))
+    try {
+      render(<ChatInput {...defaultProps} onSend={onSend} />)
 
-    const textarea = screen.getByRole('textbox')
-    await userEvent.type(textarea, 'Hello')
-    await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
+      const textarea = screen.getByRole('textbox')
+      await userEvent.type(textarea, 'Hello')
+      await userEvent.keyboard('{Enter}')
+      expect(onSend).not.toHaveBeenCalled()
 
-    expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
-      reasoningEffort: 'auto',
-      ttsEnabled: false,
-    })
+      await userEvent.keyboard('{Shift>}{Enter}{/Shift}')
+      expect(onSend).toHaveBeenCalledWith('Hello', undefined, {
+        reasoningEffort: 'auto',
+        ttsEnabled: false,
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('shows model selection in the toolbar for a single-provider setup', () => {
