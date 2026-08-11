@@ -23,26 +23,39 @@ vi.mock("../TerminalSessionList", () => ({
     sessions,
     value,
     onChange,
+    onTerminate,
   }: {
     sessions: JoinedTerminalSession[];
     value: string | null;
     onChange: (value: string) => void;
+    onTerminate: (session: JoinedTerminalSession) => void;
   }) => (
-    <select
-      aria-label="Terminal session"
-      value={value ?? ""}
-      onChange={(event) => onChange(event.target.value)}
-    >
+    <>
+      <select
+        aria-label="Terminal session"
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {sessions.map((session) => (
+          <option
+            key={`${session.tmux.socket}:${session.tmux.name}`}
+            value={`${session.tmux.socket}:${session.tmux.name}`}
+            data-external={session.external}
+          >
+            {session.label}
+          </option>
+        ))}
+      </select>
       {sessions.map((session) => (
-        <option
-          key={`${session.tmux.socket}:${session.tmux.name}`}
-          value={`${session.tmux.socket}:${session.tmux.name}`}
-          data-external={session.external}
+        <button
+          key={`terminate-${session.tmux.socket}:${session.tmux.name}`}
+          type="button"
+          onClick={() => onTerminate(session)}
         >
-          {session.label}
-        </option>
+          Terminate {session.label}
+        </button>
       ))}
-    </select>
+    </>
   ),
 }));
 
@@ -497,6 +510,21 @@ describe("ready handshake repaint", () => {
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("terminate action", () => {
+  it("kills the row's tmux session via the list terminate action", async () => {
+    const user = userEvent.setup();
+    const tmux = makeTmuxSession({ name: "doomed", socket: "gobby" });
+    hookState = makeHookState({ sessionsLoaded: true, sessions: [tmux] });
+    render(<TerminalTab />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Terminate doomed" }),
+    );
+    expect(hookState.killSession).toHaveBeenCalledTimes(1);
+    expect(hookState.killSession).toHaveBeenCalledWith("doomed", "gobby");
   });
 });
 

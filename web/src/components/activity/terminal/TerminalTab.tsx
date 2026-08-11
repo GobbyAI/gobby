@@ -17,6 +17,7 @@ import { TerminalKeysBar } from "./TerminalKeysBar";
 import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
+  type JoinedTerminalSession,
   joinTmuxSessions,
   sessionKey,
 } from "./terminalSessions";
@@ -138,6 +139,7 @@ export function TerminalTab({
     dismissEndedSession,
     sendInput,
     resizeTerminal,
+    killSession,
     onOutput,
   } = useTmuxSessions();
   const [selectedKey, setSelectedKey] = useState<string | null>(loadStoredTerminalTargetKey);
@@ -200,6 +202,13 @@ export function TerminalTab({
   useEffect(() => {
     if (selected !== null) storeTerminalTarget(selected.tmux);
   }, [selected]);
+
+  const terminateSession = useCallback(
+    (session: JoinedTerminalSession) => {
+      killSession(session.tmux.name, session.tmux.socket);
+    },
+    [killSession],
+  );
 
   useEffect(() => {
     if (createdSession === null) return;
@@ -457,6 +466,7 @@ export function TerminalTab({
           sessions={joinedSessions}
           value={selectedKey}
           onChange={chooseSession}
+          onTerminate={terminateSession}
         />
       </div>
 

@@ -1,5 +1,6 @@
 import { cn } from "../../../lib/utils";
 import { ActivityRowStatusDot, type StatusKind } from "../ActivityRowStatusDot";
+import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { SourceIcon } from "../../shared/SourceIcon";
 import { Button } from "../../ui/Button";
 import { coarseHitAreaCls } from "../../ui/controlStyles";
@@ -12,6 +13,7 @@ interface TerminalSessionListProps {
   sessions: JoinedTerminalSession[];
   value: string | null;
   onChange: (value: string) => void;
+  onTerminate: (session: JoinedTerminalSession) => void;
 }
 
 interface LifecyclePresentation {
@@ -109,12 +111,24 @@ export function TerminalSessionList({
   sessions,
   value,
   onChange,
+  onTerminate,
 }: TerminalSessionListProps) {
   return (
     <div className="flex flex-col" role="list" aria-label="Terminal sessions">
       {sessions.map((session) => {
         const key = sessionKey(session.tmux);
         const selected = key === value;
+        const menuItems: QuickMenuItem[] = [
+          {
+            label: "Terminate",
+            destructive: true,
+            disabled: session.agentManaged,
+            title: session.agentManaged
+              ? "Managed by an agent — stop the agent instead"
+              : undefined,
+            onSelect: () => onTerminate(session),
+          },
+        ];
         return (
           <div
             key={key}
@@ -135,6 +149,13 @@ export function TerminalSessionList({
             >
               <SessionRowContent session={session} />
             </Button>
+            <div className="px-1">
+              <QuickMenu
+                items={menuItems}
+                menuLabel={`Actions for ${session.label}`}
+                triggerLabel={`Open actions for ${session.label}`}
+              />
+            </div>
           </div>
         );
       })}
