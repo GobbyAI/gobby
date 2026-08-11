@@ -415,6 +415,7 @@ describe("ready handshake repaint", () => {
       .getAttribute("data-mount-id");
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).not.toHaveBeenCalled();
+    expect(hookState.refreshTerminal).not.toHaveBeenCalled();
 
     hookState = {
       ...hookState,
@@ -432,6 +433,10 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(1);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
+    // Output streamed before readiness was dropped, so every ready handshake
+    // must force a full tmux repaint even when the size is already known.
+    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(1);
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
     await waitFor(() => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
@@ -449,6 +454,8 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
+    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(2);
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
   });
 
   it("requires fresh readiness when a reconnect reuses a stream id", async () => {

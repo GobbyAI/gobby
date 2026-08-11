@@ -341,9 +341,13 @@ export function TerminalTab({
       const reportedSize = rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
       if (reportedSize) {
         resizeTerminal(reportedSize.rows, reportedSize.cols);
-      } else {
-        refreshTerminal(selected.tmux.name, selected.tmux.socket);
       }
+      // Always force a full tmux repaint once the terminal can accept writes.
+      // Output that streamed while the renderer was still initializing was
+      // dropped, and tmux only sends deltas afterward — a partial first paint
+      // (or SGR state carried from a truncated escape sequence) never
+      // self-heals without this redraw.
+      refreshTerminal(selected.tmux.name, selected.tmux.socket);
       setReadyContext(terminalContext);
     },
     [
