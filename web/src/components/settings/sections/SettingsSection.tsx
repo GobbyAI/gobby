@@ -104,7 +104,10 @@ export function SettingsSection({
         // rejects direct writes, so submitting them bricks the whole save.
         const payload = Object.fromEntries(
           Object.entries(merged).filter(
-            ([path]) => resolveSchemaNode(schema, path)?.activation !== 'managed',
+            ([path]) => {
+              if (schema === null) return false
+              return resolveSchemaNode(schema, path)?.activation !== 'managed'
+            },
           ),
         )
         const result = await saveConfig(payload)

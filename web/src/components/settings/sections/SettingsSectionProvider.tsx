@@ -7,7 +7,6 @@ import {
   SettingsSectionContext,
   type ProjectSelectionContextValue,
   type ProviderSelectionContextValue,
-  type SaveConfigResult,
   type SettingsSectionContextValue,
 } from './SettingsSectionContext'
 
@@ -29,9 +28,8 @@ export interface SettingsSectionProviderProps {
 
 /**
  * Loads the daemon config once for the lifetime of an open overlay and exposes
- * it (plus the overlay dirty-guard registry) to the active section. Wrapping
- * `saveConfig` refetches on success so a re-entered section reflects what was
- * just written.
+ * it (plus the overlay dirty-guard registry) to the active section. The
+ * configuration client publishes the post-save refresh itself.
  */
 export function SettingsSectionProvider({
   registerDirtyGuard = noopRegister,
@@ -43,7 +41,7 @@ export function SettingsSectionProvider({
   const config = useConfiguration()
   const {
     fetchConfig,
-    saveConfig: persistConfig,
+    saveConfig,
     fetchSecrets,
     fetchPrompts,
     fetchTemplate,
@@ -56,15 +54,6 @@ export function SettingsSectionProvider({
     void fetchPrompts()
     void fetchTemplate()
   }, [fetchConfig, fetchSecrets, fetchPrompts, fetchTemplate])
-
-  const saveConfig = useCallback(
-    async (values: Record<string, unknown>): Promise<SaveConfigResult> => {
-      const result = await persistConfig(values)
-      if (result.ok) await fetchConfig()
-      return result
-    },
-    [persistConfig, fetchConfig],
-  )
 
   // Import rewrites the config store, prompts, and config at once, so refetch
   // every surface this provider exposes once it succeeds.

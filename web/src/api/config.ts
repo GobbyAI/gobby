@@ -169,7 +169,7 @@ export class ConfigurationClient {
     // a malformed revision must be ignored, never thrown into the dispatcher.
     if (!Number.isSafeInteger(value) || (value as number) < 0) return
     const revision = value as number
-    if (revision <= this.watermark || revision <= (this.snapshot?.revision ?? -1)) return
+    if (revision <= this.watermark) return
     this.watermark = revision
     if (this.refreshScheduled) return
     this.refreshScheduled = true
@@ -222,16 +222,14 @@ export class ConfigurationClient {
     // The mutation response has no values payload, so bump the snapshot's
     // revision (subsequent patches must not reuse the stale one) without
     // publishing the torn revision/values pair, then refetch so subscribers
-    // see the committed values. The own-commit WS event arrives at or below
-    // this revision and is deliberately redundant with this refetch.
+    // see the committed values.
     this.snapshot = {
       ...snapshot,
       revision,
       pending_restart_keys: pendingRestartKeys,
       failed_live_keys: failedLiveKeys,
     }
-    this.watermark = Math.max(this.watermark, revision)
-    await this.fetchValues()
+    await this.refreshAfterCommittedMutation()
     return {
       kind: 'success',
       committed: true,
@@ -370,6 +368,16 @@ export class ConfigurationClient {
     }
   }
 
+  private async refreshAfterCommittedMutation(): Promise<void> {
+    try {
+      await this.fetchValues()
+    } catch {
+      // The write is already committed. Keep the pre-refresh watermark so the
+      // daemon's own-commit event can retry convergence without turning the
+      // successful mutation into a UI error.
+    }
+  }
+
   private async fetchRecord(
     path: string,
     init?: RequestInit,
@@ -428,7 +436,6 @@ export class ConfigurationClient {
     const revision = parseConfigRevision(body.revision)
     const pendingRestartKeys = parseStringArray(body.pending_restart_keys)
     const failedLiveKeys = parseFailureMap(body.failed_live_keys)
-    this.watermark = Math.max(this.watermark, revision)
     // A YAML replace rewrites values wholesale and its response carries none of
     // them: bump the revision without publishing the torn snapshot, then
     // refetch so subscribers converge on the committed document.
@@ -438,7 +445,7 @@ export class ConfigurationClient {
       pending_restart_keys: pendingRestartKeys,
       failed_live_keys: failedLiveKeys,
     }
-    await this.fetchValues()
+    await this.refreshAfterCommittedMutation()
     return {
       kind: 'success',
       committed: true,

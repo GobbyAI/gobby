@@ -46,21 +46,28 @@ export function WikiCodewikiStatus() {
       }
     };
 
-    const poll = async (): Promise<void> => {
-      if (inFlight) return;
+    const poll = async (): Promise<CodewikiStatus | null> => {
+      if (inFlight) return null;
       inFlight = true;
       try {
         const snapshot = await load();
         if (snapshot !== null && (snapshot.state === "disabled" || snapshot.enabled === false)) {
           stopPolling();
         }
+        return snapshot;
       } finally {
         inFlight = false;
       }
     };
 
-    timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
-    void poll();
+    void poll().then((snapshot) => {
+      if (
+        !cancelled
+        && (snapshot === null || (snapshot.state !== "disabled" && snapshot.enabled !== false))
+      ) {
+        timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+      }
+    });
 
     return () => {
       cancelled = true;

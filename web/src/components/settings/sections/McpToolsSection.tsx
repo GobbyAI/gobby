@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { TextField } from '../../activity/fields'
 import { Button } from '../../ui/Button'
@@ -17,6 +17,7 @@ import {
   asString,
   decodeDynamicMapRows,
   encodeDynamicMapRows,
+  hasBlankDynamicMapKey,
   type DynamicMapRow,
 } from './configAccessors'
 
@@ -58,6 +59,8 @@ const HUB_TYPE_OPTIONS = [
   { value: 'github-collection', label: 'GitHub collection' },
   { value: 'claude-plugins', label: 'Claude plugins' },
 ]
+
+const REQUIRED_HUB_KEY_ERROR = 'Hub key is required before saving'
 
 /**
  * One configured skill hub. `type` is required; the rest are optional and clear
@@ -225,11 +228,28 @@ function asHubMap(value: unknown): Record<string, HubConfig> {
  * and remove control. Writes the whole map back through the draft. Hub names
  * are `skills.hubs.{hub}` dynamic segments: stored encoded, edited decoded.
  */
-function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
+function SkillHubsField({
+  fields,
+  onValidityChange,
+}: {
+  fields: SettingsSectionFields
+  onValidityChange: (isValid: boolean) => void
+}) {
   const entries = decodeDynamicMapRows(asHubMap(fields.getValue('skills.hubs')))
   const [keyError, setKeyError] = useState<string | null>(null)
+  const hasBlankKey = hasBlankDynamicMapKey(entries)
+  const visibleKeyError = !hasBlankKey && keyError === REQUIRED_HUB_KEY_ERROR
+    ? null
+    : keyError
+
+  useEffect(() => {
+    onValidityChange(!hasBlankKey)
+  }, [hasBlankKey, onValidityChange])
 
   function commit(next: DynamicMapRow<HubConfig>[]) {
+    const nextHasBlankKey = hasBlankDynamicMapKey(next)
+    setKeyError(nextHasBlankKey ? REQUIRED_HUB_KEY_ERROR : null)
+    onValidityChange(!nextHasBlankKey)
     fields.setValue('skills.hubs', encodeDynamicMapRows(next))
   }
 
@@ -239,12 +259,12 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       entries.some((entry, i) => i !== index && entry.displayKey === nextKey)
     if (isDuplicate) {
       setKeyError(`Hub key "${nextKey}" already exists`)
+      onValidityChange(!hasBlankDynamicMapKey(entries))
       console.warn(
         `SkillHubsField: ignored rename to duplicate hub "${nextKey}" to avoid overwriting an existing entry`,
       )
       return
     }
-    setKeyError(null)
     commit(entries.map((entry, i) => (i === index ? { ...entry, displayKey: nextKey } : entry)))
   }
 
@@ -253,12 +273,10 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   }
 
   function removeEntry(index: number) {
-    setKeyError(null)
     commit(entries.filter((_, i) => i !== index))
   }
 
   function addEntry() {
-    setKeyError(null)
     commit([...entries, { storedKey: '', displayKey: '', value: { type: 'clawdhub' } }])
   }
 
@@ -270,12 +288,12 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       <p className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground">
         External hubs searched by the skills hub, keyed by hub name.
       </p>
-      {keyError && (
+      {visibleKeyError && (
         <p
-          className="max-w-[48ch] text-sm leading-[1.4] text-muted-foreground"
+          className="max-w-[48ch] text-sm leading-[1.4] text-destructive"
           role="alert"
         >
-          {keyError}
+          {visibleKeyError}
         </p>
       )}
       {entries.length > 0 ? (
@@ -335,7 +353,13 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   )
 }
 
-function SkillsGroup({ fields }: { fields: SettingsSectionFields }) {
+function SkillsGroup({
+  fields,
+  onHubsValidityChange,
+}: {
+  fields: SettingsSectionFields
+  onHubsValidityChange: (isValid: boolean) => void
+}) {
   return (
     <Subsection
       title="Skills hub"
@@ -361,18 +385,23 @@ function SkillsGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Skill manifest format"
         ariaLabel="Skill manifest format"
       />
-      <SkillHubsField fields={fields} />
+      <SkillHubsField fields={fields} onValidityChange={onHubsValidityChange} />
     </Subsection>
   )
 }
 
 export function McpToolsSection() {
+  const [hubsValid, setHubsValid] = useState(true)
   return (
-    <SettingsSection sectionId="mcp-tools" ownedPaths={OWNED_PATHS}>
+    <SettingsSection
+      sectionId="mcp-tools"
+      ownedPaths={OWNED_PATHS}
+      saveDisabled={!hubsValid}
+    >
       {(fields) => (
         <>
           <McpProxyGroup fields={fields} />
-          <SkillsGroup fields={fields} />
+          <SkillsGroup fields={fields} onHubsValidityChange={setHubsValid} />
         </>
       )}
     </SettingsSection>

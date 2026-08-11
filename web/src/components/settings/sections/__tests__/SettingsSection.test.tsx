@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SettingsSection } from '../SettingsSection'
 import { SettingsSectionContext } from '../SettingsSectionContext'
@@ -66,5 +66,39 @@ describe('SettingsSection renderers', () => {
       'border-t',
       'bg-surface-secondary',
     )
+  })
+
+  it('fails_closed_when_schema_activation_is_unavailable', async () => {
+    const saveConfig = vi.fn(async () => ({ ok: true }))
+    render(
+      <SettingsSectionContext.Provider
+        value={{
+          schema: null,
+          configValues: { server: { host: '127.0.0.1' } },
+          secretKeys: [],
+          isLoading: false,
+          saveConfig,
+          registerDirtyGuard: () => () => {},
+        }}
+      >
+        <SettingsSection sectionId="runtime-infrastructure" ownedPaths={['server.host']}>
+          {(fields) => (
+            <TextConfigField
+              fields={fields}
+              path="server.host"
+              label="Host"
+              ariaLabel="Server host"
+            />
+          )}
+        </SettingsSection>
+      </SettingsSectionContext.Provider>,
+    )
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Server host' }), {
+      target: { value: '0.0.0.0' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(saveConfig).toHaveBeenCalledWith({}))
   })
 })

@@ -126,6 +126,81 @@ describe('ConfigurationClient mutation convergence', () => {
     })
   })
 
+  it('returns_success_and_uses_own_commit_event_when_the_post_patch_refetch_rejects', async () => {
+    const { fetcher } = makeServer({ revision: 4, desired: { memory: { enabled: true } } })
+    const client = new ConfigurationClient(fetcher)
+    await client.fetchValues()
+    const serverFetcher = fetcher.getMockImplementation()
+    let rejectNextValuesRead = false
+    fetcher.mockImplementation(async (input, init) => {
+      if (init?.method === 'PATCH') {
+        const response = await serverFetcher!(input, init)
+        rejectNextValuesRead = true
+        return response
+      }
+      if (rejectNextValuesRead) {
+        rejectNextValuesRead = false
+        throw new Error('post-commit refresh failed')
+      }
+      return serverFetcher!(input, init)
+    })
+
+    const result = await client.patch({ memory: { enabled: false } })
+
+    expect(result.kind).toBe('success')
+    expect(client.currentSnapshot?.desired).toEqual({ memory: { enabled: true } })
+
+    client.observeRevision(5)
+    await vi.waitFor(() => {
+      expect(client.currentSnapshot?.revision).toBe(5)
+      expect(client.currentSnapshot?.desired).toEqual({ memory: { enabled: false } })
+    })
+  })
+
+  it('returns_success_when_the_post_yaml_replace_refetch_rejects', async () => {
+    let revision = 4
+    let rejectNextValuesRead = false
+    const fetcher: Mock<Fetcher> = vi.fn(async (input, init) => {
+      if (String(input) === '/api/config/template' && init?.method === 'PUT') {
+        revision = 5
+        rejectNextValuesRead = true
+        return jsonResponse({
+          committed: true,
+          revision,
+          changed_keys: ['memory.enabled'],
+          apply_status: 'applied',
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        })
+      }
+      if (String(input) === '/api/config/values') {
+        if (rejectNextValuesRead) {
+          rejectNextValuesRead = false
+          throw new Error('post-commit refresh failed')
+        }
+        return jsonResponse({
+          revision,
+          desired: { memory: { enabled: revision === 4 } },
+          active: { memory: { enabled: revision === 4 } },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        })
+      }
+      throw new Error(`Unexpected request: ${String(input)}`)
+    })
+    const client = new ConfigurationClient(fetcher)
+    await client.fetchValues()
+
+    const result = await client.saveTemplate('memory:\n  enabled: false\n')
+
+    expect(result.kind).toBe('success')
+    client.observeRevision(5)
+    await vi.waitFor(() => {
+      expect(client.currentSnapshot?.desired).toEqual({ memory: { enabled: false } })
+    })
+  })
+
   it('observe_revision_ignores_malformed_ws_payloads', () => {
     const { fetcher } = makeServer({ revision: 1, desired: {} })
     const client = new ConfigurationClient(fetcher)

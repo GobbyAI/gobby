@@ -509,7 +509,7 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
           if (typeof value === 'string') setCatalogKey(value)
         }}
       />
-      <div className="settings-field__actions">
+      <div className="flex flex-wrap gap-2">
         <DetailActionButton
           label="Start embedding switch"
           variant="accent"

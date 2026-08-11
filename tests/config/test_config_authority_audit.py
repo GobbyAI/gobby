@@ -16,6 +16,7 @@ CONTRACT = (
     REPOSITORY_ROOT / "crates" / "gcore" / "assets" / "config" / "runtime_config_contract.json"
 )
 GENERATOR = REPOSITORY_ROOT / "scripts" / "generate_runtime_config_contract.py"
+AUDIT = REPOSITORY_ROOT / "docs" / "audits" / "configuration-audit.md"
 
 RAW_CONFIG_METHODS = frozenset(
     {
@@ -211,6 +212,28 @@ def test_cross_language_registry_coverage() -> None:
     ).read_text()
     assert "web_has_one_config_authority" in browser_audit
     assert "authority_patches_carry_the_current_revision" in browser_audit
+
+
+def test_audit_registration_claims_match_runtime_contract() -> None:
+    contract = json.loads(CONTRACT.read_text())
+    registered_keys = {entry["key"] for entry in contract["exactKeys"]}
+    audit_rows: dict[str, list[str]] = {}
+    for line in AUDIT.read_text().splitlines():
+        if not line.startswith("| "):
+            continue
+        columns = [column.strip() for column in line.strip("|").split("|")]
+        if len(columns) == 7:
+            audit_rows[columns[0]] = columns[1:]
+
+    registered_rows = registered_keys.intersection(audit_rows)
+    contradictory_rows = {
+        key: audit_rows[key][0]
+        for key in registered_rows
+        if "not a registered runtime config key" in audit_rows[key][0]
+    }
+    assert "auth.username" in registered_rows
+    assert audit_rows["auth.username"][0].startswith("DaemonConfig schema via /api/config/schema")
+    assert contradictory_rows == {}
 
 
 def test_legacy_config_surfaces_are_absent() -> None:

@@ -15,6 +15,7 @@ const SCHEMA: Record<string, unknown> = {
     MCPClientProxyConfig: {
       type: 'object',
       properties: {
+        enabled: { type: 'boolean' },
         search_mode: { enum: ['llm', 'semantic', 'hybrid'], type: 'string' },
         min_similarity: { type: 'number' },
         top_k: { type: 'integer' },
@@ -200,6 +201,44 @@ describe('McpToolsSection', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  it('blocks_save_until_a_new_skill_hub_has_a_non_blank_key', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add skill hub' }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Hub key is required before saving',
+    )
+    const save = screen.getByRole('button', { name: 'Save' })
+    expect(save).toBeDisabled()
+    fireEvent.click(save)
+    expect(ctx.saveConfig).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Skill hub key 2'), {
+      target: { value: 'local' },
+    })
+    await waitFor(() => expect(save).toBeEnabled())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('restores_save_validity_after_discarding_a_blank_skill_hub', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add skill hub' }))
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard' }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument(),
+    )
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable MCP proxy' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled(),
+    )
   })
 
   it('persists an edited draft row through the section Save', async () => {

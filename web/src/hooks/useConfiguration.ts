@@ -149,12 +149,11 @@ export function useConfiguration() {
     if ('revision' in event) configurationClient.observeRevision(event.revision)
   })
   const websocketConnected = useWebSocketConnected()
-  const previousConnection = useRef(websocketConnected)
+  const previousConnection = useRef(false)
   useEffect(() => {
-    // Every disconnected→connected transition resyncs: the first connect
-    // covers revisions missed before the socket opened (and retries an
-    // initial values fetch that failed while the daemon was unreachable);
-    // reconnects cover events lost during the outage.
+    // The mounted-connected state and every disconnected→connected transition
+    // resync. This retries an initial values fetch even when the socket opened
+    // before this hook mounted; reconnects cover events lost during an outage.
     if (websocketConnected && !previousConnection.current) {
       void configurationClient.fetchValues()
     }

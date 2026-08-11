@@ -50,7 +50,7 @@ describe('activity toolbar template (#20044)', () => {
       'TasksTab.tsx',
     ]) {
       const source = readFileSync(join(ACTIVITY_DIR, tab), 'utf8')
-      expect(source, tab).toContain('useRegisterActivityActions(')
+      expect(source, tab).toMatch(/useRegisterActivityActions(?:<[^>]+>)?\(/)
     }
   })
 

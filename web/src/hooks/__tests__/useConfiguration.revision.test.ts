@@ -214,6 +214,32 @@ describe('useConfiguration revision authority', () => {
     expect(result.current.configValues).toEqual({ recovered: true })
   })
 
+  it('retries_a_failed_values_fetch_when_mounted_with_the_socket_already_up', async () => {
+    let available = false
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (input === '/api/config/values') {
+        if (!available) return jsonResponse({ error: { code: 'unavailable' } }, 503)
+        return jsonResponse({
+          revision: 3,
+          desired: { recovered: true },
+          active: { recovered: true },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        })
+      }
+      throw new Error(`Unexpected request: ${String(input)}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await configurationClient.fetchValues()
+    available = true
+    const { result } = renderHook(() => useConfiguration())
+
+    await waitFor(() => expect(result.current.revision).toBe(3))
+    expect(result.current.configValues).toEqual({ recovered: true })
+  })
+
   it('rederives_rules_and_approvals_from_ws_driven_snapshots', async () => {
     let valuesRead = 0
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

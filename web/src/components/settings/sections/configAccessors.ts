@@ -50,6 +50,10 @@ export interface DynamicMapRow<V> {
   value: V
 }
 
+export function hasBlankDynamicMapKey<V>(rows: readonly DynamicMapRow<V>[]): boolean {
+  return rows.some(({ displayKey }) => displayKey.trim() === '')
+}
+
 export function decodeDynamicMapRows<V>(map: Record<string, V>): DynamicMapRow<V>[] {
   return Object.entries(map).map(([storedKey, value]) => ({
     storedKey,

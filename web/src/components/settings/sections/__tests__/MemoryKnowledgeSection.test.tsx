@@ -464,6 +464,7 @@ describe('MemoryKnowledgeSection', () => {
 
     const start = screen.getByRole('button', { name: 'Start embedding switch' })
     expect(start).toBeDisabled()
+    expect(start.parentElement).toHaveClass('flex', 'flex-wrap', 'gap-2')
 
     fireEvent.change(screen.getByLabelText('Embedding catalog key'), {
       target: { value: 'ollama/qwen3-embedding' },
