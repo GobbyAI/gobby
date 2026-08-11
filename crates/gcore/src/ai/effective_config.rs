@@ -154,7 +154,21 @@ struct ManagedExecutionIdentity {
 
 static EFFECTIVE_CONFIG_STATE: OnceLock<EffectiveConfigState> = OnceLock::new();
 
+/// Hermeticity kill-switch: when set (non-empty), every read reports "no
+/// daemon-served config" before consulting the process-global cache, so a
+/// state captured from a live daemon earlier in the process can never leak
+/// into a caller that opted out (test EnvGuards set this so guarded tests
+/// are standalone by construction).
+pub const DAEMON_CONFIG_DISABLE_ENV: &str = "GOBBY_DAEMON_CONFIG_DISABLE";
+
+fn daemon_config_disabled() -> bool {
+    std::env::var_os(DAEMON_CONFIG_DISABLE_ENV).is_some_and(|value| !value.is_empty())
+}
+
 pub fn daemon_mode_layers() -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
+    if daemon_config_disabled() {
+        return Ok(None);
+    }
     daemon_mode_layers_for(runtime_mode()?, || {
         layers_from_state(effective_config_state())
     })
@@ -365,6 +379,13 @@ fn validate_managed_bundle(
             reason: "service capability is expired",
         });
     }
+    // `ai.embeddings.api_key` stays machine-exportable on purpose: its stored
+    // form is a `$secret:` reference, and `validate_served_values` below
+    // rejects any unresolved reference, so a bundle can never smuggle the
+    // reference through this key-level gate. Managed embeddings are brokered
+    // through the daemon, which therefore has no reason to resolve the secret
+    // into a capability bundle — the bundle contract stays non-secret at the
+    // value level rather than by carving the key out of the export set.
     for key in bundle.config.keys() {
         if !is_machine_config_key(key) {
             return Err(EffectiveConfigError::Contract {
@@ -468,6 +489,9 @@ fn transport_error_is_timeout(transport: &ureq::Transport) -> bool {
 }
 
 pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {
+    if daemon_config_disabled() {
+        return Ok(None);
+    }
     match runtime_mode()? {
         RuntimeMode::Daemon => daemon_dsn_from_state(effective_config_state()),
         RuntimeMode::Standalone => Ok(None),

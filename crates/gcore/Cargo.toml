@@ -63,4 +63,3 @@ urlencoding = { version = "2", optional = true }
 [dev-dependencies]
 tempfile = "3"
 serial_test = "3"
-temp-env = "0.3"

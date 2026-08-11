@@ -50,6 +50,8 @@ pub struct CodecVector {
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum DynamicSegmentError {
+    #[error("dynamic config segment must not be empty")]
+    Empty,
     #[error("truncated percent escape in dynamic config segment")]
     TruncatedEscape,
     #[error("percent escapes must use uppercase hexadecimal digits")]
@@ -101,6 +103,9 @@ pub fn encode_dynamic_segment(value: &str) -> String {
 }
 
 pub fn decode_dynamic_segment(value: &str) -> Result<String, DynamicSegmentError> {
+    if value.is_empty() {
+        return Err(DynamicSegmentError::Empty);
+    }
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut index = 0;

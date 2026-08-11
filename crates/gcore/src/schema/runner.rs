@@ -11,7 +11,16 @@ use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
-const PREDECESSOR_BASELINE_CHECKSUM: &str =
+/// Checksum of the immediate predecessor of the current embedded baseline.
+///
+/// Single-hop refresh policy: the runner upgrades a hub in place only from
+/// this one predecessor revision. When `baseline.sql` changes, move this
+/// constant to the outgoing baseline's checksum and rewrite
+/// [`baseline_refresh_statement`] to accept exactly the statements added
+/// since that predecessor — the set-difference tripwire in `runner_tests`
+/// fails until both stay in lockstep. Hubs more than one hop behind must
+/// recreate from a verified backup.
+pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "0749c25617bdd825a561e0452fbf9cc2a80bb15e99e21bbd50f2a7ee01d44a6b";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -434,7 +443,7 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
     Some(statement.to_owned())
 }
 
-fn baseline_refresh_statement(statement: &str) -> Option<String> {
+pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
     let body = statement_body(statement);
     let refreshes_schema = [
         "CREATE TABLE IF NOT EXISTS config_state",

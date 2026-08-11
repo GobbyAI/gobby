@@ -114,6 +114,17 @@ impl ServiceConfigSource for ServiceSource {
         match self {
             Self::Daemon { served, hits } => {
                 if !gobby_core::config::is_registered_runtime_key(key) {
+                    // A served value for a key this binary does not register
+                    // means the compiled contract predates the daemon: fail
+                    // closed on the value, but never silently — the operator
+                    // must know the installed gcode is stale.
+                    if served.config_value(key).is_some() {
+                        log::warn!(
+                            "daemon served configuration key {key:?} that this gcode binary's \
+                             compiled contract does not register; ignoring it — rebuild and \
+                             reinstall gcode"
+                        );
+                    }
                     return Ok(None);
                 }
                 if let Some(value) = served.config_value(key) {
@@ -279,6 +290,74 @@ mod tests {
                 );
             },
         );
+    }
+
+    static CAPTURED_WARNINGS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+    struct CaptureLogger;
+
+    impl log::Log for CaptureLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if record.level() == log::Level::Warn {
+                captured_warnings().push(record.args().to_string());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn captured_warnings() -> std::sync::MutexGuard<'static, Vec<String>> {
+        CAPTURED_WARNINGS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn install_capture_logger() {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            static LOGGER: CaptureLogger = CaptureLogger;
+            log::set_logger(&LOGGER).expect("this test binary installs no other logger");
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn daemon_service_source_warns_for_served_keys_missing_from_the_compiled_contract() {
+        install_capture_logger();
+        captured_warnings().clear();
+
+        let mut source = ServiceSource::daemon(served([("contract.unknown.key", "served-value")]));
+        assert_eq!(
+            source
+                .config_value("contract.unknown.key")
+                .expect("unregistered key fails closed"),
+            None
+        );
+        let warning = captured_warnings()
+            .iter()
+            .find(|message| message.contains("contract.unknown.key"))
+            .cloned()
+            .expect("stale-binary warning names the served key");
+        assert!(warning.contains("rebuild and reinstall gcode"));
+        assert!(
+            !warning.contains("served-value"),
+            "warning must not leak the served value"
+        );
+
+        captured_warnings().clear();
+        let mut source = ServiceSource::daemon(served([]));
+        assert_eq!(
+            source
+                .config_value("contract.unknown.key")
+                .expect("unserved unregistered key stays a plain miss"),
+            None
+        );
+        assert!(captured_warnings().is_empty());
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::sync::{Mutex, mpsc};
@@ -8,12 +9,15 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
+use super::assets::{
+    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
+};
 use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::SchemaRunner;
+use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement};
+use super::sql_splitter::split_sql_statements;
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -93,9 +97,6 @@ fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     SchemaRunner::new(client, "public")?.apply()?;
     Ok(())
 }
-
-const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "0749c25617bdd825a561e0452fbf9cc2a80bb15e99e21bbd50f2a7ee01d44a6b";
 
 fn simulate_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
     install_baseline(client)?;
@@ -250,6 +251,51 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         )?
         .get(0);
     assert_eq!(checksum, BASELINE_CHECKSUM);
+    for table in [
+        "config_state",
+        "embedding_generation_acks",
+        "embedding_projection_changes",
+    ] {
+        let exists: bool = client
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
+            .get(0);
+        assert!(exists, "refresh must create {table}");
+        let granted: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_daemon_runtime', $1, 'SELECT,INSERT,UPDATE,DELETE')",
+                &[&table],
+            )?
+            .get(0);
+        assert!(granted, "refresh must grant runtime access to {table}");
+    }
+    let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
+    assert!(verification.checked_catalog_objects > 0);
+    Ok(())
+}
+
+#[test]
+fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> anyhow::Result<()> {
+    let predecessor = include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    assert_eq!(
+        sha256_hex(predecessor.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM,
+        "fixture must be the exact predecessor baseline the runner refreshes from",
+    );
+
+    let predecessor_statements: BTreeSet<String> =
+        split_sql_statements(predecessor)?.into_iter().collect();
+    let mut refreshed = 0usize;
+    for statement in split_sql_statements(BASELINE_SQL)? {
+        let is_added = !predecessor_statements.contains(&statement);
+        let accepted = baseline_refresh_statement(&statement).is_some();
+        assert_eq!(
+            accepted, is_added,
+            "baseline_refresh_statement must accept exactly the statements added since the \
+             predecessor baseline; drifted on: {statement}",
+        );
+        refreshed += usize::from(accepted);
+    }
+    assert!(refreshed > 0, "the refresh set must not be empty");
     Ok(())
 }
 
