@@ -12,6 +12,7 @@ import click
 import psutil
 
 from gobby.cli.utils_runtime import facade
+from gobby.utils.env import is_test_protect_enabled
 
 
 def _report_lock_survivor(deps: Any, quiet: bool) -> None:
@@ -44,7 +45,7 @@ def stop_daemon(
     """Stop the daemon process. Returns True on success, False on failure."""
     deps = facade()
 
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+    if is_test_protect_enabled():
         deps.logger.warning("stop_daemon called during test - skipping")
         return True
 

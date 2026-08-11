@@ -11,6 +11,7 @@ import httpx
 import psutil
 
 from gobby.paths import get_gobby_home
+from gobby.utils.env import is_test_protect_enabled
 
 logger = logging.getLogger("gobby.daemon.control")
 
@@ -44,7 +45,7 @@ def get_daemon_pid() -> int | None:
     would then SIGTERM.
     """
     current_pid = os.getpid()
-    test_protect = os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes")
+    test_protect = is_test_protect_enabled()
     home_marker = str(get_gobby_home()) if test_protect else None
     config_marker = os.environ.get("GOBBY_CONFIG_FILE") if test_protect else None
 
@@ -181,7 +182,7 @@ async def stop_daemon_process(
     # guard in gobby.cli.utils.stop_daemon. Without it, this code path can
     # reach the user's real daemon when a test (or test-spawned subprocess)
     # invokes mcp_proxy.daemon_control without going through the CLI.
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+    if is_test_protect_enabled():
         logger.warning("stop_daemon_process called during test - skipping")
         return {"success": True, "skipped": "test_protect"}
 

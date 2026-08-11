@@ -13,6 +13,7 @@ import yaml
 
 from gobby.config.voice_secrets import mask_voice_audio_api_keys
 from gobby.storage.secret_names import SECRET_REF_PATTERN
+from gobby.utils.env import is_test_protect_enabled
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -285,7 +286,7 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     config_path = Path(config_file).expanduser()
 
     # Block writes to production config during tests
-    if os.environ.get("GOBBY_TEST_PROTECT") == "1":
+    if is_test_protect_enabled():
         real_gobby_home = Path("~/.gobby").expanduser().resolve()
         try:
             if config_path.resolve().is_relative_to(real_gobby_home):

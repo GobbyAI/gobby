@@ -18,6 +18,7 @@ from gobby.config.bootstrap import (
     BootstrapConfigError,
     load_bootstrap,
 )
+from gobby.utils.env import is_test_protect_enabled
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -101,7 +102,7 @@ def kill_all_gobby_daemons() -> int:
     """Find and kill all gobby daemon processes."""
     deps = facade()
 
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+    if is_test_protect_enabled():
         deps.logger.warning("kill_all_gobby_daemons called during test - skipping")
         return 0
 
@@ -216,7 +217,7 @@ def _kill_port_holder(port: int) -> None:
     """Kill any process listening on the given port."""
     deps = facade()
 
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+    if is_test_protect_enabled():
         deps.logger.warning("_kill_port_holder called during test - skipping")
         return
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 import subprocess  # nosec B404 # identity reference for the real runner only
 
+from gobby.utils.env import is_test_protect_enabled
+
 _TRUTHY = ("1", "true", "yes")
 _REAL_SUBPROCESS_RUN = subprocess.run
 
@@ -41,7 +43,7 @@ def ensure_docker_allowed(context: str, *, runner: object) -> None:
     runner fails closed. Fully isolated environments (dedicated Docker
     context, no production daemon) may opt in with ``GOBBY_TEST_ALLOW_DOCKER=1``.
     """
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() not in _TRUTHY:
+    if not is_test_protect_enabled():
         return
     if not resolves_to_real_run(runner):
         return

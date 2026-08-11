@@ -12,6 +12,8 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.utils.env import is_test_protect_enabled
+
 if TYPE_CHECKING:
     from gobby.config.features import HooksConfig, ProjectVerificationConfig
 
@@ -34,7 +36,7 @@ def set_project_context(ctx: dict[str, Any] | None) -> contextvars.Token[dict[st
     Blocks known test project IDs in production to prevent e2e test leakage.
     Set GOBBY_TEST_PROTECT=1 in test environments to allow test IDs.
     """
-    if ctx is not None and not os.environ.get("GOBBY_TEST_PROTECT"):
+    if ctx is not None and not is_test_protect_enabled():
         pid = ctx.get("id", "")
         if isinstance(pid, str) and pid in _TEST_PROJECT_IDS:
             logger.warning("Blocked test project_id '%s' in production context", pid)

@@ -20,6 +20,7 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
 from gobby.utils.dev import is_dev_mode
+from gobby.utils.env import is_test_protect_enabled
 
 
 def _read_ui_pid_record(pid_file: Path) -> tuple[int, float | None]:
@@ -292,7 +293,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
     """Stop the UI dev server. Returns True on success, False on failure."""
     deps = facade()
 
-    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+    if is_test_protect_enabled():
         deps.logger.warning("stop_ui_server called during test - skipping")
         return True
 

@@ -6,6 +6,22 @@ from collections.abc import Mapping
 
 ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
+_TEST_PROTECT_DISABLED = frozenset({"", "0", "false", "no", "off"})
+
+
+def is_test_protect_enabled() -> bool:
+    """Return whether ``GOBBY_TEST_PROTECT`` requests test protection.
+
+    Single source of truth for every production guard. Any set value enables
+    protection except the explicit opt-outs ``""``, ``"0"``, ``"false"``,
+    ``"no"``, and ``"off"`` (case- and whitespace-insensitive), so protective
+    guards fail closed on unrecognized values.
+    """
+    value = os.environ.get("GOBBY_TEST_PROTECT")
+    if value is None:
+        return False
+    return value.strip().lower() not in _TEST_PROTECT_DISABLED
+
 
 def expand_env_variables(value: str) -> str:
     """Expand ``${VAR}`` and ``${VAR:-default}`` patterns in a string.

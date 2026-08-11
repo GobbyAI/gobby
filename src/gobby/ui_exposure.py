@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess  # nosec B404 - fixed tailscale CLI commands
 from collections.abc import Callable, Mapping
@@ -14,6 +13,7 @@ from urllib.parse import urlsplit
 
 from gobby.config.bootstrap import UiExposureMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path, update_bootstrap_yaml
+from gobby.utils.env import is_test_protect_enabled
 
 _READ_TIMEOUT_SECONDS = 5.0
 _MUTATION_TIMEOUT_SECONDS = 15.0
@@ -307,7 +307,7 @@ def _run_json(arguments: list[str]) -> dict[str, object]:
 
 
 def _run_mutation(arguments: list[str]) -> None:
-    if os.environ.get("GOBBY_TEST_PROTECT") is not None:
+    if is_test_protect_enabled():
         raise UiExposeError("Tailscale mutation blocked by GOBBY_TEST_PROTECT")
     executable = shutil.which("tailscale")
     if executable is None:
