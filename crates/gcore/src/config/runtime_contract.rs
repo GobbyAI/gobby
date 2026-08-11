@@ -25,6 +25,8 @@ struct RuntimeConfigContract {
 struct ExactKeySpec {
     key: String,
     machine_export: bool,
+    #[serde(default)]
+    secrecy: Secrecy,
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +35,30 @@ struct PatternSpec {
     pattern: String,
     machine_export: bool,
     #[serde(default)]
-    fields: BTreeMap<String, serde_json::Value>,
+    secrecy: Secrecy,
+    #[serde(default)]
+    fields: BTreeMap<String, FieldSpec>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FieldSpec {
+    #[serde(default)]
+    secrecy: Secrecy,
+}
+
+/// Secrecy classification mirrored from the Python registry contract. Values
+/// other than `none`/`reference` deserialize as `Unknown` so a newer daemon
+/// contract never panics an older binary; `Unknown` is never treated as a
+/// resolvable secret reference.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Secrecy {
+    #[default]
+    None,
+    Reference,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,6 +103,23 @@ pub fn is_machine_config_key(key: &str) -> bool {
             .patterns
             .iter()
             .any(|spec| spec.machine_export && spec.matches(key))
+}
+
+/// True when `key` addresses a value the contract stores as a `$secret:`
+/// reference: an exact key with `reference` secrecy, or a pattern key whose
+/// pattern (or matched `{field}` segment) carries `reference` secrecy. These
+/// are the only keys daemon-mode sources may fall through to a datastore
+/// primary for — the daemon itself never serves them.
+pub fn is_secret_reference_key(key: &str) -> bool {
+    let contract = contract();
+    contract
+        .exact_keys
+        .iter()
+        .any(|spec| spec.secrecy == Secrecy::Reference && spec.key == key)
+        || contract
+            .patterns
+            .iter()
+            .any(|spec| spec.matches(key) && spec.reference_secrecy_for(key))
 }
 
 pub fn runtime_contract_codec_vectors() -> &'static [CodecVector] {
@@ -159,6 +201,26 @@ impl PatternSpec {
                 placeholder != "field"
                     || self.fields.is_empty()
                     || self.fields.contains_key(&decoded)
+            })
+    }
+
+    /// Reference secrecy for an already-matched key: the pattern's own
+    /// secrecy, or the secrecy of the field spec addressed by the `{field}`
+    /// segment when the pattern declares per-field specs.
+    fn reference_secrecy_for(&self, key: &str) -> bool {
+        if self.secrecy == Secrecy::Reference {
+            return true;
+        }
+        self.pattern
+            .split('.')
+            .zip(key.split('.'))
+            .any(|(expected, actual)| {
+                expected == "{field}"
+                    && decode_dynamic_segment(actual).is_ok_and(|decoded| {
+                        self.fields
+                            .get(&decoded)
+                            .is_some_and(|field| field.secrecy == Secrecy::Reference)
+                    })
             })
     }
 }

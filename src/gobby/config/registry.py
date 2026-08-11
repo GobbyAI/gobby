@@ -15,7 +15,6 @@ from pydantic_core import PydanticUndefined, to_jsonable_python
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_KEY_KEY,
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
     AI_EMBEDDING_QUERY_PREFIX_KEY,
@@ -317,6 +316,10 @@ class ConfigRegistry:
         for spec in self.specs:
             if spec.visibility is ConfigVisibility.RESTRICTED and spec.machine_export:
                 raise RegistryError(f"Restricted key cannot be machine-exported: {spec.key}")
+            if (
+                spec.machine_export or spec.visibility is ConfigVisibility.MACHINE
+            ) and _spec_carries_secrets(spec):
+                raise RegistryError(f"Secret-bearing key cannot be machine-exported: {spec.key}")
             if spec.secrecy is ConfigSecrecy.PAYLOAD and (
                 spec.visibility is not ConfigVisibility.RESTRICTED
             ):
@@ -411,6 +414,13 @@ def config_key_secrecy(spec: RegistrySpec, key: str) -> ConfigSecrecy:
     field_name = matched.get("field") if matched else None
     field = next((item for item in spec.field_specs if item.name == field_name), None)
     return ConfigSecrecy.NONE if field is None else field.secrecy
+
+
+def _spec_carries_secrets(spec: RegistrySpec) -> bool:
+    """True when any value the spec can address has non-NONE secrecy."""
+    if spec.secrecy is not ConfigSecrecy.NONE:
+        return True
+    return any(field.secrecy is not ConfigSecrecy.NONE for field in spec.field_specs)
 
 
 def config_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
@@ -652,11 +662,9 @@ _SECRET_REFERENCE_PATHS = frozenset({"databases.falkordb.password"})
 _MACHINE_EXPORT_KEYS = frozenset(
     {
         AI_EMBEDDING_MODEL_KEY,
-        AI_EMBEDDING_API_KEY_KEY,
         AI_EMBEDDING_DIM_KEY,
         AI_EMBEDDING_QUERY_PREFIX_KEY,
         "databases.falkordb.host",
-        "databases.falkordb.password",
         "databases.falkordb.port",
         "databases.qdrant.url",
         "indexing.respect_gitignore",

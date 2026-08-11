@@ -237,7 +237,7 @@
       "default": null,
       "description": "Explicit API key for the embedding endpoint. Installers store this as an encrypted $secret: reference in config_store.",
       "key": "ai.embeddings.api_key",
-      "machineExport": true,
+      "machineExport": false,
       "namespace": "ai.embeddings",
       "secrecy": "reference",
       "type": [
@@ -817,11 +817,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -1246,7 +1246,7 @@
       "default": null,
       "description": "FalkorDB password (Redis AUTH). `databases.falkordb.password` resolves to secret-store name `falkordb_password` for stable disambiguation. Must be provided when FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time.",
       "key": "databases.falkordb.password",
-      "machineExport": true,
+      "machineExport": false,
       "namespace": "databases",
       "secrecy": "reference",
       "type": [
@@ -1345,11 +1345,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -2141,11 +2141,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3014,11 +3014,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3215,11 +3215,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3281,11 +3281,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3435,11 +3435,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3739,11 +3739,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -3805,11 +3805,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],
@@ -4522,11 +4522,11 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "claude/haiku",
+          "candidate": "codex/gpt-5.6-luna",
           "reasoning_effort": null
         },
         {
-          "candidate": "codex/gpt-5.6-luna",
+          "candidate": "claude/haiku",
           "reasoning_effort": null
         }
       ],

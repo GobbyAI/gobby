@@ -365,13 +365,13 @@ fn validate_managed_bundle(
             reason: "service capability is expired",
         });
     }
-    // `ai.embeddings.api_key` stays machine-exportable on purpose: its stored
-    // form is a `$secret:` reference, and `validate_served_values` below
-    // rejects any unresolved reference, so a bundle can never smuggle the
-    // reference through this key-level gate. Managed embeddings are brokered
-    // through the daemon, which therefore has no reason to resolve the secret
-    // into a capability bundle — the bundle contract stays non-secret at the
-    // value level rather than by carving the key out of the export set.
+    // Secret-bearing keys (`reference` secrecy) are never machine-exportable:
+    // the Python registry fails closed at load time if one enters the export
+    // set, so `is_machine_config_key` rejects them here at the key level.
+    // Machine clients that need those values resolve them datastore-side via
+    // `DaemonOrPrimary::DaemonWithSecrets`; managed embeddings stay brokered
+    // through the daemon. `validate_served_values` below remains a value-level
+    // backstop against unresolved references in whatever is served.
     for key in bundle.config.keys() {
         if !is_machine_config_key(key) {
             return Err(EffectiveConfigError::Contract {
@@ -503,11 +503,36 @@ pub fn ai_source_without_primary() -> anyhow::Result<EffectiveLocalAiSource> {
     ai_source_with_primary(|| Ok(NoPrimaryAiConfigSource))
 }
 
+/// Like [`ai_source_with_primary`], but keeps the primary attached in daemon
+/// mode so secret-reference keys (never served by the daemon) fall through to
+/// it and `$secret:` values resolve datastore-side. The factory therefore runs
+/// in both modes — use this only when constructing the primary is cheap and
+/// side-effect free (an already-open connection, or a lazily-connecting
+/// source); `ai_source_with_primary` keeps the historical guarantee that
+/// daemon mode never invokes the factory.
+pub fn ai_source_with_secret_primary<P: ConfigSource>(
+    primary: impl FnOnce() -> anyhow::Result<P>,
+) -> anyhow::Result<AiConfigSource<DaemonOrPrimary<P>>> {
+    match daemon_mode_layers()? {
+        Some((daemon, routing)) => Ok(AiConfigSource::with_primary(
+            DaemonOrPrimary::DaemonWithSecrets(daemon, primary()?),
+            routing,
+        )),
+        None => {
+            let gobby_home = crate::gobby_home()?;
+            AiConfigSource::with_primary_from_gobby_home(
+                DaemonOrPrimary::Primary(primary()?),
+                &gobby_home,
+            )
+        }
+    }
+}
+
 #[cfg(feature = "postgres")]
 pub fn ai_source_for_conn(
     conn: &mut postgres::Client,
 ) -> anyhow::Result<EffectivePostgresAiSource<'_>> {
-    ai_source_with_primary(|| {
+    ai_source_with_secret_primary(|| {
         Ok(PostgresAiConfigSource::new(
             conn,
             crate::secrets::resolve_config_value

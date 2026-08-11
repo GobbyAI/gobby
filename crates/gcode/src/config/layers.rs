@@ -74,9 +74,13 @@ fn warn_for_unregistered_served_keys(served: &DaemonServedConfig) {
     }
 }
 
-pub(super) enum ServiceSource {
+pub(super) enum ServiceSource<'a> {
     Daemon {
         served: DaemonServedConfig,
+        /// Hub connection reserved for secret-reference keys the daemon never
+        /// serves in plaintext; consumed once to capture a resolved snapshot.
+        hub: Option<&'a mut Client>,
+        hub_secrets: Option<HubConfigSnapshot>,
         hits: HashMap<String, &'static str>,
     },
     Hub(HubConfigSnapshot),
@@ -87,9 +91,9 @@ pub(super) enum ServiceSource {
     },
 }
 
-impl ServiceSource {
+impl<'a> ServiceSource<'a> {
     pub(super) fn new(
-        conn: &mut Client,
+        conn: &'a mut Client,
         layers: &ConfigLayers,
     ) -> anyhow::Result<(Self, Option<i64>)> {
         match layers.mode {
@@ -97,7 +101,15 @@ impl ServiceSource {
                 let Some(served) = layers.daemon.clone() else {
                     anyhow::bail!("daemon configuration mode is missing its served snapshot");
                 };
-                Ok((Self::daemon(served), None))
+                Ok((
+                    Self::Daemon {
+                        served,
+                        hub: Some(conn),
+                        hub_secrets: None,
+                        hits: HashMap::new(),
+                    },
+                    None,
+                ))
             }
             ConfigMode::Hub => {
                 let snapshot = capture_hub_snapshot(conn)?;
@@ -108,9 +120,13 @@ impl ServiceSource {
         }
     }
 
+    /// Served-only daemon source without a hub fall-through (tests).
+    #[cfg(test)]
     pub(super) fn daemon(served: DaemonServedConfig) -> Self {
         Self::Daemon {
             served,
+            hub: None,
+            hub_secrets: None,
             hits: HashMap::new(),
         }
     }
@@ -128,10 +144,15 @@ impl ServiceSource {
     }
 }
 
-impl ServiceConfigSource for ServiceSource {
+impl ServiceConfigSource for ServiceSource<'_> {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
         match self {
-            Self::Daemon { served, hits } => {
+            Self::Daemon {
+                served,
+                hub,
+                hub_secrets,
+                hits,
+            } => {
                 if !gobby_core::config::is_registered_runtime_key(key) {
                     return Ok(None);
                 }
@@ -139,7 +160,25 @@ impl ServiceConfigSource for ServiceSource {
                     hits.insert(key.to_string(), "daemon");
                     return Ok(Some(value));
                 }
-                Ok(None)
+                // The daemon never serves secret-bearing keys in plaintext;
+                // resolve them datastore-side from a revision-coherent hub
+                // snapshot captured on first need.
+                if !gobby_core::config::is_secret_reference_key(key) {
+                    return Ok(None);
+                }
+                if hub_secrets.is_none()
+                    && let Some(conn) = hub.take()
+                {
+                    *hub_secrets = Some(capture_hub_snapshot(conn)?);
+                }
+                let value = hub_secrets
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.value(key))
+                    .map(str::to_string);
+                if value.is_some() {
+                    hits.insert(key.to_string(), "config_store");
+                }
+                Ok(value)
             }
             Self::Hub(snapshot) => Ok(snapshot.value(key).map(str::to_string)),
             Self::Standalone {
@@ -248,6 +287,35 @@ mod tests {
                 .expect("ignore routing value")
                 .as_deref(),
             None
+        );
+    }
+
+    #[test]
+    fn daemon_service_source_without_hub_keeps_secret_keys_absent() {
+        let mut source =
+            ServiceSource::daemon(served([("databases.falkordb.host", "falkordb.example")]));
+
+        // Secret-reference keys are never served; without a hub fall-through
+        // they stay absent instead of erroring or leaking a reference.
+        assert_eq!(
+            source
+                .config_value("databases.falkordb.password")
+                .expect("secret key without hub degrades to absent"),
+            None
+        );
+        assert_eq!(
+            source
+                .config_value("ai.embeddings.api_key")
+                .expect("secret key without hub degrades to absent"),
+            None
+        );
+        // Non-secret served values keep resolving.
+        assert_eq!(
+            source
+                .config_value("databases.falkordb.host")
+                .expect("served value")
+                .as_deref(),
+            Some("falkordb.example")
         );
     }
 

@@ -35,6 +35,12 @@ impl ConfigSource for DaemonServedConfig {
 #[derive(Debug, Clone)]
 pub enum DaemonOrPrimary<P> {
     Daemon(DaemonServedConfig),
+    /// Daemon-served values plus a datastore-backed primary consulted only
+    /// for secret-reference keys. The daemon never serves secrets in
+    /// plaintext; keys the contract marks `reference` fall through to the
+    /// primary, which returns the stored `$secret:` form and resolves it
+    /// datastore-side.
+    DaemonWithSecrets(DaemonServedConfig, P),
     Primary(P),
 }
 
@@ -42,6 +48,13 @@ impl<P: ConfigSource> ConfigSource for DaemonOrPrimary<P> {
     fn config_value(&mut self, key: &str) -> Option<String> {
         match self {
             Self::Daemon(source) => source.config_value(key),
+            Self::DaemonWithSecrets(source, secrets) => source.config_value(key).or_else(|| {
+                if super::is_secret_reference_key(key) {
+                    secrets.config_value(key)
+                } else {
+                    None
+                }
+            }),
             Self::Primary(source) => source.config_value(key),
         }
     }
@@ -49,6 +62,13 @@ impl<P: ConfigSource> ConfigSource for DaemonOrPrimary<P> {
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         match self {
             Self::Daemon(source) => source.resolve_value(value),
+            Self::DaemonWithSecrets(source, secrets) => {
+                if value.trim_start().starts_with("$secret:") {
+                    secrets.resolve_value(value)
+                } else {
+                    source.resolve_value(value)
+                }
+            }
             Self::Primary(source) => source.resolve_value(value),
         }
     }

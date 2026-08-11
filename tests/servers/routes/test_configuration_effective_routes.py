@@ -524,11 +524,12 @@ def test_service_capabilities_omit_unresolved_runtime_config_markers(
 
 
 @pytest.mark.integration
-def test_effective_config_preserves_resolved_machine_contract(
+def test_effective_config_never_serves_secrets_in_plaintext(
     client: TestClient,
     server: Any,
     runtime_config: DaemonConfig,
 ) -> None:
+    """Configured, resolvable secrets must never appear in the machine export."""
     active = runtime_config.model_copy(deep=True)
     active.embeddings.model = "active-snapshot-model"
     active.embeddings.api_key = "$secret:active-embedding-key"
@@ -556,8 +557,11 @@ def test_effective_config_preserves_resolved_machine_contract(
     assert response.status_code == 200
     assert set(response.json()) == {"config"}
     assert response.json()["config"]["ai.embeddings.model"] == "active-snapshot-model"
-    assert response.json()["config"]["ai.embeddings.api_key"] == "resolved-active-key"
-    assert response.json()["config"]["databases.falkordb.password"] == "resolved-falkordb-password"
+    assert "ai.embeddings.api_key" not in response.json()["config"]
+    assert "databases.falkordb.password" not in response.json()["config"]
+    assert "resolved-active-key" not in response.text
+    assert "resolved-falkordb-password" not in response.text
+    assert "$secret:" not in response.text
 
 
 @pytest.mark.integration
@@ -581,11 +585,12 @@ def test_effective_config_uses_machine_visibility(
     assert response.json() == {"config": {"ai.embeddings.model": "machine-visible"}}
 
 
-def test_machine_output_uses_active_secret_binding(
+def test_machine_output_leaks_neither_secret_binding(
     client: TestClient,
     server: Any,
     runtime_config: DaemonConfig,
 ) -> None:
+    """Neither the active nor the desired secret payload may reach the export."""
     key = "ai.embeddings.api_key"
     desired = runtime_config.model_copy(deep=True)
     desired.embeddings.api_key = "$secret:rotated-key"
@@ -603,8 +608,10 @@ def test_machine_output_uses_active_secret_binding(
     response = client.get("/api/config/effective")
 
     assert response.status_code == 200
-    assert response.json() == {"config": {key: "activated-payload"}}
+    assert response.json() == {"config": {}}
+    assert "activated-payload" not in response.text
     assert "rotated-unactivated-payload" not in response.text
+    assert "$secret:" not in response.text
 
 
 def test_post_overlay_markers_are_omitted(

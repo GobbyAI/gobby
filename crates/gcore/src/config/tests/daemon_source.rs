@@ -79,6 +79,76 @@ fn daemon_or_primary_delegates_to_the_active_source() {
 }
 
 #[test]
+fn daemon_with_secrets_falls_through_only_for_secret_reference_keys() {
+    let mut source = DaemonOrPrimary::DaemonWithSecrets(
+        DaemonServedConfig::new(BTreeMap::from([(
+            "ai.embeddings.model".to_string(),
+            "daemon-model".to_string(),
+        )])),
+        PrimarySource,
+    );
+
+    // Served values win; the primary is never consulted for them.
+    assert_eq!(
+        source.config_value("ai.embeddings.model").as_deref(),
+        Some("daemon-model")
+    );
+    // Secret-reference keys are never served — they fall through.
+    assert_eq!(
+        source.config_value("ai.embeddings.api_key").as_deref(),
+        Some("primary:ai.embeddings.api_key")
+    );
+    assert_eq!(
+        source
+            .config_value("databases.falkordb.password")
+            .as_deref(),
+        Some("primary:databases.falkordb.password")
+    );
+    // Pattern keys whose {field} segment carries reference secrecy fall
+    // through; sibling non-secret fields do not.
+    assert_eq!(
+        source
+            .config_value("ai.generation.endpoints.mine.api_key")
+            .as_deref(),
+        Some("primary:ai.generation.endpoints.mine.api_key")
+    );
+    assert_eq!(
+        source.config_value("ai.generation.endpoints.mine.api_base"),
+        None
+    );
+    // Unserved non-secret keys stay absent instead of leaking the primary.
+    assert_eq!(source.config_value("indexing.respect_gitignore"), None);
+    // Routing keys keep their served-config filtering.
+    assert_eq!(source.config_value("ai.routing"), None);
+}
+
+#[test]
+fn daemon_with_secrets_resolves_secret_references_via_the_primary() {
+    let mut source =
+        DaemonOrPrimary::DaemonWithSecrets(DaemonServedConfig::default(), PrimarySource);
+
+    assert_eq!(
+        source
+            .resolve_value("$secret:falkordb_password")
+            .expect("secret resolution"),
+        "primary:$secret:falkordb_password"
+    );
+    assert_eq!(
+        source
+            .resolve_value("  $secret:leading_whitespace")
+            .expect("secret resolution"),
+        "primary:  $secret:leading_whitespace"
+    );
+    // Non-secret values keep the served-config identity contract.
+    assert_eq!(
+        source
+            .resolve_value("${CLIENT_ENV_MUST_NOT_EXPAND}")
+            .expect("daemon value is already validated"),
+        "${CLIENT_ENV_MUST_NOT_EXPAND}"
+    );
+}
+
+#[test]
 fn routing_overrides_drop_non_routing_and_switch_run_values() {
     let config = StandaloneConfig::new(BTreeMap::from([
         ("ai.routing".to_string(), "daemon".to_string()),

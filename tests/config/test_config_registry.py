@@ -196,3 +196,55 @@ def test_dynamic_segment_codec_round_trip() -> None:
             assert "." not in key.split(".")[pattern.dynamic_segment_indexes[0]]
             assert pattern.match(key) == segments
             assert CONFIG_REGISTRY.resolve(key) is pattern
+
+
+def test_machine_exported_secret_specs_are_rejected_at_registry_load() -> None:
+    """The registry fails closed if a secret-bearing key enters the machine export."""
+    from gobby.config.registry import ConfigKeySpec, ConfigRegistry, PatternFieldSpec, RegistryError
+
+    exported_secret = ConfigKeySpec(
+        key="databases.falkordb.password",
+        annotation=str | None,
+        default=None,
+        secrecy=ConfigSecrecy.REFERENCE,
+        machine_export=True,
+    )
+    with pytest.raises(RegistryError, match="cannot be machine-exported"):
+        ConfigRegistry((exported_secret,), ())
+
+    machine_visible_secret = ConfigKeySpec(
+        key="databases.falkordb.password",
+        annotation=str | None,
+        default=None,
+        secrecy=ConfigSecrecy.REFERENCE,
+        visibility=ConfigVisibility.MACHINE,
+    )
+    with pytest.raises(RegistryError, match="cannot be machine-exported"):
+        ConfigRegistry((machine_visible_secret,), ())
+
+    exported_secret_field = ConfigPatternSpec(
+        pattern="ai.generation.endpoints.{endpoint}.{field}",
+        annotation=str | None,
+        default=None,
+        machine_export=True,
+        field_specs=(
+            PatternFieldSpec(
+                name="api_key",
+                annotation=str | None,
+                default=None,
+                secrecy=ConfigSecrecy.REFERENCE,
+            ),
+        ),
+    )
+    with pytest.raises(RegistryError, match="cannot be machine-exported"):
+        ConfigRegistry((), (exported_secret_field,))
+
+
+def test_no_machine_exported_spec_carries_secrets() -> None:
+    """Live-registry regression guard for the plaintext-egress policy."""
+    for spec in CONFIG_REGISTRY.specs:
+        if spec.machine_export or spec.visibility is ConfigVisibility.MACHINE:
+            assert spec.secrecy is ConfigSecrecy.NONE, spec.key
+            assert all(
+                field.secrecy is ConfigSecrecy.NONE for field in spec.field_specs
+            ), spec.key

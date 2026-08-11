@@ -1,5 +1,5 @@
 use gobby_core::ai::effective_config::{
-    EffectiveConfigLayers, ai_source_with_primary, daemon_mode_layers,
+    EffectiveConfigLayers, ai_source_with_secret_primary, daemon_mode_layers,
 };
 use gobby_core::config::{
     ConfigSource, DaemonOrPrimary, EnvOnlySource, LayeredConfigSource, QdrantConfig,
@@ -16,32 +16,74 @@ use super::search::PostgresConfigSource;
 type HubAiConfigSource = gobby_core::ai_context::AiConfigSource<DaemonOrPrimary<HubPrimary>>;
 type HubPrimaryFactory<'a> = Box<dyn FnOnce() -> anyhow::Result<HubPrimary> + 'a>;
 
-/// Hub-backed primary AI config layer with an owned, optional connection.
+/// Hub-backed primary AI config layer with a lazily-opened connection.
 ///
 /// Commands that synthesize daemon-independently still need `$secret:`
 /// references (the canonical api_key pattern) to resolve through the
 /// PostgreSQL hub when it is reachable; without a hub, plain values resolve
-/// and secrets degrade explicitly.
+/// and secrets degrade explicitly. Construction is I/O-free — the connection
+/// opens on first hub-needing read — so daemon mode can keep this primary
+/// attached for secret-reference fall-through without every command paying
+/// for (or failing on) a hub connection it never uses.
 pub(crate) struct HubPrimary {
-    conn: Option<Client>,
+    command: String,
+    conn: Option<HubConnState>,
+}
+
+enum HubConnState {
+    Open(Box<Client>),
+    Unavailable(String),
+}
+
+impl HubPrimary {
+    fn new(command: &str) -> Self {
+        Self {
+            command: command.to_string(),
+            conn: None,
+        }
+    }
+
+    fn state(&mut self) -> &mut HubConnState {
+        let command = &self.command;
+        self.conn
+            .get_or_insert_with(|| match super::env::database_url_for(command) {
+                Ok(Some(url)) => match gobby_core::postgres::connect_readwrite(&url) {
+                    Ok(client) => HubConnState::Open(Box::new(client)),
+                    Err(error) => {
+                        HubConnState::Unavailable(format!("hub connection failed: {error}"))
+                    }
+                },
+                Ok(None) => {
+                    HubConnState::Unavailable("no hub database_url is configured".to_string())
+                }
+                Err(error) => HubConnState::Unavailable(format!(
+                    "hub database_url resolution failed: {error}"
+                )),
+            })
+    }
 }
 
 impl ConfigSource for HubPrimary {
     fn config_value(&mut self, key: &str) -> Option<String> {
-        let conn = self.conn.as_mut()?;
-        gobby_core::postgres::read_config_value(conn, key)
+        let HubConnState::Open(conn) = self.state() else {
+            return None;
+        };
+        gobby_core::postgres::read_config_value(conn.as_mut(), key)
             .ok()
             .flatten()
             .and_then(|raw| gobby_core::config::decode_config_value(&raw))
     }
 
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        match self.conn.as_mut() {
-            Some(conn) => gobby_core::secrets::resolve_config_value(value, conn),
-            None => {
+        match self.state() {
+            HubConnState::Open(conn) => {
+                gobby_core::secrets::resolve_config_value(value, conn.as_mut())
+            }
+            HubConnState::Unavailable(cause) => {
                 if value.trim_start().starts_with("$secret:") {
                     anyhow::bail!(
-                        "secret resolution requires the PostgreSQL hub; configure the hub or use a literal api_key"
+                        "secret resolution requires the PostgreSQL hub ({cause}); configure the \
+                         hub or use a literal api_key"
                     );
                 }
                 Ok(value.to_string())
@@ -53,12 +95,8 @@ impl ConfigSource for HubPrimary {
 pub(crate) fn hub_ai_config_source(command: &str) -> Result<HubAiConfigSource, WikiError> {
     hub_ai_config_source_with(
         command,
-        Box::new(move || {
-            let conn = super::env::database_url_for(command)?
-                .and_then(|url| gobby_core::postgres::connect_readwrite(&url).ok());
-            Ok(HubPrimary { conn })
-        }),
-        ai_source_with_primary,
+        Box::new(move || Ok(HubPrimary::new(command))),
+        ai_source_with_secret_primary,
     )
 }
 
@@ -400,25 +438,47 @@ mod tests {
     }
 
     #[test]
-    fn daemon_hub_ai_source_does_not_open_database_connection() {
-        let connection_attempted = Cell::new(false);
+    fn daemon_hub_ai_source_construction_opens_no_database_connection() {
+        // Daemon mode now keeps the hub primary attached for secret-reference
+        // fall-through, so the factory runs at construction — but building a
+        // `HubPrimary` is I/O-free (the connection opens on first hub-needing
+        // read), and non-secret reads never touch it.
+        let factory_ran = Cell::new(false);
 
-        let _source = hub_ai_config_source_with(
+        let mut source = hub_ai_config_source_with(
             "test",
             Box::new(|| {
-                connection_attempted.set(true);
-                anyhow::bail!("database connection factory must stay lazy")
+                factory_ran.set(true);
+                Ok(HubPrimary::new("test"))
             }),
-            |_primary| {
+            |primary| {
                 Ok(gobby_core::ai_context::AiConfigSource::with_primary(
-                    DaemonOrPrimary::Daemon(DaemonServedConfig::new(BTreeMap::new())),
+                    DaemonOrPrimary::DaemonWithSecrets(
+                        DaemonServedConfig::new(BTreeMap::from([(
+                            "ai.embeddings.model".to_string(),
+                            "daemon-model".to_string(),
+                        )])),
+                        primary()?,
+                    ),
                     None,
                 ))
             },
         )
         .expect("daemon AI source");
 
-        assert!(!connection_attempted.get());
+        assert!(factory_ran.get());
+        // Served values and non-secret resolution stay on the daemon side and
+        // never open the lazy hub connection.
+        assert_eq!(
+            source.config_value("ai.embeddings.model").as_deref(),
+            Some("daemon-model")
+        );
+        assert_eq!(
+            source
+                .resolve_value("plain-value")
+                .expect("non-secret resolution"),
+            "plain-value"
+        );
     }
 
     #[test]

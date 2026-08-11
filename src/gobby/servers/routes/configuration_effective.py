@@ -131,11 +131,9 @@ def _machine_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
             continue
         if raw_value is None:
             continue
-        if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
-            raw_value = snapshot.active_secret(key)
-            if raw_value is None:
-                _warn_omitted(key, "active secret payload is unavailable")
-                continue
+        if config_key_secrecy(spec, key) is not ConfigSecrecy.NONE:
+            _warn_omitted(key, "secret values are never served in plaintext")
+            continue
         try:
             value = expand_env_vars(_stringify_config_value(raw_value))
         except (TypeError, ValueError):

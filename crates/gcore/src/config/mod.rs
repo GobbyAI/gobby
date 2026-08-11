@@ -24,7 +24,7 @@ pub use resolve::{
 pub use runtime_contract::{
     CodecVector, DynamicSegmentError, decode_dynamic_segment, encode_dynamic_segment,
     invalid_dynamic_segments, is_machine_config_key, is_registered_runtime_key,
-    runtime_contract_codec_vectors,
+    is_secret_reference_key, runtime_contract_codec_vectors,
 };
 pub use types::{
     AiCapability, AiRouting, AiTuning, CapabilityBinding, EmbeddingConfig,
