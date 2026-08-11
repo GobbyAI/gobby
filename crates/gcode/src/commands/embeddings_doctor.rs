@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use gobby_core::local_token::{AUTHORIZATION_HEADER, authorization_bearer, read_local_cli_token};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -103,21 +104,7 @@ fn build_doctor_report(
     peer: PeerDoctorOutcome,
 ) -> (EmbeddingsDoctorReport, u8) {
     let Some(resolution) = resolution else {
-        return (
-            EmbeddingsDoctorReport {
-                endpoint: None,
-                model: None,
-                dim: None,
-                probe_error: None,
-                api_key_present: false,
-                api_key_fingerprint: None,
-                namespace_resolved: None,
-                source: None,
-                agrees: None,
-                drift: None,
-            },
-            EXIT_CONFIG_MISSING,
-        );
+        return report_from_daemon(peer);
     };
 
     let dim = match configured_dim {
@@ -134,8 +121,10 @@ fn build_doctor_report(
 
     match peer {
         PeerDoctorOutcome::Absent => (report_without_peer(&resolution, dim), EXIT_HEALTHY),
-        PeerDoctorOutcome::TransportError(_) => {
-            (report_without_peer(&resolution, dim), EXIT_TRANSPORT)
+        PeerDoctorOutcome::TransportError(error) => {
+            let mut report = report_without_peer(&resolution, dim);
+            report.probe_error = Some(error);
+            (report, EXIT_TRANSPORT)
         }
         PeerDoctorOutcome::Present(peer) => {
             let drift = drift_fields(&resolution.config, dim, &peer);
@@ -158,6 +147,36 @@ fn build_doctor_report(
                     EXIT_DRIFT,
                 )
             }
+        }
+    }
+}
+
+fn report_from_daemon(peer: PeerDoctorOutcome) -> (EmbeddingsDoctorReport, u8) {
+    let mut report = EmbeddingsDoctorReport {
+        endpoint: None,
+        model: None,
+        dim: None,
+        probe_error: None,
+        api_key_present: false,
+        api_key_fingerprint: None,
+        namespace_resolved: None,
+        source: None,
+        agrees: None,
+        drift: None,
+    };
+
+    match peer {
+        PeerDoctorOutcome::Absent => (report, EXIT_CONFIG_MISSING),
+        PeerDoctorOutcome::TransportError(error) => {
+            report.probe_error = Some(error);
+            (report, EXIT_TRANSPORT)
+        }
+        PeerDoctorOutcome::Present(peer) => {
+            report.endpoint = peer.endpoint;
+            report.model = peer.model;
+            report.dim = peer.dim;
+            report.source = Some("daemon".to_string());
+            (report, EXIT_HEALTHY)
         }
     }
 }
@@ -250,7 +269,13 @@ fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {
             return PeerDoctorOutcome::TransportError(format!("build HTTP client: {error}"));
         }
     };
-    let response = match client.get(url).send() {
+    let token = match read_local_cli_token() {
+        Ok(token) => token,
+        Err(error) => {
+            return PeerDoctorOutcome::TransportError(format!("read local CLI token: {error}"));
+        }
+    };
+    let response = match daemon_doctor_request(&client, &url, &token).send() {
         Ok(response) => response,
         Err(error) => {
             return PeerDoctorOutcome::TransportError(format!("send peer doctor request: {error}"));
@@ -271,6 +296,16 @@ fn fetch_daemon_peer(daemon_url: Option<&str>) -> PeerDoctorOutcome {
             PeerDoctorOutcome::TransportError(format!("parse peer doctor response: {error}"))
         }
     }
+}
+
+fn daemon_doctor_request(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: &str,
+) -> reqwest::blocking::RequestBuilder {
+    client
+        .get(url)
+        .header(AUTHORIZATION_HEADER, authorization_bearer(token))
 }
 
 #[cfg(test)]
@@ -357,5 +392,58 @@ mod tests {
         assert_eq!(code, EXIT_TRANSPORT);
         assert_eq!(transport.dim, None);
         assert_eq!(transport.probe_error.as_deref(), Some("probe failed"));
+    }
+
+    #[test]
+    fn daemon_only_config_is_healthy() {
+        let (report, code) = build_doctor_report(
+            None,
+            None,
+            |_| unreachable!("daemon config should not probe directly"),
+            PeerDoctorOutcome::Present(PeerDoctorReport {
+                endpoint: Some("http://localhost:1234/v1".to_string()),
+                model: Some("nomic-embed-text".to_string()),
+                dim: Some(768),
+            }),
+        );
+
+        assert_eq!(code, EXIT_HEALTHY);
+        assert_eq!(report.source.as_deref(), Some("daemon"));
+        assert_eq!(report.endpoint.as_deref(), Some("http://localhost:1234/v1"));
+        assert_eq!(report.model.as_deref(), Some("nomic-embed-text"));
+        assert_eq!(report.dim, Some(768));
+        assert!(!report.api_key_present);
+    }
+
+    #[test]
+    fn daemon_transport_error_is_reported_without_direct_config() {
+        let (report, code) = build_doctor_report(
+            None,
+            None,
+            |_| unreachable!("missing config should not probe directly"),
+            PeerDoctorOutcome::TransportError("daemon unavailable".to_string()),
+        );
+
+        assert_eq!(code, EXIT_TRANSPORT);
+        assert_eq!(report.probe_error.as_deref(), Some("daemon unavailable"));
+    }
+
+    #[test]
+    fn daemon_doctor_request_uses_local_bearer_token() {
+        let request = daemon_doctor_request(
+            &reqwest::blocking::Client::new(),
+            "http://127.0.0.1:60887/api/embeddings/doctor",
+            "local-test-token",
+        )
+        .build()
+        .expect("doctor request builds");
+
+        assert_eq!(
+            request
+                .headers()
+                .get(AUTHORIZATION_HEADER)
+                .expect("authorization header"),
+            "Bearer local-test-token"
+        );
     }
 }
