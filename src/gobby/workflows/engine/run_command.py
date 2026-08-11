@@ -111,15 +111,22 @@ def resolve_materialized_skill_script(scripts_dir: Path, script: str) -> Path:
     """Resolve a script while enforcing containment in a materialized scripts directory."""
     validate_skill_script_path(script)
 
-    root = scripts_dir.resolve(strict=True)
-    if not root.is_dir():
-        raise ValueError("Materialized scripts path is not a directory")
-    target = (root / script).resolve(strict=True)
+    try:
+        root = scripts_dir.resolve(strict=True)
+        if not root.is_dir():
+            raise ValueError("Materialized scripts path is not a directory")
+        target = (root / script).resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("Materialized skill script path could not be resolved") from exc
     try:
         target.relative_to(root)
     except ValueError as exc:
         raise ValueError("Skill script resolves outside its scripts directory") from exc
-    if not target.is_file():
+    try:
+        is_file = target.is_file()
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("Materialized skill script path could not be resolved") from exc
+    if not is_file:
         raise ValueError("Skill script path must name a file")
     return target
 

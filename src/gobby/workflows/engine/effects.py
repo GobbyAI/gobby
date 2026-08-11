@@ -547,7 +547,14 @@ class EffectsMixin(DeliveryFormattingMixin):
                 skill=skill,
                 script=script,
             )
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "run_command: skill resolution failed for skill=%r script=%r: %s",
+                skill,
+                script,
+                exc,
+                exc_info=True,
+            )
             return RunCommandResult.skill_resolution_failure(
                 "skill_resolution_error",
                 started=started,

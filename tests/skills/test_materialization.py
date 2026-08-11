@@ -470,6 +470,70 @@ async def test_concurrent_materialize_single_install(
 
 
 @pytest.mark.asyncio
+async def test_local_lock_serializes_same_key_and_cleans_registry() -> None:
+    loop = asyncio.get_running_loop()
+    key = "serialize-and-clean"
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_started = asyncio.Event()
+    entries: list[str] = []
+
+    async def hold_first() -> None:
+        async with materializer._local_lock(key):
+            entries.append("first")
+            first_entered.set()
+            await release_first.wait()
+
+    async def wait_second() -> None:
+        second_started.set()
+        async with materializer._local_lock(key):
+            entries.append("second")
+
+    first = asyncio.create_task(hold_first())
+    await first_entered.wait()
+    second = asyncio.create_task(wait_second())
+    await second_started.wait()
+
+    state = materializer._LOCAL_LOCKS[loop][key]
+    assert state.users == 2
+    assert entries == ["first"]
+
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert entries == ["first", "second"]
+    assert loop not in materializer._LOCAL_LOCKS
+
+
+@pytest.mark.asyncio
+async def test_local_lock_cancelled_waiter_retains_shared_entry_until_holder_exits() -> None:
+    loop = asyncio.get_running_loop()
+    key = "cancelled-waiter"
+    waiter_started = asyncio.Event()
+
+    async with materializer._local_lock(key):
+        state = materializer._LOCAL_LOCKS[loop][key]
+
+        async def wait_for_lock() -> None:
+            waiter_started.set()
+            async with materializer._local_lock(key):
+                raise AssertionError("cancelled waiter acquired lock")
+
+        waiter = asyncio.create_task(wait_for_lock())
+        await waiter_started.wait()
+        assert state.users == 2
+
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+        assert materializer._LOCAL_LOCKS[loop][key] is state
+        assert state.users == 1
+
+    assert loop not in materializer._LOCAL_LOCKS
+
+
+@pytest.mark.asyncio
 async def test_failed_install_retry_attaches_deps(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

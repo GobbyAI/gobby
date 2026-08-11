@@ -268,11 +268,14 @@ class LocalProjectManager:
             return False
         try:
             canonical_path = Path(repo_path).expanduser().resolve(strict=False)
+            gobby_home = Path.home() / ".gobby"
+            isolation_roots = tuple(
+                (gobby_home / name).resolve(strict=False) for name in ("worktrees", "clones")
+            )
         except (OSError, RuntimeError):
-            return False
-        gobby_home = Path.home() / ".gobby"
-        for root in (gobby_home / "worktrees", gobby_home / "clones"):
-            if canonical_path.is_relative_to(root.resolve(strict=False)):
+            return True
+        for root in isolation_roots:
+            if canonical_path.is_relative_to(root):
                 return True
         return False
 

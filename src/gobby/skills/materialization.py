@@ -65,7 +65,15 @@ if not token:
     os._exit(125)
 os.execvpe(sys.argv[2], sys.argv[2:], os.environ)
 """
-_LOCAL_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+
+
+@dataclass
+class _LocalLockState:
+    lock: asyncio.Lock
+    users: int = 0
+
+
+_LOCAL_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, _LocalLockState]] = (
     weakref.WeakKeyDictionary()
 )
 _MATERIALIZERS: weakref.WeakKeyDictionary[HubDatabase, SkillScriptMaterializer] = (
@@ -276,8 +284,7 @@ async def _materialize_snapshot(
     cache_root = skill_scripts_root(home, skill.id)
     digest = _generation_digest(payloads, runtime.normalized, external)
     generation = cache_root / digest
-    local_lock = _local_lock(f"{skill.id}:{digest}")
-    async with local_lock:
+    async with _local_lock(f"{skill.id}:{digest}"):
         stage_warnings = await _publish_scripts_generation(
             home=home,
             skill=skill,
@@ -320,10 +327,24 @@ async def _materialize_snapshot(
     )
 
 
-def _local_lock(key: str) -> asyncio.Lock:
+@asynccontextmanager
+async def _local_lock(key: str) -> AsyncIterator[None]:
     loop = asyncio.get_running_loop()
     locks = _LOCAL_LOCKS.setdefault(loop, {})
-    return locks.setdefault(key, asyncio.Lock())
+    state = locks.get(key)
+    if state is None:
+        state = _LocalLockState(asyncio.Lock())
+        locks[key] = state
+    state.users += 1
+    try:
+        async with state.lock:
+            yield
+    finally:
+        state.users -= 1
+        if state.users == 0 and locks.get(key) is state:
+            locks.pop(key)
+            if not locks and _LOCAL_LOCKS.get(loop) is locks:
+                _LOCAL_LOCKS.pop(loop, None)
 
 
 def _parse_payloads(value: object) -> list[_ScriptPayload]:

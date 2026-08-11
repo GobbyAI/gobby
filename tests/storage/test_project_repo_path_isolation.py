@@ -226,6 +226,44 @@ def test_unregistered_isolation_root_path_cannot_update_repo_path(
     assert refreshed.repo_path == str(canonical_path)
 
 
+def test_isolation_root_check_fails_closed_when_candidate_resolution_is_denied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = tmp_path / "candidate"
+    original_resolve = Path.resolve
+
+    def resolve(path: Path, strict: bool = False) -> Path:
+        if path == candidate:
+            raise PermissionError("candidate denied")
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    assert LocalProjectManager._is_under_isolation_root(str(candidate)) is True
+
+
+@pytest.mark.parametrize("root_name", ["worktrees", "clones"])
+def test_isolation_root_check_fails_closed_when_root_resolution_is_denied(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root_name: str,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    candidate = tmp_path / "candidate"
+    denied_root = tmp_path / ".gobby" / root_name
+    original_resolve = Path.resolve
+
+    def resolve(path: Path, strict: bool = False) -> Path:
+        if path == denied_root:
+            raise PermissionError("root denied")
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve)
+
+    assert LocalProjectManager._is_under_isolation_root(str(candidate)) is True
+
+
 def test_nonisolated_init_can_set_missing_repo_path(
     temp_db: HubDatabase,
     tmp_path: Path,

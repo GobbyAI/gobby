@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import time
@@ -489,6 +490,36 @@ class TestRunCommandDeadlines:
         assert result.skill == "impeccable"
         assert result.script == "hook.mjs"
 
+    async def test_skill_resolution_error_logs_exception(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mixin = EffectsMixin()
+        failure = PermissionError("materialization denied")
+        mixin.skill_script_materializer = cast(
+            Any,
+            _materializer(AsyncMock(side_effect=failure)),
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.engine.effects"):
+            result = await mixin._prepare_run_command(
+                ["node"],
+                project_id=None,
+                skill="impeccable",
+                script="hook.mjs",
+                timeout=1.0,
+                background=False,
+            )
+
+        assert isinstance(result, RunCommandResult)
+        assert result.status == "skill_resolution_error"
+        records = [
+            record for record in caplog.records if "skill resolution failed" in record.message
+        ]
+        assert len(records) == 1
+        assert records[0].exc_info is not None
+        assert records[0].exc_info[1] is failure
+
 
 @pytest.mark.asyncio
 class TestRunCommandBounds:
@@ -608,27 +639,76 @@ def test_resolve_materialized_skill_script_returns_contained_file(tmp_path: Path
 
 
 @pytest.mark.parametrize(
-    "script",
+    ("script", "message"),
     [
-        "",
-        "/tmp/hook.mjs",
-        "../other/hook.mjs",
-        "nested/../../hook.mjs",
-        r"C:\temp\hook.mjs",
+        ("", "Skill script path must be non-empty"),
+        ("/tmp/hook.mjs", "Skill script path must be relative"),
+        ("../other/hook.mjs", "Skill script path cannot traverse its scripts directory"),
+        (
+            "nested/../../hook.mjs",
+            "Skill script path cannot traverse its scripts directory",
+        ),
+        (r"C:\temp\hook.mjs", "Skill script path must be relative"),
     ],
 )
-def test_resolve_materialized_skill_script_rejects_unsafe_path(script: str, tmp_path: Path) -> None:
+def test_resolve_materialized_skill_script_rejects_unsafe_path(
+    script: str,
+    message: str,
+    tmp_path: Path,
+) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    with pytest.raises(ValueError, match="non-empty|relative|traverse"):
+    with pytest.raises(ValueError) as exc_info:
         resolve_materialized_skill_script(scripts_dir, script)
+    assert str(exc_info.value) == message
 
 
 def test_resolve_materialized_skill_script_rejects_missing_file(tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(ValueError) as exc_info:
         resolve_materialized_skill_script(scripts_dir, "missing.mjs")
+    assert str(exc_info.value) == "Materialized skill script path could not be resolved"
+    assert isinstance(exc_info.value.__cause__, FileNotFoundError)
+
+
+def test_resolve_materialized_skill_script_wraps_root_resolution_failure(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+
+    with (
+        patch.object(Path, "resolve", side_effect=PermissionError("denied")),
+        pytest.raises(ValueError) as exc_info,
+    ):
+        resolve_materialized_skill_script(scripts_dir, "hook.mjs")
+
+    assert str(exc_info.value) == "Materialized skill script path could not be resolved"
+    assert isinstance(exc_info.value.__cause__, PermissionError)
+
+
+def test_resolve_materialized_skill_script_preserves_directory_policy_message(
+    tmp_path: Path,
+) -> None:
+    scripts_path = tmp_path / "scripts.mjs"
+    scripts_path.write_text("export {};\n")
+
+    with pytest.raises(ValueError) as exc_info:
+        resolve_materialized_skill_script(scripts_path, "hook.mjs")
+
+    assert str(exc_info.value) == "Materialized scripts path is not a directory"
+
+
+def test_resolve_materialized_skill_script_preserves_file_policy_message(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    target_dir = scripts_dir / "nested"
+    target_dir.mkdir(parents=True)
+
+    with pytest.raises(ValueError) as exc_info:
+        resolve_materialized_skill_script(scripts_dir, "nested")
+
+    assert str(exc_info.value) == "Skill script path must name a file"
 
 
 def test_resolve_materialized_skill_script_rejects_symlink_escape(tmp_path: Path) -> None:
