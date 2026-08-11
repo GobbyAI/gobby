@@ -56,7 +56,7 @@ async def env(tmp_path: Path, hub_db: HubDatabase) -> AsyncGenerator[dict[str, A
     # Create HookManager
     hm = HookManager(
         daemon_host="test",
-        message_processor=processor,
+        message_processor_resolver=lambda: processor,
         config=mock_config,
         database=db,
     )

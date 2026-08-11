@@ -119,7 +119,7 @@ def setup_internal_registries(
         InternalRegistryManager containing all registries
     """
     manager = InternalRegistryManager()
-    # One setup-time resolve gates registry creation; tool calls re-resolve.
+    # Review learning needs an initial manager; memory tools resolve per call.
     initial_memory_manager = (
         memory_manager_resolver() if memory_manager_resolver is not None else None
     )
@@ -222,8 +222,8 @@ def setup_internal_registries(
         manager.add_registry(session_messages_registry)
         logger.debug("Sessions registry initialized")
 
-    # Initialize memory registry if a memory manager is available at setup time
-    if initial_memory_manager is not None and memory_manager_resolver is not None:
+    # Keep memory tools available across startup outages and runtime rebuilds.
+    if memory_manager_resolver is not None:
         from gobby.mcp_proxy.tools.memory import create_memory_registry
 
         memory_registry = create_memory_registry(

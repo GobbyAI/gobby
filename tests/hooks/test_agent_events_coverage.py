@@ -50,7 +50,7 @@ class _TestHandler(AgentEventHandlerMixin):
         self.logger = MagicMock()
         self._session_manager = MagicMock()
         self._session_coordinator = None
-        self._message_processor = None
+        self._message_processor_resolver = lambda: None
         self._task_manager = None
         self._workflow_handler = None
         self._workflow_config = None

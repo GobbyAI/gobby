@@ -523,9 +523,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         event.metadata["_parent_session_id"] = effective_parent_session_id
 
     _t_msg_proc = time.monotonic()
-    if handler._message_processor and transcript_path and session_id:
+    message_processor = handler._resolve_message_processor()
+    if message_processor is not None and transcript_path and session_id:
         try:
-            handler._message_processor.register_session(
+            message_processor.register_session(
                 session_id,
                 transcript_path,
                 source=cli_source,
@@ -750,9 +751,10 @@ def handle_pre_created_session(
 
     event.metadata["_platform_session_id"] = session_id
 
-    if handler._message_processor and transcript_path:
+    message_processor = handler._resolve_message_processor()
+    if message_processor is not None and transcript_path:
         try:
-            handler._message_processor.register_session(
+            message_processor.register_session(
                 session_id,
                 transcript_path,
                 source=cli_source,

@@ -481,6 +481,7 @@ def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord 
 
 
 _background_runtime_tasks: set[asyncio.Task[None]] = set()
+_background_runtime_futures: set[Future[None]] = set()
 
 
 def _request_memory_services_rebuild(
@@ -572,9 +573,10 @@ def _build_message_processor(
         if hook_manager is not None:
             processor.set_hook_manager(hook_manager)
         runner.message_processor = processor
-        task = loop.create_task(processor.start())
-        _background_runtime_tasks.add(task)
-        task.add_done_callback(_background_runtime_tasks.discard)
+        future = asyncio.run_coroutine_threadsafe(processor.start(), loop)
+        _background_runtime_futures.add(future)
+        future.add_done_callback(_background_runtime_futures.discard)
+        future.result(timeout=4.5)
 
     def dispose() -> None:
         _dispose_async(loop, processor.stop)

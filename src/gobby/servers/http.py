@@ -494,11 +494,7 @@ class HTTPServer:
 
     @property
     def message_processor(self) -> Any:
-        return self._runtime_service("message_processor") or self.services.message_processor
-
-    @message_processor.setter
-    def message_processor(self, value: Any) -> None:
-        self.services.message_processor = value
+        return self.services.resolve_message_processor()
 
     @property
     def metrics_manager(self) -> ToolMetricsManager | None:

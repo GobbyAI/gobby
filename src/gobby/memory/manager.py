@@ -73,6 +73,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         vector_store: VectorStore | None = None,
         embed_fn: Callable[..., Any] | None = None,
         *,
+        llm_service_resolver: Callable[[], LLMService | None] | None = None,
         falkordb_host: str | None = None,
         falkordb_port: int = 16379,
         falkordb_password: str | None = None,
@@ -91,6 +92,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         self.config = config
         self._run_db = run_db
         self._llm_service = llm_service
+        self._llm_service_resolver = llm_service_resolver or (lambda: self._llm_service)
         self._vector_store = vector_store
         self._embed_fn = embed_fn
         self._project_write_fence = project_write_fence
@@ -117,6 +119,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         self._dedup_service = self._build_dedup_service(vector_store, embed_fn)
         self._kg_service = self._build_kg_service(
             llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             vector_store=vector_store,
             embed_fn=embed_fn,
             collection_prefix=collection_prefix,
@@ -255,12 +258,13 @@ class MemoryManager(MemoryManagerFacadeMethods):
         self,
         *,
         llm_service: LLMService | None,
+        llm_service_resolver: Callable[[], LLMService | None] | None,
         vector_store: VectorStore | None,
         embed_fn: Callable[..., Any] | None,
         collection_prefix: str,
         embedding_dim: int,
     ) -> KnowledgeGraphService | None:
-        if not llm_service or not self._falkor_client:
+        if (llm_service is None and llm_service_resolver is None) or not self._falkor_client:
             return None
         try:
             from gobby.prompts.loader import PromptLoader
@@ -306,6 +310,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 code_symbol_collection_prefix=collection_prefix,
                 embedding_dim=embedding_dim,
                 llm_service=llm_service,
+                llm_service_resolver=llm_service_resolver,
                 feature_config=self.config.kg,
                 graph_edge_weighting=self.config.graph_edge_weighting,
                 materialize_cooccurrence=self.config.materialize_cooccurrence,
@@ -392,7 +397,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
 
     @property
     def llm_service(self) -> LLMService | None:
-        return self._llm_service
+        return self._llm_service_resolver()
 
     @llm_service.setter
     def llm_service(self, service: LLMService | None) -> None:

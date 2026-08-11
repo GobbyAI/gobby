@@ -145,12 +145,13 @@ def test_factory_create_reuses_injected_session_manager(
             daemon_host="localhost",
             daemon_port=60887,
             llm_service=None,
+            llm_service_resolver=lambda: None,
             config=default_config,
             hook_logger=logging.getLogger("test"),
             loop=None,
             broadcaster=None,
             tool_proxy_getter=None,
-            message_processor=None,
+            message_processor_resolver=lambda: None,
             agent_runner=None,
             completion_registry=None,
             get_machine_id=lambda: "21000000-0000-4000-8000-000000000001",
@@ -166,7 +167,7 @@ def test_factory_create_reuses_injected_session_manager(
     assert cast(object, components.event_handlers._session_manager) is session_manager
     assert components.session_task_manager.db is temp_db
     assert components.task_manager.db is temp_db
-    assert create_workflow_engine.call_args.args[9] is config_runtime
+    assert create_workflow_engine.call_args.args[10] is config_runtime
 
 
 def _patched_subsystems() -> tuple[SimpleNamespace, SimpleNamespace]:
@@ -190,12 +191,13 @@ def _create_kwargs(session_manager: SessionManager, default_config: DaemonConfig
         "daemon_host": "localhost",
         "daemon_port": 60887,
         "llm_service": None,
+        "llm_service_resolver": lambda: None,
         "config": default_config,
         "hook_logger": logging.getLogger("test"),
         "loop": None,
         "broadcaster": None,
         "tool_proxy_getter": None,
-        "message_processor": None,
+        "message_processor_resolver": lambda: None,
         "agent_runner": None,
         "completion_registry": None,
         "get_machine_id": lambda: "21000000-0000-4000-8000-000000000001",
@@ -265,9 +267,14 @@ def test_factory_create_memory_fallback_threads_llm_service(
         kwargs["llm_service"] = llm_service
         components = HookManagerFactory.create(**kwargs)
 
-    create_memory.assert_called_once_with(temp_db, default_config, llm_service)
+    create_memory.assert_called_once_with(
+        temp_db,
+        default_config,
+        llm_service,
+        kwargs["llm_service_resolver"],
+    )
     create_workflow_engine.assert_called_once()
-    assert create_workflow_engine.call_args.args[4] is fallback_manager
+    assert create_workflow_engine.call_args.args[5] is fallback_manager
     assert components.memory_manager is fallback_manager
 
 
@@ -287,7 +294,7 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
     ):
         create.return_value = components
-        manager = HookManager(
+        HookManager(
             daemon_host="localhost",
             daemon_port=60887,
             database=database,
@@ -296,4 +303,3 @@ def test_hook_manager_forwards_injected_memory_manager() -> None:
         )
 
     assert create.call_args.kwargs["memory_manager"] is memory_manager
-    assert manager._memory_manager is memory_manager

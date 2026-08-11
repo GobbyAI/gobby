@@ -497,16 +497,6 @@ class ConfigRuntime:
         handles = dict(current_bundle._handles)
         old_handles: list[tuple[PreparedSubscriber, ConfigSubscriber]] = []
         if failure is None:
-            for key in changed_live:
-                if key in stored.values:
-                    active_values[key] = stored.values[key]
-                else:
-                    active_values.pop(key, None)
-                if key in desired_bindings:
-                    active_bindings[key] = desired_bindings[key]
-                else:
-                    active_bindings.pop(key, None)
-                failed.pop(key, None)
             replaced_subscribers: set[str] = set()
             for subscriber in self._subscribers:
                 replacement = prepared.get(subscriber.name)
@@ -518,14 +508,22 @@ class ConfigRuntime:
                 handles[subscriber.name] = replacement
                 services[subscriber.name] = replacement.value
                 replaced_subscribers.add(subscriber.name)
-            if replaced_subscribers:
-                # A successful replacement supersedes every failure the same
-                # subscriber recorded earlier, whichever keys carried it.
-                failed = {
-                    key: failure
-                    for key, failure in failed.items()
-                    if failure.subscriber not in replaced_subscribers
-                }
+            activated_keys = set(changed_live)
+            activated_keys.update(
+                key
+                for key, apply_failure in failed.items()
+                if apply_failure.subscriber in replaced_subscribers
+            )
+            for key in activated_keys:
+                if key in stored.values:
+                    active_values[key] = stored.values[key]
+                else:
+                    active_values.pop(key, None)
+                if key in desired_bindings:
+                    active_bindings[key] = desired_bindings[key]
+                else:
+                    active_bindings.pop(key, None)
+                failed.pop(key, None)
         else:
             apply_failure = self._apply_failure(
                 failure.subscriber,

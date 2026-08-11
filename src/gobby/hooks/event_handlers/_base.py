@@ -38,7 +38,7 @@ class EventHandlersBase:
     _workflow_handler: WorkflowHookHandler | None
     _workflow_config: WorkflowConfig | None
     _session_task_manager: SessionTaskManager | None
-    _message_processor: Any | None
+    _message_processor_resolver: Callable[[], Any | None]
     _task_manager: LocalTaskManager | None
     _progress_tracker: ProgressTracker | None
     _worktree_manager: LocalWorktreeManager | None
@@ -59,6 +59,9 @@ class EventHandlersBase:
     def get_session_manager(self) -> HookSessionManager | None:
         """Return the configured hook session manager, if available."""
         return self._session_manager
+
+    def _resolve_message_processor(self) -> Any | None:
+        return self._message_processor_resolver()
 
     def _shutdown_in_progress(self) -> bool:
         """Return whether the daemon app context is tearing down."""

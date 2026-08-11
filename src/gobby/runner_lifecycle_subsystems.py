@@ -298,7 +298,6 @@ def _run_tracked_start(
 
 
 async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    await _start_tracked_service(runner.message_processor, "Message processor", tracker)
     await _start_tracked_service(
         runner.communications_manager,
         "Communications manager",

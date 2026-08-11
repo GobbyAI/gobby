@@ -30,12 +30,10 @@ def register_memory_recall_tool(
 ) -> None:
     """Register inline recall and overflow-only retrieval."""
     recall_config = config or MemoryRecallConfig()
-    registration_manager = memory_manager_resolver()
-    if registration_manager is None:
-        raise RuntimeError("Memory recall tools require an available memory manager")
-    # The hub database handle is stable across runtime epochs; only the
-    # manager and LLM service are re-resolved per call.
-    queue = MemoryRecallDeliveryQueue(registration_manager.db)
+
+    def _current_queue() -> MemoryRecallDeliveryQueue | None:
+        manager = memory_manager_resolver()
+        return MemoryRecallDeliveryQueue(manager.db) if manager is not None else None
 
     def _current_runner() -> MemoryRecallRunner | None:
         manager = memory_manager_resolver()
@@ -113,6 +111,9 @@ def register_memory_recall_tool(
                 "recall_request_id": recall_request_id,
                 "error": "No ambient Gobby session is available.",
             }
+        queue = _current_queue()
+        if queue is None:
+            return _retrieval_error(recall_request_id, "Memory services are unavailable.")
         try:
             delivery = queue.get(session_id, recall_request_id)
             pending = queue.pending(session_id)

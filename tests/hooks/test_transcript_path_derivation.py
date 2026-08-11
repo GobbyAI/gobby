@@ -188,7 +188,7 @@ class TestTranscriptPathDerivation:
         mock_dependencies["session_coordinator"].register_session.assert_called_once_with(
             "external-qwen"
         )
-        mock_dependencies["message_processor"].register_session.assert_called_once_with(
+        mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "platform-session", str(current_session), source="qwen"
         )
 

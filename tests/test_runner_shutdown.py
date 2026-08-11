@@ -379,66 +379,6 @@ class TestGobbyRunnerShutdown:
             assert runner.database.close.called is True
 
     @pytest.mark.asyncio
-    async def test_run_starts_message_processor(self, mock_config) -> None:
-        """Test that run starts the message processor when enabled."""
-        mock_config.message_tracking = MagicMock()
-        mock_config.message_tracking.enabled = True
-        mock_config.message_tracking.poll_interval = 5.0
-        mock_config.databases.qdrant.url = ""
-        mock_config.databases.falkordb.password = None
-        mock_config.embeddings.api_base = ""
-        mock_config.ui.enabled = False
-
-        mock_mcp_manager = AsyncMock()
-        mock_mcp_manager.connect_all = AsyncMock()
-        mock_mcp_manager.disconnect_all = AsyncMock()
-
-        mock_message_processor = AsyncMock()
-        mock_message_processor.start = AsyncMock()
-        mock_message_processor.stop = AsyncMock()
-
-        patches = create_base_patches(
-            mock_config=mock_config,
-            mock_mcp_manager=mock_mcp_manager,
-        )
-        patches = [p for p in patches if "SessionMessageProcessor" not in str(p)]
-        patches.append(
-            patch(
-                "gobby.runner_init.services.SessionMessageProcessor",
-                return_value=mock_message_processor,
-            )
-        )
-
-        with ExitStack() as stack:
-            [stack.enter_context(p) for p in patches]
-
-            runner = GobbyRunner()
-
-            # Request shutdown from the message processor's own start(), not from
-            # connect_all(). connect_all runs several awaited init steps before
-            # _start_core_services reaches message_processor.start(); triggering
-            # shutdown at connect_all races the subsystem-init task against the
-            # run loop's 0.5s poll and is lost under 3.13 asyncio scheduling when
-            # the suite is loaded. Driving shutdown from start() guarantees the
-            # call happened before the loop exits, independent of scheduling.
-            async def stop_after_processor_start() -> None:
-                runner._shutdown_requested = True
-
-            mock_message_processor.start.side_effect = stop_after_processor_start
-
-            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
-                mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
-                mock_server_cls.return_value = mock_server
-
-                with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
-
-            mock_message_processor.start.assert_called_once()
-            assert mock_message_processor.start.await_count == 1
-            assert runner._shutdown_requested is True
-
-    @pytest.mark.asyncio
     async def test_run_runs_startup_metrics_cleanup(self, mock_config) -> None:
         """Test that run performs startup metrics cleanup."""
         mock_config.databases.qdrant.url = ""

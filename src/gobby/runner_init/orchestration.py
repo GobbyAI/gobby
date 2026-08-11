@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
@@ -17,6 +17,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.projects.purge import GraphCleaner, VectorCleaner
     from gobby.runner import GobbyRunner
     from gobby.system_automation import PipelineHeartbeatService
 
@@ -142,6 +143,37 @@ def _reconcile_codewiki_dormant_state(runner: GobbyRunner) -> None:
             result.failed,
             result.residual_enabled,
         )
+
+
+def _resolve_project_vector_cleaner(runner: GobbyRunner) -> VectorCleaner:
+    from gobby.projects.purge import NoopProjectVectorCleaner, ProjectPurgeVectorStoreUnavailable
+    from gobby.projects.vector_cleanup import ProjectVectorCleaner
+
+    bundle = runner.config_runtime.capture()
+    memory = bundle.services.get("memory_services")
+    vector_store = getattr(memory, "vector_store", None)
+    if vector_store is not None:
+        return ProjectVectorCleaner(vector_store)
+    if bundle.snapshot.active.databases.qdrant.url is not None:
+        raise ProjectPurgeVectorStoreUnavailable(
+            "Qdrant is configured but the runtime memory bundle is unavailable"
+        )
+    return NoopProjectVectorCleaner()
+
+
+def _resolve_project_graph_cleaner(runner: GobbyRunner) -> GraphCleaner:
+    from gobby.config.persistence import is_falkordb_enabled
+    from gobby.projects.purge import NoopProjectGraphCleaner
+
+    bundle = runner.config_runtime.capture()
+    memory = bundle.services.get("memory_services")
+    manager = getattr(memory, "memory_manager", None)
+    graph_cleaner = getattr(manager, "kg_service", None)
+    if graph_cleaner is not None:
+        return cast("GraphCleaner", graph_cleaner)
+    if is_falkordb_enabled(bundle.snapshot.active.databases):
+        raise RuntimeError("FalkorDB is configured but graph cleanup is unavailable")
+    return NoopProjectGraphCleaner()
 
 
 def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
@@ -426,40 +458,11 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
 
         try:
             from gobby.code_index.gcode_gateway import GcodeGateway
-            from gobby.config.persistence import is_falkordb_enabled
             from gobby.gwiki_gateway import GwikiGateway
             from gobby.projects.gwiki_lock import GwikiProjectDrainBarrier
-            from gobby.projects.purge import (
-                NoopProjectGraphCleaner,
-                NoopProjectVectorCleaner,
-                ProjectPurgeService,
-                ProjectPurgeVectorStoreUnavailable,
-                register_project_purge_cron,
-            )
-            from gobby.projects.vector_cleanup import ProjectVectorCleaner
+            from gobby.projects.purge import ProjectPurgeService, register_project_purge_cron
             from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-            def resolve_vector_cleaner() -> ProjectVectorCleaner | NoopProjectVectorCleaner:
-                """Resolve the purge vector cleaner from the current runtime epoch."""
-                bundle = runner.config_runtime.capture()
-                memory = bundle.services.get("memory_services")
-                vector_store = getattr(memory, "vector_store", None)
-                if vector_store is not None:
-                    return ProjectVectorCleaner(vector_store)
-                active = bundle.snapshot.active
-                if getattr(active.databases, "qdrant", None) is not None:
-                    raise ProjectPurgeVectorStoreUnavailable(
-                        "Qdrant is configured but the runtime memory bundle is "
-                        "unavailable; failing the purge so the cron retries"
-                    )
-                return NoopProjectVectorCleaner()
-
-            kg_service = (
-                runner.memory_manager.kg_service if runner.memory_manager is not None else None
-            )
-            if kg_service is None and is_falkordb_enabled(config.databases):
-                raise RuntimeError("FalkorDB is configured but graph cleanup is unavailable")
-            graph_cleaner = kg_service or NoopProjectGraphCleaner()
             runner.project_purge_service = ProjectPurgeService(
                 db=runner.database,
                 projects=pm,
@@ -468,8 +471,8 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 gwiki_barrier=GwikiProjectDrainBarrier(runner.database),
                 wiki_gateway=GwikiGateway(),
                 code_gateway=GcodeGateway(),
-                vector_cleaner=resolve_vector_cleaner,
-                graph_cleaner=graph_cleaner,
+                vector_cleaner=lambda: _resolve_project_vector_cleaner(runner),
+                graph_cleaner=lambda: _resolve_project_graph_cleaner(runner),
             )
             register_project_purge_cron(
                 runner.cron_storage,

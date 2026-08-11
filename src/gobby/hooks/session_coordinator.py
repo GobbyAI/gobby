@@ -16,6 +16,7 @@ import logging
 import re
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any
@@ -91,7 +92,7 @@ class SessionCoordinator:
     def __init__(
         self,
         session_storage: HookSessionManager | None = None,
-        message_processor: Any | None = None,
+        message_processor_resolver: Callable[[], Any | None] | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
         logger: logging.Logger | None = None,
@@ -102,14 +103,14 @@ class SessionCoordinator:
 
         Args:
             session_storage: SessionManager for session queries
-            message_processor: SessionMessageProcessor for message registration
+            message_processor_resolver: Resolves the current SessionMessageProcessor
             agent_run_manager: LocalAgentRunManager for agent run completion
             worktree_manager: LocalWorktreeManager for worktree release
             logger: Optional logger instance
             completion_registry: CompletionEventRegistry for notifying on agent completion
         """
         self._session_manager = session_storage
-        self._message_processor = message_processor
+        self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._agent_run_manager = agent_run_manager
         self._worktree_manager = worktree_manager
         self.logger = logger or logging.getLogger(__name__)
@@ -264,7 +265,8 @@ class SessionCoordinator:
         Returns:
             Number of sessions successfully re-registered
         """
-        if not self._message_processor or not self._session_manager:
+        message_processor = self._message_processor_resolver()
+        if message_processor is None or not self._session_manager:
             return 0
 
         try:
@@ -282,9 +284,7 @@ class SessionCoordinator:
                 try:
                     # Determine source from session (default to claude)
                     source = getattr(session, "source", "claude") or "claude"
-                    self._message_processor.register_session(
-                        session.id, transcript_path, source=source
-                    )
+                    message_processor.register_session(session.id, transcript_path, source=source)
                     registered_count += 1
                 except Exception as e:
                     self.logger.warning(
@@ -606,12 +606,13 @@ class SessionCoordinator:
             # before reading them. The processor runs on a 2s poll interval, so
             # SESSION_END can fire before the final stats have been written to DB.
             session_id = session.id
-            if self._message_processor:
+            message_processor = self._message_processor_resolver()
+            if message_processor is not None:
                 try:
                     if not self._event_loop or not self._event_loop.is_running():
                         raise RuntimeError("daemon event loop is not available")
                     flush_future = asyncio.run_coroutine_threadsafe(
-                        self._message_processor.flush_session(session_id),
+                        message_processor.flush_session(session_id),
                         self._event_loop,
                     )
                     flush_future.result(timeout=5)

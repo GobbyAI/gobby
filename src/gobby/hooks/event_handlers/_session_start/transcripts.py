@@ -88,8 +88,9 @@ def ensure_qwen_transcript_tracking(
         handler._session_coordinator.register_session(
             str(event.session_id or "").strip() or platform_session_id
         )
-    if handler._message_processor:
-        handler._message_processor.register_session(
+    message_processor = handler._resolve_message_processor()
+    if message_processor is not None:
+        message_processor.register_session(
             platform_session_id,
             transcript_path,
             source="qwen",

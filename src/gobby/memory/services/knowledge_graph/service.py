@@ -58,8 +58,9 @@ class KnowledgeGraphService:
         falkor_client: FalkorClient,
         embed_fn: Callable[..., Any] | None,
         prompt_loader: PromptLoader,
-        llm_service: LLMService,
+        llm_service: LLMService | None,
         feature_config: MemoryKnowledgeGraphConfig,
+        llm_service_resolver: Callable[[], LLMService | None] | None = None,
         vector_store: VectorStore | None = None,
         code_link_min_score: float = 0.82,
         code_symbol_collection_prefix: str = "code_symbols_",
@@ -98,6 +99,7 @@ class KnowledgeGraphService:
         self._extractor = KnowledgeGraphExtractor(
             prompt_loader,
             llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             feature_config=feature_config,
         )
         self._maintenance = KnowledgeGraphMaintenance(falkor_client)

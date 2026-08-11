@@ -96,6 +96,7 @@ class PipelineExecutor(
         completion_registry: Any | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         pipeline_config: PipelineConfig | None = None,
+        llm_service_resolver: Callable[[], Any] | None = None,
     ):
         """Initialize the pipeline executor.
 
@@ -113,10 +114,12 @@ class PipelineExecutor(
             completion_registry: Optional CompletionEventRegistry for wait steps
             run_db: Optional bounded executor bridge for hub database work
             pipeline_config: Optional pipeline configuration for step defaults
+            llm_service_resolver: Resolves the current LLM service for prompt steps
         """
         self.db = db
         self.execution_manager = execution_manager
         self.llm_service = llm_service
+        self._llm_service_resolver = llm_service_resolver or (lambda: self.llm_service)
         self.webhook_notifier = webhook_notifier
         self.loader = loader
         self.event_callback = event_callback

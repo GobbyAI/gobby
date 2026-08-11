@@ -223,13 +223,42 @@ class TestSessionLifecycleTransitions:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
         )
 
         count = coordinator.reregister_active_sessions()
 
         assert count == 2
         assert mock_message_processor.register_session.call_count == 2
+
+    def test_reregister_resolves_current_processor_and_disabled_tracking_noops(self) -> None:
+        session = MagicMock(
+            id="session-1",
+            transcript_path="/path/to/1.jsonl",
+            source="claude",
+        )
+        session_storage = MagicMock()
+        session_storage.list.side_effect = lambda status, limit: (
+            [session] if status == "active" else []
+        )
+        old_processor = MagicMock()
+        rebuilt_processor = MagicMock()
+        current: list[Any | None] = [old_processor]
+        coordinator = SessionCoordinator(
+            session_storage=session_storage,
+            message_processor_resolver=lambda: current[0],
+        )
+
+        current[0] = rebuilt_processor
+        assert coordinator.reregister_active_sessions() == 1
+        rebuilt_processor.register_session.assert_called_once_with(
+            "session-1", "/path/to/1.jsonl", source="claude"
+        )
+        old_processor.register_session.assert_not_called()
+
+        current[0] = None
+        assert coordinator.reregister_active_sessions() == 0
+        assert rebuilt_processor.register_session.call_count == 1
 
     def test_reregister_active_session_with_processed_transcript(self) -> None:
         """Active transcripts remain live after their last completed processing pass."""
@@ -247,7 +276,7 @@ class TestSessionLifecycleTransitions:
         mock_message_processor = MagicMock()
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
         )
 
         count = coordinator.reregister_active_sessions()
@@ -283,7 +312,7 @@ class TestSessionLifecycleTransitions:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
         )
 
         count = coordinator.reregister_active_sessions()
@@ -307,7 +336,7 @@ class TestSessionLifecycleTransitions:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
         )
 
         count = coordinator.reregister_active_sessions()
@@ -344,7 +373,7 @@ class TestSessionLifecycleTransitions:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
             logger=logging.getLogger("test"),
         )
 
@@ -363,7 +392,7 @@ class TestSessionLifecycleTransitions:
         logger = logging.getLogger("test.session_coordinator.structured")
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=MagicMock(),
+            message_processor_resolver=lambda: MagicMock(),
             logger=logger,
         )
 
@@ -397,7 +426,7 @@ class TestSessionLifecycleTransitions:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
         )
 
         with patch("gobby.workflows.state_manager.SessionVariableManager") as MockSVMgr:
@@ -508,7 +537,7 @@ class TestAgentRunCompletion:
         session_manager.get.side_effect = get_refreshed_session
         coordinator = SessionCoordinator(
             session_storage=session_manager,
-            message_processor=message_processor,
+            message_processor_resolver=lambda: message_processor,
             agent_run_manager=agent_run_manager,
         )
         coordinator.set_completion_registry(MagicMock())
@@ -1098,14 +1127,14 @@ class TestSessionCoordinatorInitialization:
 
         coordinator = SessionCoordinator(
             session_storage=mock_session_storage,
-            message_processor=mock_message_processor,
+            message_processor_resolver=lambda: mock_message_processor,
             agent_run_manager=mock_agent_run_manager,
             worktree_manager=mock_worktree_manager,
             logger=logger,
         )
 
         assert coordinator._session_manager is mock_session_storage
-        assert coordinator._message_processor is mock_message_processor
+        assert coordinator._message_processor_resolver() is mock_message_processor
         assert coordinator._agent_run_manager is mock_agent_run_manager
         assert coordinator._worktree_manager is mock_worktree_manager
         assert coordinator.logger is logger
@@ -1115,7 +1144,7 @@ class TestSessionCoordinatorInitialization:
         coordinator = SessionCoordinator()
 
         assert coordinator._session_manager is None
-        assert coordinator._message_processor is None
+        assert coordinator._message_processor_resolver() is None
         assert coordinator._agent_run_manager is None
         assert coordinator._worktree_manager is None
         assert coordinator.logger is not None

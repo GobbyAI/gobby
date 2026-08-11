@@ -122,12 +122,13 @@ class HookManagerFactory:
         daemon_host: str,
         daemon_port: int,
         llm_service: LLMService | None,
+        llm_service_resolver: Callable[[], LLMService | None],
         config: Any | None,
         hook_logger: logging.Logger,
         loop: asyncio.AbstractEventLoop | None,
         broadcaster: Any | None,
         tool_proxy_getter: Any | None,
-        message_processor: Any | None,
+        message_processor_resolver: Callable[[], Any | None],
         agent_runner: Any | None,
         completion_registry: Any | None,
         config_runtime: ConfigRuntimeReader | None,
@@ -144,12 +145,13 @@ class HookManagerFactory:
             daemon_host: Daemon host for communication
             daemon_port: Daemon port for communication
             llm_service: Optional LLMService for multi-provider support
+            llm_service_resolver: Resolves the current runtime LLM service
             config: Optional DaemonConfig instance
             hook_logger: Configured logger instance
             loop: Event loop for async operations
             broadcaster: Optional HookEventBroadcaster instance
             tool_proxy_getter: Callable returning ToolProxyService
-            message_processor: SessionMessageProcessor instance
+            message_processor_resolver: Resolves the current SessionMessageProcessor
             agent_runner: Optional AgentRunner for agent-scoped workflow completion
             completion_registry: Optional CompletionEventRegistry for wait-step wakeups
             config_runtime: Runtime snapshot reader for live configuration policy
@@ -202,13 +204,19 @@ class HookManagerFactory:
 
         # Initialize memory system — prefer the daemon's fully-wired manager so
         # hook-path recall uses the same semantic+graph search as the MCP path.
-        mem_manager = memory_manager or cls._create_memory(resolved_database, config, llm_service)
+        mem_manager = memory_manager or cls._create_memory(
+            resolved_database,
+            config,
+            llm_service,
+            llm_service_resolver,
+        )
 
         # Initialize workflow engine
         workflow_components = cls._create_workflow_engine(
             resolved_database,
             config,
             llm_service,
+            llm_service_resolver,
             transcript_processor,
             mem_manager,
             storage,
@@ -230,7 +238,7 @@ class HookManagerFactory:
 
         session_coordinator = SessionCoordinator(
             session_storage=cast(HookSessionManager, storage.session),
-            message_processor=message_processor,
+            message_processor_resolver=message_processor_resolver,
             agent_run_manager=storage.agent_run,
             worktree_manager=storage.worktree,
             logger=hook_logger,
@@ -254,7 +262,7 @@ class HookManagerFactory:
             session_manager=cast(HookSessionManager, session_mgr),
             workflow_handler=workflow_components.handler,
             session_task_manager=storage.session_task,
-            message_processor=message_processor,
+            message_processor_resolver=message_processor_resolver,
             task_manager=storage.task,
             progress_tracker=autonomous.progress_tracker,
             worktree_manager=storage.worktree,
@@ -537,13 +545,19 @@ class HookManagerFactory:
         database: HubDatabase,
         config: Any | None,
         llm_service: LLMService | None = None,
+        llm_service_resolver: Callable[[], LLMService | None] | None = None,
     ) -> MemoryManager:
         memory_config = config.memory if config and hasattr(config, "memory") else None
         if not memory_config:
             from gobby.config.persistence import MemoryConfig
 
             memory_config = MemoryConfig()
-        return MemoryManager(database, memory_config, llm_service=llm_service)
+        return MemoryManager(
+            database,
+            memory_config,
+            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
+        )
 
     @staticmethod
     def _create_webhooks(config: Any | None) -> WebhookDispatcher:
@@ -561,6 +575,7 @@ class HookManagerFactory:
         database: HubDatabase,
         config: Any | None,
         llm_service: LLMService | None,
+        llm_service_resolver: Callable[[], LLMService | None],
         transcript_processor: Any,
         memory_manager: MemoryManager,
         storage: _Storage,
@@ -615,6 +630,7 @@ class HookManagerFactory:
                 db=database,
                 execution_manager=pipeline_mgr,
                 llm_service=llm_service,
+                llm_service_resolver=llm_service_resolver,
                 loader=loader,
                 template_engine=template_engine,
                 tool_proxy_getter=tool_proxy_getter,

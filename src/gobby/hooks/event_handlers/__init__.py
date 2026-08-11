@@ -61,7 +61,7 @@ class EventHandlers(
         workflow_handler: WorkflowHookHandler | None = None,
         session_storage: HookSessionManager | None = None,
         session_task_manager: SessionTaskManager | None = None,
-        message_processor: Any | None = None,
+        message_processor_resolver: Callable[[], Any | None] | None = None,
         task_manager: LocalTaskManager | None = None,
         progress_tracker: ProgressTracker | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
@@ -87,7 +87,7 @@ class EventHandlers(
             workflow_handler: WorkflowHookHandler for lifecycle workflows
             session_storage: Compatibility alias for session_manager
             session_task_manager: SessionTaskManager for session-task links
-            message_processor: SessionMessageProcessor for message handling
+            message_processor_resolver: Resolves the current SessionMessageProcessor
             task_manager: LocalTaskManager for task operations
             session_coordinator: SessionCoordinator for session tracking
             session_end_auto_link_worker: Managed worker for session commit auto-linking
@@ -115,7 +115,7 @@ class EventHandlers(
         self._liveness_monitor: SessionLivenessMonitor | None = None
         self._workflow_handler = workflow_handler
         self._session_task_manager = session_task_manager
-        self._message_processor = message_processor
+        self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._task_manager = task_manager
         self._progress_tracker = progress_tracker
         self._worktree_manager = worktree_manager

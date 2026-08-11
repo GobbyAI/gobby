@@ -147,7 +147,7 @@ class TestGobbyRunnerInit:
                 "Authorization": "resolved-runtime-token"
             }
             repository = mocks_by_attribute["ConfigRepository"].return_value
-            repository.runtime_candidate.assert_called_once_with({})
+            repository.runtime_candidate.assert_called_once_with({}, {})
 
     async def test_trace_export_broadcasts_from_worker_thread(
         self,

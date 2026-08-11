@@ -46,7 +46,7 @@ def create_lifespan(
             "config": config,
             "broadcaster": server.broadcaster,
             "tool_proxy_getter": lambda: server.tool_proxy,
-            "message_processor": server.services.message_processor,
+            "message_processor_resolver": lambda: server.message_processor,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
             "config_runtime": server.services.config_runtime,
@@ -90,8 +90,9 @@ def create_lifespan(
         app.state.hook_manager.event_handlers.set_attention_metadata_store(
             server.services.attention_metadata_store
         )
-        if server.services.message_processor is not None:
-            server.services.message_processor.set_hook_manager(app.state.hook_manager)
+        message_processor = server.message_processor
+        if message_processor is not None:
+            message_processor.set_hook_manager(app.state.hook_manager)
 
         if server.services.database:
             from gobby.servers.pending_interactions import PendingInteractionManager
@@ -287,7 +288,7 @@ def create_lifespan(
                 dispatch_summaries_fn=getattr(
                     app.state.hook_manager, "_dispatch_session_summaries", None
                 ),
-                message_processor=getattr(app.state.hook_manager, "_message_processor", None),
+                message_processor_resolver=lambda: server.message_processor,
                 tmux_config=config.tmux if config else None,
             )
             app.state.liveness_monitor = liveness_monitor
@@ -393,8 +394,9 @@ def create_lifespan(
                 logger.exception("PendingInteractionManager cleanup failed: %s", e)
 
         if hasattr(app.state, "hook_manager"):
-            if server.services.message_processor is not None:
-                server.services.message_processor.set_hook_manager(None)
+            message_processor = server.message_processor
+            if message_processor is not None:
+                message_processor.set_hook_manager(None)
             hook_manager_shutdown = getattr(app.state.hook_manager, "shutdown_async", None)
             if not callable(hook_manager_shutdown):
                 raise RuntimeError("Hook manager must provide callable shutdown_async()")

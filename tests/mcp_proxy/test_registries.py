@@ -1,5 +1,5 @@
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -92,6 +92,31 @@ def test_setup_with_memory_manager_only() -> None:
     registry_names = [r.name for r in registries]
     assert "gobby-memory" in registry_names
     assert "gobby-workflows" in registry_names
+
+
+async def test_memory_registry_recovers_after_runtime_manager_rebuild() -> None:
+    mock_config = MagicMock()
+    mock_config.get_gobby_tasks_config.return_value.enabled = False
+    current: list[Any | None] = [None]
+
+    manager = setup_internal_registries(
+        _config=mock_config,
+        memory_manager_resolver=lambda: current[0],
+    )
+    registry = manager.get_registry("gobby-memory")
+    assert registry is not None
+
+    rebuilt = MagicMock()
+    rebuilt.get_stats = AsyncMock(return_value={"total": 1})
+    current[0] = rebuilt
+    with patch(
+        "gobby.utils.project_context.get_project_context",
+        return_value={"id": "11111111-1111-4111-8111-111111110001"},
+    ):
+        result = await registry.call("memory_stats", {})
+
+    assert result["stats"]["total"] == 1
+    rebuilt.get_stats.assert_awaited_once()
 
 
 def test_setup_with_metrics_manager_only() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from .models import Entity, Relationship, _GraphEntity
@@ -75,11 +76,13 @@ class KnowledgeGraphExtractor:
     def __init__(
         self,
         prompt_loader: PromptLoader,
-        llm_service: JSONFeatureProvider,
+        llm_service: JSONFeatureProvider | None,
         feature_config: MemoryKnowledgeGraphConfig,
+        llm_service_resolver: Callable[[], JSONFeatureProvider | None] | None = None,
     ) -> None:
         self._prompt_loader = prompt_loader
         self._llm_service = llm_service
+        self._llm_service_resolver = llm_service_resolver or (lambda: self._llm_service)
         self._feature_config = feature_config
 
     async def _generate_json(
@@ -89,7 +92,10 @@ class KnowledgeGraphExtractor:
         system_prompt: str | None = None,
         caller: str,
     ) -> dict[str, Any]:
-        response = await self._llm_service.call_json_feature(
+        llm_service = self._llm_service_resolver()
+        if llm_service is None:
+            raise RuntimeError("Knowledge graph extraction requires an available LLM service")
+        response = await llm_service.call_json_feature(
             self._feature_config,
             prompt,
             system_prompt=system_prompt,

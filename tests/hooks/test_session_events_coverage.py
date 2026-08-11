@@ -79,7 +79,8 @@ class _TestHandler(SessionEventHandlerMixin):
         self._session_manager.update.return_value = None
         self._session_coordinator = MagicMock()
         self._session_end_auto_link_worker = None
-        self._message_processor = MagicMock()
+        message_processor = MagicMock()
+        self._message_processor_resolver = lambda: message_processor
         self._task_manager = MagicMock()
         self._workflow_handler = MagicMock()
         self._workflow_config = None
@@ -210,7 +211,7 @@ class TestHandleSessionEnd:
         # Should call auto_link_commits and complete_agent_run
         handler._task_manager = MagicMock()
         handler._session_coordinator.complete_agent_run.assert_called_once()
-        handler._message_processor.unregister_session.assert_called_with("sess-1")
+        handler._message_processor_resolver().unregister_session.assert_called_with("sess-1")
         handler._session_manager.update_status_if_non_terminal.assert_called_with(
             "sess-1", "expired"
         )
@@ -238,7 +239,7 @@ class TestHandleSessionEnd:
         handler.handle_session_end(event)
 
         assert event.metadata.get("_platform_session_id") == "db-sess-1"
-        handler._message_processor.unregister_session.assert_called_with("db-sess-1")
+        handler._message_processor_resolver().unregister_session.assert_called_with("db-sess-1")
 
     def test_handle_session_end_exceptions(self) -> None:
         handler = _TestHandler()
@@ -247,7 +248,9 @@ class TestHandleSessionEnd:
 
         # Setting up exceptions
         handler._session_coordinator.complete_agent_run.side_effect = Exception("test run")
-        handler._message_processor.unregister_session.side_effect = Exception("test proc")
+        handler._message_processor_resolver().unregister_session.side_effect = Exception(
+            "test proc"
+        )
         handler._session_manager.update_status_if_non_terminal.side_effect = Exception(
             "test storage"
         )
@@ -372,7 +375,7 @@ class TestSessionStartAndHelpers:
 
             handler._session_manager.register_session.assert_called_once()
             handler._session_coordinator.register_session.assert_called_with("ext-1")
-            handler._message_processor.register_session.assert_called_with(
+            handler._message_processor_resolver().register_session.assert_called_with(
                 "new-sess-1", "/tmp/transcript.json", source="claude"
             )
             assert event.metadata["_platform_session_id"] == "new-sess-1"

@@ -70,6 +70,7 @@ class ServiceContainer:
     metrics_manager: Any | None = None  # ToolMetricsManager
     agent_runner: Any | None = None  # AgentRunner
     message_processor: Any | None = None  # SessionMessageProcessor
+    message_processor_resolver: Callable[[], Any | None] | None = None
 
     # Validation & Git
     task_validator: Any | None = None  # TaskValidator
@@ -145,6 +146,11 @@ class ServiceContainer:
         if self.db_executor is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self.db_executor.run(func, *args, **kwargs)
+
+    def resolve_message_processor(self) -> Any | None:
+        if self.message_processor_resolver is not None:
+            return self.message_processor_resolver()
+        return self.message_processor
 
     def db_executor_stats(self) -> dict[str, int | float | bool] | None:
         """Return DB executor diagnostics when configured."""

@@ -696,6 +696,7 @@ async def test_successful_rebuild_drops_failures_recorded_under_other_keys() -> 
     repository.index = 2
     await runtime.reconcile_revision(2)
     assert runtime.snapshot.failed_live_keys == {}
+    assert runtime.snapshot.active.ui.enabled is True
     await runtime.close()
 
 

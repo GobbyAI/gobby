@@ -99,7 +99,7 @@ class SessionLivenessMonitor:
         session_storage: Session manager for DB queries and status updates.
         dispatch_summaries_fn: Callback to generate session summaries.
             Signature: ``(session_id: str, background: bool, done_event) -> None``
-        message_processor: Optional session message processor for cleanup.
+        message_processor_resolver: Resolves the current message processor for cleanup.
         poll_interval: Seconds between polls (default 30).
     """
 
@@ -108,14 +108,14 @@ class SessionLivenessMonitor:
         session_storage: SessionManager,
         dispatch_summaries_fn: Callable[..., None] | None = None,
         generate_summaries_fn: Callable[..., Coroutine[Any, Any, None]] | None = None,
-        message_processor: SessionMessageProcessor | None = None,
+        message_processor_resolver: Callable[[], SessionMessageProcessor | None] | None = None,
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         tmux_config: TmuxConfig | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
         self._generate_summaries_fn = generate_summaries_fn
-        self._message_processor = message_processor
+        self._message_processor_resolver = message_processor_resolver or (lambda: None)
         self._poll_interval = poll_interval
         self._tmux_config = tmux_config
         self._task: asyncio.Task[None] | None = None
@@ -599,9 +599,10 @@ class SessionLivenessMonitor:
                     exc_info=True,
                 )
 
-        if self._message_processor:
+        message_processor = self._message_processor_resolver()
+        if message_processor is not None:
             try:
-                self._message_processor.unregister_session(session_id)
+                message_processor.unregister_session(session_id)
             except Exception:
                 logger.debug(
                     "SessionLivenessMonitor: failed to unregister session %s",

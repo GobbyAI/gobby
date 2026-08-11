@@ -536,11 +536,13 @@ class TestSessionStartPreCreatedSession:
 
         handlers.handle_session_start(event)
 
-        mock_dependencies["message_processor"].register_session.assert_called_once_with(
+        mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "sess-123", "/path/to/transcript.jsonl", source="claude"
         )
-        assert mock_dependencies["message_processor"].register_session.call_count == 1
-        assert mock_dependencies["message_processor"].register_session.call_args is not None
+        assert mock_dependencies["message_processor_resolver"]().register_session.call_count == 1
+        assert (
+            mock_dependencies["message_processor_resolver"]().register_session.call_args is not None
+        )
 
     def test_pre_created_session_message_processor_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -554,7 +556,7 @@ class TestSessionStartPreCreatedSession:
         mock_session.agent_run_id = None
 
         mock_dependencies["session_storage"].get.return_value = mock_session
-        mock_dependencies["message_processor"].register_session.side_effect = Exception(
+        mock_dependencies["message_processor_resolver"]().register_session.side_effect = Exception(
             "Registration failed"
         )
 
@@ -605,7 +607,7 @@ class TestSessionStartPreCreatedSession:
         assert response.metadata.get("is_pre_created") is True
         assert event.metadata["_platform_session_id"] == "sess-web-123"
         mock_dependencies["session_manager"].register_session.assert_not_called()
-        mock_dependencies["message_processor"].register_session.assert_called_once_with(
+        mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "sess-web-123",
             "/path/to/transcript.jsonl",
             source="claude",
@@ -1135,7 +1137,7 @@ class TestSessionStartNewSession:
         mock_dependencies["session_storage"].find_parent.assert_not_called()
         mock_dependencies["session_manager"].register_session.assert_not_called()
         mock_dependencies["session_coordinator"].register_session.assert_not_called()
-        mock_dependencies["message_processor"].register_session.assert_not_called()
+        mock_dependencies["message_processor_resolver"]().register_session.assert_not_called()
 
     def test_handoff_db_error_still_returns_session_banner(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -1348,11 +1350,50 @@ class TestSessionStartNewSession:
 
         handlers.handle_session_start(event)
 
-        mock_dependencies["message_processor"].register_session.assert_called_once_with(
+        mock_dependencies["message_processor_resolver"]().register_session.assert_called_once_with(
             "new-sess-456", "/path/to/transcript.jsonl", source="claude"
         )
-        assert mock_dependencies["message_processor"].register_session.call_count == 1
-        assert mock_dependencies["message_processor"].register_session.call_args is not None
+        assert mock_dependencies["message_processor_resolver"]().register_session.call_count == 1
+        assert (
+            mock_dependencies["message_processor_resolver"]().register_session.call_args is not None
+        )
+
+    def test_session_start_resolves_rebuilt_processor_and_disabled_tracking_noops(
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
+    ) -> None:
+        old_processor = MagicMock()
+        rebuilt_processor = MagicMock()
+        current: list[Any | None] = [old_processor]
+        mock_dependencies["message_processor_resolver"] = lambda: current[0]
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_manager"].register_session.side_effect = [
+            "new-sess-1",
+            "new-sess-2",
+        ]
+        handlers = EventHandlers(**mock_dependencies)
+
+        current[0] = rebuilt_processor
+        handlers.handle_session_start(
+            make_event(
+                HookEventType.SESSION_START,
+                session_id="ext-1",
+                data={"transcript_path": "/path/to/first.jsonl"},
+            )
+        )
+        rebuilt_processor.register_session.assert_called_once_with(
+            "new-sess-1", "/path/to/first.jsonl", source="claude"
+        )
+        old_processor.register_session.assert_not_called()
+
+        current[0] = None
+        handlers.handle_session_start(
+            make_event(
+                HookEventType.SESSION_START,
+                session_id="ext-2",
+                data={"transcript_path": "/path/to/second.jsonl"},
+            )
+        )
+        assert rebuilt_processor.register_session.call_count == 1
 
     def test_new_session_message_processor_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -1360,7 +1401,7 @@ class TestSessionStartNewSession:
         """Test error registering with message processor is handled."""
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
-        mock_dependencies["message_processor"].register_session.side_effect = Exception(
+        mock_dependencies["message_processor_resolver"]().register_session.side_effect = Exception(
             "Registration failed"
         )
 

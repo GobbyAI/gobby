@@ -555,6 +555,30 @@ class TestAddToGraph:
         assert "Ignored 1 unknown relationship deletion ID selection(s)" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_extractor_resolves_current_llm_service(
+        self,
+        mock_llm: AsyncMock,
+        mock_prompt_loader: MagicMock,
+        mock_feature_config: MemoryKnowledgeGraphConfig,
+    ) -> None:
+        rebuilt_llm = AsyncMock()
+        rebuilt_llm.call_json_feature.return_value = {"entities": []}
+        current = [mock_llm]
+        extractor = KnowledgeGraphExtractor(
+            mock_prompt_loader,
+            mock_llm,
+            mock_feature_config,
+            llm_service_resolver=lambda: current[0],
+        )
+        current[0] = rebuilt_llm
+
+        result = await extractor._generate_json("prompt", caller="memory.extract")
+
+        assert result == {"entities": []}
+        rebuilt_llm.call_json_feature.assert_awaited_once()
+        mock_llm.call_json_feature.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_delete_selector_deduplicates_canonical_triples_across_valid_ids(
         self,
         mock_llm: AsyncMock,

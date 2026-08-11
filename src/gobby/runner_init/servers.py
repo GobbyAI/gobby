@@ -110,7 +110,7 @@ def init_servers(runner: GobbyRunner) -> None:
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
         agent_runner=runner.agent_runner,
-        message_processor=runner.message_processor,
+        message_processor_resolver=lambda: runner.message_processor,
         task_validator=runner.task_validator,
         worktree_storage=runner.worktree_storage,
         clone_storage=runner.clone_storage,
@@ -184,8 +184,6 @@ def init_servers(runner: GobbyRunner) -> None:
     )
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
-
-    runner.http_server.message_processor = runner.message_processor
 
     if runner.communications_manager and runner.http_server.transcript_reader:
         from gobby.communications.native_plan_actions import NativePlanActionService

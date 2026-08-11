@@ -209,7 +209,7 @@ def make_service(
         wiki_gateway=FakeWikiGateway(events, success=wiki_success),
         code_gateway=FakeCodeGateway(events, success=code_success),
         vector_cleaner=lambda: vectors,
-        graph_cleaner=FakeGraphCleaner(events),
+        graph_cleaner=lambda: FakeGraphCleaner(events),
         drain_timeout=0.01,
     )
     return service, projects, vectors, events
@@ -279,6 +279,8 @@ async def test_unavailable_vector_store_fails_purge_before_destructive_cleanup()
     assert not result.success
     assert projects.get("p1") is not None
     assert projects.project.deleted_at is not None
+    assert "cron:disable" not in events
+    assert "cron:delete" not in events
     assert "fence:enter" not in events
     assert "hub:begin" not in events
 

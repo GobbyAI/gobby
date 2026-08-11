@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Callable
 from typing import Any, cast
 
 from opentelemetry.trace import Status, StatusCode
@@ -28,6 +29,7 @@ class PipelineExecutorStepMixin:
     completion_registry: Any
     execution_manager: Any
     llm_service: Any
+    _llm_service_resolver: Callable[[], Any]
     loader: Any
     pipeline_config: Any
     renderer: Any
@@ -90,7 +92,7 @@ class PipelineExecutorStepMixin:
                     return await _facade_attr("execute_prompt_step")(
                         rendered_step.prompt,
                         context,
-                        self.llm_service,
+                        self._llm_service_resolver(),
                         self.pipeline_config.prompt_step,
                     )
                 elif step.invoke_pipeline:

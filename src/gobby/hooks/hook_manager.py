@@ -9,6 +9,7 @@ import concurrent.futures
 import copy
 import logging
 import threading
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID
 
@@ -68,7 +69,7 @@ class HookManager:
         config: Any | None = None,
         broadcaster: Any | None = None,
         tool_proxy_getter: Any | None = None,
-        message_processor: Any | None = None,
+        message_processor_resolver: Callable[[], Any | None] | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
         config_runtime: "ConfigRuntimeReader | None" = None,
@@ -82,7 +83,6 @@ class HookManager:
         self.daemon_url = f"http://{daemon_host}:{daemon_port}"
         self.broadcaster = broadcaster
         self.tool_proxy_getter = tool_proxy_getter
-        self._message_processor = message_processor
         self._completion_registry = completion_registry
         self._owns_database = database is None and session_manager is None
         self._shutdown_complete = False
@@ -115,12 +115,13 @@ class HookManager:
             daemon_host=daemon_host,
             daemon_port=daemon_port,
             llm_service=llm_service,
+            llm_service_resolver=self._current_llm_service,
             config=config,
             hook_logger=self.logger,
             loop=self._loop,
             broadcaster=broadcaster,
             tool_proxy_getter=tool_proxy_getter,
-            message_processor=message_processor,
+            message_processor_resolver=message_processor_resolver or (lambda: None),
             agent_runner=agent_runner,
             completion_registry=completion_registry,
             config_runtime=config_runtime,
@@ -145,7 +146,6 @@ class HookManager:
         self._stop_registry = components.stop_registry
         self._progress_tracker = components.progress_tracker
         self._stuck_detector = components.stuck_detector
-        self._memory_manager = components.memory_manager
         self._workflow_loader = components.workflow_loader
         self._skill_manager = components.skill_manager
         self._pipeline_executor = components.pipeline_executor

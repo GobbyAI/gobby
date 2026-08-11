@@ -768,3 +768,33 @@ class TestExecutePromptStep:
         assert result == {"response": "LLM response"}
         mock_llm_service.call_feature.assert_awaited_once()
         assert mock_llm_service.call_feature.await_args.args[0] is pipeline_config.prompt_step
+
+    async def test_executor_prompt_step_resolves_current_llm_service(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        from gobby.workflows.definitions import PipelineStep
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+
+        rebuilt = MagicMock()
+        rebuilt.call_feature = AsyncMock(return_value="rotated response")
+        current = [mock_llm_service]
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            llm_service_resolver=lambda: current[0],
+        )
+        current[0] = rebuilt
+
+        result = await executor._execute_step(
+            PipelineStep(id="prompt", prompt="Use rotated credentials"),
+            {"inputs": {}, "steps": {}},
+            "project",
+        )
+
+        assert result == {"response": "rotated response"}
+        rebuilt.call_feature.assert_awaited_once()
+        mock_llm_service.call_feature.assert_not_awaited()

@@ -720,10 +720,6 @@ class TestInitSubsystems:
                 events.append("tracker-finish")
                 super().finish()
 
-        async def message_start() -> None:
-            events.append("message-start")
-            raise RuntimeError("message failed")
-
         async def communications_start() -> None:
             events.append("communications-start")
 
@@ -749,7 +745,8 @@ class TestInitSubsystems:
                 capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
             ),
             http_server=SimpleNamespace(services=services),
-            message_processor=SimpleNamespace(start=AsyncMock(side_effect=message_start)),
+            message_processor=SimpleNamespace(start=AsyncMock()),
+            agent_runner=None,
             communications_manager=SimpleNamespace(
                 start=AsyncMock(side_effect=communications_start)
             ),
@@ -796,7 +793,6 @@ class TestInitSubsystems:
             await runner_lifecycle_subsystems.init_subsystems(runner, AsyncMock(), tracker)
 
         assert events == [
-            "message-start",
             "communications-start",
             "lifecycle-start",
             "cron-start",
@@ -808,8 +804,8 @@ class TestInitSubsystems:
             "tracker-finish",
             "ready:True",
         ]
+        runner.message_processor.start.assert_not_awaited()
         assert tracker.errors == [
-            {"subsystem": "Message processor", "error": "message failed"},
             {"subsystem": "Session lifecycle manager", "error": "lifecycle failed"},
             {"subsystem": "Cron scheduler", "error": "cron failed"},
         ]
@@ -3173,8 +3169,11 @@ class TestMessageProcessorPreparedService:
         assert prepared.value is processor
         processor.start.assert_not_called()
 
-        prepared.activate()
-        await asyncio.sleep(0)
+        loop.set_debug(True)
+        try:
+            await asyncio.to_thread(prepared.activate)
+        finally:
+            loop.set_debug(False)
 
         assert runner.message_processor is processor
         assert processor.session_manager is runner.session_manager
@@ -3193,6 +3192,43 @@ class TestMessageProcessorPreparedService:
         runner = SimpleNamespace()
 
         assert _build_message_processor(runner, config, MagicMock()) is None
+
+
+class TestProjectPurgeRuntimeResolvers:
+    def test_vector_cleaner_is_noop_when_qdrant_url_is_unconfigured(self) -> None:
+        from gobby.projects.purge import NoopProjectVectorCleaner
+        from gobby.runner_init.orchestration import _resolve_project_vector_cleaner
+
+        active = DaemonConfig()
+        assert active.databases.qdrant.url is None
+        bundle = SimpleNamespace(snapshot=SimpleNamespace(active=active), services={})
+        runner = SimpleNamespace(
+            config_runtime=SimpleNamespace(capture=lambda: bundle),
+        )
+
+        assert isinstance(_resolve_project_vector_cleaner(runner), NoopProjectVectorCleaner)
+
+    def test_graph_cleaner_resolves_current_memory_bundle_each_run(self) -> None:
+        from gobby.runner_init.orchestration import _resolve_project_graph_cleaner
+
+        active = DaemonConfig()
+        first = object()
+        second = object()
+        services = {
+            "memory_services": SimpleNamespace(
+                memory_manager=SimpleNamespace(kg_service=first),
+            )
+        }
+        bundle = SimpleNamespace(snapshot=SimpleNamespace(active=active), services=services)
+        runner = SimpleNamespace(
+            config_runtime=SimpleNamespace(capture=lambda: bundle),
+        )
+
+        assert _resolve_project_graph_cleaner(runner) is first
+        services["memory_services"] = SimpleNamespace(
+            memory_manager=SimpleNamespace(kg_service=second),
+        )
+        assert _resolve_project_graph_cleaner(runner) is second
 
 
 class TestMessageProcessorWebSocketIntegration:
@@ -4043,10 +4079,10 @@ class TestAgentRestartRecoveryHelpers:
             ),
         ):
             first = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
-                runner
+                cast(GobbyRunner, runner)
             )
             second = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
-                runner
+                cast(GobbyRunner, runner)
             )
 
         assert first == 0
@@ -4098,7 +4134,9 @@ class TestAgentRestartRecoveryHelpers:
             ),
         ):
             delivered = (
-                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(runner)
+                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
+                    cast(GobbyRunner, runner)
+                )
             )
 
         assert delivered == 1
@@ -4173,7 +4211,9 @@ class TestAgentRestartRecoveryHelpers:
             ),
         ):
             delivered = (
-                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(runner)
+                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
+                    cast(GobbyRunner, runner)
+                )
             )
 
         assert delivered == 1

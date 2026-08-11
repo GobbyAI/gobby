@@ -143,7 +143,7 @@ class ProjectPurgeService:
         wiki_gateway: WikiGateway,
         code_gateway: CodeGateway,
         vector_cleaner: Callable[[], VectorCleaner],
-        graph_cleaner: GraphCleaner,
+        graph_cleaner: Callable[[], GraphCleaner],
         drain_timeout: float = 120.0,
         command_timeout: float = 120.0,
     ) -> None:
@@ -177,15 +177,15 @@ class ProjectPurgeService:
             if not deleted:
                 return PurgeOutcome.failed(project_id, "Failed to soft-delete project")
 
+        # Resolve runtime-bound dependencies before deleting cron jobs. A
+        # resolver failure leaves the retry mechanism intact.
+        vector_cleaner = self.vector_cleaner()
+        graph_cleaner = self.graph_cleaner()
         jobs = await asyncio.to_thread(self.cron.disable_project_jobs, project_id)
         job_ids = [str(job.id) for job in jobs]
         await self._drain_cron_runs(job_ids)
         await asyncio.to_thread(self.cron.delete_project_jobs, job_ids)
 
-        # Resolve the cleaner per run so the purge always targets the current
-        # runtime epoch's vector store; resolution failure fails the purge and
-        # the cron retries instead of silently orphaning vectors.
-        vector_cleaner = self.vector_cleaner()
         async with self.fence.exclusive(project_id, timeout=self.drain_timeout):
             async with self.gwiki_barrier.drain(project_id, timeout=self.drain_timeout):
                 pass
@@ -193,7 +193,7 @@ class ProjectPurgeService:
             await self._purge_wiki(project_id)
             await self._invalidate_code(project_id)
             await vector_cleaner.clear_project(project_id, memory_ids)
-            await self.graph_cleaner.clear_project_graph_strict(project_id)
+            await graph_cleaner.clear_project_graph_strict(project_id)
             await asyncio.to_thread(self._delete_hub_rows, project_id)
         return PurgeOutcome.purged(project_id)
 

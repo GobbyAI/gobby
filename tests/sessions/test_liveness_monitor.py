@@ -14,6 +14,7 @@ from gobby.sessions.liveness_monitor import (
     _TmuxLivenessInventory,
     _TmuxSocketIdentity,
 )
+from gobby.sessions.processor import SessionMessageProcessor
 from gobby.terminal_ownership import OwnershipReason, PaneOwnershipDecision
 
 
@@ -495,7 +496,7 @@ class TestConditionalExpiry:
         monitor = SessionLivenessMonitor(
             session_storage=cast(Any, storage),
             dispatch_summaries_fn=dispatch,
-            message_processor=processor,
+            message_processor_resolver=lambda: cast(SessionMessageProcessor, processor),
         )
 
         result = await monitor._expire_session("session")
@@ -513,7 +514,7 @@ class TestConditionalExpiry:
         monitor = SessionLivenessMonitor(
             session_storage=cast(Any, storage),
             dispatch_summaries_fn=dispatch,
-            message_processor=processor,
+            message_processor_resolver=lambda: cast(SessionMessageProcessor, processor),
         )
 
         result = await monitor._expire_session("session")
