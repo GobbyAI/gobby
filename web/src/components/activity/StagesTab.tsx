@@ -3,10 +3,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
 import { coarseHitAreaCls } from "../ui/controlStyles";
-import { SegmentedControl } from "../ui/SegmentedControl";
+import { useRegisterActivityActions } from "./activityActions";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
-import { PlusIcon } from "../icons/AppIcons";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   deleteProfile,
@@ -41,6 +40,7 @@ interface StagesTabProps {
 export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) {
   const [segment, setSegment] = useState<StageSegment>("stages");
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [stages, setStages] = useState<StageEntry[]>([]);
   const [profiles, setProfiles] = useState<BuildProfile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +126,38 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
     });
   };
 
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearch("");
+  };
+
+  const searchPlaceholder =
+    segment === "stages" ? "Search stages..." : "Search profiles...";
+
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: segment,
+        onChange: (value) => handleSegmentChange(value as StageSegment),
+        options: STAGE_SEGMENT_OPTIONS,
+        ariaLabel: "Stage surface",
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search stages and profiles",
+      },
+      ...(segment === "profiles"
+        ? {
+            onAdd: handleCreateProfile,
+            addLabel: "Profile",
+            addAriaLabel: "New profile",
+          }
+        : {}),
+    },
+    [segment, searchOpen],
+  );
+
   const withStageBusy = async (stage: StageEntry, action: () => Promise<void>) => {
     setBusyStageName(stage.name);
     setError(null);
@@ -177,34 +209,15 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
+      {searchOpen && (
+        <ActivityToolbarSearchRow
           value={search}
           onChange={setSearch}
-          placeholder={segment === "stages" ? "Search stages..." : "Search profiles..."}
+          placeholder={searchPlaceholder}
           ariaLabel="Search stages and profiles"
+          onClose={closeSearch}
         />
-        <SegmentedControl<StageSegment>
-          options={STAGE_SEGMENT_OPTIONS}
-          value={segment}
-          onChange={handleSegmentChange}
-          ariaLabel="Stage surface"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
-        />
-        {segment === "profiles" && (
-          <Button
-            type="button"
-            variant="accent"
-            size="sm"
-            className={`activity-panel-action-btn ml-auto ${coarseHitAreaCls}`}
-            onClick={handleCreateProfile}
-          >
-            <PlusIcon />
-            <span className="activity-panel-action-btn__label">Profile</span>
-          </Button>
-        )}
-      </div>
+      )}
       {error && (
         <Button
           type="button"

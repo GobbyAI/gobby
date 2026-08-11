@@ -119,7 +119,10 @@ export function SegmentedControl<T extends string>({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
               'segmented-control__option',
-              'inline-flex items-center justify-center px-[var(--segmented-option-px)]',
+              // min-w-0 lets a squeezed track shrink its options instead of
+              // letting them paint over neighboring controls; the inner span
+              // ellipsizes the label under that squeeze.
+              'inline-flex min-w-0 items-center justify-center px-[var(--segmented-option-px)]',
               // Options keep the track's visual height on touch (the bar
               // supplies the 44px row); the invisible ::before floors the tap
               // target at 44×44 instead of inflating the rendered box.
@@ -134,7 +137,9 @@ export function SegmentedControl<T extends string>({
               disabled && 'cursor-not-allowed opacity-50',
             )}
           >
-            {option.label}
+            <span className="segmented-control__option-label min-w-0 truncate">
+              {option.label}
+            </span>
           </button>
         )
       })}

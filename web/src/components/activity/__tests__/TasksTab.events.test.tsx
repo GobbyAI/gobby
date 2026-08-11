@@ -10,11 +10,16 @@ import {
 import {
   act,
   fireEvent,
-  render,
+  render as baseRender,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../ActivityActionsContext";
 import { TasksTab } from "../TasksTab";
 import {
   createMockFetch,
@@ -27,6 +32,20 @@ import {
   taskList,
   taskStatePayload,
 } from "./TasksTab.setup";
+
+// The tab's Filter / Search / New triggers render in the shared panel header
+// in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 let wsHandler: ((data: Record<string, unknown>) => void) | null = null;
 vi.mock("../../../hooks/useWebSocketEvent", () => ({

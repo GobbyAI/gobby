@@ -39,7 +39,9 @@ import { TaskCloseDialog } from "./TaskCloseDialog";
 import {
   TaskQuickMenu,
 } from "./TaskQuickMenu";
-import { TasksTabToolbar } from "./TasksTabToolbar";
+import { useRegisterActivityActions } from "./activityActions";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
+import { TasksTabFilters } from "./TasksTabFilters";
 import { TasksTabList } from "./TasksTabList";
 import { TaskCreateForm } from "../tasks/TaskCreateForm";
 import {
@@ -89,6 +91,7 @@ export const TasksTab = memo(function TasksTab({
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const {
     activeFilterCount,
@@ -198,12 +201,43 @@ export const TasksTab = memo(function TasksTab({
     tasksRef.current = tasks;
   }, [tasks]);
 
-  const { handleCreateTask } = useTaskActions({
+  const { handleCreateTask, handleOpenCreateTask } = useTaskActions({
     projectId,
     fetchTasks,
     setShowCreateTask,
     setActionError,
   });
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearch("");
+  }, []);
+
+  useRegisterActivityActions(
+    {
+      filter: {
+        open: showFilterDropdown,
+        onToggle: () => setShowFilterDropdown((v) => !v),
+        ariaLabel: "Filter tasks",
+        activeCount: activeFilterCount,
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search tasks",
+      },
+      onAdd: handleOpenCreateTask,
+      addAriaLabel: "New task",
+    },
+    [
+      showFilterDropdown,
+      setShowFilterDropdown,
+      activeFilterCount,
+      searchOpen,
+      closeSearch,
+      handleOpenCreateTask,
+    ],
+  );
 
   // WebSocket: real-time task event subscription
   const handleTaskEventRef = useRef<
@@ -605,19 +639,25 @@ export const TasksTab = memo(function TasksTab({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      <TasksTabToolbar
-        search={search}
-        onSearchChange={setSearch}
-        showFilterDropdown={showFilterDropdown}
-        onToggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
-        activeFilterCount={activeFilterCount}
-        statusFilters={statusFilters}
-        stagesRegistry={stagesRegistry}
-        selectedStageFilters={selectedStageFilters}
-        onFiltersApply={handleFiltersApply}
-        onCloseFilterDropdown={() => setShowFilterDropdown(false)}
-      />
+    <div className="relative flex flex-col h-full min-h-0">
+      {searchOpen && (
+        <ActivityToolbarSearchRow
+          value={search}
+          onChange={setSearch}
+          placeholder="Search"
+          ariaLabel="Search tasks"
+          onClose={closeSearch}
+        />
+      )}
+      {showFilterDropdown && (
+        <TasksTabFilters
+          filters={statusFilters}
+          stages={stagesRegistry}
+          selectedStages={selectedStageFilters}
+          onApply={handleFiltersApply}
+          onClose={() => setShowFilterDropdown(false)}
+        />
+      )}
       {actionError && (
         <div
           className="px-2.5 py-1.5 border-b border-border text-xs"

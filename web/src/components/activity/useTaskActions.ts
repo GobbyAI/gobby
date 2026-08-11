@@ -1,7 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 
 import type { CreateTaskParams } from "../tasks/TaskCreateForm";
-import { useRegisterActivityActions } from "./activityActions";
 import { getBaseUrl } from "./TasksTabData";
 
 interface UseTaskActionsOptions {
@@ -13,6 +12,7 @@ interface UseTaskActionsOptions {
 
 interface UseTaskActionsResult {
   handleCreateTask: (params: CreateTaskParams) => Promise<unknown>;
+  handleOpenCreateTask: () => void;
 }
 
 function describeCaughtError(err: unknown): string {
@@ -96,13 +96,5 @@ export function useTaskActions({
     [setShowCreateTask],
   );
 
-  useRegisterActivityActions(
-    {
-      onAdd: handleOpenCreateTask,
-      addAriaLabel: "New task",
-    },
-    [handleOpenCreateTask],
-  );
-
-  return { handleCreateTask };
+  return { handleCreateTask, handleOpenCreateTask };
 }

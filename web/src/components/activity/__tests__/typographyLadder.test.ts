@@ -102,7 +102,6 @@ describe('activity-panel typography ladder (#14245)', () => {
   it('keeps status-bar controls at desktop visual height on touch devices', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
-    const tasksToolbarSource = readSource('src/components/activity/TasksTabToolbar.tsx')
     const filterPrimitivesSource = readSource('src/components/activity/FilterPrimitives.tsx')
     const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
@@ -118,7 +117,6 @@ describe('activity-panel typography ladder (#14245)', () => {
     expect(commandBarSource).toContain('min-h-[var(--status-bar-control-height)]')
     expect(activitySource).toContain('activity-panel-tabs')
     expect(activitySource).toContain('px-3')
-    expect(tasksToolbarSource).toContain('ml-auto')
     expect(filterPrimitivesSource).toContain('relative aria-expanded:border-')
     expect(filterPrimitivesSource).toContain('data-filter-active-count')
     expect(filterPrimitivesSource).toContain('absolute -right-1 -top-1')

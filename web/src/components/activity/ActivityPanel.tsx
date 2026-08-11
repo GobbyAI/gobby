@@ -224,7 +224,7 @@ function ActivityDropdown({
           <span className="activity-panel-tab-icon flex items-center justify-center">
             {activeTabConfig.icon}
           </span>
-          <span>{activeTabConfig.label}</span>
+          <span className="min-w-0 truncate">{activeTabConfig.label}</span>
         </span>
         <DropdownCaret open={isOpen} />
       </Button>

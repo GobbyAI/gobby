@@ -7,7 +7,12 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
+import { fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../ActivityActionsContext";
 import { TasksTab } from "../TasksTab";
 import {
   createMockFetch,
@@ -19,6 +24,20 @@ import {
   stagePayload,
   taskStatePayload,
 } from "./TasksTab.setup";
+
+// The tab's Filter / Search / New triggers render in the shared panel header
+// in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: () => {},
@@ -125,7 +144,7 @@ describe("TasksTab — filters", () => {
       screen.getByLabelText("Status: Development: Needs Review · Claimed"),
     ).toBeTruthy();
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 
     expect(screen.getByText("Stage")).toBeTruthy();
     expect(screen.getByText("Stage state")).toBeTruthy();
@@ -147,7 +166,7 @@ describe("TasksTab — filters", () => {
     });
 
     mockFetch.fn.mockClear();
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
@@ -168,7 +187,7 @@ describe("TasksTab — filters", () => {
     });
 
     mockFetch.fn.mockClear();
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Development" }));
     fireEvent.click(await screen.findByRole("checkbox", { name: "Operator Review" }));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
@@ -206,7 +225,7 @@ describe("TasksTab — filters", () => {
 
     render(<TasksTab projectId="proj-1" />);
 
-    fireEvent.click(await screen.findByTitle("Filter by task state"));
+    fireEvent.click(await screen.findByRole("button", { name: "Filter tasks" }));
 
     expect(await screen.findByRole("checkbox", { name: "Development" })).toBeTruthy();
     expect(screen.queryByRole("checkbox", { name: "Test Architecture" })).toBeNull();

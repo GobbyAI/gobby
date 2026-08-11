@@ -1,11 +1,11 @@
 import { memo, useMemo, useState } from 'react'
 import { ResizeHandle } from '../shared/ResizeHandle'
-import { SegmentedControl } from '../ui/SegmentedControl'
 import { Button } from '../ui/Button'
 import { coarseHitAreaCls } from '../ui/controlStyles'
 import { formatTime } from '../shared/executions/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
+import { useRegisterActivityActions } from './activityActions'
 import { ActivityPanelEmpty, TracesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityRowStatusDot } from './ActivityRowStatusDot'
 
@@ -62,23 +62,24 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
     setDisplayLimitState({ filter: nextStatusFilter, limit: PAGE_SIZE })
   }
 
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: statusFilter,
+        onChange: (value) => handleStatusFilterChange(value as StatusFilter),
+        options: FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label })),
+        ariaLabel: 'Trace status filter',
+      },
+    },
+    [statusFilter],
+  )
+
   if (isLoading && traces.length === 0) {
     return <ActivityPanelEmpty body="Loading traces…" />
   }
 
   return (
     <div className="flex flex-col h-full">
-      <div className="activity-panel-toolbar">
-        <SegmentedControl<StatusFilter>
-          value={statusFilter}
-          onChange={handleStatusFilterChange}
-          options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
-          ariaLabel="Trace status filter"
-          controlHeight="sm"
-          className="ml-auto"
-        />
-      </div>
-
       {error && (
         <p role="alert" className="border-b border-border px-3 py-1.5 text-xs text-destructive">
           {error}

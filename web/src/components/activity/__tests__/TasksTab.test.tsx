@@ -7,8 +7,9 @@ import {
   beforeEach,
   afterEach,
 } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render as baseRender, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement, ReactNode } from "react";
 import {
   ActivityActionButtons,
   ActivityActionsProvider,
@@ -24,6 +25,20 @@ import {
   stagePayload,
   taskStatePayload,
 } from "./TasksTab.setup";
+
+// The tab's Filter / Search / New triggers render in the shared panel header
+// in the real layout; mount it alongside the tab so those controls are
+// reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: () => {},
@@ -92,7 +107,7 @@ describe("TasksTab", () => {
     mockFetch.resetRoutes();
     mockFetch.mockErrorResponse(/\/api\/tasks\?/, 500);
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     fireEvent.click(screen.getByLabelText("Closed"));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
@@ -112,7 +127,7 @@ describe("TasksTab", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
 
     await waitFor(() => {
       expect(screen.getByLabelText("Development")).toBeChecked();
@@ -267,7 +282,7 @@ describe("TasksTab", () => {
       expect(screen.getByText("Plain ready task")).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     expect(screen.getByLabelText("Review Rejected")).toBeChecked();
 
     fireEvent.click(screen.getByLabelText("Ready"));
@@ -278,7 +293,7 @@ describe("TasksTab", () => {
       expect(screen.queryByText("Plain ready task")).toBeNull();
     });
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     fireEvent.click(screen.getByLabelText("Review Rejected"));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 
@@ -324,7 +339,7 @@ describe("TasksTab", () => {
       ).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTitle("Filter by task state"));
+    fireEvent.click(screen.getByRole("button", { name: "Filter tasks" }));
     fireEvent.click(screen.getByLabelText("Closed"));
     fireEvent.click(screen.getByRole("button", { name: "Apply" }));
 

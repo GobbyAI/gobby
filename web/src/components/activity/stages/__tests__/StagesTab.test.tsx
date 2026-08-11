@@ -1,9 +1,28 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render as baseRender, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from "../../ActivityActionsContext";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { StagesTab } from "../../StagesTab";
+
+// The tab's segment selector, Search, and New Profile triggers render in the
+// shared panel header in the real layout; mount it alongside the tab so those
+// controls are reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  );
+}
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness });
 
 vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,

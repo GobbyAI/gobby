@@ -2,14 +2,13 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { Button } from '../ui/Button'
-import { SegmentedControl } from '../ui/SegmentedControl'
 import { coarseHitAreaCls } from '../ui/controlStyles'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
 import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
+import { useRegisterActivityActions } from './activityActions'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityFilterDropdown } from './ActivityFilterDropdown'
-import { FilterDropdownTrigger } from './FilterPrimitives'
 import {
   deletePipelineDefinition,
   exportPipelineYaml,
@@ -287,6 +286,28 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     })
   }, [])
 
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: segment,
+        onChange: (value) => handleSegmentChange(value as PipelineSegment),
+        options: PIPELINE_SEGMENT_OPTIONS,
+        ariaLabel: 'Pipeline surface',
+      },
+      ...(segment === 'live'
+        ? {
+            filter: {
+              open: showFilterDropdown,
+              onToggle: () => setShowFilterDropdown((v) => !v),
+              ariaLabel: 'Filter pipelines',
+              activeCount: statusFilter === 'all' ? 0 : 1,
+            },
+          }
+        : {}),
+    },
+    [segment, handleSegmentChange, showFilterDropdown, statusFilter],
+  )
+
   const handleSaveDefinition = useCallback(async (draft: PipelineDefinition) => {
     const updated = await updatePipelineDefinition(draft.id, {
       description: draft.description ?? '',
@@ -398,53 +419,17 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
   }, [detailExec?.steps])
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="relative flex flex-col h-full">
       {ConfirmDialogElement}
-      {/* Toolbar */}
-      <div className="activity-panel-toolbar">
-        <SegmentedControl<PipelineSegment>
-          options={PIPELINE_SEGMENT_OPTIONS}
-          value={segment}
-          onChange={handleSegmentChange}
-          ariaLabel="Pipeline surface"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
+      {segment === 'live' && showFilterDropdown && (
+        <ActivityFilterDropdown<StatusFilter>
+          value={statusFilter}
+          options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
+          onChange={setStatusFilter}
+          onClose={() => setShowFilterDropdown(false)}
+          ariaLabel="Pipeline status filter"
         />
-        {segment === 'live' && (
-          <FilterDropdownTrigger
-            open={showFilterDropdown}
-            activeCount={statusFilter === 'all' ? 0 : 1}
-            className="ml-auto"
-            onClick={() => setShowFilterDropdown((v) => !v)}
-            title="Filter pipelines"
-            aria-label="Filter pipelines"
-            icon={
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-              </svg>
-            }
-          />
-        )}
-        {segment === 'live' && showFilterDropdown && (
-          <ActivityFilterDropdown<StatusFilter>
-            value={statusFilter}
-            options={FILTER_OPTIONS.map((o) => ({ value: o.id, label: o.label }))}
-            onChange={setStatusFilter}
-            onClose={() => setShowFilterDropdown(false)}
-            ariaLabel="Pipeline status filter"
-          />
-        )}
-      </div>
+      )}
 
       {segment === 'defs' ? (
         <>

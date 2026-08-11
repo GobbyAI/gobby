@@ -35,13 +35,15 @@ export function ActivityFilterDropdown<T extends string>({
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
 
+  // Anchored to the tab body (relative) just under the panel header — the
+  // trigger lives in the shared header toolbar, not inside the tab.
   return (
     <FilterDropdownShell
       panelRef={panelRef}
       onClose={onClose}
       role="listbox"
       ariaLabel={ariaLabel}
-      className="absolute top-full right-2 w-[min(220px,calc(100vw-1.5rem))] p-1"
+      className="absolute top-1 right-2 w-[min(220px,calc(100vw-1.5rem))] p-1"
     >
       {options.map((option) => {
         const isActive = option.value === value;

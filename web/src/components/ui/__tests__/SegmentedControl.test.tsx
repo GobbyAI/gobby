@@ -164,4 +164,17 @@ describe('SegmentedControl', () => {
 
     expect(screen.getByRole('radio', { name: 'Readable label' })).toBeInTheDocument()
   })
+
+  it('keeps squeezed options from painting over neighbors', () => {
+    // A flex parent that squeezes the track must shrink the options
+    // (min-w-0) and ellipsize their labels rather than let them overflow
+    // onto adjacent header controls (#20044).
+    renderControl()
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).toHaveClass('min-w-0')
+      const label = radio.querySelector('.segmented-control__option-label')
+      expect(label).not.toBeNull()
+      expect(label).toHaveClass('min-w-0', 'truncate')
+    }
+  })
 })

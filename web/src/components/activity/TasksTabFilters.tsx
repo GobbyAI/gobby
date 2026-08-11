@@ -78,7 +78,7 @@ export function TasksTabFilters({
       onClose={onClose}
       outsideInteraction="primary-mousedown"
       ariaLabel="Task filters"
-      className="absolute top-full right-2 w-[min(24rem,calc(100vw-1.5rem))]"
+      className="absolute top-1 right-2 w-[min(24rem,calc(100vw-1.5rem))]"
     >
         <div className="grid grid-cols-2 divide-x divide-border">
           {/* Left column: Stage list (single column, all stages) */}

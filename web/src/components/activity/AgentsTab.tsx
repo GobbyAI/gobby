@@ -2,11 +2,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { ResizeHandle } from "../shared/ResizeHandle";
-import { Button } from "../ui/Button";
-import { SegmentedControl } from "../ui/SegmentedControl";
+import { useRegisterActivityActions } from "./activityActions";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
-import { PlusIcon } from "../icons/AppIcons";
+import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   deleteAgentDefinition,
@@ -40,6 +38,7 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<AgentSourceFilter>("installed");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
@@ -113,6 +112,31 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
     });
   };
 
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearch("");
+  };
+
+  useRegisterActivityActions(
+    {
+      selector: {
+        value: sourceFilter,
+        onChange: (value) => setSourceFilter(value as AgentSourceFilter),
+        options: AGENT_SOURCE_OPTIONS,
+        ariaLabel: "Agent source",
+      },
+      search: {
+        open: searchOpen,
+        onToggle: searchOpen ? closeSearch : () => setSearchOpen(true),
+        ariaLabel: "Search agents",
+      },
+      onAdd: handleCreate,
+      addLabel: "Agent",
+      addAriaLabel: "New agent",
+    },
+    [sourceFilter, searchOpen],
+  );
+
   const handleSave = useCallback(
     async (definitionId: string | null, draft: AgentDraft) => {
       const saved = await saveAgentDraft({ definitionId, draft, projectId });
@@ -170,34 +194,15 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
       {ConfirmDialogElement}
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
+      {searchOpen && (
+        <ActivityToolbarSearchRow
           value={search}
           onChange={setSearch}
           placeholder="Search agents..."
           ariaLabel="Search agents"
+          onClose={closeSearch}
         />
-        <SegmentedControl
-          options={AGENT_SOURCE_OPTIONS}
-          value={sourceFilter}
-          onChange={setSourceFilter}
-          ariaLabel="Agent source"
-          controlHeight="sm"
-        />
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn ml-auto"
-          onClick={handleCreate}
-          // The visible label collapses to icon-only in narrow panels; the
-          // aria-label keeps the accessible name stable at every width.
-          aria-label="New agent"
-        >
-          <PlusIcon />
-          <span className="activity-panel-action-btn__label">Agent</span>
-        </Button>
-      </div>
+      )}
       {error && (
         <div className="border-b border-border bg-[var(--color-error-soft)] px-3 py-2 text-sm text-error">
           {error}

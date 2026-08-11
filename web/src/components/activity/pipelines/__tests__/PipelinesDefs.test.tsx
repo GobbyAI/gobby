@@ -1,7 +1,25 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render as baseRender, screen, waitFor, within } from '@testing-library/react'
+import type { ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  ActivityActionButtons,
+  ActivityActionsProvider,
+} from '../../ActivityActionsContext'
 import { PipelinesTab } from '../../PipelinesTab'
 import { createMockFetch, type MockFetchInstance } from '../../../../test/mocks/fetch'
+
+// The tab's segment selector renders in the shared panel header in the real
+// layout; mount it alongside the tab so the control is reachable in tests.
+function HeaderHarness({ children }: { children: ReactNode }) {
+  return (
+    <ActivityActionsProvider>
+      <ActivityActionButtons />
+      {children}
+    </ActivityActionsProvider>
+  )
+}
+
+const render = (ui: ReactElement) => baseRender(ui, { wrapper: HeaderHarness })
 
 vi.mock('../../../shared/ResizeHandle', () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
