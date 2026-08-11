@@ -108,6 +108,13 @@ function buildCodeBlockTheme(base: PrismStyle): PrismStyle {
       background: 'transparent',
       fontFamily: CODE_CHROME_TYPOGRAPHY.fontFamily,
       textShadow: 'none',
+      // One Dark/Light pin `white-space: pre` on the inner <code>, which beats
+      // any pre-wrap a consumer sets on the surrounding <pre> — mono content
+      // then lays out at full line width and gets clipped by overflow-hidden
+      // ancestors (#19186). Inherit instead, so each surface's pre-level
+      // customStyle decides the wrap policy (tool cards wrap; file viewers and
+      // desktop fences keep `pre` + scroll).
+      whiteSpace: 'inherit',
     },
   }
 }

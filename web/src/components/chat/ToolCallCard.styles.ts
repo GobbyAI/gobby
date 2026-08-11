@@ -25,5 +25,5 @@ export const TOOL_RESULT_CUSTOM_STYLE = {
 }
 
 export const TOOL_ERROR_PRE_CLASS =
-  'bg-destructive/30 rounded p-2 whitespace-pre-wrap break-words ' +
+  'bg-destructive/30 rounded p-2 whitespace-pre-wrap [overflow-wrap:anywhere] ' +
   'overflow-x-hidden text-destructive-foreground'

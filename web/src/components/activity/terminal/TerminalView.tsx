@@ -392,7 +392,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
             >
               <div className="flex flex-col gap-1">
                 <strong className="font-semibold">Terminal renderer unavailable</strong>
-                <span className="overflow-wrap-break-word text-[var(--text-secondary)]">
+                <span className="[overflow-wrap:anywhere] text-[var(--text-secondary)]">
                   {resolution.message}
                 </span>
               </div>

@@ -4,12 +4,15 @@ import { cn } from '../../lib/utils'
 import { useResolvedTheme } from '../../hooks/useResolvedTheme'
 import { getCodeBlockTheme } from '../shared/codeBlockTheme'
 
-const JSON_BLOCK_CLASS = 'overflow-hidden whitespace-pre-wrap'
+// Mono overflow contract (.impeccable.md): pre-wrap + overflow-wrap:anywhere.
+// `break-word` keeps a long token's full width as the min-content size, so a
+// min-width-constrained ancestor lets the block outgrow the viewport and the
+// card's overflow-hidden clips it mid-word; `anywhere` wraps instead.
+const JSON_BLOCK_CLASS = 'overflow-hidden whitespace-pre-wrap [overflow-wrap:anywhere]'
 
 interface JsonBlockProps {
   value: unknown
   className?: string
-  breakMode?: 'words' | 'all'
   testId?: string
 }
 
@@ -28,18 +31,11 @@ function formatJsonValue(value: unknown): string {
 export function JsonBlock({
   value,
   className,
-  breakMode = 'words',
   testId,
 }: JsonBlockProps) {
   const resolvedTheme = useResolvedTheme()
   return (
-    <div
-      className={cn(
-        JSON_BLOCK_CLASS,
-        breakMode === 'all' ? 'break-all' : 'break-words',
-        className,
-      )}
-    >
+    <div className={cn(JSON_BLOCK_CLASS, className)}>
       <SyntaxHighlighter
         data-testid={testId}
         style={getCodeBlockTheme(resolvedTheme)}
@@ -57,7 +53,7 @@ export function JsonBlock({
           overflowY: 'auto',
           overflowX: 'hidden',
           whiteSpace: 'pre-wrap',
-          overflowWrap: breakMode === 'all' ? 'anywhere' : 'break-word',
+          overflowWrap: 'anywhere',
         }}
       >
         {formatJsonValue(value)}

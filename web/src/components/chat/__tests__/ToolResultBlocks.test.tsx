@@ -47,6 +47,16 @@ describe('JsonResultBlock', () => {
     expect(pre?.className).not.toMatch(/bg-/)
     expect(pre?.className).toContain('text-foreground')
   })
+
+  it('wraps long tokens per the mono overflow contract (#19186)', () => {
+    const { container } = render(<JsonResultBlock value={'{"k":"v"}'} />)
+    const pre = container.querySelector('pre')
+    // pre-wrap + overflow-wrap:anywhere; `break-word` would leave the block's
+    // min-content at full token width and let ancestors clip it mid-word.
+    expect(pre?.className).toContain('whitespace-pre-wrap')
+    expect(pre?.className).toContain('[overflow-wrap:anywhere]')
+    expect(pre?.className).not.toContain('break-words')
+  })
 })
 
 describe('tool-result background (#14721)', () => {
@@ -54,6 +64,12 @@ describe('tool-result background (#14721)', () => {
     // CodeBlock/PlainBody/LineNumberedBody read this so the syntax block
     // does not paint var(--code-bg) over the tool card.
     expect(TOOL_RESULT_CUSTOM_STYLE.background).toBe('transparent')
+  })
+
+  it('pins the mono overflow contract on tool results (#19186)', () => {
+    expect(TOOL_RESULT_CUSTOM_STYLE.whiteSpace).toBe('pre-wrap')
+    expect(TOOL_RESULT_CUSTOM_STYLE.overflowWrap).toBe('anywhere')
+    expect(TOOL_RESULT_CUSTOM_STYLE.overflowX).toBe('hidden')
   })
 
 })

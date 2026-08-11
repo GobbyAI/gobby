@@ -618,7 +618,7 @@ function FileContent({
       <div className="min-h-0 flex-1 overflow-auto [&>div]:min-h-full">
         <div
           className={cn(
-            'message-content overflow-wrap-break-word px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]',
+            'message-content [overflow-wrap:anywhere] px-6 py-4 text-[length:var(--text-base)] leading-[1.7] text-[var(--text-primary)]',
             markdownBodyClassName,
           )}
         >

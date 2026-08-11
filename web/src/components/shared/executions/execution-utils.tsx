@@ -125,7 +125,7 @@ export function StepDisplay({
 
       {showOutput && step.output_json && (
         <div className="border-t border-border bg-[var(--bg-secondary)] px-3 py-2">
-          <pre className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words font-mono text-sm leading-[1.5] text-[var(--text-secondary)]">
+          <pre className="m-0 max-h-[200px] overflow-y-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-sm leading-[1.5] text-[var(--text-secondary)]">
             {formatJson(step.output_json)}
           </pre>
         </div>

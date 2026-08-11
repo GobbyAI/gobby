@@ -58,7 +58,7 @@ export interface JsonResultBlockProps {
 }
 
 const JSON_BLOCK_BASE = cn(
-  'rounded max-h-96 overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap break-words',
+  'rounded max-h-96 overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap [overflow-wrap:anywhere]',
   TOOL_CARD_SPACING.resultPad,
 )
 

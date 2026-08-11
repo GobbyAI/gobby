@@ -305,7 +305,7 @@ describe('ToolCallCards rendering', () => {
 
     expect(jsonBlock).not.toBeNull()
     expect(jsonBlock as HTMLElement).toHaveClass('whitespace-pre-wrap')
-    expect(jsonBlock as HTMLElement).toHaveClass('break-words')
+    expect(jsonBlock as HTMLElement).toHaveClass('[overflow-wrap:anywhere]')
     expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-x-auto')
     expect(jsonBlock as HTMLElement).not.toHaveClass('overflow-y-auto')
     expect((jsonBlock as HTMLElement).querySelector('code')).not.toBeNull()
@@ -313,6 +313,8 @@ describe('ToolCallCards rendering', () => {
     expect(screen.getByTestId('toolcall-json')).toHaveStyle({
       overflowY: 'auto',
       overflowX: 'hidden',
+      whiteSpace: 'pre-wrap',
+      overflowWrap: 'anywhere',
     })
   })
 
@@ -341,7 +343,7 @@ describe('ToolCallCards rendering', () => {
 
     expect(jsonBlock).not.toBeNull()
     expect(jsonBlock!).toHaveClass('whitespace-pre-wrap')
-    expect(jsonBlock!).toHaveClass('break-words')
+    expect(jsonBlock!).toHaveClass('[overflow-wrap:anywhere]')
     expect(jsonBlock!).not.toHaveClass('overflow-x-auto')
     expect(jsonBlock!.querySelector('code')).not.toBeNull()
   })

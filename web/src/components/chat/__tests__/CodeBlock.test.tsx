@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { CSSProperties } from 'react'
 
 // Mock IntersectionObserver so LazyHighlighter renders SyntaxHighlighter immediately
 vi.stubGlobal('IntersectionObserver', class {
@@ -13,13 +14,33 @@ vi.stubGlobal('IntersectionObserver', class {
   disconnect() {}
 })
 
-// Mock react-syntax-highlighter
+// Mock react-syntax-highlighter; expose wrap props so the mono overflow
+// contract (#19186) is assertable.
 vi.mock('react-syntax-highlighter', () => ({
-  Prism: ({ children, language }: { children: string; language: string }) => (
-    <pre data-testid="syntax-highlighter" data-language={language}>
+  Prism: ({
+    children,
+    language,
+    customStyle,
+    wrapLongLines,
+  }: {
+    children: string
+    language: string
+    customStyle?: CSSProperties
+    wrapLongLines?: boolean
+  }) => (
+    <pre
+      data-testid="syntax-highlighter"
+      data-language={language}
+      data-wrap-long-lines={wrapLongLines ? 'true' : 'false'}
+      style={customStyle}
+    >
       {children}
     </pre>
   ),
+}))
+
+vi.mock('../../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
 }))
 
 vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
@@ -33,6 +54,7 @@ vi.mock('../../../lib/utils', () => ({
 }))
 
 import { codeBlockComponents } from '../CodeBlock'
+import { useIsMobile } from '../../../hooks/useIsMobile'
 
 const CodeBlock = codeBlockComponents.code!
 const TableComponent = codeBlockComponents.table!
@@ -42,6 +64,7 @@ const ImageComponent = codeBlockComponents.img!
 describe('CodeBlock', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(useIsMobile).mockReturnValue(false)
   })
 
   it('renders inline code when no language and no newlines', () => {
@@ -60,6 +83,32 @@ describe('CodeBlock', () => {
 
     expect(screen.getByTestId('syntax-highlighter')).toBeTruthy()
     expect(screen.getByTestId('syntax-highlighter').dataset.language).toBe('typescript')
+  })
+
+  it('wraps fences on the mobile tier per the mono overflow contract (#19186)', () => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    render(
+      <CodeBlock className="language-typescript">
+        {'const x = 1;\nconst y = 2;'}
+      </CodeBlock>,
+    )
+
+    const pre = screen.getByTestId('syntax-highlighter')
+    expect(pre.dataset.wrapLongLines).toBe('true')
+    expect(pre).toHaveStyle({ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' })
+  })
+
+  it('keeps the desktop scroll affordance on fences', () => {
+    render(
+      <CodeBlock className="language-typescript">
+        {'const x = 1;\nconst y = 2;'}
+      </CodeBlock>,
+    )
+
+    const pre = screen.getByTestId('syntax-highlighter')
+    expect(pre.dataset.wrapLongLines).toBe('false')
+    expect(pre.style.whiteSpace).toBe('')
+    expect(pre.style.overflowWrap).toBe('')
   })
 
   it('shows language label in header', () => {

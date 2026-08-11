@@ -244,7 +244,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
             const startLine = group.lines[0].lineNum
             return (
               <div key={i}>
-                <div className="text-muted-foreground text-xs mb-1 font-mono">{group.filePath}</div>
+                <div className="text-muted-foreground text-xs mb-1 font-mono [overflow-wrap:anywhere]">{group.filePath}</div>
                 <CodeBlock
                   language={lang}
                   startingLineNumber={startLine}
@@ -264,7 +264,7 @@ function ToolResultContent({ call }: { call: ToolCall }) {
     const fileLines = resultStr.trim().split('\n').filter(l => l.trim())
     if (fileLines.length > 0) {
       return (
-        <div className="font-mono text-xs space-y-0.5 py-1">
+        <div className="font-mono text-xs space-y-0.5 py-1 [overflow-wrap:anywhere]">
           {fileLines.map((f, i) => (
             <div key={i} className="text-muted-foreground">{f}</div>
           ))}

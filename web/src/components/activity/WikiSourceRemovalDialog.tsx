@@ -61,7 +61,6 @@ export function WikiSourceRemovalDialog({
               <JsonBlock
                 value={preview ?? {}}
                 className="text-xs"
-                breakMode="all"
                 testId="wiki-removal-preview"
               />
             </div>

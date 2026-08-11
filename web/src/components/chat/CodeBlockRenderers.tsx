@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeBlock } from '../shared/CodeBlock'
 import { cn } from '../../lib/utils'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { Button } from '../ui/Button'
 
 export interface CodeProps {
@@ -12,6 +13,7 @@ export interface CodeProps {
 export function CodeBlockInner({ children, className }: CodeProps) {
   const [copied, setCopied] = useState(false)
   const copyTimeoutRef = useRef<number | null>(null)
+  const isMobile = useIsMobile()
 
   const match = /language-([\w+#\-./]+)/.exec(className || '')
   const language = match ? match[1] : ''
@@ -70,7 +72,17 @@ export function CodeBlockInner({ children, className }: CodeProps) {
       <CodeBlock
         language={language || 'text'}
         lazy
-        customStyle={{ margin: 0, borderRadius: 0 }}
+        wrapLongLines={isMobile}
+        customStyle={{
+          margin: 0,
+          borderRadius: 0,
+          // Mono overflow contract (.impeccable.md): on the mobile tier every
+          // mono block wraps; horizontal scrolling inside nested cards is
+          // banned on touch surfaces. Desktop keeps the scroll affordance.
+          ...(isMobile
+            ? { whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const }
+            : {}),
+        }}
       >
         {codeString}
       </CodeBlock>
