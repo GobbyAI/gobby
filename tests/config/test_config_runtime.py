@@ -22,7 +22,6 @@ from gobby.config.runtime import (
     UnavailableService,
 )
 from gobby.storage.config_notifications import ConfigNotificationListener, NotificationConnection
-from gobby.storage.config_repository import MAX_CONFIG_REVISION
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 FEATURE_LOW_PROFILE_DEFAULT_KEY = "ai.generation.profile_defaults.feature_low"
@@ -926,7 +925,7 @@ async def test_bogus_revision_request_unwedges_and_adopts_stored() -> None:
 
 
 @pytest.mark.asyncio
-async def test_listener_clamps_notification_payloads() -> None:
+async def test_listener_drops_out_of_domain_notification_payloads() -> None:
     class _Conn:
         autocommit = True
 
@@ -956,7 +955,52 @@ async def test_listener_clamps_notification_payloads() -> None:
     revisions = [revision async for revision in listener.revisions()]
     await listener.close()
 
-    assert revisions == [MAX_CONFIG_REVISION, 7]
+    assert revisions == [7]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_revision_request_survives_bogus_request_adoption() -> None:
+    class BlockingFinalReadRepository(FakeRepository):
+        def __init__(self, snapshots: list[StoredSnapshot]) -> None:
+            super().__init__(snapshots)
+            self.final_read_entered = threading.Event()
+            self.release_final_read = threading.Event()
+
+        def read_bounded(
+            self,
+            *,
+            resolve_secrets: bool = True,
+            statement_timeout_ms: int,
+            lock_timeout_ms: int,
+        ) -> StoredSnapshot:
+            captured = self.snapshots[self.index]
+            self.read_count += 1
+            if self.read_count == 4:
+                self.final_read_entered.set()
+                self.release_final_read.wait(1)
+            return captured
+
+    repository = BlockingFinalReadRepository(
+        [
+            stored_snapshot(0),
+            stored_snapshot(1, ui_enabled=True, changed={"ui.enabled": 1}),
+        ]
+    )
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+    await runtime.start()
+
+    bogus = asyncio.create_task(runtime.reconcile_revision(1 << 60))
+    await asyncio.to_thread(repository.final_read_entered.wait, 1)
+    legitimate = asyncio.create_task(runtime.reconcile_revision(1))
+    await wait_until(lambda: bool(runtime._pending_revision_requests))
+    repository.index = 1
+    repository.release_final_read.set()
+
+    bogus_snapshot, legitimate_snapshot = await asyncio.gather(bogus, legitimate)
+
+    assert bogus_snapshot.revision == 0
+    assert legitimate_snapshot.revision == 1
+    await runtime.close()
 
 
 @pytest.mark.asyncio
@@ -983,5 +1027,7 @@ async def test_revision_poll_heals_dead_listener() -> None:
     repository.index = 1
 
     await wait_until(lambda: runtime.capture().snapshot.revision == 1)
+    await wait_until(lambda: notifications.connect_count == 2)
     assert runtime.capture().snapshot.active.ui.enabled is True
+    assert runtime.healthy is True
     await runtime.close()

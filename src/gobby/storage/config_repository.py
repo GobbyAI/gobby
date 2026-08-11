@@ -109,7 +109,7 @@ class ConfigRepository:
             )
         with self.db.transaction() as transaction:
             transaction.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            revision = self._read_revision(transaction)
+            revision = self.read_revision(transaction)
             rows = self._read_rows(transaction)
             return self.snapshot_from_rows(
                 transaction,
@@ -137,7 +137,7 @@ class ConfigRepository:
             lock_timeout_ms=lock_timeout_ms,
             repeatable_read_read_only=True,
         ) as transaction:
-            revision = self._read_revision(transaction)
+            revision = self.read_revision(transaction)
             rows = self._read_rows(transaction)
             return self.snapshot_from_rows(
                 transaction,
@@ -153,7 +153,7 @@ class ConfigRepository:
     def reconcile_registry(self) -> frozenset[str]:
         """Repair derived secrecy flags and fail closed on residual keys."""
         with self.db.transaction() as transaction:
-            revision = self._read_revision(transaction, lock=True)
+            revision = self.read_revision(transaction, lock=True)
             rows = transaction.execute(
                 "SELECT key, value, is_secret, revision FROM config_store ORDER BY key FOR UPDATE"
             ).fetchall()
@@ -172,7 +172,7 @@ class ConfigRepository:
                 repaired.add(key)
             return frozenset(repaired)
 
-    def _read_revision(self, transaction: Transaction, *, lock: bool = False) -> int:
+    def read_revision(self, transaction: Transaction, *, lock: bool = False) -> int:
         suffix = " FOR UPDATE" if lock else ""
         row = transaction.execute(
             f"SELECT revision FROM config_state WHERE id = %s{suffix}",  # nosec B608
@@ -203,11 +203,7 @@ class ConfigRepository:
         ).fetchall()
         if not rows:
             raise ConfigRepositoryError("Configuration revision state is missing")
-        revision = int(rows[0]["global_revision"])
-        if not 0 <= revision <= MAX_CONFIG_REVISION:
-            raise ConfigRepositoryError(
-                f"Configuration revision is outside the safe domain: {revision}"
-            )
+        revision = self._validated_revision(rows[0], field="global_revision")
         return revision, [row for row in rows if row["key"] is not None]
 
     def snapshot_from_rows(
@@ -309,10 +305,10 @@ class ConfigRepository:
         return tuple(path)
 
     @staticmethod
-    def _validated_revision(row: Row | None) -> int:
+    def _validated_revision(row: Row | None, *, field: str = "revision") -> int:
         if row is None:
             raise ConfigRepositoryError("Configuration revision state is missing")
-        revision = int(row["revision"])
+        revision = int(row[field])
         if not 0 <= revision <= MAX_CONFIG_REVISION:
             raise ConfigRepositoryError(
                 f"Configuration revision is outside the safe domain: {revision}"

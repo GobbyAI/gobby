@@ -198,6 +198,12 @@ def test_dynamic_segment_codec_round_trip() -> None:
             assert CONFIG_REGISTRY.resolve(key) is pattern
 
 
+@pytest.mark.parametrize("value", ["", "\ud800"])
+def test_dynamic_segment_codec_rejects_unencodable_input(value: str) -> None:
+    with pytest.raises(ValueError):
+        encode_dynamic_segment(value)
+
+
 def test_machine_exported_secret_specs_are_rejected_at_registry_load() -> None:
     """The registry fails closed if a secret-bearing key enters the machine export."""
     from gobby.config.registry import ConfigKeySpec, ConfigRegistry, PatternFieldSpec, RegistryError
@@ -245,6 +251,4 @@ def test_no_machine_exported_spec_carries_secrets() -> None:
     for spec in CONFIG_REGISTRY.specs:
         if spec.machine_export or spec.visibility is ConfigVisibility.MACHINE:
             assert spec.secrecy is ConfigSecrecy.NONE, spec.key
-            assert all(
-                field.secrecy is ConfigSecrecy.NONE for field in spec.field_specs
-            ), spec.key
+            assert all(field.secrecy is ConfigSecrecy.NONE for field in spec.field_specs), spec.key

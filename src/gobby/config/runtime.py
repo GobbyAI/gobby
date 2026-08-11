@@ -129,7 +129,9 @@ class ConfigRuntime:
         self._secret_identity_verifier = secret_identity_verifier
         self._managed_resolver = managed_resolver
         self._reconcile_lock = asyncio.Lock()
+        self._reconnect_lock = asyncio.Lock()
         self._max_requested_revision = -1
+        self._pending_revision_requests: dict[object, int] = {}
         self._bundle: RuntimeActiveBundle | None = None
         self._listener_task: asyncio.Task[None] | None = None
         self._poll_task: asyncio.Task[None] | None = None
@@ -222,9 +224,15 @@ class ConfigRuntime:
         if self._closed:
             raise RuntimeError("ConfigRuntime is closed")
         revision = min(revision, MAX_CONFIG_REVISION)
+        request = object()
+        self._pending_revision_requests[request] = revision
         self._max_requested_revision = max(self._max_requested_revision, revision)
-        async with self._reconcile_lock:
-            return await self._reconcile_locked(force=False)
+        try:
+            async with self._reconcile_lock:
+                self._pending_revision_requests.pop(request, None)
+                return await self._reconcile_locked(force=False)
+        finally:
+            self._pending_revision_requests.pop(request, None)
 
     async def reprepare_subscriber(self, name: str) -> ConfigSnapshot:
         """Force one subscriber replacement at the currently adopted revision."""
@@ -422,6 +430,7 @@ class ConfigRuntime:
             if self._max_requested_revision > stored.revision:
                 if self._max_requested_revision != requested:
                     confirming_reads = 0
+                    await asyncio.sleep(self._CONFIRM_BACKOFF)
                     continue
                 confirming_reads += 1
                 if confirming_reads < self._CONFIRMING_READS:
@@ -435,7 +444,11 @@ class ConfigRuntime:
                     stored.revision,
                     confirming_reads,
                 )
-                self._max_requested_revision = stored.revision
+                pending_revision = max(
+                    self._pending_revision_requests.values(),
+                    default=stored.revision,
+                )
+                self._max_requested_revision = max(stored.revision, pending_revision)
             confirming_reads = 0
             if stored.revision <= current.revision:
                 return current
@@ -874,13 +887,14 @@ class ConfigRuntime:
                 continue
             bundle = self._bundle
             if bundle is not None and observed > bundle.snapshot.revision:
+                self._healthy = False
                 try:
-                    await self.reconcile_revision(observed)
+                    await self._reconnect()
                 except asyncio.CancelledError:
                     raise
                 except Exception:
                     logger.warning(
-                        "Configuration revision poll reconciliation failed",
+                        "Configuration revision poll reconnect failed",
                         exc_info=True,
                     )
 
@@ -902,20 +916,23 @@ class ConfigRuntime:
 
     async def _reconnect(self) -> None:
         assert self._notifications is not None
-        while not self._closed:
-            with suppress(Exception):
-                await self._notifications.close()
-            await asyncio.sleep(self._reconnect_backoff)
-            try:
-                await self._notifications.connect()
-                async with self._reconcile_lock:
-                    await self._reconcile_locked(force=True)
-                self._healthy = True
+        async with self._reconnect_lock:
+            if self._healthy or self._closed:
                 return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("Configuration listener reconnect failed", exc_info=True)
+            while not self._closed:
+                with suppress(Exception):
+                    await self._notifications.close()
+                await asyncio.sleep(self._reconnect_backoff)
+                try:
+                    await self._notifications.connect()
+                    async with self._reconcile_lock:
+                        await self._reconcile_locked(force=True)
+                    self._healthy = True
+                    return
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.warning("Configuration listener reconnect failed", exc_info=True)
 
     async def close(self) -> None:
         if self._closed:

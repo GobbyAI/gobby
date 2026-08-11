@@ -432,6 +432,115 @@ def test_shared_secret_reference_survives_partial_unset(
     assert secret_store.get("shared_endpoint_key") is None
 
 
+def test_shared_secret_reference_survives_endpoint_rename(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    alpha = "ai.generation.endpoints.alpha"
+    beta = "ai.generation.endpoints.beta"
+    seeded = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                f"{alpha}.api_base": "https://alpha.example/v1",
+                f"{alpha}.model": "model-a",
+            },
+            secrets={
+                f"{alpha}.api_key": SecretUpdate(
+                    "shared-secret",
+                    name="shared_endpoint_key",
+                )
+            },
+        ),
+    )
+
+    mutations.patch(
+        expected_revision=seeded.revision,
+        patch=ConfigPatch(
+            values={
+                f"{beta}.api_base": "https://beta.example/v1",
+                f"{beta}.model": "model-b",
+                f"{beta}.api_key": "$secret:shared_endpoint_key",
+            },
+            unset=frozenset(
+                {
+                    f"{alpha}.api_base",
+                    f"{alpha}.model",
+                    f"{alpha}.api_key",
+                }
+            ),
+        ),
+    )
+
+    assert secret_store.get("shared_endpoint_key") == "shared-secret"
+    binding = mutations.repository.read().secret_bindings[f"{beta}.api_key"]
+    assert binding.plaintext == "shared-secret"
+
+
+def test_secret_references_survive_two_key_swap(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    alpha = "ai.generation.endpoints.alpha"
+    beta = "ai.generation.endpoints.beta"
+    seeded = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                f"{alpha}.api_base": "https://alpha.example/v1",
+                f"{alpha}.model": "model-a",
+                f"{beta}.api_base": "https://beta.example/v1",
+                f"{beta}.model": "model-b",
+            },
+            secrets={
+                f"{alpha}.api_key": SecretUpdate("alpha-secret", name="alpha_endpoint_key"),
+                f"{beta}.api_key": SecretUpdate("beta-secret", name="beta_endpoint_key"),
+            },
+        ),
+    )
+
+    mutations.patch(
+        expected_revision=seeded.revision,
+        patch=ConfigPatch(
+            values={
+                f"{alpha}.api_key": "$secret:beta_endpoint_key",
+                f"{beta}.api_key": "$secret:alpha_endpoint_key",
+            }
+        ),
+    )
+
+    assert secret_store.get("alpha_endpoint_key") == "alpha-secret"
+    assert secret_store.get("beta_endpoint_key") == "beta-secret"
+    bindings = mutations.repository.read().secret_bindings
+    assert bindings[f"{alpha}.api_key"].plaintext == "beta-secret"
+    assert bindings[f"{beta}.api_key"].plaintext == "alpha-secret"
+
+
+def test_secret_reference_in_ordinary_string_value_prevents_deletion(
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    key = "ai.generation.endpoints.alpha.api_key"
+    seeded = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "ai.generation.endpoints.alpha.api_base": "https://alpha.example/v1",
+                "ai.generation.endpoints.alpha.model": "model-a",
+                "telemetry.service_name": "$secret:shared_endpoint_key",
+            },
+            secrets={key: SecretUpdate("shared-secret", name="shared_endpoint_key")},
+        ),
+    )
+
+    mutations.patch(
+        expected_revision=seeded.revision,
+        patch=ConfigPatch(unset=frozenset({key})),
+    )
+
+    assert secret_store.get("shared_endpoint_key") == "shared-secret"
+
+
 def test_namespace_replacement_preserves_managed_embedding_keys(
     mutations: ConfigMutations,
 ) -> None:

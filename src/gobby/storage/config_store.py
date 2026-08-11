@@ -346,7 +346,7 @@ class ConfigStore:
                 ConfigPatch(values={key: value}),
                 source="embedding_switch",
                 embedding_run_id=new_run_id,
-                expected_revision=self.repository._read_revision(transaction, lock=True),
+                expected_revision=self.repository.read_revision(transaction, lock=True),
             )
 
     def delete_internal_lifecycle(self, key: str, run_id: str) -> bool:
@@ -363,7 +363,7 @@ class ConfigStore:
                 ConfigPatch(unset=frozenset({key})),
                 source="embedding_switch",
                 embedding_run_id=run_id,
-                expected_revision=self.repository._read_revision(transaction, lock=True),
+                expected_revision=self.repository.read_revision(transaction, lock=True),
             )
         return key in result.changed_keys
 
@@ -384,7 +384,7 @@ class ConfigStore:
                 ConfigPatch(values=entries),
                 source="embedding_switch",
                 embedding_run_id=run_id,
-                expected_revision=self.repository._read_revision(transaction, lock=True),
+                expected_revision=self.repository.read_revision(transaction, lock=True),
             )
         return len(result.changed_keys)
 
@@ -403,7 +403,7 @@ class ConfigStore:
         if not entries or not set(entries).issubset(AI_EMBEDDING_CONFIG_KEY_SET):
             raise ValueError("Embedding switch owner may write only canonical embedding values")
         with embedding_mutation_context(self.db) as transaction:
-            revision = self.repository._read_revision(transaction, lock=True)
+            revision = self.repository.read_revision(transaction, lock=True)
             record = dict(completed_record)
             record["committed_revision"] = revision + 1
             result = self.mutations.patch_internal(
@@ -462,7 +462,7 @@ class ConfigStore:
                 ConfigPatch(values=entries, secrets=secrets),
                 source="install",
                 secret_store=secret_store,
-                expected_revision=self.repository._read_revision(transaction, lock=True),
+                expected_revision=self.repository.read_revision(transaction, lock=True),
             )
         return len(result.changed_keys)
 
@@ -480,7 +480,7 @@ class ConfigStore:
         with embedding_mutation_context(self.db) as transaction:
             if name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            revision = self.repository._read_revision(transaction, lock=True)
+            revision = self.repository.read_revision(transaction, lock=True)
             rows = self.repository._read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             referencing = {
@@ -520,7 +520,7 @@ class ConfigStore:
         with embedding_mutation_context(self.db) as transaction:
             if name == EMBEDDING_API_KEY_SECRET_NAME:
                 self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
-            revision = self.repository._read_revision(transaction, lock=True)
+            revision = self.repository.read_revision(transaction, lock=True)
             rows = self.repository._read_rows(transaction)
             snapshot = self.repository.snapshot_from_rows(transaction, revision, rows)
             referencing = frozenset(

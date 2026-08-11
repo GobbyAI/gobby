@@ -301,7 +301,7 @@ async def test_validation_detection_uses_runtime_snapshot() -> None:
         Any,
         SimpleNamespace(
             server=SimpleNamespace(services=SimpleNamespace(config=DaemonConfig())),
-            get_config_runtime=lambda: runtime,
+            get_config_snapshot=lambda: runtime.snapshot,
         ),
     )
     router = APIRouter(prefix="/api/config")

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
@@ -144,11 +144,11 @@ def embedding_mutation_context(db: Any) -> AbstractContextManager[Transaction]:
 
 
 def config_key_to_secret_name(key: str) -> str:
-    """Return the canonical one-to-one SecretStore name for a config key.
+    """Return a stable collision-resistant SecretStore name for a config key.
 
     Secret names are lowercase ASCII identifiers while encoded key segments are
     case-sensitive, so the sanitized readable part alone cannot be unique; a
-    short digest of the exact key carries the one-to-one guarantee.
+    short digest of the exact key makes accidental collisions unlikely.
     """
     if secret_name := _CONFIG_SECRET_NAMES.get(key):
         return secret_name
@@ -235,7 +235,7 @@ class ConfigMutations:
         _validate_revision(expected_revision)
         self._validate_patch_shape(patch)
         with embedding_mutation_context(self.db) as transaction:
-            revision = self.repository._read_revision(transaction, lock=True)
+            revision = self.repository.read_revision(transaction, lock=True)
             if revision != expected_revision:
                 raise ConfigConflictError(expected_revision, revision)
             rows = self.repository._read_rows(transaction)
@@ -380,6 +380,7 @@ class ConfigMutations:
                 if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                     self._validate_reference(key, validated)
                     assert isinstance(validated, str)
+                    references[key] = validated
                     existing_binding = candidate_bindings.get(key)
                     if existing_binding is None or existing_binding.reference != validated:
                         candidate_bindings[key] = SecretBinding(validated, None)
@@ -524,6 +525,11 @@ class ConfigMutations:
         revision: int,
     ) -> None:
         released: dict[str, set[str]] = {}
+        retained_values = dict(snapshot.overrides)
+        for key in patch.unset:
+            retained_values.pop(key, None)
+        retained_values.update(values)
+        retained_values.update(references)
 
         def release_binding(key: str) -> None:
             binding = snapshot.secret_bindings.get(key)
@@ -553,29 +559,19 @@ class ConfigMutations:
             self._upsert(transaction, key, reference, source, revision)
             if old_binding is not None and old_binding.reference != reference:
                 release_binding(key)
-        self._delete_released_secrets(released, references, snapshot)
+        self._delete_released_secrets(released, retained_values.values())
 
     def _delete_released_secrets(
         self,
-        released: Mapping[str, set[str]],
-        references: Mapping[str, str],
-        snapshot: ConfigReadSnapshot,
+        released: Collection[str],
+        retained_values: Iterable[object],
     ) -> None:
         """Delete a released secret only when no config row still references it."""
         if not released:
             return
-        holders: dict[str, set[str]] = {}
-        for key, binding in snapshot.secret_bindings.items():
-            name = normalize_secret_name(binding.reference.removeprefix("$secret:"))
-            holders.setdefault(name, set()).add(key)
-        retained = {
-            normalize_secret_name(reference.removeprefix("$secret:"))
-            for reference in references.values()
-        }
-        for name, releasing in released.items():
+        retained = self.secret_store.find_secret_references(retained_values)
+        for name in released:
             if name in retained:
-                continue
-            if holders.get(name, set()) - releasing:
                 continue
             self.secret_store.delete(name)
 

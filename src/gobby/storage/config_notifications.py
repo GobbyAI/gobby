@@ -63,8 +63,8 @@ class ConfigNotificationListener:
                 revision = int(notification.payload)
             except ValueError:
                 continue
-            if revision >= 0:
-                yield min(revision, MAX_CONFIG_REVISION)
+            if 0 <= revision <= MAX_CONFIG_REVISION:
+                yield revision
 
     async def close(self) -> None:
         connection = self._connection
