@@ -42,6 +42,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
 };
 
+// Self-hosted endpoint providers surface as "endpoint:<id>"; the scheme is an
+// implementation detail, so labels show only the humanized endpoint name
+// (#20047 — no "Endpoint:Lm-Studio" raw casing).
+const ENDPOINT_LABELS: Record<string, string> = {
+  "lm-studio": "LM Studio",
+  ollama: "Ollama",
+};
+
 // Providers that must never be offered as a choice anywhere in the web UI
 // (filters, pickers, spawn forms). Existing sessions from these providers
 // still render with their labels/badges. AGY is hidden until fully supported
@@ -110,6 +118,10 @@ export function getProviderDisplayName(
   const normalized = normalizeProvider(provider);
   if (!normalized) {
     return "";
+  }
+  if (normalized.startsWith("endpoint:")) {
+    const endpoint = normalized.slice("endpoint:".length);
+    return ENDPOINT_LABELS[endpoint] ?? titleCase(endpoint.replace(/-/g, " "));
   }
   return PROVIDER_LABELS[normalized] ?? titleCase(normalized);
 }

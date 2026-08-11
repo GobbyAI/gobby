@@ -241,8 +241,13 @@ function ActivityDropdown({
               className={cn(
                 "activity-panel-mobile-menu__item",
                 "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] mobile:min-h-11 mobile:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+                // Active pill mirrors .activity-filter-dropdown__item--active:
+                // bg-tertiary on bg-secondary was too faint to read as the
+                // current tab (#20047).
                 activeTab === tab.id &&
-                  "active bg-[var(--bg-tertiary)] text-[var(--text-primary)]",
+                  "active bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] text-accent hover:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] hover:text-accent",
+                activeTab === tab.id &&
+                  "[[data-theme=light]_&]:bg-accent [[data-theme=light]_&]:text-accent-foreground [[data-theme=light]_&]:hover:bg-accent [[data-theme=light]_&]:hover:text-accent-foreground",
                 coarseHitAreaCls,
               )}
               onClick={() => onSelect(tab.id)}

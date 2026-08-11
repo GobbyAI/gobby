@@ -233,16 +233,17 @@ export function SessionsFilterDropdown({
           </FilterSection>
 
           <FilterSection label="Task ref">
-            <div className="flex flex-col gap-0.5 px-2 py-1">
-              {TASK_REF_ROLES.map((role) => (
-                <FilterCheckboxRow
-                  key={role.value}
-                  label={role.label}
-                  checked={filters.taskRefRoles.has(role.value)}
-                  onToggle={() => handleTaskRefRoleToggle(role.value)}
-                />
-              ))}
-            </div>
+            {/* Rows sit directly in the section like Mode/Provider do — an
+                extra px-2 wrapper indented these checkboxes off the shared
+                rail (#20047). */}
+            {TASK_REF_ROLES.map((role) => (
+              <FilterCheckboxRow
+                key={role.value}
+                label={role.label}
+                checked={filters.taskRefRoles.has(role.value)}
+                onToggle={() => handleTaskRefRoleToggle(role.value)}
+              />
+            ))}
             <RefRangeInputs
               minValue={filters.taskRefMin}
               maxValue={filters.taskRefMax}

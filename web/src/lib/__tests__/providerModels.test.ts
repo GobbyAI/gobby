@@ -347,6 +347,12 @@ describe("providerModels", () => {
     ).toEqual(["claude", "codex", "droid", "qwen"]);
   });
 
+  it("humanizes endpoint provider ids instead of raw scheme casing (#20047)", () => {
+    expect(getProviderDisplayName("endpoint:lm-studio")).toBe("LM Studio");
+    expect(getProviderDisplayName("endpoint:ollama")).toBe("Ollama");
+    expect(getProviderDisplayName("endpoint:my-box")).toBe("My Box");
+  });
+
   it("handles Grok, AGY, and provider metadata fields", () => {
     const entries: ProviderModelEntry[] = [
       {
