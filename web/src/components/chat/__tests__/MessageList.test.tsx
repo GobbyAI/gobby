@@ -11,6 +11,8 @@ const { scrollToIndexMock, virtuosoProps } = vi.hoisted(() => ({
     className?: string;
     computeItemKey?: (index: number, message: ChatMessage) => React.Key;
     followOutput?: () => "auto" | "smooth" | false;
+    atBottomStateChange?: (atBottom: boolean) => void;
+    totalListHeightChanged?: (height: number) => void;
   }>,
 }));
 
@@ -27,12 +29,16 @@ vi.mock("react-virtuoso", async () => {
           followOutput,
           itemContent,
           components,
+          atBottomStateChange,
+          totalListHeightChanged,
         }: {
           className?: string;
           computeItemKey?: (index: number, message: ChatMessage) => React.Key;
           data: ChatMessage[];
           followOutput?: () => "auto" | "smooth" | false;
           itemContent: (index: number, message: ChatMessage) => React.ReactNode;
+          atBottomStateChange?: (atBottom: boolean) => void;
+          totalListHeightChanged?: (height: number) => void;
           components?: {
             Footer?: React.ComponentType;
             Scroller?: React.ComponentType<{
@@ -52,7 +58,13 @@ vi.mock("react-virtuoso", async () => {
           }),
           [],
         );
-        virtuosoProps.push({ className, computeItemKey, followOutput });
+        virtuosoProps.push({
+          className,
+          computeItemKey,
+          followOutput,
+          atBottomStateChange,
+          totalListHeightChanged,
+        });
         const Scroller = components?.Scroller ?? "div";
         const Footer = components?.Footer;
         return (
@@ -149,6 +161,84 @@ describe("MessageList", () => {
         align: "end",
       });
     });
+  });
+
+  it("keeps auto-scrolling after a pinned load despite layout-shift off-bottom reports", async () => {
+    const ref = React.createRef<MessageListHandle>();
+    const { rerender } = render(
+      <MessageList
+        ref={ref}
+        messages={[message("m1")]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    act(() => {
+      ref.current?.scrollToBottom();
+    });
+    // Progressive measurement pushes the scroller off the bottom before it
+    // ever settles — while pinned this is a layout shift, not user intent.
+    const latestProps = () => virtuosoProps[virtuosoProps.length - 1];
+    act(() => {
+      latestProps()?.atBottomStateChange?.(false);
+      latestProps()?.totalListHeightChanged?.(2400);
+    });
+
+    scrollToIndexMock.mockClear();
+    rerender(
+      <MessageList
+        ref={ref}
+        messages={[message("m1"), message("m2")]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(scrollToIndexMock).toHaveBeenCalledWith({
+        index: "LAST",
+        behavior: "auto",
+        align: "end",
+      });
+    });
+  });
+
+  it("respects a real scroll-up once the pinned load has settled at bottom", async () => {
+    const ref = React.createRef<MessageListHandle>();
+    const { rerender } = render(
+      <MessageList
+        ref={ref}
+        messages={[message("m1")]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    const latestProps = () => virtuosoProps[virtuosoProps.length - 1];
+    act(() => {
+      ref.current?.scrollToBottom();
+    });
+    // Settling at bottom releases the pin; the next off-bottom report is a
+    // genuine user scroll and must latch.
+    act(() => {
+      latestProps()?.atBottomStateChange?.(true);
+    });
+    act(() => {
+      latestProps()?.atBottomStateChange?.(false);
+    });
+
+    scrollToIndexMock.mockClear();
+    rerender(
+      <MessageList
+        ref={ref}
+        messages={[message("m1"), message("m2")]}
+        isStreaming={false}
+        isThinking={false}
+      />,
+    );
+
+    expect(scrollToIndexMock).not.toHaveBeenCalled();
   });
 
   it("still follows streaming output without animated bounce", () => {

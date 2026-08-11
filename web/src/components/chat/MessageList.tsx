@@ -57,6 +57,13 @@ export const MessageList = memo(
     const scrollerRef = useRef<HTMLDivElement | null>(null);
     const userScrolledUpRef = useRef(false);
     const pendingScrollFrameRef = useRef<number | null>(null);
+    // Loading a transcript scrolls to bottom once, but Virtuoso measures tall
+    // items progressively — the scroll height keeps growing afterwards. Pin
+    // the scroller to the bottom until it first actually reports at-bottom;
+    // otherwise a paused session's history lands mid-list with a blank
+    // estimated-height region above, and the layout shift latches
+    // userScrolledUpRef and suppresses every later auto-scroll.
+    const pinToBottomRef = useRef(false);
 
     const setScrollerRef = useCallback(
       (
@@ -115,6 +122,7 @@ export const MessageList = memo(
       () => ({
         scrollToBottom() {
           userScrolledUpRef.current = false;
+          pinToBottomRef.current = true;
           scrollScrollerToBottom();
           virtuosoRef.current?.scrollToIndex({
             index: "LAST",
@@ -129,15 +137,34 @@ export const MessageList = memo(
 
     const handleAtBottomStateChange = useCallback(
       (atBottom: boolean) => {
+        if (atBottom) {
+          pinToBottomRef.current = false;
+          userScrolledUpRef.current = false;
+          return;
+        }
+        // While pinned, off-bottom reports are programmatic layout shifts
+        // from progressive measurement, never user intent — re-bottom.
+        if (pinToBottomRef.current) {
+          scheduleScrollScrollerToBottom();
+          return;
+        }
         // Don't flip the flag during streaming — content growth can briefly
         // push us past atBottomThreshold before followOutput scrolls back,
         // which causes the "bounce" where auto-scroll stops mid-stream.
         if (!isStreaming) {
-          userScrolledUpRef.current = !atBottom;
+          userScrolledUpRef.current = true;
         }
       },
-      [isStreaming],
+      [isStreaming, scheduleScrollScrollerToBottom],
     );
+
+    // Progressive item measurement grows the list height after the initial
+    // scroll; while pinned, chase the growth so the transcript stays bottomed.
+    const handleTotalListHeightChanged = useCallback(() => {
+      if (pinToBottomRef.current) {
+        scheduleScrollScrollerToBottom();
+      }
+    }, [scheduleScrollScrollerToBottom]);
 
     // Reset scroll flag when streaming starts so stale scroll-up state
     // from before the agent began doesn't prevent auto-scroll.
@@ -153,6 +180,7 @@ export const MessageList = memo(
     // is appended in rapid chunks.
     useLayoutEffect(() => {
       if (!isStreaming && !userScrolledUpRef.current && messages.length > 0) {
+        pinToBottomRef.current = true;
         scrollScrollerToBottom();
         virtuosoRef.current?.scrollToIndex({
           index: "LAST",
@@ -316,6 +344,7 @@ export const MessageList = memo(
         }}
         atBottomThreshold={400}
         atBottomStateChange={handleAtBottomStateChange}
+        totalListHeightChanged={handleTotalListHeightChanged}
         overscan={400}
         increaseViewportBy={200}
         components={virtuosoComponents}
