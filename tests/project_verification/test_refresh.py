@@ -36,7 +36,10 @@ from gobby.project_verification.refresh import (
     refresh_project_verification,
     refresh_project_verification_deterministic,
 )
-from gobby.project_verification.synthesis import synthesize_verification_commands
+from gobby.project_verification.synthesis import (
+    PROJECT_VERIFICATION_SCHEMA,
+    synthesize_verification_commands,
+)
 
 pytestmark = [pytest.mark.unit]
 
@@ -507,6 +510,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
     assert service.request.profile == "feature_mid"
     assert service.request.candidates == tuple(config.candidates)
     assert service.request.caller == "project_verification.refresh"
+    assert service.request.json_schema == PROJECT_VERIFICATION_SCHEMA
 
 
 @pytest.mark.asyncio

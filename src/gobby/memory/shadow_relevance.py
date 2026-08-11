@@ -12,6 +12,7 @@ from dataclasses import asdict, is_dataclass
 from typing import Any
 
 from gobby.config.feature_base import candidate_labels
+from gobby.memory.generation_schemas import SHADOW_RELEVANCE_SCHEMA
 from gobby.utils.datetime import utc_now
 
 SHADOW_PROTOCOL_VERSION = "digest-shadow-query-relevance-v1"
@@ -257,6 +258,7 @@ async def _judge_shadow_entries(
             judge_config,
             prompt,
             system_prompt=SHADOW_RELEVANCE_RUBRIC,
+            json_schema=SHADOW_RELEVANCE_SCHEMA,
             caller="memory.shadow_relevance",
         )
     except Exception as exc:

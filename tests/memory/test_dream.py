@@ -61,6 +61,7 @@ from gobby.memory.dream.truth_digest import (
     build_project_truth_digest,
     build_project_truth_digest_async,
 )
+from gobby.memory.generation_schemas import DREAM_ACTIONS_SCHEMA
 from gobby.prompts.loader import PromptLoader
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
@@ -505,6 +506,7 @@ async def test_planner_request_sets_overall_provider_deadline() -> None:
         )
 
     kwargs = llm_service.call_json_feature.await_args.kwargs
+    assert kwargs["json_schema"] == DREAM_ACTIONS_SCHEMA
     assert kwargs["total_timeout_seconds"] == PLANNER_TOTAL_DEADLINE_SECONDS
     assert PLANNER_TOTAL_DEADLINE_SECONDS == 1200.0
 

@@ -45,6 +45,7 @@ def _feature_request(
     caller: str | None,
     cwd: str | None = None,
     total_timeout_seconds: float | None = None,
+    json_schema: dict[str, Any] | None = None,
     output_validator: Callable[[str], str | None] | None = None,
 ) -> TextGenerationRequest:
     candidates = tuple(getattr(feature_config, "candidates", ()) or ())
@@ -62,6 +63,7 @@ def _feature_request(
         candidate_timeout_seconds=candidate_timeout_seconds,
         cli_candidate_timeout_seconds=cli_candidate_timeout_seconds,
         total_timeout_seconds=total_timeout_seconds,
+        json_schema=json_schema,
         output_validator=output_validator,
     )
 
@@ -131,6 +133,7 @@ class LLMService:
         prompt: str,
         system_prompt: str | None = None,
         *,
+        json_schema: dict[str, Any],
         max_tokens: int | None = None,
         caller: str | None = None,
         cwd: str | None = None,
@@ -151,6 +154,7 @@ class LLMService:
                 caller=caller,
                 cwd=cwd,
                 total_timeout_seconds=total_timeout_seconds,
+                json_schema=json_schema,
             )
         )
 

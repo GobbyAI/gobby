@@ -12,6 +12,7 @@ from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.close_verdict import CloseVerdict, parse_close_verdict
 from gobby.tasks.criteria_contract import split_validation_criteria
+from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_close_diff_evidence
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,7 @@ class TaskValidator:
             self.config,
             prompt,
             system_prompt=self.config.system_prompt,
+            json_schema=TASK_CLOSE_VALIDATION_SCHEMA,
             caller="tasks.close_checklist",
         )
         return parse_close_verdict(payload, criteria)

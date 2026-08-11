@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 from gobby.llm.base import LLMProviderCancellation
+from gobby.memory.generation_schemas import TURN_RECORD_SCHEMA
 from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
 from gobby.memory.title_heuristics import (
     LIFECYCLE_CMDS,
@@ -463,6 +464,7 @@ async def _build_turn_record(
         response = await llm_service.call_json_feature(
             digest_config,
             prompt,
+            json_schema=TURN_RECORD_SCHEMA,
             caller="memory.turn_record",
         )
         try:

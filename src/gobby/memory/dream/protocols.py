@@ -107,6 +107,7 @@ class MemoryDreamLLMProtocol(Protocol):
         prompt: str,
         system_prompt: str | None = None,
         *,
+        json_schema: dict[str, Any],
         caller: str | None = None,
         total_timeout_seconds: float | None = None,
     ) -> dict[str, Any]: ...

@@ -25,6 +25,13 @@ from gobby.llm.base import (
 
 pytestmark = pytest.mark.unit
 
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {"key": {"type": "string"}},
+    "required": ["key"],
+    "additionalProperties": False,
+}
+
 
 # ─── Mock SDK classes ───────────────────────────────────────────────────
 
@@ -43,12 +50,14 @@ class MockResultMessage:
         subtype: str = "success",
         api_error_status: int | None = None,
         usage: dict[str, Any] | None = None,
+        structured_output: object | None = None,
     ) -> None:
         self.result = result
         self.is_error = is_error
         self.subtype = subtype
         self.api_error_status = api_error_status
         self.usage = usage
+        self.structured_output = structured_output
 
 
 class MockRateLimitInfo:
@@ -933,20 +942,21 @@ class TestGenerateJson:
             provider = ClaudeLLMProvider(claude_config)
 
             with pytest.raises(RuntimeError, match="unavailable"):
-                await provider.generate_json("Generate JSON")
+                await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_parses_json(self, claude_config: DaemonConfig) -> None:
-        """SDK path parses JSON response using output_format constraint."""
+        """SDK path returns the ResultMessage structured output."""
 
         async def mock_query(prompt: str, options: object) -> object:
-            yield MockAssistantMessage([MockTextBlock('{"key": "value"}')])
+            yield MockAssistantMessage([MockTextBlock("ignored text")])
+            yield MockResultMessage(structured_output={"key": "value"})
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider.generate_json("Generate JSON")
+            result = await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
 
             assert result == {"key": "value"}
 
@@ -959,13 +969,13 @@ class TestGenerateJson:
 
         async def mock_query(prompt: str, options: object) -> object:
             captured_sources.append(options.setting_sources)
-            yield MockAssistantMessage([MockTextBlock('{"isolated": true}')])
+            yield MockResultMessage(structured_output={"isolated": True})
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider.generate_json("Generate JSON")
+            result = await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
 
         assert result == {"isolated": True}
         assert captured_sources == [[]]
@@ -982,7 +992,11 @@ class TestGenerateJson:
             captured["system_prompt"] = options.system_prompt
             captured["effort"] = options.kwargs.get("effort")
             captured["output_format"] = options.output_format
-            yield MockAssistantMessage([MockTextBlock('{"entities": []}')])
+            captured["max_turns"] = options.max_turns
+            captured["tools"] = options.tools
+            captured["allowed_tools"] = options.allowed_tools
+            captured["mcp_servers"] = options.mcp_servers
+            yield MockResultMessage(structured_output={"entities": []})
 
         async def execute_sdk_query(
             operation: str,
@@ -990,7 +1004,7 @@ class TestGenerateJson:
             options: object,
             logger: logging.Logger,
             **kwargs: object,
-        ) -> str:
+        ) -> dict[str, Any]:
             captured["operation"] = operation
             return await query_fn()
 
@@ -1003,6 +1017,7 @@ class TestGenerateJson:
                     "rendered entity extraction prompt",
                     "strict entity extraction system prompt",
                     "haiku",
+                    json_schema=JSON_SCHEMA,
                     reasoning_effort="high",
                     caller="memory.kg.extract_entities",
                 )
@@ -1011,7 +1026,11 @@ class TestGenerateJson:
         assert captured["prompt"] == "rendered entity extraction prompt"
         assert captured["system_prompt"] == "strict entity extraction system prompt"
         assert captured["effort"] == "high"
-        assert captured["output_format"] == {"type": "json_object"}
+        assert captured["output_format"] == {"type": "json_schema", "schema": JSON_SCHEMA}
+        assert captured["max_turns"] == 8
+        assert captured["tools"] == []
+        assert captured["allowed_tools"] == []
+        assert captured["mcp_servers"] == {}
         assert captured["operation"] == "generate_json[memory.kg.extract_entities]"
         assert "applied_reasoning_effort" not in result
 
@@ -1023,7 +1042,7 @@ class TestGenerateJson:
 
         async def mock_query(prompt: str, options: Any) -> object:
             captured_kwargs.append(options.kwargs)
-            yield MockAssistantMessage([MockTextBlock('{"ok": true}')])
+            yield MockResultMessage(structured_output={"ok": True})
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
@@ -1031,6 +1050,7 @@ class TestGenerateJson:
             provider = ClaudeLLMProvider(claude_config)
             result = await provider.generate_json(
                 "Generate JSON",
+                json_schema=JSON_SCHEMA,
                 reasoning_effort="auto",
             )
 
@@ -1038,36 +1058,38 @@ class TestGenerateJson:
         assert "effort" not in captured_kwargs[0]
 
     @pytest.mark.asyncio
-    async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:
-        """SDK path raises ValueError with response snippet on invalid JSON."""
-
-        async def mock_query(prompt: str, options: object) -> object:
-            yield MockAssistantMessage([MockTextBlock("not json")])
-
-        with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-
-            with pytest.raises(ValueError, match="not json"):
-                await provider.generate_json("Generate JSON")
-
-    @pytest.mark.asyncio
-    async def test_generate_json_sdk_markdown_fence_fallback(
+    async def test_generate_json_sdk_missing_structured_output(
         self, claude_config: DaemonConfig
     ) -> None:
-        """SDK path extracts JSON from markdown-fenced response."""
+        """SDK path rejects a result without structured output."""
 
         async def mock_query(prompt: str, options: object) -> object:
-            yield MockAssistantMessage([MockTextBlock('```json\n{"entities": []}\n```')])
+            yield MockAssistantMessage([MockTextBlock('{"key": "ignored"}')])
+            yield MockResultMessage()
 
         with mock_claude_sdk(mock_query):
             from gobby.llm.claude import ClaudeLLMProvider
 
             provider = ClaudeLLMProvider(claude_config)
-            result = await provider.generate_json("Generate JSON")
 
-            assert result == {"entities": []}
+            with pytest.raises(ValueError, match="no object structured output"):
+                await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_rejects_non_object_structured_output(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        """SDK path rejects non-object structured output."""
+
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockResultMessage(structured_output=[])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with pytest.raises(ValueError, match="no object structured output"):
+                await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_classifies_error_result_success(
@@ -1090,7 +1112,7 @@ class TestGenerateJson:
                 caplog.at_level(logging.WARNING, logger="gobby.llm.claude"),
                 pytest.raises(ClaudeSDKProviderFailure, match="generate_json provider degraded"),
             ):
-                await provider.generate_json("Generate JSON")
+                await provider.generate_json("Generate JSON", json_schema=JSON_SCHEMA)
 
         sleep.assert_not_awaited()
         assert "provider degraded: Claude SDK returned error-result-success" in caplog.text

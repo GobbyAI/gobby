@@ -575,7 +575,7 @@ def test_runtime_candidate_resolves_secret_references(
         raise AssertionError("runtime candidate must use the captured secret bindings")
 
     monkeypatch.setattr(secret_store, "get", reject_out_of_snapshot_read)
-    candidate = repository.runtime_candidate(dict(snapshot.values), snapshot.secret_bindings)
+    candidate = repository.runtime_candidate(dict(snapshot.overrides), snapshot.secret_bindings)
 
     assert snapshot.values[key] == f"$secret:{config_key_to_secret_name(key)}"
     assert candidate.databases.falkordb.password == "falkor-plaintext-pw"

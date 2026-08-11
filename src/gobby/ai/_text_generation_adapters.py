@@ -106,10 +106,13 @@ class ClaudeTextGenerateAdapter:
         )
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        if request.json_schema is None:
+            raise ValueError("Claude JSON generation requires a JSON schema")
         return await self._provider.generate_json(
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,
+            json_schema=request.json_schema,
             reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )

@@ -132,6 +132,7 @@ class ClaudeLLMProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        json_schema: dict[str, Any],
         reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
@@ -140,6 +141,7 @@ class ClaudeLLMProvider:
             prompt,
             system_prompt,
             model,
+            json_schema=json_schema,
             reasoning_effort=reasoning_effort,
             caller=caller,
         )

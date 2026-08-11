@@ -34,7 +34,9 @@ def test_full_loader_is_not_exported() -> None:
 def test_cli_runtime_closes_config_resources(monkeypatch: pytest.MonkeyPatch) -> None:
     database = MagicMock()
     repository = MagicMock()
-    repository.read.return_value = SimpleNamespace(values={"hooks.provider_timeout": 321})
+    repository.read.return_value = SimpleNamespace(
+        overrides={"hooks.provider_timeout": 321}, secret_bindings={}
+    )
     repository.runtime_candidate.return_value = DaemonConfig()
 
     @contextmanager
@@ -55,5 +57,5 @@ def test_cli_runtime_closes_config_resources(monkeypatch: pytest.MonkeyPatch) ->
     runtime.close()
 
     repository.read.assert_called_once_with(resolve_secrets=True)
-    repository.runtime_candidate.assert_called_once_with({"hooks.provider_timeout": 321})
+    repository.runtime_candidate.assert_called_once_with({"hooks.provider_timeout": 321}, {})
     database.close.assert_called_once_with()

@@ -23,6 +23,28 @@ manifests, package scripts, Make/Just/Task recipes, validation docs, or existing
 .gobby/project.json entries. Reject mutating validation forms such as formatters
 without --check or commands with --fix."""
 
+_COMMAND_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "command": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "sources": {"type": "array", "items": {"type": "string"}},
+        "rationale": {"type": "string"},
+    },
+    "required": ["command", "confidence", "sources", "rationale"],
+    "additionalProperties": False,
+}
+
+PROJECT_VERIFICATION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "commands": {"type": "object", "additionalProperties": _COMMAND_SCHEMA},
+        "custom": {"type": "object", "additionalProperties": _COMMAND_SCHEMA},
+    },
+    "required": ["commands"],
+    "additionalProperties": False,
+}
+
 
 @dataclass(frozen=True)
 class RejectedCommand:
@@ -61,6 +83,7 @@ async def synthesize_verification_commands(
         profile=str(config.profile),
         candidates=tuple(config.candidates),
         system_prompt=SYSTEM_PROMPT,
+        json_schema=PROJECT_VERIFICATION_SCHEMA,
         caller=CALLER,
         cwd=str(bundle.root),
     )

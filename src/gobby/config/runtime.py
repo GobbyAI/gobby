@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from concurrent.futures import Future as ThreadFuture
@@ -36,6 +35,12 @@ from gobby.config.runtime_models import (
     ConfigSnapshot,
     RuntimeSecretBinding,
     UnavailableService,
+)
+from gobby.config.runtime_projection import (
+    changed_keys as _changed_keys,
+)
+from gobby.config.runtime_projection import (
+    runtime_bindings as _runtime_bindings,
 )
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
@@ -358,6 +363,7 @@ class ConfigRuntime:
         bindings = _runtime_bindings(stored.secret_bindings)
         managed = self._resolve_managed(stored)
         desired_values = dict(stored.values)
+        desired_overrides = dict(stored.overrides)
         failures: dict[str, ApplyFailure] = {}
         services: dict[str, object] = {}
         handles: dict[str, PreparedSubscriber] = {}
@@ -370,6 +376,8 @@ class ConfigRuntime:
             failed_live_keys={},
             desired_values=desired_values,
             active_values=desired_values,
+            desired_overrides=desired_overrides,
+            active_overrides=desired_overrides,
             desired_bindings=bindings,
             active_bindings=bindings,
         )
@@ -491,6 +499,7 @@ class ConfigRuntime:
     ]:
         current = current_bundle.snapshot
         active_values = dict(current._active_values)
+        active_overrides = dict(current._active_overrides)
         active_bindings = dict(current._active_bindings)
         failed = dict(current.failed_live_keys)
         services = dict(current_bundle.services)
@@ -519,6 +528,10 @@ class ConfigRuntime:
                     active_values[key] = stored.values[key]
                 else:
                     active_values.pop(key, None)
+                if key in stored.overrides:
+                    active_overrides[key] = stored.overrides[key]
+                else:
+                    active_overrides.pop(key, None)
                 if key in desired_bindings:
                     active_bindings[key] = desired_bindings[key]
                 else:
@@ -537,7 +550,7 @@ class ConfigRuntime:
                 replacement = prepared.get(subscriber.name)
                 if replacement is not None:
                     old_handles.append((replacement, subscriber))
-        active = self._repository.runtime_candidate(active_values, active_bindings)
+        active = self._repository.runtime_candidate(active_overrides, active_bindings)
         pending = self._pending_restart_keys(
             stored.values,
             active_values,
@@ -553,6 +566,8 @@ class ConfigRuntime:
             failed_live_keys=failed,
             desired_values=stored.values,
             active_values=active_values,
+            desired_overrides=stored.overrides,
+            active_overrides=active_overrides,
             desired_bindings=desired_bindings,
             active_bindings=active_bindings,
         )
@@ -653,7 +668,7 @@ class ConfigRuntime:
                     lock_timeout_ms=self._lock_timeout_ms,
                 )
             return stored, self._repository.runtime_candidate(
-                dict(stored.values), stored.secret_bindings
+                dict(stored.overrides), stored.secret_bindings
             )
 
         return await self._run_db(read)
@@ -780,6 +795,8 @@ class ConfigRuntime:
             failed_live_keys=failed_live_keys,
             desired_values=snapshot._desired_values,
             active_values=snapshot._active_values,
+            desired_overrides=snapshot._desired_overrides,
+            active_overrides=snapshot._active_overrides,
             desired_bindings=snapshot._desired_bindings,
             active_bindings=snapshot._active_bindings,
         )
@@ -919,53 +936,6 @@ class ConfigRuntime:
             await self._dispose_many(bundle._handles, self._subscribers)
         self._db_executor.shutdown(wait=False, cancel_futures=True)
         self._constructor_executor.shutdown(wait=False, cancel_futures=True)
-
-
-def _runtime_bindings(
-    bindings: Mapping[str, StoredSecretBinding],
-) -> MappingProxyType[str, RuntimeSecretBinding]:
-    captured = {
-        key: RuntimeSecretBinding(
-            reference=binding.reference,
-            plaintext=binding.plaintext,
-            fingerprint=_secret_fingerprint(binding.plaintext),
-        )
-        for key, binding in bindings.items()
-    }
-    return MappingProxyType(captured)
-
-
-def _secret_fingerprint(plaintext: str | None) -> str:
-    payload = b"\x00" if plaintext is None else b"\x01" + plaintext.encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
-
-
-def _changed_keys(
-    current: ConfigSnapshot,
-    stored: StoredConfigSnapshot,
-) -> frozenset[str]:
-    desired_bindings = _runtime_bindings(stored.secret_bindings)
-    keys = (
-        set(current._desired_values)
-        | set(stored.values)
-        | set(current.row_revisions)
-        | set(stored.row_revisions)
-        | set(current._desired_bindings)
-        | set(desired_bindings)
-    )
-    changed = {
-        key
-        for key in keys
-        if current._desired_values.get(key) != stored.values.get(key)
-        or current.row_revisions.get(key) != stored.row_revisions.get(key)
-        or _binding_fingerprint(current._desired_bindings.get(key))
-        != _binding_fingerprint(desired_bindings.get(key))
-    }
-    return frozenset(changed)
-
-
-def _binding_fingerprint(binding: RuntimeSecretBinding | None) -> str | None:
-    return None if binding is None else binding.fingerprint
 
 
 def _dispose_late_result(future: ThreadFuture[PreparedSubscriber]) -> None:

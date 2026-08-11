@@ -9,6 +9,7 @@ from typing import Any
 from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.dream.models import DreamCandidate
+from gobby.memory.generation_schemas import DREAM_ACTIONS_SCHEMA
 from gobby.prompts.loader import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -233,6 +234,7 @@ async def _call_llm_planner(
     response = await llm_service.call_json_feature(
         dream_config,
         prompt,
+        json_schema=DREAM_ACTIONS_SCHEMA,
         caller="memory.dream",
         total_timeout_seconds=PLANNER_TOTAL_DEADLINE_SECONDS,
     )

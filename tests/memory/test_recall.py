@@ -10,6 +10,7 @@ import pytest
 from gobby.config.feature_base import FeatureProfile
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.memory.generation_schemas import RECALL_CLASSIFICATION_SCHEMA
 from gobby.memory.recall import (
     MAX_QUERY_CHARS,
     MAX_QUERY_TERMS,
@@ -52,6 +53,7 @@ class FakeLLMService:
         prompt: str,
         system_prompt: str | None = None,
         *,
+        json_schema: dict[str, Any],
         caller: str | None = None,
         total_timeout_seconds: float | None = None,
     ) -> Any:
@@ -60,6 +62,7 @@ class FakeLLMService:
                 "feature_config": feature_config,
                 "prompt": prompt,
                 "system_prompt": system_prompt,
+                "json_schema": json_schema,
                 "caller": caller,
                 "total_timeout_seconds": total_timeout_seconds,
             }
@@ -198,6 +201,7 @@ async def test_classifier_approval_runs_one_low_feature_and_one_hybrid_search(
     ]
     assert len(llm.calls) == 1
     assert llm.calls[0]["caller"] == "memory.recall.classify"
+    assert llm.calls[0]["json_schema"] == RECALL_CLASSIFICATION_SCHEMA
     assert llm.calls[0]["feature_config"].profile == FeatureProfile.LOW
     assert len(manager.calls) == 1
     assert manager.calls[0]["caller"] == "memory.recall"

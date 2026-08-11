@@ -7,6 +7,12 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.memory.generation_schemas import (
+    ENTITY_EXTRACTION_SCHEMA,
+    RELATIONSHIP_DELETION_SCHEMA,
+    RELATIONSHIP_EXTRACTION_SCHEMA,
+)
+
 from .models import Entity, Relationship, _GraphEntity
 
 if TYPE_CHECKING:
@@ -64,6 +70,7 @@ class JSONFeatureProvider(Protocol):
         prompt: str,
         system_prompt: str | None = None,
         *,
+        json_schema: dict[str, Any],
         caller: str | None = None,
     ) -> dict[str, Any]:
         """Generate a JSON object for a configured feature."""
@@ -89,6 +96,7 @@ class KnowledgeGraphExtractor:
         self,
         prompt: str,
         *,
+        json_schema: dict[str, Any],
         system_prompt: str | None = None,
         caller: str,
     ) -> dict[str, Any]:
@@ -99,6 +107,7 @@ class KnowledgeGraphExtractor:
             self._feature_config,
             prompt,
             system_prompt=system_prompt,
+            json_schema=json_schema,
             caller=caller,
         )
         if not isinstance(response, dict):
@@ -118,6 +127,7 @@ class KnowledgeGraphExtractor:
         try:
             response = await self._generate_json(
                 prompt,
+                json_schema=ENTITY_EXTRACTION_SCHEMA,
                 system_prompt=ENTITY_EXTRACTION_SYSTEM_PROMPT,
                 caller="memory.kg.extract_entities",
             )
@@ -165,7 +175,11 @@ class KnowledgeGraphExtractor:
             "memory/extract_relations",
             {"content": content, "entities": entities_json},
         )
-        response = await self._generate_json(prompt, caller="memory.kg.extract_relationships")
+        response = await self._generate_json(
+            prompt,
+            json_schema=RELATIONSHIP_EXTRACTION_SCHEMA,
+            caller="memory.kg.extract_relationships",
+        )
         raw_relations = response.get("relations", [])
         if not isinstance(raw_relations, list):
             logger.warning(
@@ -250,7 +264,11 @@ class KnowledgeGraphExtractor:
             "memory/delete_relations",
             {"existing_relations": existing_json, "new_relations": new_relations_json},
         )
-        response = await self._generate_json(prompt, caller="memory.kg.select_outdated_relations")
+        response = await self._generate_json(
+            prompt,
+            json_schema=RELATIONSHIP_DELETION_SCHEMA,
+            caller="memory.kg.select_outdated_relations",
+        )
         to_delete = response.get("relation_ids_to_delete", [])
         if not isinstance(to_delete, list):
             logger.warning(

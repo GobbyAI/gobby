@@ -1,6 +1,5 @@
 """Claude Agent SDK client flows."""
 
-import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Any
@@ -34,7 +33,6 @@ from gobby.llm.claude_runtime import (
 )
 from gobby.llm.image_payloads import prepare_image_data
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
-from gobby.utils.json_helpers import extract_json_from_text
 
 _FEATURE_TEXTGEN_MAX_TURNS = 8
 
@@ -266,6 +264,7 @@ class ClaudeSDKClient:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        json_schema: dict[str, Any],
         reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
@@ -284,21 +283,21 @@ class ClaudeSDKClient:
                 )
             options = ClaudeAgentOptions(
                 system_prompt=system_prompt or "You are a helpful assistant.",
-                max_turns=1,
+                max_turns=_FEATURE_TEXTGEN_MAX_TURNS,
                 model=model or self._default_model,
                 tools=[],
                 allowed_tools=[],
                 mcp_servers={},
                 permission_mode="default",
                 cli_path=cli_path,
-                output_format={"type": "json_object"},
+                output_format={"type": "json_schema", "schema": json_schema},
                 cwd=str(neutral_cwd),
                 **reasoning_options,
             )
             operation = f"generate_json[{caller}]" if caller else "generate_json"
 
-            async def _run_query() -> str:
-                result_text = ""
+            async def _run_query() -> object | None:
+                structured_output: object | None = None
                 message_count = 0
                 rate_limit_info: Any | None = None
                 async for message in query(prompt=prompt, options=options):
@@ -311,49 +310,20 @@ class ClaudeSDKClient:
                         message_count,
                         type(message).__name__,
                     )
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                result_text += block.text
-                    elif isinstance(message, ResultMessage):
+                    if isinstance(message, ResultMessage):
                         raise_for_error_result(message, operation, rate_limit_info=rate_limit_info)
-                        if message.result:
-                            result_text = message.result
+                        structured_output = message.structured_output
                 if message_count == 0:
                     self.logger.warning("generate_json: No messages received from Claude SDK")
-                elif not result_text:
-                    self.logger.warning(
-                        "generate_json: %d messages but no text content", message_count
-                    )
-                return result_text
+                return structured_output
 
-            text = await execute_sdk_query(
+            result = await execute_sdk_query(
                 operation, _run_query, options, self.logger, max_retries=3
             )
 
-        text = str(text).strip()
-        self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
-        if not text:
-            raise ValueError("Claude SDK returned empty response for JSON generation")
-
-        try:
-            result: dict[str, Any] = json.loads(text)
-            return result
-        except json.JSONDecodeError as exc:
-            self.logger.debug("Direct JSON parse failed, trying extract_json_from_text fallback")
-            extracted = extract_json_from_text(text)
-            if extracted:
-                try:
-                    result = json.loads(extracted)
-                    self.logger.debug(
-                        "Fallback extracted JSON (%d chars): %s",
-                        len(extracted),
-                        extracted[:200],
-                    )
-                    return result
-                except json.JSONDecodeError:
-                    pass
-            raise ValueError(f"Failed to parse Claude response as JSON: {text[:200]}") from exc
+        if not isinstance(result, dict):
+            raise ValueError("Claude SDK returned no object structured output")
+        return result
 
     async def describe_image(
         self,

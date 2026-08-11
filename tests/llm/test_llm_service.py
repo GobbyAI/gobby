@@ -16,6 +16,13 @@ from gobby.llm.service import LLMService
 
 pytestmark = pytest.mark.unit
 
+JSON_SCHEMA = {
+    "type": "object",
+    "properties": {"ok": {"type": "boolean"}},
+    "required": ["ok"],
+    "additionalProperties": False,
+}
+
 
 class FakeTextGeneration:
     def __init__(self, bindings: list[CapabilityBinding] | None = None) -> None:
@@ -109,6 +116,7 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
         config,
         "prompt",
         system_prompt="system",
+        json_schema=JSON_SCHEMA,
         max_tokens=321,
         cwd="/tmp/project",
     )
@@ -123,6 +131,7 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     assert request.max_tokens == 321
     assert request.candidate_timeout_seconds is None
     assert request.cli_candidate_timeout_seconds is None
+    assert request.json_schema == JSON_SCHEMA
 
 
 @pytest.mark.asyncio
@@ -135,7 +144,7 @@ async def test_call_json_feature_preserves_structured_candidate_reasoning(
         candidates=[{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}],
     )
 
-    result = await service.call_json_feature(config, "prompt")
+    result = await service.call_json_feature(config, "prompt", json_schema=JSON_SCHEMA)
 
     assert result == {"ok": True}
     request = fake_generation.requests[0]

@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.memory.generation_schemas import RECALL_CLASSIFICATION_SCHEMA
 from gobby.memory.recall_signal_log import make_injection_outcome_recorder
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.utils.datetime import datetime_to_required_iso
@@ -367,6 +368,7 @@ class MemoryRecallRunner:
                     classifier_config,
                     f"Parent user prompt:\n{prompt}",
                     system_prompt=CLASSIFIER_SYSTEM_PROMPT,
+                    json_schema=RECALL_CLASSIFICATION_SCHEMA,
                     caller="memory.recall.classify",
                     total_timeout_seconds=self.config.timeout,
                 ),

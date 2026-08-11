@@ -40,6 +40,8 @@ class ConfigSnapshot:
     _active: DaemonConfig = field(repr=False, compare=False)
     _desired_values: MappingProxyType[str, object] = field(repr=False, compare=False)
     _active_values: MappingProxyType[str, object] = field(repr=False, compare=False)
+    _desired_overrides: MappingProxyType[str, object] = field(repr=False, compare=False)
+    _active_overrides: MappingProxyType[str, object] = field(repr=False, compare=False)
     _desired_bindings: MappingProxyType[str, RuntimeSecretBinding] = field(
         repr=False, compare=False
     )
@@ -56,6 +58,8 @@ class ConfigSnapshot:
         failed_live_keys: Mapping[str, ApplyFailure],
         desired_values: Mapping[str, object] | None = None,
         active_values: Mapping[str, object] | None = None,
+        desired_overrides: Mapping[str, object] | None = None,
+        active_overrides: Mapping[str, object] | None = None,
         desired_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
         active_bindings: Mapping[str, RuntimeSecretBinding] | None = None,
     ) -> None:
@@ -78,6 +82,16 @@ class ConfigSnapshot:
             self,
             "_active_values",
             MappingProxyType(dict(active_values or {})),
+        )
+        object.__setattr__(
+            self,
+            "_desired_overrides",
+            MappingProxyType(dict(desired_overrides or {})),
+        )
+        object.__setattr__(
+            self,
+            "_active_overrides",
+            MappingProxyType(dict(active_overrides or {})),
         )
         object.__setattr__(
             self,
@@ -107,6 +121,14 @@ class ConfigSnapshot:
     @property
     def active_values(self) -> Mapping[str, object]:
         return self._active_values
+
+    @property
+    def desired_overrides(self) -> Mapping[str, object]:
+        return self._desired_overrides
+
+    @property
+    def active_overrides(self) -> Mapping[str, object]:
+        return self._active_overrides
 
     def desired_secret(self, key: str) -> str | None:
         binding = self._desired_bindings.get(key)

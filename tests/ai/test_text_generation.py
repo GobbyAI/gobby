@@ -2897,6 +2897,28 @@ async def test_text_generation_service_times_out_slow_json_candidate_and_falls_b
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_falls_back_after_candidate_json_failure() -> None:
+    service = TextGenerationService(
+        _two_candidate_registry("endpoint:invalid", "endpoint:good"),
+        {
+            "endpoint:invalid": ProviderFailureAdapter(
+                ValueError("provider returned no object structured output")
+            ),
+            "endpoint:good": JSONAdapter("endpoint:good"),
+        },
+    )
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            candidates=("endpoint:invalid/slow-model", "endpoint:good/good-model"),
+        )
+    )
+
+    assert result == {"provider": "endpoint:good", "model": "good-model"}
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_terminal_candidate_timeout_raises() -> None:
     registry = AICapabilityRegistry(
         [

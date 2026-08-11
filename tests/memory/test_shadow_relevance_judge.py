@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.memory.generation_schemas import SHADOW_RELEVANCE_SCHEMA
 from gobby.memory.shadow_relevance import (
     SHADOW_PROTOCOL_VERSION,
     SHADOW_RELEVANCE_RUBRIC,
@@ -111,6 +112,7 @@ class FakeJudgeLLM:
         prompt: str,
         system_prompt: str | None = None,
         *,
+        json_schema: dict[str, Any],
         caller: str | None = None,
         **_: Any,
     ) -> dict[str, Any]:
@@ -121,6 +123,7 @@ class FakeJudgeLLM:
                 "feature_config": feature_config,
                 "prompt": prompt,
                 "system_prompt": system_prompt,
+                "json_schema": json_schema,
                 "caller": caller,
             }
         )
@@ -245,6 +248,7 @@ async def test_shadow_poll_claims_each_request_immediately_before_its_call() -> 
     assert store.label_batches[0][1]["created_at"] is not None
     assert all(row["label_source"] == "digest_shadow" for row in store.label_batches[0][0])
     assert all(len(call["feature_config"].candidates) == 1 for call in llm.calls)
+    assert all(call["json_schema"] == SHADOW_RELEVANCE_SCHEMA for call in llm.calls)
     assert all(call["system_prompt"] == SHADOW_RELEVANCE_RUBRIC for call in llm.calls)
     assert all(call["caller"] == "memory.shadow_relevance" for call in llm.calls)
 

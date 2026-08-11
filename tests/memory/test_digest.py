@@ -28,6 +28,7 @@ from gobby.memory.digest import (
     _validate_turn_record_payload,
     build_turn_and_digest,
 )
+from gobby.memory.generation_schemas import TURN_RECORD_SCHEMA
 from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
@@ -536,6 +537,7 @@ class TestBuildTurnAndDigest:
         llm_call = mock_llm_service.call_json_feature.await_args
         assert llm_call.args[0] is digest_config.digest
         assert "Fix the authentication bug in auth.py" in llm_call.args[1]
+        assert llm_call.kwargs["json_schema"] == TURN_RECORD_SCHEMA
         assert llm_call.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio

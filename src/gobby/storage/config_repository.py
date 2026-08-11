@@ -249,8 +249,8 @@ class ConfigRepository:
         overrides: dict[str, object],
         secret_bindings: Mapping[str, StoredSecretBinding],
     ) -> DaemonConfig:
-        """Validate a complete prospective override set with cross-field rules."""
-        candidate = DaemonConfig().model_dump(mode="python", by_alias=False)
+        """Validate a sparse prospective override set with cross-field rules."""
+        candidate: dict[str, object] = {}
         for key, value in overrides.items():
             spec = self._resolve(key)
             if spec.source_path is None:

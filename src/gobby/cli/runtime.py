@@ -75,7 +75,7 @@ class CliRuntime:
             repository = self.config_repository_factory(database)
             snapshot = repository.read(resolve_secrets=True)
             self._config = repository.runtime_candidate(
-                dict(snapshot.values), snapshot.secret_bindings
+                dict(snapshot.overrides), snapshot.secret_bindings
             )
         return self._config
 

@@ -16,6 +16,7 @@ from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.expansion._compile import _build_file_context, _expansion_feature_config
 from gobby.tasks.expansion_service import ExpansionService
+from gobby.tasks.generation_schemas import EXPANSION_COMPILATION_SCHEMA
 
 pytestmark = pytest.mark.unit
 
@@ -352,6 +353,21 @@ def test_compile_rejects_missing_manifest_entry(
 
 
 @pytest.mark.asyncio
+async def test_invoke_llm_compile_forwards_schema(service: ExpansionService) -> None:
+    service.llm_service.call_json_feature = AsyncMock(return_value={})
+    service._render_prompt = MagicMock(return_value="prompt")
+    run = MagicMock(id="expand-1", provider=None, model=None)
+
+    result = await service._invoke_llm_compile(run, {"task": {}})
+
+    assert result == {}
+    assert (
+        service.llm_service.call_json_feature.await_args.kwargs["json_schema"]
+        == EXPANSION_COMPILATION_SCHEMA
+    )
+
+
+@pytest.mark.asyncio
 async def test_invoke_llm_compile_wraps_json_decode_error(service: ExpansionService) -> None:
     service.llm_service.call_json_feature.side_effect = json.JSONDecodeError("bad", "x", 0)
     service._render_prompt = MagicMock(return_value="prompt")
@@ -388,9 +404,10 @@ async def test_invoke_llm_compile_wraps_non_object_result(service: ExpansionServ
 @pytest.mark.asyncio
 async def test_invoke_llm_compile_wraps_unexpected_provider_error(
     service: ExpansionService,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service.llm_service.call_json_feature.side_effect = RuntimeError("provider down")
-    service._render_prompt = MagicMock(return_value="prompt")
+    monkeypatch.setattr(service, "_render_prompt", MagicMock(return_value="prompt"))
     run = MagicMock(id="expand-1", provider=None, model=None)
 
     with pytest.raises(ValueError, match="Expansion compiler failed for run=expand-1") as excinfo:

@@ -36,8 +36,8 @@ class TestFeatureProfile:
 
     def test_profile_candidate_ordering(self) -> None:
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]) == (
-            "claude/haiku",
             "codex/gpt-5.6-luna",
+            "claude/haiku",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
             "codex/gpt-5.6-terra",

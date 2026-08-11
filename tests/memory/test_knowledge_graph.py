@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable
 from dataclasses import asdict
 from datetime import UTC, datetime
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +15,11 @@ import pytest
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
+from gobby.memory.generation_schemas import (
+    ENTITY_EXTRACTION_SCHEMA,
+    RELATIONSHIP_DELETION_SCHEMA,
+    RELATIONSHIP_EXTRACTION_SCHEMA,
+)
 from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import (
     ActiveMemoryPreview,
@@ -572,7 +577,11 @@ class TestAddToGraph:
         )
         current[0] = rebuilt_llm
 
-        result = await extractor._generate_json("prompt", caller="memory.extract")
+        result = await extractor._generate_json(
+            "prompt",
+            json_schema=ENTITY_EXTRACTION_SCHEMA,
+            caller="memory.extract",
+        )
 
         assert result == {"entities": []}
         rebuilt_llm.call_json_feature.assert_awaited_once()
@@ -633,10 +642,12 @@ class TestAddToGraph:
             _prompt: str,
             *,
             system_prompt: str | None = None,
+            json_schema: dict[str, Any],
             caller: str,
         ) -> dict[str, object]:
             del system_prompt
             if caller == "memory.kg.extract_entities":
+                assert json_schema == ENTITY_EXTRACTION_SCHEMA
                 return {
                     "entities": [
                         {"entity": "Josh", "entity_type": "person"},
@@ -644,6 +655,7 @@ class TestAddToGraph:
                     ]
                 }
             if caller == "memory.kg.extract_relationships":
+                assert json_schema == RELATIONSHIP_EXTRACTION_SCHEMA
                 return {
                     "relations": [
                         {
@@ -654,6 +666,7 @@ class TestAddToGraph:
                     ]
                 }
             if caller == "memory.kg.select_outdated_relations":
+                assert json_schema == RELATIONSHIP_DELETION_SCHEMA
                 new_relations = json.loads(delete_context["new_relations"])
                 existing_relations = json.loads(delete_context["existing_relations"])
                 if new_relations[0]["relationship"] == existing_relations[0]["relationship"]:

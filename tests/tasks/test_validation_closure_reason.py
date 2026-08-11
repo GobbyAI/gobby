@@ -12,6 +12,7 @@ import pytest
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.generation_schemas import TASK_CLOSE_VALIDATION_SCHEMA
 from gobby.tasks.validation import NO_WORK_CLOSE_REASONS, TaskValidator
 
 pytestmark = pytest.mark.unit
@@ -65,13 +66,17 @@ async def _run(validator: TaskValidator, **overrides: Any) -> None:
 async def test_closure_reason_reaches_prompt_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    validator, _ = _validator()
+    validator, llm_service = _validator()
     captured: dict[str, Any] = {}
     monkeypatch.setattr(validator._loader, "render", _capture_context(captured))
 
     await _run(validator, closure_reason="obsolete")
 
     assert captured["closure_reason"] == "obsolete"
+    assert (
+        llm_service.call_json_feature.await_args.kwargs["json_schema"]
+        == TASK_CLOSE_VALIDATION_SCHEMA
+    )
 
 
 @pytest.mark.asyncio

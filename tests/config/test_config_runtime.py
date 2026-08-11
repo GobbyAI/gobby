@@ -13,6 +13,7 @@ import psycopg
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.feature_base import candidate_labels
 from gobby.config.registry import ActivationPolicy
 from gobby.config.runtime import (
     ConfigChange,
@@ -23,6 +24,8 @@ from gobby.config.runtime import (
 from gobby.storage.config_notifications import ConfigNotificationListener, NotificationConnection
 from gobby.storage.config_repository import MAX_CONFIG_REVISION
 from gobby.storage.hub.postgres import PostgresHubDatabase
+
+FEATURE_LOW_PROFILE_DEFAULT_KEY = "ai.generation.profile_defaults.feature_low"
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +49,7 @@ class FakeRepository:
         self.index = 0
         self.read_count = 0
         self.bounds: list[tuple[int, int]] = []
+        self.candidate_inputs: list[dict[str, object]] = []
 
     def read(self, *, resolve_secrets: bool = True) -> StoredSnapshot:
         assert resolve_secrets
@@ -65,15 +69,21 @@ class FakeRepository:
     def runtime_candidate(
         self, overrides: dict[str, object], _secret_bindings: object
     ) -> DaemonConfig:
-        config = DaemonConfig()
-        ui_enabled = bool(overrides.get("ui.enabled", config.ui.enabled))
-        test_mode = bool(overrides.get("test_mode", config.test_mode))
-        return config.model_copy(
-            update={
-                "ui": config.ui.model_copy(update={"enabled": ui_enabled}),
-                "test_mode": test_mode,
+        self.candidate_inputs.append(dict(overrides))
+        candidate: dict[str, object] = {}
+        if "ui.enabled" in overrides:
+            candidate["ui"] = {"enabled": overrides["ui.enabled"]}
+        if "test_mode" in overrides:
+            candidate["test_mode"] = overrides["test_mode"]
+        if FEATURE_LOW_PROFILE_DEFAULT_KEY in overrides:
+            candidate["ai"] = {
+                "generation": {
+                    "profile_defaults": {"feature_low": overrides[FEATURE_LOW_PROFILE_DEFAULT_KEY]}
+                }
             }
-        )
+        if "memory_recall.candidates" in overrides:
+            candidate["memory_recall"] = {"candidates": overrides["memory_recall.candidates"]}
+        return DaemonConfig.model_validate(candidate)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,12 +177,19 @@ def stored_snapshot(
     test_mode: bool = False,
     changed: Mapping[str, int] | None = None,
     secrets: Mapping[str, StoredBinding] | None = None,
+    values: Mapping[str, object] | None = None,
+    overrides: Mapping[str, object] | None = None,
 ) -> StoredSnapshot:
-    values = MappingProxyType({"ui.enabled": ui_enabled, "test_mode": test_mode})
+    complete_values: dict[str, object] = {"ui.enabled": ui_enabled, "test_mode": test_mode}
+    complete_values.update(values or {})
+    stored_values = MappingProxyType(complete_values)
+    stored_overrides = MappingProxyType(
+        dict(complete_values) if overrides is None else dict(overrides)
+    )
     return StoredSnapshot(
         revision=revision,
-        values=values,
-        overrides=values,
+        values=stored_values,
+        overrides=stored_overrides,
         row_revisions=MappingProxyType(dict(changed or {})),
         secret_bindings=MappingProxyType(dict(secrets or {})),
     )
@@ -210,6 +227,92 @@ async def test_snapshot_swap_is_atomic() -> None:
     with pytest.raises(TypeError):
         cast(dict[str, int], new_bundle.snapshot.row_revisions)["ui.enabled"] = 99
 
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_sparse_profile_override_propagates_to_omitted_feature_candidates() -> None:
+    low_candidates = ["codex/gpt-5.6-luna", "claude/haiku"]
+    repository = FakeRepository(
+        [
+            stored_snapshot(
+                1,
+                values={
+                    FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates,
+                    "memory_recall.candidates": ["claude/haiku"],
+                },
+                overrides={FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates},
+            )
+        ]
+    )
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+
+    await runtime.start()
+
+    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(
+        low_candidates
+    )
+    assert repository.candidate_inputs[-1] == {FEATURE_LOW_PROFILE_DEFAULT_KEY: low_candidates}
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_live_profile_override_updates_inherited_feature_candidates() -> None:
+    initial = ["codex/gpt-5.6-luna", "claude/haiku"]
+    updated = ["endpoint:local/qwen", "claude/haiku"]
+    repository = FakeRepository(
+        [
+            stored_snapshot(
+                1,
+                values={FEATURE_LOW_PROFILE_DEFAULT_KEY: initial},
+                overrides={FEATURE_LOW_PROFILE_DEFAULT_KEY: initial},
+                changed={FEATURE_LOW_PROFILE_DEFAULT_KEY: 1},
+            ),
+            stored_snapshot(
+                2,
+                values={FEATURE_LOW_PROFILE_DEFAULT_KEY: updated},
+                overrides={FEATURE_LOW_PROFILE_DEFAULT_KEY: updated},
+                changed={FEATURE_LOW_PROFILE_DEFAULT_KEY: 2},
+            ),
+        ]
+    )
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+    await runtime.start()
+    repository.index = 1
+
+    await runtime.reconcile_revision(2)
+
+    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(updated)
+    assert runtime.snapshot.active_overrides == {FEATURE_LOW_PROFILE_DEFAULT_KEY: updated}
+    await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_feature_candidates_override_profile_default() -> None:
+    profile_candidates = ["codex/gpt-5.6-luna", "claude/haiku"]
+    explicit_candidates = ["endpoint:local/qwen"]
+    repository = FakeRepository(
+        [
+            stored_snapshot(
+                1,
+                values={
+                    FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
+                    "memory_recall.candidates": explicit_candidates,
+                },
+                overrides={
+                    FEATURE_LOW_PROFILE_DEFAULT_KEY: profile_candidates,
+                    "memory_recall.candidates": explicit_candidates,
+                },
+            )
+        ]
+    )
+    runtime = ConfigRuntime(repository, registry=FakeRegistry())
+
+    await runtime.start()
+
+    assert candidate_labels(runtime.snapshot.active.memory_recall.candidates) == tuple(
+        explicit_candidates
+    )
     await runtime.close()
 
 
