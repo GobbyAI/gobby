@@ -14,6 +14,7 @@ from gobby.runner_init.storage import (
     _warn_missing_terminal_dependency,
     bootstrap_overlaid_config,
 )
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
@@ -87,3 +88,36 @@ def test_bootstrap_overlay_preserves_stored_projection_values() -> None:
     # clobbering sibling websocket settings from the stored projection.
     assert merged.websocket.port == 61112
     assert merged.websocket.ping_interval == 45
+
+
+def test_real_runtime_candidate_through_overlay_matches_daemon_startup(
+    temp_db: HubDatabase,
+) -> None:
+    """The daemon startup path: stored overrides flow through the real
+    runtime_candidate, and bootstrap-owned facts land only via the overlay."""
+    from gobby.storage.config_repository import ConfigRepository
+    from gobby.storage.config_store import ConfigStore
+
+    repository = ConfigRepository(temp_db)
+    repository.reconcile_registry()
+    ConfigStore(temp_db).set("voice.enabled", True)
+    stored = repository.read()
+
+    candidate = repository.runtime_candidate(dict(stored.overrides))
+
+    # runtime_candidate does not overlay bootstrap fields by design; they stay
+    # at their defaults until bootstrap_overlaid_config runs.
+    assert candidate.daemon_port == DaemonConfig().daemon_port
+    assert candidate.voice.enabled is True
+
+    bootstrap = BootstrapConfig(
+        daemon_port=61111,
+        websocket_port=61112,
+        database_url="postgresql://gobby:pw@db.example:5432/hub",
+    )
+    merged = bootstrap_overlaid_config(candidate, bootstrap)
+
+    assert merged.daemon_port == 61111
+    assert merged.websocket.port == 61112
+    assert merged.database_url == "postgresql://gobby:pw@db.example:5432/hub"
+    assert merged.voice.enabled is True

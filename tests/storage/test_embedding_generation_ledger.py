@@ -148,3 +148,28 @@ def test_replace_tools_appends_tombstones_and_content_events(
     assert len(replacements) == 1
     assert replacements[0].id != old_tool_id
     assert _events(temp_db, replacements[0].id)[-1] == ("tool", False)
+
+
+def test_expired_serving_ack_unblocks_collection(temp_db: HubDatabase) -> None:
+    """A live ack blocks incompatible-generation GC until its DB lease lapses."""
+    from uuid import uuid4
+
+    state = EmbeddingGenerationState(temp_db)
+    watermark = state.watermark()
+    lease = state.prepare_serving_lease(
+        uuid4(),
+        "old-generation",
+        0,
+        lease_seconds=0.2,
+        caught_up_watermark=watermark,
+        required_watermark=watermark,
+    )
+    lease.activate()
+
+    assert state.can_collect("new-generation", 1) is False
+
+    deadline = time.monotonic() + 3.0
+    while state.can_collect("new-generation", 1) is False:
+        assert time.monotonic() < deadline, "expired ack never became collectible"
+        time.sleep(0.05)
+    assert state.can_collect("new-generation", 1) is True

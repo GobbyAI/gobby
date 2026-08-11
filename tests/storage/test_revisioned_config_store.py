@@ -547,3 +547,13 @@ def test_voice_binding_plaintext_api_key_is_rejected_at_storage(
 
     assert result.revision == 1
     assert result.changed_keys == frozenset({"voice.openai_compatible_audio"})
+
+
+def test_expected_revision_domain_is_rejected(mutations: ConfigMutations) -> None:
+    """Storage rejects out-of-domain expected revisions before touching rows."""
+    from typing import Any, cast
+
+    patch = ConfigPatch(values={"rules.enforcement_enabled": True})
+    for invalid in (-1, MAX_CONFIG_REVISION + 1, True, "0", 1.5, None):
+        with pytest.raises(ConfigValidationError, match="expected_revision"):
+            mutations.patch(expected_revision=cast(Any, invalid), patch=patch)
