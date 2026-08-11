@@ -885,8 +885,12 @@ describe("App wiring", () => {
       });
 
       const logoutButton = await screen.findByRole("button", { name: "Log out" });
-      expect(logoutButton).toHaveClass("w-8", "shrink-0", "pointer-coarse:min-w-11");
-      expect(logoutButton).not.toHaveClass("app-logout-btn", "pointer-coarse:min-h-11");
+      expect(logoutButton).toHaveClass("w-8", "shrink-0", "pointer-coarse:before:min-w-11");
+      expect(logoutButton).not.toHaveClass(
+        "app-logout-btn",
+        "pointer-coarse:min-h-11",
+        "pointer-coarse:min-w-11",
+      );
       expect(document.querySelector('[aria-label="Toggle navigation menu"]')).toBeNull();
 
       await act(async () => {

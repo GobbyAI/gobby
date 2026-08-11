@@ -22,9 +22,13 @@ describe('ThemeToggle', () => {
       'bg-accent-tint',
       'w-8',
       'shrink-0',
+      'pointer-coarse:before:min-w-11',
+    )
+    expect(button).not.toHaveClass(
+      'app-theme-toggle',
+      'pointer-coarse:min-h-11',
       'pointer-coarse:min-w-11',
     )
-    expect(button).not.toHaveClass('app-theme-toggle', 'pointer-coarse:min-h-11')
 
     fireEvent.click(button)
     expect(onThemeChange).toHaveBeenCalledWith('light')

@@ -37,7 +37,7 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
       variant="accent"
       size="icon"
       dense
-      className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
+      className={cn("shrink-0", coarseHitAreaCls)}
       disabled={disabled}
       aria-label={label}
       title={label}

@@ -401,14 +401,18 @@ describe('mobile chrome CSS', () => {
       '[@media(max-width:768px)]:py-2.5',
       '[@media(max-width:768px)]:text-[length:var(--text-2xl)]',
       '[--control-row-height:var(--status-bar-control-height)]',
-      'pointer-coarse:[--control-row-height:2.75rem]',
       'flex-nowrap',
-      'pointer-coarse:min-w-11',
       '[--app-brand-logo-size:2.75rem]',
       '[@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]',
     ]) {
       expectClassToken(appSource, token)
     }
+    // Header controls keep the 1.75rem status-bar visual height on touch —
+    // the 44px floor comes from coarseHitAreaCls, never from re-promoting the
+    // row height or the rendered box (#19181).
+    expect(appSource).not.toContain('pointer-coarse:[--control-row-height:2.75rem]')
+    expectNoClassToken(appSource, 'pointer-coarse:min-w-11')
+    expect(appSource).toContain('coarseHitAreaCls')
     expectStringAttribute(appSource, 'aria-label', 'Log out')
     expectStringAttribute(appSource, 'size', 'var(--app-brand-logo-size)')
     for (const hook of [
@@ -426,7 +430,8 @@ describe('mobile chrome CSS', () => {
 
     expectStringAttribute(themeToggleSource, 'size', 'icon')
     expectClassToken(themeToggleSource, 'shrink-0')
-    expectClassToken(themeToggleSource, 'pointer-coarse:min-w-11')
+    expectNoClassToken(themeToggleSource, 'pointer-coarse:min-w-11')
+    expect(themeToggleSource).toContain('coarseHitAreaCls')
     expectNoClassToken(themeToggleSource, 'app-theme-toggle')
 
     for (const token of [
@@ -463,11 +468,14 @@ describe('mobile chrome CSS', () => {
       'mobile:[--segmented-option-px:0.55rem]',
       'mobile:text-[length:var(--text-sm)]',
       'px-[var(--segmented-option-px)]',
-      'pointer-coarse:min-h-11',
-      'pointer-coarse:min-w-11',
     ]) {
       expectClassToken(segmentedControlSource, token)
     }
+    // Options carry the invisible hit-area expansion instead of coarse
+    // min-size promotion of the rendered box (#19181).
+    expect(segmentedControlSource).toContain('coarseTouchTarget && coarseHitAreaCls')
+    expectNoClassToken(segmentedControlSource, 'pointer-coarse:min-h-11')
+    expectNoClassToken(segmentedControlSource, 'pointer-coarse:min-w-11')
     expect(segmentedControlSource).toContain(
       "controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'",
     )
@@ -475,14 +483,16 @@ describe('mobile chrome CSS', () => {
     expect(activityActionsSource).toContain(
       String.raw`@max-[479px]/activity-panel:[&>.segmented-control\_\_option]:[--segmented-option-px:0.5rem]`,
     )
-    const denseIconTokens = ['min-h-8', 'w-8', 'pointer-coarse:min-w-11'] as const
+    const denseIconTokens = ['min-h-8', 'w-8'] as const
     document.body.innerHTML = `<button data-dense-header-icon class="${denseIconTokens.join(' ')}"></button>`
     const style = await injectUtilityStyles(denseIconTokens, true)
     const denseIconStyle = getComputedStyle(
       document.querySelector('[data-dense-header-icon]')!,
     )
+    // Dense header icons stay pixel-neutral under coarse pointers — the 44px
+    // floor lives on the coarseHitAreaCls ::before, not the host (#19181).
     expect(cssLengthToPixels(denseIconStyle.width)).toBe(32)
-    expect(cssLengthToPixels(denseIconStyle.minWidth)).toBe(44)
+    expect(cssLengthToPixels(denseIconStyle.minWidth)).toBe(0)
     expect(cssLengthToPixels(denseIconStyle.minHeight)).toBe(32)
 
     style.remove()
@@ -497,13 +507,8 @@ describe('mobile chrome CSS', () => {
       'inline-flex',
       '[--segmented-option-px:0.75rem]',
       'text-[length:var(--text-base)]',
-      'pointer-coarse:min-h-11',
     ] as const
-    const optionTokens = [
-      'px-[var(--segmented-option-px)]',
-      'pointer-coarse:min-h-11',
-      'pointer-coarse:min-w-11',
-    ] as const
+    const optionTokens = ['px-[var(--segmented-option-px)]'] as const
     const caretTokens = ['inline-flex', 'items-center', 'justify-center', 'shrink-0', 'opacity-70']
 
     for (const token of [...rootTokens, ...optionTokens]) {
@@ -544,9 +549,12 @@ describe('mobile chrome CSS', () => {
     const coarseStyle = await injectUtilityStyles(candidates, true)
     const coarseRoot = getComputedStyle(document.querySelector('[data-segmented-root]')!)
     const coarseOption = getComputedStyle(document.querySelector('[data-segmented-option]')!)
-    expect(cssLengthToPixels(coarseRoot.minHeight)).toBeGreaterThanOrEqual(44)
-    expect(cssLengthToPixels(coarseOption.minWidth)).toBeGreaterThanOrEqual(44)
-    expect(cssLengthToPixels(coarseOption.minHeight)).toBeGreaterThanOrEqual(44)
+    // Coarse pointers keep the rendered box pixel-neutral too — the 44px
+    // floor lives on the coarseHitAreaCls ::before expansion, whose ≥44×44
+    // geometry coarsePointerTouchTargets.test.ts verifies (#19181).
+    expect(cssLengthToPixels(coarseRoot.minHeight)).toBe(0)
+    expect(cssLengthToPixels(coarseOption.minWidth)).toBe(0)
+    expect(cssLengthToPixels(coarseOption.minHeight)).toBe(0)
 
     coarseStyle.remove()
     document.body.replaceChildren()
@@ -566,8 +574,13 @@ describe('mobile chrome CSS', () => {
     expect(activityPanelSource).toContain(
       '[&_.activity-panel-search]:min-h-[var(--control-row-height-sm)]',
     )
-    expect(activityPanelSource).toContain(
+    // Toolbar controls keep --status-bar-control-height on touch; hit-area
+    // expansion supplies the 44px floor, never a visual min-height (#19181).
+    expect(activityPanelSource).not.toContain(
       'pointer-coarse:[&_.activity-panel-search]:min-h-11',
+    )
+    expect(activityPanelSource).not.toContain(
+      String.raw`pointer-coarse:[&_.activity-panel-toolbar_.segmented-control\_\_option]:min-h-11`,
     )
     expect(activityPanelSource).toContain('mobile:min-h-11')
     expect(activityPanelSource).toContain(

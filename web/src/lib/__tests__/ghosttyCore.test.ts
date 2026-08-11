@@ -10,13 +10,11 @@ vi.mock('@wterm/ghostty', () => ({
 
 import { loadGhosttyCore } from '../ghosttyCore'
 
-// withGobbyAnsiPalette wraps the loaded core's cell getters in place, so
-// stub cores must expose them for loadGhosttyCore to resolve.
-const makeCore = (id: string) => ({
-  id,
-  getCell: () => ({}),
-  getScrollbackCell: () => ({}),
-})
+// The loader pipes every core through withGobbyAnsiPalette, which rebinds
+// these two cell accessors on the loaded instance.
+function fakeCore(id: string) {
+  return { id, getCell: vi.fn(), getScrollbackCell: vi.fn() }
+}
 
 describe('loadGhosttyCore', () => {
   beforeEach(() => {
@@ -24,8 +22,8 @@ describe('loadGhosttyCore', () => {
   })
 
   it('returns a fresh core per call', async () => {
-    const firstCore = makeCore('first')
-    const secondCore = makeCore('second')
+    const firstCore = fakeCore('first')
+    const secondCore = fakeCore('second')
     load.mockResolvedValueOnce(firstCore).mockResolvedValueOnce(secondCore)
 
     await expect(loadGhosttyCore()).resolves.toBe(firstCore)
@@ -37,7 +35,7 @@ describe('loadGhosttyCore', () => {
   })
 
   it('can load after a rejected attempt', async () => {
-    const recoveredCore = makeCore('recovered')
+    const recoveredCore = fakeCore('recovered')
     load.mockRejectedValueOnce(new Error('wasm unavailable')).mockResolvedValueOnce(recoveredCore)
 
     await expect(loadGhosttyCore()).rejects.toThrow('wasm unavailable')
