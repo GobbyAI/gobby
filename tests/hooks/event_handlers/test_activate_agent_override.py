@@ -51,14 +51,14 @@ class TestAgentNameOverride:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
-    def test_override_skips_config_store(
+    def test_override_skips_config_repository(
         self, mock_resolve: MagicMock, _mock_svm: MagicMock
     ) -> None:
-        """When agent_name_override is provided, ConfigStore should not be consulted."""
+        """When agent_name_override is provided, stored config is not consulted."""
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body("custom-agent")
 
-        with patch("gobby.storage.config_store.ConfigStore") as mock_cs:
+        with patch("gobby.storage.config_repository.ConfigRepository") as mock_repo:
             handlers._activate_default_agent(
                 session_id="sess-1",
                 cli_source="claude",
@@ -66,9 +66,9 @@ class TestAgentNameOverride:
                 agent_name_override="custom-agent",
             )
 
-            mock_cs.assert_not_called()
-            assert mock_cs.call_count == 0
-            assert not mock_cs.called
+            mock_repo.assert_not_called()
+            assert mock_repo.call_count == 0
+            assert not mock_repo.called
 
         mock_resolve.assert_called_once_with(
             "custom-agent", handlers._session_manager.db, project_id="proj-1"
@@ -78,19 +78,19 @@ class TestAgentNameOverride:
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")
-    def test_no_override_reads_config_store(
+    def test_no_override_reads_config_repository(
         self, mock_resolve: MagicMock, mock_svm_cls: MagicMock
     ) -> None:
-        """When no override is provided, ConfigStore is used to get the default agent."""
+        """When no override is provided, the stored default agent is consulted."""
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body("default")
 
         # SessionVariableManager must return empty vars so the code falls
-        # through to ConfigStore instead of using existing _agent_type.
+        # through to the config repository instead of using existing _agent_type.
         mock_svm_cls.return_value.get_variables.return_value = {}
 
-        with patch("gobby.storage.config_store.ConfigStore") as mock_cs:
-            mock_cs.return_value.get.return_value = "default"
+        with patch("gobby.storage.config_repository.ConfigRepository") as mock_repo:
+            mock_repo.return_value.read.return_value.values = {"default_agent": "default"}
 
             handlers._activate_default_agent(
                 session_id="sess-1",
@@ -98,12 +98,11 @@ class TestAgentNameOverride:
                 project_id=None,
             )
 
-            mock_cs.assert_called_once_with(handlers._session_manager.db)
-            assert mock_cs.call_count == 1
-            assert mock_cs.call_args is not None
-            mock_cs.return_value.get.assert_called_once_with("default_agent")
-            assert mock_cs.return_value.get.call_count == 1
-            assert mock_cs.return_value.get.call_args is not None
+            mock_repo.assert_called_once_with(handlers._session_manager.db)
+            assert mock_repo.call_count == 1
+            assert mock_repo.call_args is not None
+            mock_repo.return_value.read.assert_called_once_with(resolve_secrets=False)
+            assert mock_repo.return_value.read.call_count == 1
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.workflows.agent_resolver.resolve_agent")

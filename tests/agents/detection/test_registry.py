@@ -143,12 +143,11 @@ def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
             """
         )
     }
-    migration = temp_db.fetchone(
-        "SELECT version FROM schema_migrations WHERE version = %s",
-        (333,),
-    )
+    # Baseline application stamps one receipt row at the baseline version;
+    # per-migration rows are gone, so assert the head covers migration 333.
+    head = temp_db.fetchone("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
 
-    assert migration == {"version": 333}
+    assert head is not None and head["version"] >= 333
     assert {
         "provider_id",
         "version",

@@ -518,10 +518,10 @@ class TestSessionStartAndHelpers:
         # Global default
         with (
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_sv_mgr,
-            patch("gobby.storage.config_store.ConfigStore") as mock_cs,
+            patch("gobby.storage.config_repository.ConfigRepository") as mock_repo,
         ):
             mock_sv_mgr.return_value.get_variables.return_value = {}
-            mock_cs.return_value.get.return_value = "global-agent"
+            mock_repo.return_value.read.return_value.values = {"default_agent": "global-agent"}
             assert handler._resolve_agent_name("sess-1", None) == "global-agent"
 
     def test_build_agent_changes(self) -> None:

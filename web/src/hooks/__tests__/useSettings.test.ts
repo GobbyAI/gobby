@@ -235,7 +235,17 @@ describe('useSettings', () => {
     [Number.POSITIVE_INFINITY, 16],
     [undefined, 16],
   ])('normalizes API font size %s to %s', async (remoteFontSize, expected) => {
-    const remote = { fontSize: remoteFontSize }
+    // The hook reads ui_settings out of the /api/config/values snapshot, so
+    // the stub must return the full snapshot envelope (json() passes NaN and
+    // Infinity through, which a JSON.stringify round-trip would flatten).
+    const remote = {
+      revision: 1,
+      desired: { ui_settings: { fontSize: remoteFontSize } },
+      active: { ui_settings: { fontSize: remoteFontSize } },
+      secret_set: {},
+      pending_restart_keys: [],
+      failed_live_keys: {},
+    }
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({ ok: true, json: async () => remote })),
@@ -253,7 +263,17 @@ describe('useSettings', () => {
     localStorage.setItem('gobby-settings', JSON.stringify({ fontSize: 20 }))
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => ({ ok: true, json: async () => ({ theme: 'light' }) })),
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          revision: 1,
+          desired: { ui_settings: { theme: 'light' } },
+          active: { ui_settings: { theme: 'light' } },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
+      })),
     )
 
     const { result } = renderHook(() => useSettings())

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -35,7 +36,10 @@ def client(
         database=temp_db,
         session_manager=None,
     )
-    server.services.config_store = ConfigStore(temp_db)
+    # Exercise the documented config_store fallback seam in
+    # resolve_server_attachment_limits; the attribute is dynamic, so type
+    # it through Any.
+    cast(Any, server.services).config_store = ConfigStore(temp_db)
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
     return TestClient(app)
@@ -100,7 +104,7 @@ def test_upload_without_project_id_uses_server_project(
         session_manager=None,
         project_id=project.id,
     )
-    server.services.config_store = ConfigStore(temp_db)
+    cast(Any, server.services).config_store = ConfigStore(temp_db)
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
 

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -31,6 +33,25 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
+
+
+def _runtime_with(values: dict[str, object]) -> Any:
+    config = DaemonConfig()
+    return cast(
+        Any,
+        SimpleNamespace(
+            snapshot=ConfigSnapshot(
+                revision=1,
+                desired=config,
+                active=config,
+                row_revisions={},
+                pending_restart_keys=frozenset(),
+                failed_live_keys={},
+                desired_values=values,
+                active_values=values,
+            )
+        ),
+    )
 
 
 def _make_event() -> HookEvent:
@@ -122,7 +143,6 @@ class TestAggregateBlocks:
     async def test_aggregate_blocks_false_restores_first_block_behavior(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        ConfigStore(db).set("rules.aggregate_blocks", False)
         _insert_rule(
             manager,
             "first-gate",
@@ -140,9 +160,8 @@ class TestAggregateBlocks:
         )
         variables: dict[str, Any] = {}
 
-        response = await RuleEngine(db).evaluate(
-            _make_event(), session_id=SESSION_ID, variables=variables
-        )
+        engine = RuleEngine(db, config_runtime=_runtime_with({"rules.aggregate_blocks": False}))
+        response = await engine.evaluate(_make_event(), session_id=SESSION_ID, variables=variables)
 
         assert response.reason == "Rule enforced by Gobby: [first-gate]\nFirst gate"
         assert "second_ran" not in variables
