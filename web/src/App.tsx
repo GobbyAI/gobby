@@ -19,6 +19,7 @@ import { useColonAutocomplete } from "./hooks/useColonAutocomplete";
 import { useAgentDefinitions } from "./hooks/useAgentDefinitions";
 import { useProjects } from "./hooks/useProjects";
 import { useSessionCatalog } from "./hooks/useSessionCatalog";
+import { useIsMobile } from "./hooks/useIsMobile";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
 import type { ActivityTab } from "./components/activity/ActivityPanelTabs";
@@ -199,6 +200,7 @@ export default function App() {
     null,
   );
   const settingsOverlay = useSettingsOverlay();
+  const isMobile = useIsMobile();
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
   // Chat is the only page surface. Activity tabs (Tasks/Sessions/MCP) live
@@ -509,7 +511,12 @@ export default function App() {
                 dropDirection="down"
               />
             )}
-            <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
+            {/* Mobile app-header pattern (.impeccable.md): theme toggle and
+                logout collapse into the settings entry; the settings surface
+                exposes both. Desktop keeps the three-button cluster. */}
+            {!isMobile && (
+              <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
+            )}
             <Button
               type="button"
               variant="accent"
@@ -524,7 +531,7 @@ export default function App() {
             >
               <SettingsCogIcon />
             </Button>
-            {authRequired && authenticated && (
+            {!isMobile && authRequired && authenticated && (
               <Button
                 type="button"
                 variant="accent"
@@ -702,6 +709,7 @@ export default function App() {
               clientSettings={clientSettings}
               providerSelection={providerSelection}
               projectSelection={projectSelection}
+              onLogout={authRequired && authenticated ? logout : undefined}
             />
           </Suspense>
         )}

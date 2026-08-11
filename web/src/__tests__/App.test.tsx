@@ -1,20 +1,32 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, act, waitFor, screen, fireEvent } from "@testing-library/react";
+import {
+  render,
+  act,
+  waitFor,
+  screen,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 
 import App from "../App";
 import { useChat } from "../hooks/useChat";
 import { useSessionCatalog } from "../hooks/useSessionCatalog";
 import { useAuth } from "../hooks/useAuth";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { configurationClient } from "../api/config";
 
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
 const settingsOverlayRenderSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('../components/settings/SettingsOverlay', () => ({
-  default: () => {
-    settingsOverlayRenderSpy();
+  default: (props: Record<string, unknown>) => {
+    settingsOverlayRenderSpy(props);
     return <div role="dialog" aria-label="Settings overlay" data-testid="settings-overlay" />;
   },
+}));
+
+vi.mock("../hooks/useIsMobile", () => ({
+  useIsMobile: vi.fn(() => false),
 }));
 
 vi.mock("../hooks/useAuth", () => ({
@@ -900,6 +912,99 @@ describe("App wiring", () => {
     } finally {
       // Restore the suite default (auth off) so later tests are unaffected;
       // clearAllMocks does not drop a mockReturnValue override.
+      vi.mocked(useAuth).mockReturnValue({
+        authRequired: false,
+        authenticated: true,
+        credentialsConfigured: true,
+        loading: false,
+        login: vi.fn(),
+        logout: vi.fn(),
+      } as never);
+    }
+  });
+
+  it("collapses the header to a single settings entry at the mobile tier (#19185)", async () => {
+    const logout = vi.fn();
+    vi.mocked(useAuth).mockReturnValue({
+      authRequired: true,
+      authenticated: true,
+      credentialsConfigured: true,
+      loading: false,
+      login: vi.fn(),
+      logout,
+    } as never);
+    vi.mocked(useIsMobile).mockReturnValue(true);
+    try {
+      await act(async () => {
+        render(<App />);
+      });
+
+      const header = screen.getByTestId("app-header");
+      const settingsEntry = within(header).getByRole("button", {
+        name: "Open settings",
+      });
+      expect(
+        within(header).queryByRole("button", { name: "Log out" }),
+      ).toBeNull();
+      expect(
+        within(header).queryByRole("button", {
+          name: /Switch to (light|dark) theme/,
+        }),
+      ).toBeNull();
+
+      // The settings surface owns theme and logout on mobile — the overlay
+      // receives the header's logout handler.
+      await act(async () => {
+        fireEvent.click(settingsEntry);
+      });
+      expect(await screen.findByTestId("settings-overlay")).toBeInTheDocument();
+      const overlayProps = settingsOverlayRenderSpy.mock.calls[
+        settingsOverlayRenderSpy.mock.calls.length - 1
+      ]?.[0] as {
+        onLogout?: () => void;
+      };
+      expect(overlayProps.onLogout).toBe(logout);
+    } finally {
+      vi.mocked(useIsMobile).mockReturnValue(false);
+      vi.mocked(useAuth).mockReturnValue({
+        authRequired: false,
+        authenticated: true,
+        credentialsConfigured: true,
+        loading: false,
+        login: vi.fn(),
+        logout: vi.fn(),
+      } as never);
+    }
+  });
+
+  it("keeps the three-button header cluster on the desktop tier (#19185)", async () => {
+    vi.mocked(useAuth).mockReturnValue({
+      authRequired: true,
+      authenticated: true,
+      credentialsConfigured: true,
+      loading: false,
+      login: vi.fn(),
+      logout: vi.fn(),
+    } as never);
+    vi.mocked(useIsMobile).mockReturnValue(false);
+    try {
+      await act(async () => {
+        render(<App />);
+      });
+
+      const header = screen.getByTestId("app-header");
+      expect(
+        within(header).getByRole("button", {
+          name: /Switch to (light|dark) theme/,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        within(header).getByRole("button", { name: "Open settings" }),
+      ).toBeInTheDocument();
+      expect(
+        within(header).getByRole("button", { name: "Log out" }),
+      ).toBeInTheDocument();
+    } finally {
       vi.mocked(useAuth).mockReturnValue({
         authRequired: false,
         authenticated: true,

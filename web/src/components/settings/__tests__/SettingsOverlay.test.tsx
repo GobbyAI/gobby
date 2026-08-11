@@ -12,15 +12,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { configurationClient } from '../../../api/config'
 import { SettingsOverlay } from '../SettingsOverlay'
 import { useSettingsOverlay } from '../useSettingsOverlay'
+import { useIsMobile } from '../../../hooks/useIsMobile'
 import {
   DEFAULT_SETTINGS_SECTION,
   SETTINGS_SECTIONS,
   type SettingsSectionId,
 } from '../sections'
 
+vi.mock('../../../hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 interface HarnessProps {
   confirmDiscard?: (message: string) => boolean
   dirtySections?: readonly SettingsSectionId[]
+  onLogout?: () => void
 }
 
 const NO_DIRTY: readonly SettingsSectionId[] = []
@@ -30,7 +36,7 @@ const NO_DIRTY: readonly SettingsSectionId[] = []
  * driven by useSettingsOverlay. A sibling "chat" input with local state stands
  * in for the chat surface so we can assert it survives open/close (13.1.1).
  */
-function Harness({ confirmDiscard, dirtySections = NO_DIRTY }: HarnessProps) {
+function Harness({ confirmDiscard, dirtySections = NO_DIRTY, onLogout }: HarnessProps) {
   const overlay = useSettingsOverlay(confirmDiscard ? { confirmDiscard } : {})
 
   useEffect(() => {
@@ -53,6 +59,7 @@ function Harness({ confirmDiscard, dirtySections = NO_DIRTY }: HarnessProps) {
           onClose={overlay.close}
           onSelectSection={overlay.selectSection}
           registerDirtyGuard={overlay.registerDirtyGuard}
+          onLogout={onLogout}
         />
       ) : null}
     </div>
@@ -117,6 +124,7 @@ const STUB_RESPONSES: Record<string, () => unknown> = {
 }
 
 beforeEach(() => {
+  vi.mocked(useIsMobile).mockReturnValue(false)
   configurationClient.reset()
   vi.stubGlobal(
     'fetch',
@@ -250,6 +258,35 @@ describe('SettingsOverlay section dropdown', () => {
     expect(
       within(dialog).getByRole('heading', { name: 'Observability' }),
     ).not.toBeNull()
+  })
+})
+
+describe('SettingsOverlay mobile-tier logout entry (#19185)', () => {
+  it('renders a logout entry in the header at the mobile tier and fires the handler', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    const onLogout = vi.fn()
+    render(<Harness onLogout={onLogout} />)
+    const dialog = await openOverlay()
+
+    const logout = within(dialog).getByRole('button', { name: 'Log out' })
+    fireEvent.click(logout)
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
+  it('renders no logout entry at the desktop tier (header cluster owns it)', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    render(<Harness onLogout={vi.fn()} />)
+    const dialog = await openOverlay()
+
+    expect(within(dialog).queryByRole('button', { name: 'Log out' })).toBeNull()
+  })
+
+  it('renders no logout entry on mobile when auth is off (no handler)', async () => {
+    vi.mocked(useIsMobile).mockReturnValue(true)
+    render(<Harness />)
+    const dialog = await openOverlay()
+
+    expect(within(dialog).queryByRole('button', { name: 'Log out' })).toBeNull()
   })
 })
 

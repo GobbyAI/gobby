@@ -1,9 +1,10 @@
 import { createElement, useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import { ChevronDownIcon, CloseIcon } from '../icons'
+import { ChevronDownIcon, CloseIcon, LogoutIcon } from '../icons'
 import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
 import { coarseHitAreaCls } from '../ui/controlStyles'
+import { useIsMobile } from '../../hooks/useIsMobile'
 import { ActivityFilterDropdown } from '../activity/ActivityFilterDropdown'
 import {
   getSettingsSection,
@@ -50,6 +51,13 @@ interface SettingsOverlayProps {
    * standalone.
    */
   projectSelection?: ProjectSelectionContextValue
+  /**
+   * Log-out handler for the mobile-tier header entry (the mobile app-header
+   * pattern collapses the header's logout into this surface). Undefined when
+   * auth is off or the visitor is not authenticated; the entry only renders
+   * at the mobile tier.
+   */
+  onLogout?: () => void
 }
 
 const SECTION_OPTIONS = SETTINGS_SECTIONS.map((section) => ({
@@ -91,11 +99,13 @@ export function SettingsOverlay({
   clientSettings,
   providerSelection,
   projectSelection,
+  onLogout,
 }: SettingsOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false)
   const headingId = useId()
+  const isMobile = useIsMobile()
 
   useEffect(() => {
     if (!isOpen) return
@@ -170,16 +180,31 @@ export function SettingsOverlay({
           <h2 id={headingId} className="text-lg font-semibold leading-[1.2] text-foreground">
             Settings
           </h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="shrink-0"
-            onClick={onClose}
-            aria-label="Close settings"
-          >
-            <CloseIcon />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            {isMobile && onLogout ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                onClick={onLogout}
+                aria-label="Log out"
+                title="Log out"
+              >
+                <LogoutIcon />
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="shrink-0"
+              onClick={onClose}
+              aria-label="Close settings"
+            >
+              <CloseIcon />
+            </Button>
+          </div>
         </header>
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
           <div className="relative inline-block mobile:w-full">
