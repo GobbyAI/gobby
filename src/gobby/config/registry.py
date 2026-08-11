@@ -628,6 +628,7 @@ _MACHINE_EXPORT_KEYS = frozenset(
         AI_EMBEDDING_DIM_KEY,
         AI_EMBEDDING_QUERY_PREFIX_KEY,
         "databases.falkordb.host",
+        "databases.falkordb.password",
         "databases.falkordb.port",
         "databases.qdrant.url",
         "indexing.respect_gitignore",

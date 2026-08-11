@@ -16,7 +16,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import install_setup_impeccable as installer
-from gobby.cli.install import uninstall
+from gobby.cli.uninstall import uninstall
 from gobby.skills.script_cache import (
     DELETION_TOMBSTONE_PREFIX,
     PROCESS_OWNER_FILE,
@@ -940,10 +940,10 @@ def test_uninstall_tools_selector_matrix(
     settings.write_text("{}", encoding="utf-8")
     cleanup = installer.ImpeccableRemovalResult((), ())
     with (
-        patch("gobby.cli.install.Path.home", return_value=tmp_path),
-        patch("gobby.cli.install.remove_impeccable_runtime", return_value=cleanup) as remove,
+        patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
+        patch("gobby.cli.uninstall.remove_impeccable_runtime", return_value=cleanup) as remove,
         patch(
-            "gobby.cli.install.uninstall_claude",
+            "gobby.cli.uninstall.uninstall_claude",
             return_value={"success": True, "hooks_removed": [], "files_removed": []},
         ) as remove_claude,
     ):
@@ -960,8 +960,8 @@ def test_uninstall_tools_without_hooks(tmp_path: Path) -> None:
     removed = tmp_path / "tools" / "impeccable"
     cleanup = installer.ImpeccableRemovalResult((removed,), ())
     with (
-        patch("gobby.cli.install.Path.home", return_value=tmp_path),
-        patch("gobby.cli.install.remove_impeccable_runtime", return_value=cleanup) as remove,
+        patch("gobby.cli.uninstall.Path.home", return_value=tmp_path),
+        patch("gobby.cli.uninstall.remove_impeccable_runtime", return_value=cleanup) as remove,
     ):
         result = CliRunner().invoke(uninstall, ["--tools", "--yes"], catch_exceptions=False)
 

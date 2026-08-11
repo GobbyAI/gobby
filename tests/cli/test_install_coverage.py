@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli._install_prompts import _echo_uninstall_details
 from gobby.cli._install_state import (
     EmbeddingInstallState,
     InstallSectionState,
@@ -18,12 +19,12 @@ from gobby.cli._install_state import (
 )
 from gobby.cli.install import (
     _echo_install_details,
-    _echo_uninstall_details,
     _is_claude_code_installed,
     _is_codex_cli_installed,
     install,
-    uninstall,
 )
+from gobby.cli.uninstall import uninstall
+from gobby.ui_exposure import UiExposeError
 
 pytestmark = pytest.mark.unit
 
@@ -39,6 +40,11 @@ def runner(monkeypatch: pytest.MonkeyPatch) -> CliRunner:
     monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
     monkeypatch.setattr(install_module, "_run_install_preflight", lambda **_kwargs: ([], []))
     monkeypatch.setattr(install_module, "_maybe_start_daemon_after_install", MagicMock())
+    monkeypatch.setattr(
+        install_module,
+        "resolve_installer_ui_exposure",
+        lambda *_args, **_kwargs: False,
+    )
     monkeypatch.setattr(
         "gobby.cli.installers.ide_config.find_vscode_family_ides_needing_terminal_integration",
         lambda: [],
@@ -209,7 +215,11 @@ class TestInstallCommand:
             ) as mock_falkordb,
             patch("gobby.cli.install._maybe_start_daemon_after_install") as mock_start,
         ):
-            result = runner.invoke(install, ["--config-only"], catch_exceptions=False)
+            result = runner.invoke(
+                install,
+                ["--config-only", "--no-expose-ui"],
+                catch_exceptions=False,
+            )
 
         assert result.exit_code == 0, result.output
         assert "Configuration and required infrastructure complete." in result.output
@@ -317,7 +327,11 @@ class TestInstallCommand:
             patch("gobby.cli.install._run_voice_install") as voice_install,
             patch("gobby.cli.install._echo_install_summary") as full_summary,
         ):
-            result = runner.invoke(install, ["--hooks"], catch_exceptions=False)
+            result = runner.invoke(
+                install,
+                ["--hooks", "--no-expose-ui"],
+                catch_exceptions=False,
+            )
 
         assert result.exit_code == 0
         assert "pre-commit" in result.output
@@ -333,6 +347,44 @@ class TestInstallCommand:
         full_summary.assert_not_called()
         _config.assert_not_called()
         _setup.assert_not_called()
+
+    def test_hooks_with_expose_ui_bypasses_maintenance_return(
+        self,
+        runner: CliRunner,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import importlib
+
+        install_module = importlib.import_module("gobby.cli.install")
+        apply_exposure = MagicMock(side_effect=UiExposeError("sentinel"))
+        monkeypatch.setattr(
+            install_module,
+            "resolve_installer_ui_exposure",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(install_module, "apply_installer_ui_exposure", apply_exposure)
+        with (
+            patch(
+                "gobby.cli.install.ensure_personal_project_identity",
+                return_value=Path("/fake/personal/.gobby/project.json"),
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake/bootstrap.yaml"},
+            ),
+            patch("gobby.cli.install.run_daemon_setup") as daemon_setup,
+            patch("gobby.cli.install._should_initialize_project", return_value=False),
+        ):
+            result = runner.invoke(
+                install,
+                ["--hooks", "--expose-ui", "--no-interactive"],
+            )
+
+        assert result.exit_code == 1
+        assert "Failed to expose the web UI: sentinel" in result.output
+        daemon_setup.assert_called_once()
+        apply_exposure.assert_called_once_with(True, 60887)
 
     def test_install_claude_targeted_skips_embedding_and_services(
         self,
@@ -418,7 +470,11 @@ class TestInstallCommand:
                 return_value={"success": True},
             ) as mock_restart_policy,
         ):
-            result = runner.invoke(install, install_args, catch_exceptions=False)
+            result = runner.invoke(
+                install,
+                [*install_args, "--no-expose-ui"],
+                catch_exceptions=False,
+            )
 
         assert result.exit_code == 0
         assert "Gobby Installation" in result.output
@@ -461,7 +517,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
-            result = runner.invoke(install, [], catch_exceptions=False)
+            result = runner.invoke(install, ["--no-expose-ui"], catch_exceptions=False)
 
         assert result.exit_code == 0
         assert "Components to configure: agy, postgres, qdrant, falkordb" in result.output
@@ -619,7 +675,11 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
         ):
-            result = runner.invoke(install, ["-C", str(tmp_path)], catch_exceptions=False)
+            result = runner.invoke(
+                install,
+                ["-C", str(tmp_path), "--no-expose-ui"],
+                catch_exceptions=False,
+            )
         assert result.exit_code == 0, result.output
         assert "No supported AI coding CLIs detected; CLI hooks will be skipped." in result.output
 
@@ -658,7 +718,7 @@ class TestInstallCommand:
 # uninstall command
 # ---------------------------------------------------------------------------
 class TestUninstallCommand:
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     def test_uninstall_claude(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
         mock_uninstall.return_value = {
             "success": True,
@@ -669,7 +729,7 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Claude Code" in result.output
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     def test_uninstall_claude_failure(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
         mock_uninstall.return_value = {
             "success": False,
@@ -679,7 +739,7 @@ class TestUninstallCommand:
         assert result.exit_code == 1
         assert "Permission denied" in result.output
 
-    @patch("gobby.cli.install.uninstall_codex")
+    @patch("gobby.cli.uninstall.uninstall_codex")
     def test_uninstall_codex(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
         mock_uninstall.return_value = {
             "success": True,

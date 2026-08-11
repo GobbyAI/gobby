@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -16,13 +17,24 @@ from gobby.cli.ui import (
     ui,
 )
 from gobby.config.app import DaemonConfig
+from gobby.ui_exposure import UiExposeError, UiExposeResult
 
 pytestmark = pytest.mark.unit
+ui_module = importlib.import_module("gobby.cli.ui")
 
 
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolate_ui_exposure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        ui_module,
+        "get_ui_exposure_status",
+        lambda _daemon_port: UiExposeResult(mode=None),
+    )
 
 
 def _runtime(config: DaemonConfig) -> CliRuntime:
@@ -309,6 +321,7 @@ class TestUiStatus:
         result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Disabled" in result.output
+        assert "Exposure: off" in result.output
 
     @patch("gobby.cli.ui._get_ui_pid", return_value=5555)
     def test_status_dev_running(self, _pid: MagicMock, runner: CliRunner) -> None:
@@ -339,6 +352,82 @@ class TestUiStatus:
         result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Served by daemon" in result.output
+
+    def test_status_exposed(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        config = MagicMock()
+        config.ui.enabled = False
+        monkeypatch.setattr(
+            ui_module,
+            "get_ui_exposure_status",
+            lambda _daemon_port: UiExposeResult(
+                mode="tailscale", url="https://node.example.ts.net/"
+            ),
+        )
+
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
+
+        assert "Exposure: tailscale (https://node.example.ts.net/)" in result.output
+
+    def test_status_exposure_degraded(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = MagicMock()
+        config.ui.enabled = False
+        monkeypatch.setattr(
+            ui_module,
+            "get_ui_exposure_status",
+            lambda _daemon_port: UiExposeResult(
+                mode="tailscale", degraded_reason="root handler is missing"
+            ),
+        )
+
+        result = runner.invoke(ui, ["status"], obj=_runtime(config), catch_exceptions=False)
+
+        assert "Exposure: tailscale (degraded: root handler is missing)" in result.output
+
+
+class TestUiExposureCommands:
+    def test_expose_prints_url(self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch) -> None:
+        bootstrap = MagicMock(daemon_port=60887)
+        enable = Mock(return_value=UiExposeResult(mode="tailscale", url="https://node/"))
+        monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
+        monkeypatch.setattr(ui_module, "enable_tailscale_ui", enable)
+
+        result = runner.invoke(ui, ["expose"])
+
+        assert result.exit_code == 0
+        assert "Web UI exposed at https://node/" in result.output
+        enable.assert_called_once_with(60887)
+
+    def test_unexpose_forget_is_explicit(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bootstrap = MagicMock(daemon_port=60887)
+        disable = Mock(return_value=UiExposeResult(mode=None))
+        monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
+        monkeypatch.setattr(ui_module, "disable_tailscale_ui", disable)
+
+        result = runner.invoke(ui, ["unexpose", "--forget"])
+
+        assert result.exit_code == 0
+        assert "Serve state was not changed" in result.output
+        disable.assert_called_once_with(60887, forget=True)
+
+    def test_exposure_error_is_click_error(
+        self, runner: CliRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bootstrap = MagicMock(daemon_port=60887)
+        monkeypatch.setattr(ui_module, "load_bootstrap", Mock(return_value=bootstrap))
+        monkeypatch.setattr(
+            ui_module,
+            "enable_tailscale_ui",
+            Mock(side_effect=UiExposeError("conflict")),
+        )
+
+        result = runner.invoke(ui, ["expose"])
+
+        assert result.exit_code == 1
+        assert "Error: conflict" in result.output
 
 
 # ---------------------------------------------------------------------------

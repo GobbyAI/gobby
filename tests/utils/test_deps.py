@@ -253,7 +253,17 @@ def test_tailscale_info() -> None:
         if cmd == ["tailscale", "status", "--json"]:
             return json.dumps({"Self": {"DNSName": "test.hostname."}})
         if cmd == ["tailscale", "serve", "status", "--json"]:
-            return json.dumps({"Web": {"443": {"/": "backend"}}, "AllowFunnel": {"443": True}})
+            return json.dumps(
+                {
+                    "TCP": {"443": {"HTTPS": True}},
+                    "Web": {
+                        "test.hostname:443": {
+                            "Handlers": {"/": {"Proxy": "http://localhost:60887"}}
+                        }
+                    },
+                    "AllowFunnel": {"test.hostname:443": True},
+                }
+            )
         return None
 
     with (
@@ -264,7 +274,9 @@ def test_tailscale_info() -> None:
         assert info is not None
         assert info["version"] == "1.66.4"
         assert info["hostname"] == "test.hostname"
-        assert info["serving"] == {"443": {"/": "backend"}}
+        assert info["serving"] == {
+            "test.hostname:443": {"Handlers": {"/": {"Proxy": "http://localhost:60887"}}}
+        }
         assert info["funnel"] is True
 
 

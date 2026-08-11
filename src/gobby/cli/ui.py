@@ -12,7 +12,14 @@ from typing import TYPE_CHECKING
 
 import click
 
+from gobby.config.bootstrap import load_bootstrap
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
+from gobby.ui_exposure import (
+    UiExposeError,
+    disable_tailscale_ui,
+    enable_tailscale_ui,
+    get_ui_exposure_status,
+)
 
 from .ui_mode import UIModeResolution
 from .utils import find_web_dir, get_gobby_home, spawn_ui_server, stop_ui_server
@@ -89,6 +96,36 @@ def ui() -> None:
     pass
 
 
+@ui.command("expose")
+def ui_expose() -> None:
+    """Expose the web UI to this machine's Tailscale network."""
+    daemon_port = load_bootstrap().daemon_port
+    try:
+        result = enable_tailscale_ui(daemon_port)
+    except UiExposeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Web UI exposed at {result.url}")
+
+
+@ui.command("unexpose")
+@click.option(
+    "--forget",
+    is_flag=True,
+    help="Forget Gobby's exposure intent without asserting Serve state was removed.",
+)
+def ui_unexpose(forget: bool) -> None:
+    """Remove Gobby's Tailscale root handler."""
+    daemon_port = load_bootstrap().daemon_port
+    try:
+        disable_tailscale_ui(daemon_port, forget=forget)
+    except UiExposeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if forget:
+        click.echo("UI exposure intent forgotten; Tailscale Serve state was not changed.")
+    else:
+        click.echo("Web UI exposure disabled.")
+
+
 @ui.command("start")
 @click.pass_context
 def ui_start(ctx: click.Context) -> None:
@@ -163,6 +200,7 @@ def ui_status(ctx: click.Context) -> None:
 
     if not config.ui.enabled:
         click.echo("Web UI: Disabled")
+        _echo_exposure_status(config.daemon_port)
         return
 
     ui_resolution = _resolve_ui_mode_for_command(config)
@@ -178,6 +216,17 @@ def ui_status(ctx: click.Context) -> None:
     elif ui_resolution.effective == "production":
         click.echo(f"  URL: http://localhost:{config.daemon_port}/")
         click.echo("  Status: Served by daemon (check 'gobby status')")
+    _echo_exposure_status(config.daemon_port)
+
+
+def _echo_exposure_status(daemon_port: int) -> None:
+    exposure = get_ui_exposure_status(daemon_port)
+    if exposure.mode is None:
+        click.echo("Exposure: off")
+    elif exposure.degraded_reason is not None:
+        click.echo(f"Exposure: tailscale (degraded: {exposure.degraded_reason})")
+    else:
+        click.echo(f"Exposure: tailscale ({exposure.url})")
 
 
 @ui.command()

@@ -103,7 +103,7 @@ async def _repair_code_index_bm25(
     )
     from gobby.runner_init.services import mark_service_degraded
 
-    database_url = config.database_url
+    database_url = runner.startup_config.database_url
     if database_url:
         try:
             status = await asyncio.to_thread(

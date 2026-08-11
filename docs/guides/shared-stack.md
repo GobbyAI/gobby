@@ -92,6 +92,45 @@ Its preflight checks the copied key and token, runs a PostgreSQL query, reads sh
 configuration and secrets, checks Qdrant health, and authenticates a FalkorDB `PING`.
 Any failed check aborts installation with endpoint-specific diagnostics.
 
+## Tailnet-only web UI
+
+Gobby can publish its local web UI through Tailscale Serve while the daemon remains
+bound to `localhost`. Exposure does not change `auth_mode`; the same Gobby
+authentication policy applies through the HTTPS URL. The exposure choice is stored as
+`ui_expose: tailscale` in the machine-local `bootstrap.yaml` and is never copied into
+shared configuration.
+
+An interactive full or config-only install offers this setup when Tailscale is
+running, with **No** as the default. Targeted installs act only when `--expose-ui` is
+explicit. `--no-interactive` skips an unspecified choice, and `--no-expose-ui` leaves
+the existing Serve state and saved intent unchanged.
+
+Manage exposure explicitly with:
+
+```bash
+gobby ui expose
+gobby ui status
+gobby ui unexpose
+```
+
+`gobby ui expose` manages only the HTTPS port 443 root handler and preserves sibling
+Serve handlers. `gobby ui unexpose` verifies root-handler removal before forgetting
+Gobby's intent. Use `gobby ui unexpose --forget` only when external Serve state is
+being managed separately; it clears Gobby's intent without claiming the root handler
+was removed.
+
+On each `gobby start`, saved intent is reconciled after daemon readiness. A successful
+reconciliation prints the MagicDNS HTTPS URL. A Tailscale failure emits a warning and
+does not block daemon startup. With no saved intent, startup makes no Tailscale calls
+and leaves manual Serve configuration alone.
+
+`gobby ui status` reports exposure as off, healthy with its URL, or degraded with the
+reason. Recovery is fail-closed: ensure the Tailscale backend and MagicDNS are enabled,
+remove any conflicting port-443 protocol or foreign root proxy, and disable Funnel for
+the node's `host:443`; then rerun `gobby ui expose` or `gobby start`. Gobby refuses to
+combine this feature with Funnel because Funnel permits public ingress beyond the
+tailnet.
+
 ## M0 acceptance checklist
 
 Use the [remote Docker stack live-test runbook](remote-docker-acceptance.md) for the

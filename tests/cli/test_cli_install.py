@@ -25,8 +25,8 @@ from gobby.cli.install import (
     _is_droid_cli_installed,
     _is_qwen_cli_installed,
     _resolve_ide_settings_consent,
-    uninstall,
 )
+from gobby.cli.uninstall import uninstall
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, ensure_local_api_token, hash_token
 from gobby.storage.config_store import ConfigStore
@@ -719,7 +719,7 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "No Gobby hooks found" in result.output
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_claude_only_flag(
         self,
@@ -750,7 +750,7 @@ class TestUninstallCommand:
 
         mock_uninstall_claude.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_codex")
+    @patch("gobby.cli.uninstall.uninstall_codex")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_only_flag(
         self,
@@ -776,7 +776,7 @@ class TestUninstallCommand:
         assert "Removed 1 files" in result.output
         mock_uninstall_codex.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_qwen")
+    @patch("gobby.cli.uninstall.uninstall_qwen")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_qwen_only_flag(
         self,
@@ -804,7 +804,7 @@ class TestUninstallCommand:
         assert "Removed 1 hooks" in result.output
         mock_uninstall_qwen.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_droid")
+    @patch("gobby.cli.uninstall.uninstall_droid")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_droid_only_flag(
         self,
@@ -829,7 +829,7 @@ class TestUninstallCommand:
         assert "Removed 1 hooks" in result.output
         mock_uninstall_droid.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_agy")
+    @patch("gobby.cli.uninstall.uninstall_agy")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_agy_only_flag(
         self,
@@ -854,7 +854,7 @@ class TestUninstallCommand:
         assert "Removed 1 hooks" in result.output
         mock_uninstall_agy.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_claude_failure(
         self,
@@ -880,7 +880,7 @@ class TestUninstallCommand:
         assert "Failed: Settings file not found" in result.output
         assert "Some uninstallations failed" in result.output
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_no_hooks_to_remove(
         self,
@@ -904,7 +904,7 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "(no hooks found to remove)" in result.output
 
-    @patch("gobby.cli.install.uninstall_codex")
+    @patch("gobby.cli.uninstall.uninstall_codex")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_no_integration_found(
         self,
@@ -949,7 +949,7 @@ class TestUninstallCommand:
         assert result.exit_code == 1
         assert "Aborted" in result.output
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_confirms_with_yes_input(
         self,
@@ -985,7 +985,7 @@ class TestInstallCommandDirectInvocation:
         """Create a CLI test runner."""
         return CliRunner()
 
-    @patch("gobby.cli.install.uninstall_claude")
+    @patch("gobby.cli.uninstall.uninstall_claude")
     def test_invoke_uninstall_directly(
         self,
         mock_uninstall_claude: MagicMock,
@@ -1026,7 +1026,7 @@ class TestUninstallEdgeCases:
         """Create a CLI test runner."""
         return CliRunner()
 
-    @patch("gobby.cli.install.uninstall_codex")
+    @patch("gobby.cli.uninstall.uninstall_codex")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_checks_home_path(
         self,
@@ -1062,7 +1062,7 @@ class TestUninstallEdgeCases:
         assert "Codex" in result.output
         mock_uninstall_codex.assert_called_once()
 
-    @patch("gobby.cli.install.uninstall_codex")
+    @patch("gobby.cli.uninstall.uninstall_codex")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_uninstall_codex_failure(
         self,

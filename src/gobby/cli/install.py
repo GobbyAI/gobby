@@ -28,6 +28,11 @@ from gobby.storage.secrets import (
     SecretStore,
     write_private_file,
 )
+from gobby.ui_exposure import (
+    UiExposeError,
+    apply_installer_ui_exposure,
+    resolve_installer_ui_exposure,
+)
 from gobby.utils.local_token import local_token_path, read_local_api_token
 
 from ._detectors import (
@@ -58,20 +63,16 @@ from ._install_prompts import (
     _echo_install_details,
     _echo_install_summary,
     _echo_migration_notice,
-    _echo_uninstall_details,
-    _echo_uninstall_summary,
     _prompt_api_keys,
     _run_embedding_install,
     _run_falkordb_install,
     _run_git_hooks_install,
     _run_qdrant_install,
     _run_standard_cli_install,
-    _run_standard_cli_uninstall,
     _run_voice_install,
 )
 from ._install_state import empty_install_state, prepare_install_state, should_configure_section
 from .install_setup import ensure_daemon_config, run_daemon_setup
-from .install_setup_impeccable import remove_impeccable_runtime
 from .installers import (
     install_agy,
     install_claude,
@@ -84,12 +85,6 @@ from .installers import (
     install_postgres,
     install_qdrant,
     install_qwen,
-    uninstall_agy,
-    uninstall_claude,
-    uninstall_codex,
-    uninstall_droid,
-    uninstall_grok,
-    uninstall_qwen,
 )
 from .installers.container_restart import apply_managed_service_restart_policy
 from .runtime import get_cli_runtime
@@ -109,12 +104,10 @@ __all__ = [
     "_is_qwen_cli_installed",
     "_is_agy_cli_installed",
     "_echo_install_details",
-    "_echo_uninstall_details",
     "_API_KEY_PROMPTS",
     "_prompt_api_keys",
     "_ensure_daemon_config",
     "install",
-    "uninstall",
 ]
 
 
@@ -378,6 +371,12 @@ def _install_required_stack(
     help="Configure detected VS Code-family terminals for tmux and Gobby session titles.",
 )
 @click.option(
+    "--expose-ui/--no-expose-ui",
+    "expose_ui_flag",
+    default=None,
+    help="Expose the web UI to this machine's Tailscale network.",
+)
+@click.option(
     "--no-interactive",
     "no_interactive_flag",
     is_flag=True,
@@ -417,6 +416,7 @@ def install(
     secret_kek_posture: str,
     auth_mode: str | None,
     ide_settings_flag: bool | None,
+    expose_ui_flag: bool | None,
     no_interactive_flag: bool,
     container_restarts_flag: bool,
     working_dir: Path | None,
@@ -506,6 +506,15 @@ def install(
 
     is_full_install = all_flag or config_only_flag
     bootstrap = load_bootstrap()
+    expose_ui = resolve_installer_ui_exposure(
+        expose_ui_flag,
+        full_install=is_full_install,
+        no_interactive=no_interactive_flag,
+        confirm=lambda: click.confirm(
+            "Expose the web UI to your Tailscale network?",
+            default=False,
+        ),
+    )
     datastore_mode = bootstrap.datastore_mode
     provision_managed_services = is_full_install and datastore_mode == "local"
     hooks_only_maintenance = (
@@ -520,6 +529,7 @@ def install(
         )
         and auth_mode is None
         and ide_settings_flag is None
+        and expose_ui_flag is not True
     )
 
     # Get install directory info
@@ -601,6 +611,15 @@ def install(
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
+    try:
+        exposure_result = apply_installer_ui_exposure(
+            expose_ui,
+            bootstrap.daemon_port,
+        )
+    except UiExposeError as exc:
+        raise click.ClickException(f"Failed to expose the web UI: {exc}") from exc
+    if exposure_result is not None:
+        click.echo(f"Web UI exposed at {exposure_result.url}")
     if config_only_flag:
         if not _echo_install_summary(results, True):
             sys.exit(1)
@@ -737,235 +756,3 @@ def install(
             _maybe_start_daemon_after_install(no_interactive=no_interactive_flag)
     finally:
         runtime.close()
-
-
-@click.command("uninstall")
-@click.option(
-    "--claude",
-    "claude_flag",
-    is_flag=True,
-    help="Uninstall Claude Code hooks only",
-)
-@click.option(
-    "--grok",
-    "grok_flag",
-    is_flag=True,
-    help="Uninstall Grok CLI hooks only",
-)
-@click.option(
-    "--codex",
-    "codex_flag",
-    is_flag=True,
-    help="Uninstall Codex notify integration",
-)
-@click.option(
-    "--droid",
-    "droid_flag",
-    is_flag=True,
-    help="Uninstall Droid CLI hooks only",
-)
-@click.option(
-    "--agy",
-    "agy_flag",
-    is_flag=True,
-    help="Uninstall AGY CLI hooks only",
-)
-@click.option(
-    "--qwen",
-    "qwen_flag",
-    is_flag=True,
-    help="Uninstall Qwen CLI hooks only",
-)
-@click.option(
-    "--all",
-    "all_flag",
-    is_flag=True,
-    default=False,
-    help="Uninstall hooks from all CLIs (default behavior when no flags specified)",
-)
-@click.option(
-    "--tools",
-    "tools_flag",
-    is_flag=True,
-    help="Remove Gobby-managed tools and their owned materialization caches",
-)
-@click.option(
-    "--project",
-    "project_flag",
-    is_flag=True,
-    help="Uninstall per-project hooks from current directory (instead of global)",
-)
-@click.option(
-    "-C",
-    "--path",
-    "working_dir",
-    type=click.Path(exists=True, file_okay=False, dir_okay=True, path_type=Path),
-    default=None,
-    help="Target directory (default: current directory)",
-)
-@click.confirmation_option(prompt="Are you sure you want to uninstall Gobby hooks?")
-def uninstall(
-    claude_flag: bool,
-    grok_flag: bool,
-    agy_flag: bool,
-    codex_flag: bool,
-    droid_flag: bool,
-    qwen_flag: bool,
-    all_flag: bool,
-    tools_flag: bool,
-    project_flag: bool,
-    working_dir: Path | None,
-) -> None:
-    """Uninstall Gobby hooks and selected managed tools.
-
-    By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
-    Use --project to uninstall per-project hooks from the current directory.
-    Use --claude, --grok, --agy, --qwen, or --codex to uninstall only from
-    specific CLIs.
-    """
-    if tools_flag and project_flag:
-        raise click.UsageError("--tools cannot be combined with --project")
-    project_path = working_dir.resolve() if working_dir else Path.cwd()
-
-    # Determine which CLIs to uninstall
-    if (
-        not claude_flag
-        and not grok_flag
-        and not agy_flag
-        and not qwen_flag
-        and not codex_flag
-        and not droid_flag
-        and not all_flag
-        and not tools_flag
-    ):
-        all_flag = True
-
-    if tools_flag:
-        cleanup = remove_impeccable_runtime()
-        for path in cleanup.removed:
-            click.echo(f"Removed managed artifact: {path}")
-        for warning in cleanup.skipped:
-            click.echo(f"Warning: {warning}", err=True)
-        if not any((claude_flag, grok_flag, agy_flag, qwen_flag, codex_flag, droid_flag, all_flag)):
-            return
-
-    # Build list of CLIs to uninstall
-    clis_to_uninstall: list[str] = []
-
-    if all_flag:
-        if project_flag:
-            claude_settings = project_path / ".claude" / "settings.json"
-            grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
-            agy_hooks = Path.home() / ".gemini" / "config" / "hooks.json"
-            qwen_settings = project_path / ".qwen" / "settings.json"
-            codex_hooks = project_path / ".codex" / "hooks.json"
-            droid_hooks = project_path / ".factory" / "hooks" / "hooks.json"
-        else:
-            claude_settings = Path.home() / ".claude" / "settings.json"
-            grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
-            agy_hooks = Path.home() / ".gemini" / "config" / "hooks.json"
-            qwen_settings = Path.home() / ".qwen" / "settings.json"
-            codex_hooks = Path.home() / ".codex" / "hooks.json"
-            droid_hooks = Path.home() / ".factory" / "hooks" / "hooks.json"
-
-        if claude_settings.exists():
-            clis_to_uninstall.append("claude")
-        if grok_hooks.exists():
-            clis_to_uninstall.append("grok")
-        if agy_hooks.exists():
-            clis_to_uninstall.append("agy")
-        if qwen_settings.exists():
-            clis_to_uninstall.append("qwen")
-        if codex_hooks.exists():
-            clis_to_uninstall.append("codex")
-        if droid_hooks.exists():
-            clis_to_uninstall.append("droid")
-
-        if not clis_to_uninstall:
-            click.echo("No Gobby hooks found to uninstall.")
-            if project_flag:
-                click.echo(f"\nChecked: {project_path / '.claude'}")
-                click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
-                click.echo(f"         {Path.home() / '.gemini' / 'config' / 'hooks.json'}")
-                click.echo(f"         {project_path / '.qwen'}")
-                click.echo(f"         {project_path / '.codex'}")
-                click.echo(f"         {project_path / '.factory'}")
-            else:
-                click.echo(f"\nChecked: {Path.home() / '.claude'}")
-                click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
-                click.echo(f"         {Path.home() / '.gemini' / 'config' / 'hooks.json'}")
-                click.echo(f"         {Path.home() / '.qwen'}")
-                click.echo(f"         {Path.home() / '.codex'}")
-                click.echo(f"         {Path.home() / '.factory'}")
-            sys.exit(0)
-    else:
-        if claude_flag:
-            clis_to_uninstall.append("claude")
-        if grok_flag:
-            clis_to_uninstall.append("grok")
-        if agy_flag:
-            clis_to_uninstall.append("agy")
-        if qwen_flag:
-            clis_to_uninstall.append("qwen")
-        if codex_flag:
-            clis_to_uninstall.append("codex")
-        if droid_flag:
-            clis_to_uninstall.append("droid")
-
-    click.echo("=" * 60)
-    click.echo("  Gobby Hooks Uninstallation")
-    click.echo("=" * 60)
-    if project_flag:
-        click.echo(f"\nScope: Project ({project_path})")
-    else:
-        click.echo("\nScope: Global")
-    click.echo(f"Targets to uninstall: {', '.join(clis_to_uninstall)}")
-    click.echo("")
-
-    # For global uninstall, use Path.home() so uninstallers find ~/.{cli}/
-    uninstall_base = project_path if project_flag else Path.home()
-
-    # Track results
-    results: dict[str, dict[str, Any]] = {}
-
-    # Standard CLIs (claude, grok, agy, qwen, codex, droid)
-    _standard_uninstallers: dict[str, Callable[..., dict[str, Any]]] = {
-        "agy": uninstall_agy,
-        "claude": uninstall_claude,
-        "grok": uninstall_grok,
-        "qwen": uninstall_qwen,
-        "codex": uninstall_codex,
-        "droid": uninstall_droid,
-    }
-    for cli_name, uninstaller_fn in _standard_uninstallers.items():
-        if cli_name in clis_to_uninstall:
-            uninstall_kwargs: dict[str, Any] = {}
-            if cli_name in {"qwen", "droid"}:
-                uninstall_kwargs["mode"] = "project" if project_flag else "global"
-            _run_standard_cli_uninstall(
-                cli_name,
-                uninstaller_fn,
-                uninstall_base,
-                results,
-                **uninstall_kwargs,
-            )
-
-    # Remove global hooks directory for global uninstall
-    if not project_flag and all_flag:
-        global_hooks_dir = Path(
-            os.environ.get("GOBBY_HOOKS_DIR", str(Path.home() / ".gobby" / "hooks"))
-        )
-        for fname in ("hook_dispatcher.py", "validate_settings.py"):
-            fpath = global_hooks_dir / fname
-            if fpath.exists():
-                try:
-                    fpath.unlink()
-                except OSError as e:
-                    click.echo(f"  Warning: could not remove {fpath}: {e}", err=True)
-        click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
-        click.echo("")
-
-    # Summary
-    all_success = _echo_uninstall_summary(results)
-    if not all_success:
-        sys.exit(1)

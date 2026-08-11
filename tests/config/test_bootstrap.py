@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.config.bootstrap import BootstrapConfig, BootstrapConfigError, load_bootstrap
 
 
 def _write_bootstrap(path: Path, content: str) -> None:
@@ -166,3 +166,22 @@ def test_bootstrap_preserves_valid_explicit_scalar_values(tmp_path: Path) -> Non
     assert bootstrap.database_url == "postgresql://gobby:secret@localhost/gobby"
     assert "hub_backend" not in bootstrap.to_config_dict()
     assert "database_path" not in bootstrap.to_config_dict()
+
+
+def test_ui_exposure_mode_loads_from_bootstrap(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_path, "ui_expose: tailscale\n")
+
+    assert load_bootstrap(str(bootstrap_path)).ui_expose == "tailscale"
+
+
+def test_ui_exposure_mode_rejects_unknown_value(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_path, "ui_expose: funnel\n")
+
+    with pytest.raises(BootstrapConfigError, match="ui_expose"):
+        load_bootstrap(str(bootstrap_path))
+
+
+def test_ui_exposure_is_machine_local_only() -> None:
+    assert "ui_expose" not in BootstrapConfig(ui_expose="tailscale").to_config_dict()

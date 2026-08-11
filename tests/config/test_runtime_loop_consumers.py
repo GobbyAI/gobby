@@ -144,7 +144,10 @@ async def test_lifecycle_consumer_observes_live_change(
         return {"healthy": True, "indexes": []}
 
     monkeypatch.setattr("gobby.code_index.bm25_health.repair_bm25_indexes", repair)
-    runner = SimpleNamespace(config_runtime=runtime)
+    runner = SimpleNamespace(
+        config_runtime=runtime,
+        startup_config=SimpleNamespace(database_url="postgresql://bootstrap/hub"),
+    )
 
     assert (
         await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
@@ -153,7 +156,7 @@ async def test_lifecycle_consumer_observes_live_change(
         await lifecycle_subsystems._repair_code_index_bm25(cast(GobbyRunner, runner), None) is True
     )
 
-    assert repairs == [("postgresql://runtime/revision-2", 41)]
+    assert repairs == [("postgresql://bootstrap/hub", 41)]
     assert runtime.capture_count == 2
 
 

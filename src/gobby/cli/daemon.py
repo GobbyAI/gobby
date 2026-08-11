@@ -25,6 +25,7 @@ from gobby.config.logging import (
     resolved_logs_dir,
 )
 from gobby.runner_pid_file import probe_daemon_lock
+from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
     required_dependency_errors,
@@ -96,6 +97,17 @@ def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
         click.echo(f"  ~ {msg}")
     else:
         click.echo(f"  + {msg}")
+
+
+def _reconcile_ui_exposure(daemon_port: int) -> None:
+    try:
+        result = reconcile_ui_exposure(daemon_port)
+    except UiExposeError as exc:
+        click.secho(f"warning: UI exposure reconciliation failed: {exc}", fg="yellow")
+        return
+
+    if result is not None:
+        _step(f"Web UI exposed at {result.url}")
 
 
 def _show_runtime_output_tail(runtime_log_file: Path, n: int = 15) -> None:
@@ -340,6 +352,7 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 sys.exit(1)
             _step(f"Daemon started via {svc.get('platform', 'OS')} service")
             _step(f"Health check passed ({elapsed:.1f}s)")
+            _reconcile_ui_exposure(config.daemon_port)
             return
         _step(f"Service start failed: {result.get('error')}", error=True)
         click.echo("  Falling back to direct start...")
@@ -446,6 +459,8 @@ def start(ctx: click.Context, verbose: bool) -> None:
                 _step("Startup readiness did not complete", error=True)
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
+
+            _reconcile_ui_exposure(http_port)
 
             # Report the UI endpoint and effective mode when enabled. The runner
             # owns both production serving and the dev-server lifecycle.

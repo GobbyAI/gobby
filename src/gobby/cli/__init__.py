@@ -22,7 +22,7 @@ from .github import github
 from .hub_backup.cli import hub_backup
 from .hub_maintenance import hub_maintenance
 from .init import init
-from .install import install, uninstall
+from .install import install
 from .linear import linear
 from .mcp import mcp_server
 from .mcp_proxy import mcp_proxy
@@ -51,6 +51,7 @@ from .test_quality import test_quality
 from .test_types import test_types
 from .tokens import tokens
 from .ui import ui
+from .uninstall import uninstall
 from .utils import get_gobby_home
 from .workflows import workflows
 from .worktrees import worktrees

@@ -532,15 +532,23 @@ def test_effective_config_preserves_resolved_machine_contract(
     active = runtime_config.model_copy(deep=True)
     active.embeddings.model = "active-snapshot-model"
     active.embeddings.api_key = "$secret:active-embedding-key"
+    active.databases.falkordb.password = "$secret:active-falkordb-password"
     values = {
         "ai.embeddings.model": "active-snapshot-model",
         "ai.embeddings.api_key": "$secret:active-embedding-key",
+        "databases.falkordb.password": "$secret:active-falkordb-password",
     }
     server.services.config_runtime.snapshot = _snapshot(
         active,
         active_values=values,
-        desired_secrets={"ai.embeddings.api_key": "resolved-active-key"},
-        active_secrets={"ai.embeddings.api_key": "resolved-active-key"},
+        desired_secrets={
+            "ai.embeddings.api_key": "resolved-active-key",
+            "databases.falkordb.password": "resolved-falkordb-password",
+        },
+        active_secrets={
+            "ai.embeddings.api_key": "resolved-active-key",
+            "databases.falkordb.password": "resolved-falkordb-password",
+        },
     )
 
     response = client.get("/api/config/effective")
@@ -549,6 +557,7 @@ def test_effective_config_preserves_resolved_machine_contract(
     assert set(response.json()) == {"config"}
     assert response.json()["config"]["ai.embeddings.model"] == "active-snapshot-model"
     assert response.json()["config"]["ai.embeddings.api_key"] == "resolved-active-key"
+    assert response.json()["config"]["databases.falkordb.password"] == "resolved-falkordb-password"
 
 
 @pytest.mark.integration

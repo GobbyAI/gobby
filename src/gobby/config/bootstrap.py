@@ -39,6 +39,7 @@ DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 
 AuthMode = Literal["required", "disabled"]
 DatastoreMode = Literal["local", "remote"]
+UiExposureMode = Literal["tailscale"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
     "database_url is required in bootstrap.yaml. "
@@ -64,6 +65,7 @@ class BootstrapConfig:
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
+    ui_expose: UiExposureMode | None = None
 
     def to_config_dict(self) -> dict[str, Any]:
         """Convert to a dict suitable for DaemonConfig construction.
@@ -140,6 +142,7 @@ def load_bootstrap(
         datastore_mode = _parse_datastore_mode(
             data.get("datastore_mode", BootstrapConfig.datastore_mode)
         )
+        ui_expose = _parse_ui_exposure_mode(data.get("ui_expose"))
         if resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
         if resolve_database_url and database_url:
@@ -166,6 +169,7 @@ def load_bootstrap(
             database_url=database_url,
             postgres_pool=postgres_pool,
             daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
+            ui_expose=ui_expose,
         )
     except BootstrapConfigError:
         raise
@@ -188,6 +192,14 @@ def _parse_datastore_mode(value: object) -> DatastoreMode:
     if value in ("local", "remote"):
         return cast(DatastoreMode, value)
     raise BootstrapConfigError("datastore_mode must be one of: local, remote")
+
+
+def _parse_ui_exposure_mode(value: object) -> UiExposureMode | None:
+    if value is None:
+        return None
+    if value != "tailscale":
+        raise BootstrapConfigError("ui_expose must be 'tailscale' when configured")
+    return cast(UiExposureMode, value)
 
 
 def _validate_managed_database_url(

@@ -59,7 +59,7 @@ class TestFalkorDBInstallFlags:
         assert "--neo4j-password" not in result.output
 
     def test_uninstall_exposes_no_graph_target_flags(self) -> None:
-        from gobby.cli.install import uninstall
+        from gobby.cli.uninstall import uninstall
 
         option_names = _option_names(uninstall)
         assert "--falkordb" not in option_names

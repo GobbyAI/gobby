@@ -1,23 +1,27 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
 
 from gobby import runner_lifecycle_subsystems as lifecycle
 from gobby.code_index import bm25_health
+from gobby.runner import GobbyRunner
 
 
 def _runner() -> SimpleNamespace:
+    code_index = SimpleNamespace(
+        enabled=True,
+        maintenance_index_timeout_seconds=17,
+    )
     return SimpleNamespace(
-        config=SimpleNamespace(
-            database_url="postgres://db",
-            code_index=SimpleNamespace(
-                enabled=True,
-                maintenance_index_timeout_seconds=17,
-            ),
+        startup_config=SimpleNamespace(database_url="postgres://db"),
+        config_runtime=SimpleNamespace(
+            capture=lambda: SimpleNamespace(
+                snapshot=SimpleNamespace(active=SimpleNamespace(code_index=code_index))
+            )
         ),
         degraded_services=set(),
     )
@@ -29,7 +33,7 @@ async def test_startup_bm25_failure_marks_service_degraded(monkeypatch: Any) -> 
     status = bm25_health.unavailable_bm25_status("invalid chunk style tag: 254")
     monkeypatch.setattr(bm25_health, "repair_bm25_indexes", lambda *_args, **_kwargs: status)
 
-    ready = await lifecycle._repair_code_index_bm25(runner, None)
+    ready = await lifecycle._repair_code_index_bm25(cast(GobbyRunner, runner), None)
 
     assert ready is False
     assert runner.degraded_services == {"code_index_bm25"}
@@ -53,7 +57,7 @@ async def test_startup_bm25_repair_allows_workers(monkeypatch: Any) -> None:
     }
     monkeypatch.setattr(bm25_health, "repair_bm25_indexes", lambda *_args, **_kwargs: status)
 
-    ready = await lifecycle._repair_code_index_bm25(runner, None)
+    ready = await lifecycle._repair_code_index_bm25(cast(GobbyRunner, runner), None)
 
     assert ready is True
     assert runner.degraded_services == set()
@@ -79,11 +83,12 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
         "_start_cron_scheduler",
         "_recover_pipelines",
         "_start_system_automation_loop",
+        "_run_agent_hook_replay_barrier",
     ]
     for name in async_steps:
         monkeypatch.setattr(lifecycle, name, AsyncMock())
     monkeypatch.setattr(lifecycle, "_repair_code_index_bm25", AsyncMock(return_value=False))
-    monkeypatch.setattr(lifecycle, "_schedule_provider_model_refresh", lambda *_args: None)
+    monkeypatch.setattr(lifecycle, "_schedule_workflow_skill_prewarm", lambda *_args: None)
     tracked: list[str] = []
     monkeypatch.setattr(
         lifecycle,
@@ -91,7 +96,13 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
         lambda _operation, label, _tracker: tracked.append(label),
     )
 
-    await lifecycle.init_subsystems(runner, AsyncMock(), None)
+    await lifecycle.init_subsystems(
+        cast(GobbyRunner, runner),
+        AsyncMock(),
+        None,
+        reap_orphaned_srt_runners=AsyncMock(),
+        recover_agent_completion_subscribers=AsyncMock(return_value=0),
+    )
 
     assert "Code index tasks" not in tracked
     assert runner.http_server.services.startup_ready is True

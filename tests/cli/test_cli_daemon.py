@@ -19,8 +19,9 @@ from click.testing import CliRunner
 
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli import cli
-from gobby.cli.daemon import _start_dependency_errors
+from gobby.cli.daemon import _reconcile_ui_exposure, _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
+from gobby.ui_exposure import UiExposeError, UiExposeResult
 
 pytestmark = pytest.mark.unit
 
@@ -273,6 +274,38 @@ class TestStartupProgressPolling:
         assert _poll_startup_progress(60887, max_wait=5.0) is False
 
 
+def test_reconcile_ui_exposure_reports_url(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "gobby.cli.daemon.reconcile_ui_exposure",
+        lambda _port: UiExposeResult(
+            mode="tailscale",
+            url="https://host.tailnet.ts.net/",
+            changed=False,
+        ),
+    )
+
+    _reconcile_ui_exposure(60887)
+
+    assert "Web UI exposed at https://host.tailnet.ts.net/" in capsys.readouterr().out
+
+
+def test_reconcile_ui_exposure_warns_without_raising(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def fail(_port: int) -> None:
+        raise UiExposeError("tailscale is unavailable")
+
+    monkeypatch.setattr("gobby.cli.daemon.reconcile_ui_exposure", fail)
+
+    _reconcile_ui_exposure(60887)
+
+    assert "warning: UI exposure reconciliation failed: tailscale is unavailable" in (
+        capsys.readouterr().out
+    )
+
+
 class TestStartCommand:
     """Tests for the 'start' command."""
 
@@ -280,6 +313,11 @@ class TestStartCommand:
     def runner(self) -> CliRunner:
         """Create a CLI test runner."""
         return CliRunner()
+
+    @pytest.fixture(autouse=True)
+    def mock_ui_exposure_reconciliation(self) -> Generator[MagicMock]:
+        with patch("gobby.cli.daemon._reconcile_ui_exposure") as reconcile:
+            yield reconcile
 
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help text."""
@@ -386,9 +424,21 @@ class TestStartCommand:
         mock_poll_startup: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
+        mock_ui_exposure_reconciliation: MagicMock,
     ) -> None:
         """Start waits for health before returning when using the service manager."""
         mock_load_config.return_value = mock_daemon_config
+        call_order: list[str] = []
+
+        def record_ready(_port: int) -> bool:
+            call_order.append("ready")
+            return True
+
+        def record_reconciliation(_port: int) -> None:
+            call_order.append("reconcile")
+
+        mock_poll_startup.side_effect = record_ready
+        mock_ui_exposure_reconciliation.side_effect = record_reconciliation
 
         result = runner.invoke(cli, ["start"])
 
@@ -400,6 +450,8 @@ class TestStartCommand:
         mock_service_start.assert_called_once()
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
         mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
+        mock_ui_exposure_reconciliation.assert_called_once_with(mock_daemon_config.daemon_port)
+        assert call_order == ["ready", "reconcile"]
 
     @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
