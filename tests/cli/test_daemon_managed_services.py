@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.cli import _daemon_services as daemon_services
 from gobby.cli import daemon
 from gobby.cli.installers.compose_env import (
     MANAGED_SERVICE_PROFILES,
@@ -31,6 +34,34 @@ def _write_compose(home: Path, *, include_falkordb: bool = True) -> Path:
         encoding="utf-8",
     )
     return compose
+
+
+def test_compose_timeout_terminates_windows_process_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = ["docker", "compose", "up"]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.pid = 42
+    process.communicate.side_effect = subprocess.TimeoutExpired(command, 10)
+    popen = MagicMock(return_value=process)
+    taskkill = MagicMock(return_value=subprocess.CompletedProcess(command, 0))
+
+    monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "run", taskkill)
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        daemon_services._run_compose_command(command, timeout=10, env={}, cwd=".")
+
+    assert popen.call_args.kwargs["start_new_session"] is False
+    taskkill.assert_called_once_with(
+        ["taskkill", "/PID", "42", "/T", "/F"],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
 
 
 def test_missing_docker_is_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -85,7 +116,7 @@ def test_compose_starts_all_profiles_and_waits_for_health(
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
-    monkeypatch.setattr(daemon.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     result = daemon._services_start(tmp_path)
 
@@ -128,7 +159,7 @@ def test_compose_failure_prevents_startup(
             raise subprocess.TimeoutExpired(command, 120)
         return subprocess.CompletedProcess(command, 1, stdout="", stderr="unhealthy")
 
-    monkeypatch.setattr(daemon.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     result = daemon._services_start(tmp_path)
 
@@ -162,7 +193,7 @@ def test_missing_service_config_after_postgres_bootstrap_is_fatal(
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
     monkeypatch.setattr(daemon, "resolve_compose_runtime", _resolve)
-    monkeypatch.setattr(daemon.subprocess, "run", _run)
+    monkeypatch.setattr(subprocess, "run", _run)
 
     result = daemon._services_start(tmp_path)
 

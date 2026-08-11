@@ -317,6 +317,23 @@ async def test_recall_review_lessons_matches_path_tags_across_checkouts(
             "session_id": SESSION_ID,
         },
     )
+    await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-other-path",
+            "decision": "confirmed",
+            "finding": {
+                "title": "Use shared coordinator elsewhere",
+                "pattern_id": "shared-coordinator-other-path",
+                "path": str(worktree_root / "src/gobby/wiki/other.py"),
+                "principle": "Scheduled writes must route through the coordinator.",
+            },
+            "evidence": {"commit": "def"},
+            "session_id": SESSION_ID,
+        },
+    )
 
     # Recording from an absolute worktree path must produce the same
     # repo-relative path tag that a main-checkout path normalizes to.
@@ -341,6 +358,7 @@ async def test_recall_review_lessons_matches_path_tags_across_checkouts(
 
     assert result["success"] is True
     assert result["count"] == 1
+    assert [lesson["pattern_id"] for lesson in result["lessons"]] == ["shared-coordinator"]
     assert list_calls == [["review-lesson", "confirmed"]]
 
 

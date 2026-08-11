@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from tests.integration.config.conftest import DaemonWorker, TwoDaemonCluster
 
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 
 def _value(snapshot: dict[str, object], projection: str, key: str) -> object:
@@ -302,10 +302,9 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
         # expires or fences. (Guarded: on a slow machine the TTL may already
         # have lapsed by the time the partition lands.)
         assert two_daemons.second.can_collect("new-generation", 1) is False
-    started = time.monotonic()
     with pytest.raises(RuntimeError, match="lease renewal failed"):
         two_daemons.first.lease_renew()
-    assert time.monotonic() - started < lease_seconds
+    assert time.monotonic() - activated < lease_seconds
     if time.monotonic() - activated < lease_seconds * 0.5:
         # A transient renewal failure alone does not fence; the local
         # deadline (TTL minus margin) is the fence of last resort.

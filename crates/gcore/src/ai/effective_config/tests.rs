@@ -354,6 +354,7 @@ fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
     let display = error.to_string();
     assert!(display.contains("ai.embeddings.api_key"));
     assert!(display.contains("unresolved secret reference"));
+    assert!(!display.contains("$secret:embeddings_api_key"));
     join_request(request);
 }
 

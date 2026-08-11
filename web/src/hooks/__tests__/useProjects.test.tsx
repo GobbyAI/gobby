@@ -2,6 +2,7 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useProjects, type ProjectWithStats } from '../useProjects'
+import { useWebSocketEvent } from '../useWebSocketEvent'
 
 vi.mock('../useWebSocketEvent', () => ({
   useWebSocketEvent: vi.fn(),
@@ -39,6 +40,7 @@ function okResponse(projects: ProjectWithStats[]): Response {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.clearAllMocks()
   vi.restoreAllMocks()
 })
 
@@ -61,6 +63,11 @@ describe('useProjects auth gating (#20066)', () => {
       ({ enabled }: { enabled: boolean }) => useProjects({ enabled }),
       { initialProps: { enabled: false } },
     )
+    expect(fetchMock).not.toHaveBeenCalled()
+    const calls = vi.mocked(useWebSocketEvent).mock.calls
+    const disabledHandler = calls[calls.length - 1]?.[1]
+    expect(disabledHandler).toBeDefined()
+    disabledHandler?.({})
     expect(fetchMock).not.toHaveBeenCalled()
 
     rerender({ enabled: true })

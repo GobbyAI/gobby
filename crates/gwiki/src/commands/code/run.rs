@@ -540,6 +540,7 @@ mod scope_tests {
             "GIT_ALTERNATE_OBJECT_DIRECTORIES",
             "GIT_CEILING_DIRECTORIES",
             "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_CONFIG_PARAMETERS",
             "GIT_TEMPLATE_DIR",
         ] {
             command.env_remove(variable);

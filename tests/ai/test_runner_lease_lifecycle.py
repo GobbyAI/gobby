@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import uuid4
@@ -20,6 +21,8 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationState,
     EmbeddingServingLease,
 )
+
+pytestmark = pytest.mark.unit
 
 
 class _StubCursor:
@@ -492,13 +495,18 @@ async def test_renew_loop_fences_reacquires_and_resumes(
     )
     db.fail_execute = ConnectionError("partition")
     loop_task = asyncio.create_task(services._renew_embedding_lease(handle))
-
-    acknowledged = await asyncio.wait_for(asyncio.to_thread(db.ack_inserted.wait), timeout=5.0)
-    assert acknowledged
-    assert handle.lease is not lease
-    handle.assert_serving()
-
-    db.renew_rowcount = 0
-    await asyncio.wait_for(loop_task, timeout=5.0)
-    with pytest.raises(EmbeddingGenerationLeaseLost):
+    try:
+        acknowledged = await asyncio.wait_for(asyncio.to_thread(db.ack_inserted.wait), timeout=5.0)
+        assert acknowledged
+        assert handle.lease is not lease
         handle.assert_serving()
+
+        db.renew_rowcount = 0
+        await asyncio.wait_for(loop_task, timeout=5.0)
+        with pytest.raises(EmbeddingGenerationLeaseLost):
+            handle.assert_serving()
+    finally:
+        if not loop_task.done():
+            loop_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await loop_task

@@ -82,7 +82,10 @@ def register_memory_recall_tool(
             "parent_turn_seq": normalized_parent_turn_seq,
             "is_spawned_agent": is_spawned_agent,
         }
-        runner = _current_runner()
+        try:
+            runner = _current_runner()
+        except RuntimeError:
+            return {"success": False, "error": "Memory services are unavailable."}
         if runner is None:
             return {"success": False, "error": "Memory services are unavailable."}
         result = await runner.run(event, session_id, variables)

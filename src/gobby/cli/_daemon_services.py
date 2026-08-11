@@ -6,6 +6,7 @@ import os
 import shutil
 import signal
 import subprocess  # nosec B404 # subprocess needed for managed Docker services
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -152,13 +153,22 @@ def _run_compose_command(
         text=True,
         env=dict(env),
         cwd=cwd,
-        start_new_session=True,
+        start_new_session=sys.platform != "win32",
     ) as process:
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(process.pid, signal.SIGKILL)
+            if sys.platform == "win32":
+                with contextlib.suppress(OSError, subprocess.SubprocessError):
+                    subprocess.run(  # nosec B603 B607 # Windows process-tree cleanup
+                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                        capture_output=True,
+                        check=False,
+                        text=True,
+                    )
+            else:
+                with contextlib.suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
             raise
         return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 

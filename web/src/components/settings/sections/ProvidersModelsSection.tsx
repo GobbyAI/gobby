@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import { NumberField, SwitchField, TextField } from '../../activity/fields'
-import { BoundedSelectField, KeyValueMapField, StringListField } from '../fields'
+import {
+  BoundedSelectField,
+  KeyValueMapField,
+  KeyValueRowsField,
+  StringListField,
+} from '../fields'
 import {
   fetchProviderModelCatalog,
   getModelsForProvider,
@@ -14,7 +19,7 @@ import {
   useSettingsSectionContext,
   type ProviderSelectionContextValue,
 } from './SettingsSectionContext'
-import { asMap, decodeDynamicMapKeys, encodeDynamicMapKeys } from './configAccessors'
+import { asMap, decodeDynamicMapRows, encodeDynamicMapRows } from './configAccessors'
 import {
   NumberConfigField,
   SchemaSelectField,
@@ -366,14 +371,14 @@ function ContextWindowGroup({ fields }: { fields: SettingsSectionFields }) {
       title="Context window overrides"
       hint="Override the context window size for models whose name contains the key."
     >
-      <KeyValueMapField<number>
+      <KeyValueRowsField<number>
         label="Overrides"
         ariaLabel="Context window override"
-        value={decodeDynamicMapKeys(asMap<number>(fields.getValue(CONTEXT_WINDOW_PATH)))}
+        value={decodeDynamicMapRows(asMap<number>(fields.getValue(CONTEXT_WINDOW_PATH)))}
         keyPlaceholder="model substring (e.g. opus)"
         addLabel="Add override"
         createValue={() => 0}
-        onChange={(next) => fields.setValue(CONTEXT_WINDOW_PATH, encodeDynamicMapKeys(next))}
+        onChange={(next) => fields.setValue(CONTEXT_WINDOW_PATH, encodeDynamicMapRows(next))}
         renderValue={(tokens, onValueChange, key) => (
           <NumberField
             label=""

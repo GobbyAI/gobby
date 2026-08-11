@@ -260,12 +260,13 @@ class ConfigRepository:
                 and isinstance(value, str)
                 and value.startswith("$secret:")
             ):
+                reference = self._secret_reference(key, value)
                 binding = secret_bindings.get(key)
                 if binding is None:
                     raise ConfigRepositoryError(
                         f"Missing resolved secret binding for configuration key {key!r}"
                     )
-                if binding.reference != value:
+                if binding.reference != reference:
                     raise TornConfigSnapshotError(
                         f"Secret binding changed during snapshot materialization for {key!r}"
                     )

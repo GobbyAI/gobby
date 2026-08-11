@@ -53,6 +53,7 @@ def test_database_concurrency_config_rejects_invalid_values(value: object) -> No
         DatabaseConcurrencyConfig(executor_max_workers=value)  # type: ignore[arg-type]
 
 
+@pytest.mark.unit
 def test_database_concurrency_loads_from_runtime_candidate() -> None:
     config = ConfigRepository(MagicMock()).runtime_candidate(
         {

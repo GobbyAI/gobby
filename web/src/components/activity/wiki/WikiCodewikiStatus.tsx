@@ -24,6 +24,7 @@ export function WikiCodewikiStatus() {
 
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
     let timer: number | undefined;
 
     const load = async (): Promise<CodewikiStatus | null> => {
@@ -45,10 +46,16 @@ export function WikiCodewikiStatus() {
       }
     };
 
-    const poll = async () => {
-      const snapshot = await load();
-      if (snapshot !== null && (snapshot.state === "disabled" || snapshot.enabled === false)) {
-        stopPolling();
+    const poll = async (): Promise<void> => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const snapshot = await load();
+        if (snapshot !== null && (snapshot.state === "disabled" || snapshot.enabled === false)) {
+          stopPolling();
+        }
+      } finally {
+        inFlight = false;
       }
     };
 

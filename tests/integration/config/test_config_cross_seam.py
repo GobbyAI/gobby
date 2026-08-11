@@ -28,7 +28,7 @@ from gobby.ai.embedding_switch import (
 )
 from gobby.config.documents import ConfigDocumentsService
 from gobby.config.runtime import ConfigRuntime
-from gobby.config.values import MASKED_SECRET, ConfigValuesService
+from gobby.config.values import MASKED_SECRET, ConfigValuesError, ConfigValuesService
 from gobby.config.voice_secrets import MASKED_VOICE_AUDIO_API_KEY, VOICE_AUDIO_BINDINGS_KEY
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
@@ -264,8 +264,6 @@ async def test_template_replace_rejects_plaintext_voice_keys(world: _World) -> N
     content = cast(str, exported["content"])
     revision = cast(int, exported["revision"])
     poisoned = content.replace(MASKED_VOICE_AUDIO_API_KEY, "sk-plaintext-leak")
-
-    from gobby.config.values import ConfigValuesError
 
     with pytest.raises(ConfigValuesError):
         await world.documents.replace_yaml(expected_revision=revision, content=poisoned)

@@ -73,6 +73,32 @@ describe("WikiCodewikiStatus", () => {
     expect(container.firstChild).toBeNull();
   });
 
+  it("does not overlap status requests while a poll is in flight", async () => {
+    vi.useFakeTimers();
+    let resolveRequest!: (
+      value: Awaited<ReturnType<typeof fetchCodewikiStatus>>,
+    ) => void;
+    mockFetchCodewikiStatus.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveRequest = resolve;
+        }),
+    );
+
+    render(<WikiCodewikiStatus />);
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(90_000));
+
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveRequest({ enabled: true, state: "enabled", reason: "" });
+      await Promise.resolve();
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(2);
+  });
+
   it("stops polling when a later snapshot disables the surface", async () => {
     vi.useFakeTimers();
     mockFetchCodewikiStatus

@@ -44,20 +44,32 @@ export function asMap<V>(value: unknown): Record<string, V> {
  * empty string is the transient just-added row and passes through untouched —
  * the codec rejects empty segments by contract.
  */
-export function decodeDynamicMapKeys<V>(map: Record<string, V>): Record<string, V> {
-  return Object.fromEntries(
-    Object.entries(map).map(([key, value]) => [
-      key === '' ? key : decodeDynamicSegmentLenient(key),
-      value,
-    ]),
-  )
+export interface DynamicMapRow<V> {
+  storedKey: string
+  displayKey: string
+  value: V
 }
 
-export function encodeDynamicMapKeys<V>(map: Record<string, V>): Record<string, V> {
+export function decodeDynamicMapRows<V>(map: Record<string, V>): DynamicMapRow<V>[] {
+  return Object.entries(map).map(([storedKey, value]) => ({
+    storedKey,
+    displayKey: storedKey === '' ? storedKey : decodeDynamicSegmentLenient(storedKey),
+    value,
+  }))
+}
+
+export function encodeDynamicMapRows<V>(rows: DynamicMapRow<V>[]): Record<string, V> {
   return Object.fromEntries(
-    Object.entries(map).map(([key, value]) => [
-      key === '' ? key : encodeDynamicSegment(key),
-      value,
-    ]),
+    rows.map(({ storedKey, displayKey, value }) => {
+      const originalDisplayKey =
+        storedKey === '' ? storedKey : decodeDynamicSegmentLenient(storedKey)
+      const nextStoredKey =
+        displayKey === originalDisplayKey
+          ? storedKey
+          : displayKey === ''
+            ? displayKey
+            : encodeDynamicSegment(displayKey)
+      return [nextStoredKey, value]
+    }),
   )
 }

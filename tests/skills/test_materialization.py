@@ -911,6 +911,7 @@ async def test_timed_out_waiter_leaves_shared_materialization_running(
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
 async def test_inflight_materializations_are_scoped_to_the_current_event_loop(
     temp_db: HubDatabase,
     tmp_path: Path,

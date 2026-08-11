@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { ConfigurationClient } from '../config'
 
@@ -14,13 +14,20 @@ interface ServerState {
   desired: Record<string, unknown>
 }
 
+type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+
+interface ServerDouble {
+  state: ServerState
+  fetcher: Mock<Fetcher>
+}
+
 /**
  * A minimal reactive-config server double: GET returns the current snapshot,
  * PATCH commits when `expected_revision` matches and bumps the revision.
  */
-function makeServer(initial: ServerState) {
+function makeServer(initial: ServerState): ServerDouble {
   const state = { ...initial, desired: { ...initial.desired } }
-  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  const fetcher: Mock<Fetcher> = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     if (String(input) !== '/api/config/values') {
       throw new Error(`Unexpected request: ${String(input)}`)
     }

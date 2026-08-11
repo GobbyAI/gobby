@@ -12,6 +12,7 @@ from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, Query, UploadFile
+from starlette.concurrency import run_in_threadpool
 
 from gobby.ai.audio import (
     AudioCapabilityRequest,
@@ -260,8 +261,13 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         failure_label = _audio_failure_label(selected_capability)
 
         try:
+            resolved_config = await run_in_threadpool(
+                _config_with_resolved_audio_keys,
+                server,
+                config,
+            )
             service = build_daemon_audio_service(
-                _config_with_resolved_audio_keys(server, config),
+                resolved_config,
                 registry=_cached_audio_registry(config),
             )
             result = await service.execute(

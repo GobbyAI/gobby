@@ -98,30 +98,30 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
     void refreshDefinitions();
   }, [refreshDefinitions]);
 
-  const handleSelect = (agent: AgentDefInfo) => {
+  const handleSelect = (agent: AgentDefInfo): void => {
     confirmLeaveRef.current(() => {
       setCreating(false);
       setSelectedKey(getAgentKey(agent));
     });
   };
 
-  const handleCreate = () => {
+  const handleCreate = (): void => {
     confirmLeaveRef.current(() => {
       setCreating(true);
       setSelectedKey(null);
     });
   };
 
-  const closeSearch = () => {
+  const closeSearch = (): void => {
     setSearchOpen(false);
     setSearch("");
   };
 
-  useRegisterActivityActions(
+  useRegisterActivityActions<AgentSourceFilter>(
     {
       selector: {
         value: sourceFilter,
-        onChange: (value) => setSourceFilter(value as AgentSourceFilter),
+        onChange: (value: AgentSourceFilter): void => setSourceFilter(value),
         options: AGENT_SOURCE_OPTIONS,
         ariaLabel: "Agent source",
       },

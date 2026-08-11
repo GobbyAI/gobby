@@ -426,6 +426,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                     "run_command[%s]: suppressed duplicate background run for session %s",
                     row.name,
                     event.session_id,
+                    extra={"rule_name": row.name, "session_id": event.session_id},
                 )
                 return
             task = create_background_task(

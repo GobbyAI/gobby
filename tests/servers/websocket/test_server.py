@@ -41,6 +41,7 @@ class _LiveRuntime:
         return self._bundle
 
 
+@pytest.mark.unit
 def test_daemon_config_reads_live_runtime_snapshot() -> None:
     startup = DaemonConfig(voice={"enabled": False})
     runtime = _LiveRuntime(DaemonConfig(voice={"enabled": False}))
@@ -58,6 +59,7 @@ def test_daemon_config_reads_live_runtime_snapshot() -> None:
     assert server.daemon_config.voice.enabled is True
 
 
+@pytest.mark.unit
 def test_daemon_config_serves_one_projection_per_epoch() -> None:
     runtime = _LiveRuntime(DaemonConfig())
     server = WebSocketServer(
@@ -69,6 +71,7 @@ def test_daemon_config_serves_one_projection_per_epoch() -> None:
     assert server.daemon_config is server.daemon_config
 
 
+@pytest.mark.unit
 def test_daemon_config_falls_back_before_runtime_ready() -> None:
     startup = DaemonConfig(voice={"enabled": True})
     runtime = _LiveRuntime(DaemonConfig(voice={"enabled": False}), ready=False)

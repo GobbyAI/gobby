@@ -205,7 +205,15 @@ class TestGetSkill:
 
         result = await registry.call("get_skill", {"skill_id": "skill-1"})
         assert result["success"] is True
+        assert result["skill"]["id"] == "skill-1"
         assert result["skill"]["name"] == "test-skill"
+        registry._mock_storage.get_skill_with_manifest.assert_called_once_with(
+            skill_id="skill-1",
+            name=None,
+            project_id=None,
+            file_limit=100,
+            directory_limit=20,
+        )
 
     @pytest.mark.asyncio
     async def test_get_skill_not_found(self, mock_db):

@@ -84,8 +84,8 @@ export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
   useWebSocketEvent(
     'project_event',
     useCallback(() => {
-      fetchProjects()
-    }, [fetchProjects]),
+      if (enabled) fetchProjects()
+    }, [enabled, fetchProjects]),
   )
 
   const selectedProject = useMemo(

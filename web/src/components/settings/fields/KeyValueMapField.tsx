@@ -25,6 +25,18 @@ export interface KeyValueMapFieldProps<V = string> {
   createValue?: () => V
 }
 
+export interface KeyValueMapRow<V> {
+  storedKey: string
+  displayKey: string
+  value: V
+}
+
+export interface KeyValueRowsFieldProps<V = string>
+  extends Omit<KeyValueMapFieldProps<V>, 'value' | 'onChange'> {
+  value: KeyValueMapRow<V>[]
+  onChange: (value: KeyValueMapRow<V>[]) => void
+}
+
 function defaultRenderValue(
   value: unknown,
   onValueChange: (next: string) => void,
@@ -45,7 +57,7 @@ function defaultRenderValue(
  * Order is preserved by rebuilding from entries on every change, so renaming a
  * key does not reshuffle the map.
  */
-export function KeyValueMapField<V = string>({
+export function KeyValueRowsField<V = string>({
   label,
   value,
   onChange,
@@ -55,17 +67,17 @@ export function KeyValueMapField<V = string>({
   addLabel = 'Add entry',
   renderValue,
   createValue,
-}: KeyValueMapFieldProps<V>) {
-  const entries = Object.entries(value) as Array<[string, V]>
+}: KeyValueRowsFieldProps<V>) {
+  const entries = value
 
-  function commit(nextEntries: Array<[string, V]>) {
-    onChange(Object.fromEntries(nextEntries) as Record<string, V>)
+  function commit(nextEntries: KeyValueMapRow<V>[]) {
+    onChange(nextEntries)
   }
 
   function updateKey(index: number, nextKey: string) {
     commit(
       entries.map((entry, entryIndex) =>
-        entryIndex === index ? [nextKey, entry[1]] : entry,
+        entryIndex === index ? { ...entry, displayKey: nextKey } : entry,
       ),
     )
   }
@@ -73,7 +85,7 @@ export function KeyValueMapField<V = string>({
   function updateValue(index: number, nextValue: V) {
     commit(
       entries.map((entry, entryIndex) =>
-        entryIndex === index ? [entry[0], nextValue] : entry,
+        entryIndex === index ? { ...entry, value: nextValue } : entry,
       ),
     )
   }
@@ -84,7 +96,7 @@ export function KeyValueMapField<V = string>({
 
   function addEntry() {
     const seed = createValue ? createValue() : ('' as V)
-    commit([...entries, ['', seed]])
+    commit([...entries, { storedKey: '', displayKey: '', value: seed }])
   }
 
   return (
@@ -93,12 +105,12 @@ export function KeyValueMapField<V = string>({
         <>
           {entries.length > 0 ? (
             <ul className="m-0 flex list-none flex-col gap-2 p-0">
-              {entries.map(([key, entryValue], index) => (
+              {entries.map((entry, index) => (
                 <li key={index} className="flex flex-wrap items-center gap-2">
                   <Input
                     type="text"
                     wrapperClassName="flex-[1_1_8rem]"
-                    value={key}
+                    value={entry.displayKey}
                     disabled={disabled}
                     placeholder={keyPlaceholder}
                     aria-label={`${ariaLabel} key ${index + 1}`}
@@ -106,9 +118,9 @@ export function KeyValueMapField<V = string>({
                   />
                   <div className="min-w-0 flex-[2_1_12rem]">
                     {(renderValue ?? defaultRenderValue)(
-                      entryValue,
+                      entry.value,
                       (next) => updateValue(index, next as V),
-                      key,
+                      entry.displayKey,
                     )}
                   </div>
                   <Button
@@ -117,7 +129,11 @@ export function KeyValueMapField<V = string>({
                     size="sm"
                     className="shrink-0"
                     disabled={disabled}
-                    aria-label={key ? `Remove ${key}` : `Remove ${ariaLabel} entry ${index + 1}`}
+                    aria-label={
+                      entry.displayKey
+                        ? `Remove ${entry.displayKey}`
+                        : `Remove ${ariaLabel} entry ${index + 1}`
+                    }
                     onClick={() => removeEntry(index)}
                   >
                     Remove
@@ -136,5 +152,26 @@ export function KeyValueMapField<V = string>({
         </>
       )}
     </FormField>
+  )
+}
+
+export function KeyValueMapField<V = string>(props: KeyValueMapFieldProps<V>) {
+  const rows = Object.entries(props.value).map(([key, value]) => ({
+    storedKey: key,
+    displayKey: key,
+    value,
+  }))
+  return (
+    <KeyValueRowsField
+      {...props}
+      value={rows}
+      onChange={(nextRows) =>
+        props.onChange(
+          Object.fromEntries(
+            nextRows.map(({ displayKey, value }) => [displayKey, value]),
+          ),
+        )
+      }
+    />
   )
 }

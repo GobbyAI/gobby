@@ -224,7 +224,10 @@ describe('McpToolsSection', () => {
         skills: {
           ...(makeConfigValues().skills as Record<string, unknown>),
           // `skills.hubs.{hub}` keys are dynamic segments, stored encoded.
-          hubs: { 'my%2Ehub': { type: 'clawdhub' } },
+          hubs: {
+            'my%2Ehub': { type: 'clawdhub' },
+            'my.hub': { type: 'github', url: 'https://example.test/hub.git' },
+          },
         },
       },
     })
@@ -242,6 +245,7 @@ describe('McpToolsSection', () => {
     const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0]
     expect(payload['skills.hubs']).toEqual({
       'my%2Ehub%2Fv2': { type: 'clawdhub' },
+      'my.hub': { type: 'github', url: 'https://example.test/hub.git' },
     })
   })
 })

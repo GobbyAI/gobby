@@ -288,6 +288,7 @@ def test_render_transcript_renders_instruction_wrappers_as_protocol_tools_case_i
     ]
 
 
+@pytest.mark.unit
 def test_render_transcript_collapses_codex_apps_and_plugin_blocks() -> None:
     # #20079: Codex injects <apps_instructions> in system bootstrap and
     # <recommended_plugins> in a user-role turn; both must collapse to

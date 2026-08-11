@@ -15,8 +15,9 @@ import {
 } from './configFields'
 import {
   asString,
-  decodeDynamicMapKeys,
-  encodeDynamicMapKeys,
+  decodeDynamicMapRows,
+  encodeDynamicMapRows,
+  type DynamicMapRow,
 } from './configAccessors'
 
 /**
@@ -225,18 +226,17 @@ function asHubMap(value: unknown): Record<string, HubConfig> {
  * are `skills.hubs.{hub}` dynamic segments: stored encoded, edited decoded.
  */
 function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
-  const hubs = decodeDynamicMapKeys(asHubMap(fields.getValue('skills.hubs')))
-  const entries = Object.entries(hubs)
+  const entries = decodeDynamicMapRows(asHubMap(fields.getValue('skills.hubs')))
   const [keyError, setKeyError] = useState<string | null>(null)
 
-  function commit(next: Record<string, HubConfig>) {
-    fields.setValue('skills.hubs', encodeDynamicMapKeys(next))
+  function commit(next: DynamicMapRow<HubConfig>[]) {
+    fields.setValue('skills.hubs', encodeDynamicMapRows(next))
   }
 
   function updateKey(index: number, nextKey: string) {
     const isDuplicate =
       nextKey !== '' &&
-      entries.some((entry, i) => i !== index && entry[0] === nextKey)
+      entries.some((entry, i) => i !== index && entry.displayKey === nextKey)
     if (isDuplicate) {
       setKeyError(`Hub key "${nextKey}" already exists`)
       console.warn(
@@ -245,29 +245,21 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       return
     }
     setKeyError(null)
-    commit(
-      Object.fromEntries(
-        entries.map((entry, i) => (i === index ? [nextKey, entry[1]] : entry)),
-      ),
-    )
+    commit(entries.map((entry, i) => (i === index ? { ...entry, displayKey: nextKey } : entry)))
   }
 
   function updateHub(index: number, nextHub: HubConfig) {
-    commit(
-      Object.fromEntries(
-        entries.map((entry, i) => (i === index ? [entry[0], nextHub] : entry)),
-      ),
-    )
+    commit(entries.map((entry, i) => (i === index ? { ...entry, value: nextHub } : entry)))
   }
 
   function removeEntry(index: number) {
     setKeyError(null)
-    commit(Object.fromEntries(entries.filter((_, i) => i !== index)))
+    commit(entries.filter((_, i) => i !== index))
   }
 
   function addEntry() {
     setKeyError(null)
-    commit({ ...hubs, '': { type: 'clawdhub' } })
+    commit([...entries, { storedKey: '', displayKey: '', value: { type: 'clawdhub' } }])
   }
 
   return (
@@ -288,7 +280,7 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       )}
       {entries.length > 0 ? (
         <ul className="m-0 flex list-none flex-col gap-3 p-0">
-          {entries.map(([key, hub], index) => (
+          {entries.map((entry, index) => (
             <li
               key={index}
               className="flex flex-col gap-3 rounded-lg border border-border bg-surface-secondary p-3.5"
@@ -298,7 +290,7 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
                   type="text"
                   wrapperClassName="flex-1"
                   className="min-w-0 flex-[1_1_10rem] text-foreground [font-family:inherit] pointer-coarse:min-h-11"
-                  value={key}
+                  value={entry.displayKey}
                   placeholder="hub-name"
                   aria-label={`Skill hub key ${index + 1}`}
                   onChange={(event) => updateKey(index, event.target.value)}
@@ -308,7 +300,9 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
                   variant="ghost"
                   size="sm"
                   aria-label={
-                    key ? `Remove ${key}` : `Remove skill hub ${index + 1}`
+                    entry.displayKey
+                      ? `Remove ${entry.displayKey}`
+                      : `Remove skill hub ${index + 1}`
                   }
                   onClick={() => removeEntry(index)}
                 >
@@ -316,8 +310,8 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
                 </Button>
               </div>
               <HubEntryFields
-                hub={hub}
-                hubKey={key}
+                hub={entry.value}
+                hubKey={entry.displayKey}
                 onChange={(next) => updateHub(index, next)}
               />
             </li>

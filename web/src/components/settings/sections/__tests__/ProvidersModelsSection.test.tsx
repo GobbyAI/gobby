@@ -205,7 +205,10 @@ describe('ProvidersModelsSection', () => {
         ...makeConfigValues(),
         // `context_window_overrides.{model_match}` keys are dynamic
         // segments, stored encoded ("gpt-4.1" contains a dot).
-        context_window_overrides: { 'gpt-4%2E1': 200000 },
+        context_window_overrides: {
+          'gpt-4%2E1': 200000,
+          'gpt-4.1': 100000,
+        },
       },
     })
     renderSection(ctx)
@@ -220,7 +223,10 @@ describe('ProvidersModelsSection', () => {
 
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0]
-    expect(payload['context_window_overrides']).toEqual({ 'gpt-4%2E2': 200000 })
+    expect(payload['context_window_overrides']).toEqual({
+      'gpt-4%2E2': 200000,
+      'gpt-4.1': 100000,
+    })
   })
 
   it('degrades gracefully when client settings and provider selection are absent', () => {

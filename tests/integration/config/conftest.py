@@ -206,6 +206,8 @@ async def _build_state(spec: WorkerSpec) -> _WorkerState:
     try:
         await runtime.start()
     except Exception as exc:
+        # Keep the process-boundary contract as ``TypeName: message``. The
+        # wrong-KEK daemon test asserts the exception type survives serialization.
         startup_error = f"{type(exc).__name__}: {exc}"
     return _WorkerState(
         db=db,
@@ -296,10 +298,10 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
         await asyncio.to_thread(persist_journal, state.store, journal)
         return journal.to_dict()
     if operation == "switch_status":
-        status_journal = await asyncio.to_thread(lambda: get_switch_status(state.store))
+        status_journal = await asyncio.to_thread(get_switch_status, state.store)
         return None if status_journal is None else status_journal.to_dict()
     if operation == "switch_phase":
-        phase_journal = await asyncio.to_thread(lambda: get_switch_status(state.store))
+        phase_journal = await asyncio.to_thread(get_switch_status, state.store)
         if phase_journal is None:
             raise RuntimeError("embedding switch journal is missing")
         updated = await asyncio.to_thread(
@@ -310,7 +312,7 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
         )
         return updated.to_dict()
     if operation == "switch_complete":
-        complete_journal = await asyncio.to_thread(lambda: get_switch_status(state.store))
+        complete_journal = await asyncio.to_thread(get_switch_status, state.store)
         if complete_journal is None:
             raise RuntimeError("embedding switch journal is missing")
         record = await asyncio.to_thread(complete_switch, state.store, complete_journal)
@@ -798,6 +800,7 @@ def two_daemons(
 
 
 __all__ = [
+    "DaemonWorker",
     "LIVE_KEY",
     "RESTART_KEY",
     "RemoteConfigConflict",

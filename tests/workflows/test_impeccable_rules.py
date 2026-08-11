@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import subprocess
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -212,8 +214,34 @@ async def test_deep_detector_schedules_for_supported_sources(
     create_task.call_args.args[0].close()
 
 
+async def _run_node_eval(script: str) -> str:
+    command = ["node", "--input-type=module", "--eval", script]
+    process = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5.0)
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            process.kill()
+        await process.wait()
+        raise
+    assert process.returncode is not None
+    if process.returncode != 0:
+        raise subprocess.CalledProcessError(
+            process.returncode,
+            command,
+            output=stdout.decode(),
+            stderr=stderr.decode(),
+        )
+    return stdout.decode()
+
+
 @pytest.mark.integration
-def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     nested = worktree / "packages" / "web" / "src"
     nested.mkdir(parents=True)
@@ -229,19 +257,15 @@ def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
         f"{json.dumps(str(tmp_path))}));"
     )
 
-    completed = subprocess.run(
-        ["node", "--input-type=module", "--eval", script],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.stdout == str(worktree)
+    assert await _run_node_eval(script) == str(worktree)
 
 
 @pytest.mark.integration
+@pytest.mark.asyncio
 @pytest.mark.parametrize("event", [True, {"cwd": True}, {"workspace_roots": [42]}])
-def test_hook_project_root_rejects_non_string_path_values(tmp_path: Path, event: object) -> None:
+async def test_hook_project_root_rejects_non_string_path_values(
+    tmp_path: Path, event: object
+) -> None:
     helper = (
         Path(__file__).parents[2]
         / "src/gobby/install/shared/skills/impeccable/scripts/hook-project-root.mjs"
@@ -253,11 +277,4 @@ def test_hook_project_root_rejects_non_string_path_values(tmp_path: Path, event:
         f"{json.dumps(str(tmp_path))}));"
     )
 
-    completed = subprocess.run(
-        ["node", "--input-type=module", "--eval", script],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert completed.stdout == str(tmp_path)
+    assert await _run_node_eval(script) == str(tmp_path)

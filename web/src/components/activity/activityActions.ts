@@ -17,10 +17,10 @@ import {
  * except the selector, which carries its options and value here so the header
  * can render one canonical SegmentedControl for every tab.
  */
-export interface ActivityToolbarSelector {
-  value: string;
-  onChange: (value: string) => void;
-  options: readonly { value: string; label: string }[];
+export interface ActivityToolbarSelector<Option extends string = string> {
+  value: Option;
+  onChange: (value: Option) => void;
+  options: readonly { value: Option; label: string }[];
   ariaLabel: string;
 }
 
@@ -40,8 +40,8 @@ export interface ActivityToolbarSearch {
   ariaLabel: string;
 }
 
-export interface ActivityPanelActions {
-  selector?: ActivityToolbarSelector;
+export interface ActivityPanelActions<Option extends string = string> {
+  selector?: ActivityToolbarSelector<Option>;
   filter?: ActivityToolbarFilter;
   search?: ActivityToolbarSearch;
   onAdd?: () => void;
@@ -71,13 +71,13 @@ export function useActivityActions(): ActivityPanelActions | null {
  * Safe to call with no provider present (e.g. in isolated tests) — it is a
  * no-op then.
  */
-export function useRegisterActivityActions(
-  actions: ActivityPanelActions | null,
+export function useRegisterActivityActions<Option extends string = string>(
+  actions: ActivityPanelActions<Option> | null,
   deps: DependencyList,
 ): void {
   const { register } = useContext(ActivityActionsContext);
   useEffect(() => {
-    register(actions);
+    register(actions as ActivityPanelActions | null);
     return () => register(null);
     // actions is intentionally tracked via the caller-supplied deps so the
     // hook does not require a memoized object at every call site.

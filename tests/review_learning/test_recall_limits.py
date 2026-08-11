@@ -72,9 +72,9 @@ async def test_candidate_lessons_use_one_bounded_scan_and_rank_tagged_first() ->
     tagged = _Memory(
         id="tagged",
         content="tagged",
-        tags=["review-lesson", path_tag("src/second.py")],
+        tags=["review-lesson", "confirmed", path_tag("src/second.py")],
     )
-    untagged = _Memory(id="untagged", content="untagged", tags=["review-lesson"])
+    untagged = _Memory(id="untagged", content="untagged", tags=["review-lesson", "confirmed"])
     manager = _CandidateMemoryManager([untagged, tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
@@ -100,8 +100,16 @@ async def test_candidate_lessons_use_one_bounded_scan_and_rank_tagged_first() ->
 
 @pytest.mark.asyncio
 async def test_candidate_lessons_deduplicate_by_memory_id() -> None:
-    first = _Memory(id="lesson", content="lesson", tags=[path_tag("src/tagged.py")])
-    duplicate = _Memory(id="lesson", content="lesson", tags=[path_tag("src/tagged.py")])
+    first = _Memory(
+        id="lesson",
+        content="lesson",
+        tags=["review-lesson", "confirmed", path_tag("src/tagged.py")],
+    )
+    duplicate = _Memory(
+        id="lesson",
+        content="lesson",
+        tags=["review-lesson", "confirmed", path_tag("src/tagged.py")],
+    )
     manager = _CandidateMemoryManager([first, duplicate])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
@@ -120,7 +128,11 @@ async def test_candidate_lessons_deduplicate_by_memory_id() -> None:
 
 @pytest.mark.asyncio
 async def test_candidate_lessons_skip_empty_path_tags() -> None:
-    tagged = _Memory(id="tagged", content="tagged", tags=[path_tag("src/tagged.py")])
+    tagged = _Memory(
+        id="tagged",
+        content="tagged",
+        tags=["review-lesson", "confirmed", path_tag("src/tagged.py")],
+    )
     manager = _CandidateMemoryManager([tagged])
     service = ReviewLearningService(
         cast(ReviewLearningMemoryManager, manager),
