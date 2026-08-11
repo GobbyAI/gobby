@@ -32,17 +32,25 @@ describe('ProjectSelector', () => {
     expect(within(group).getByRole('radio', { name: 'gobby' })).toBeInTheDocument()
   })
 
-  it('keeps the segmented options touch-sized while the compact trigger stays dense', () => {
+  it('keeps segmented options and the compact trigger dense with invisible hit areas (#19181)', () => {
     renderSelector()
 
+    // The control keeps its 1.75rem header height on touch; each option's
+    // coarseHitAreaCls ::before floors the tap target at 44×44 instead of
+    // inflating the rendered box.
     const group = screen.getByRole('radiogroup', { name: 'Project scope' })
-    expect(group).toHaveClass('pointer-coarse:min-h-11')
+    expect(group).not.toHaveClass('pointer-coarse:min-h-11', 'overflow-hidden')
     for (const radio of within(group).getAllByRole('radio')) {
-      expect(radio).toHaveClass('pointer-coarse:min-h-11', 'pointer-coarse:min-w-11')
+      expect(radio).toHaveClass(
+        'relative',
+        'pointer-coarse:before:min-h-11',
+        'pointer-coarse:before:min-w-11',
+      )
+      expect(radio).not.toHaveClass('pointer-coarse:min-h-11', 'pointer-coarse:min-w-11')
     }
 
     const compactTrigger = screen.getByRole('button', { name: 'Project scope: gobby' })
-    expect(compactTrigger).toHaveClass('min-h-7')
+    expect(compactTrigger).toHaveClass('min-h-7', 'pointer-coarse:before:min-h-11')
     expect(compactTrigger).not.toHaveClass(
       'pointer-coarse:min-h-11',
       'pointer-coarse:min-w-11',

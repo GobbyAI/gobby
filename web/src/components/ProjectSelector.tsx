@@ -255,6 +255,9 @@ export function ProjectSelector({
       aria-label="Project selector"
     >
       <div className="mobile:hidden">
+        {/* No overflow-hidden on the segmented control: it would clip the
+            options' coarse-pointer ::before hit-area expansion out of
+            hit-testing. Edge options round themselves to match the track. */}
         <SegmentedControl<ProjectMode>
           value={isPersonal ? "personal" : "project"}
           onChange={handleModeChange}
@@ -264,7 +267,6 @@ export function ProjectSelector({
           ]}
           ariaLabel="Project scope"
           disabled={disabled}
-          className="overflow-hidden"
         />
       </div>
       {/* No overflow-hidden here: it would clip the coarse-pointer ::before

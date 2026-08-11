@@ -108,6 +108,10 @@ describe('activity-panel typography ladder (#14245)', () => {
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
     expect(rootSource).toContain('--status-bar-control-height: 1.75rem')
+    // No coarse-pointer promotion of the compact control row: the bar
+    // supplies the 44px row and coarseHitAreaCls floors the tap target, so
+    // compact controls keep their desktop visual height on touch (#19181).
+    expect(rootSource).not.toContain('--control-row-height-sm: 2.75rem')
     // Status-bar session actions encode the desktop-height-on-touch contract
     // via the Button `dense` prop (min-h-7 with no pointer-coarse promotion).
     expect(statusBarSource).toMatch(/variant="accent"\s+size="sm"\s+dense/)

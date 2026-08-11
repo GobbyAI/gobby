@@ -370,9 +370,8 @@ describe('coarse-pointer touch targets', () => {
       readFileSync(join(srcRoot, 'components/ThemeToggle.tsx'), 'utf8'),
     ]
     for (const source of headerSources) {
-      expect(source).toContain(
-        'cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)',
-      )
+      expect(source).toContain('cn("shrink-0", coarseHitAreaCls)')
+      expect(source).not.toContain('pointer-coarse:min-w-11')
     }
 
     const overlaySource = readFileSync(

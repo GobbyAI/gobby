@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { SegmentedControl } from '../SegmentedControl'
+import { coarseHitAreaCls } from '../controlStyles'
+
+const HIT_AREA_TOKENS = coarseHitAreaCls.split(/\s+/).filter(Boolean)
 
 const OPTIONS = [
   { value: 'a', label: 'A' },
@@ -102,27 +105,31 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radio', { name: 'C' })).toHaveAttribute('tabindex', '-1')
   })
 
-  it('keeps coarse pointer touch-target classes by default', () => {
+  it('expands option hit areas on coarse pointers without inflating the box (#19181)', () => {
     renderControl()
 
-    expect(screen.getByRole('radiogroup', { name: 'Letter' })).toHaveClass(
-      'pointer-coarse:min-h-11',
-    )
-    for (const radio of screen.getAllByRole('radio')) {
-      expect(radio).toHaveClass('pointer-coarse:min-h-11')
-      expect(radio).toHaveClass('pointer-coarse:min-w-11')
-    }
-  })
-
-  it('omits coarse pointer touch-target classes when dense chrome opts out', () => {
-    renderControl({ coarseTouchTarget: false })
-
+    // The track and options keep their visual height on touch — no coarse
+    // min-size promotion anywhere; the 44px floor lives on the invisible
+    // coarseHitAreaCls ::before expansion carried by each option.
     expect(screen.getByRole('radiogroup', { name: 'Letter' })).not.toHaveClass(
       'pointer-coarse:min-h-11',
     )
     for (const radio of screen.getAllByRole('radio')) {
+      for (const token of HIT_AREA_TOKENS) {
+        expect(radio).toHaveClass(token)
+      }
       expect(radio).not.toHaveClass('pointer-coarse:min-h-11')
       expect(radio).not.toHaveClass('pointer-coarse:min-w-11')
+    }
+  })
+
+  it('omits the coarse hit-area expansion when dense chrome opts out', () => {
+    renderControl({ coarseTouchTarget: false })
+
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).not.toHaveClass("pointer-coarse:before:content-['']")
+      expect(radio).not.toHaveClass('pointer-coarse:before:min-h-11')
+      expect(radio).not.toHaveClass('pointer-coarse:before:min-w-11')
     }
   })
 

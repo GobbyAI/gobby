@@ -241,10 +241,10 @@
      pointer:coarse so adjacent controls keep matching baselines on touch. */
   --control-row-height: 2.25rem;
 
-  /* Compact control row height — used by activity-panel toolbars (Sessions,
-     Tasks, Traces, Cron) so their search/segmented/filter cluster reads at
-     btn-sm scale and fits inside --activity-panel-bar-height. Promotes to
-     2.75rem on pointer:coarse for parity with .btn-sm (44px touch floor). */
+  /* Compact control row height — activity-panel toolbars (Sessions, Tasks,
+     Traces, Cron) read at btn-sm scale inside --activity-panel-bar-height.
+     Holds 1.75rem on pointer:coarse: the bar supplies the 44px row and the
+     invisible coarseHitAreaCls ::before floors the tap target (#19181). */
   --control-row-height-sm: 1.75rem;
 
   /* Pane status-bar height — single source of truth for every status-bar
@@ -270,7 +270,6 @@
 @media (pointer: coarse) {
   :root {
     --control-row-height: 2.75rem;
-    --control-row-height-sm: 2.75rem;
   }
 }
 

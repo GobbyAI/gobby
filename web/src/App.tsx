@@ -487,7 +487,7 @@ export default function App() {
               Gobby
             </span>
           </div>
-          <div className="[--control-row-height:var(--status-bar-control-height)] flex shrink-0 flex-nowrap items-center justify-end gap-2 pointer-coarse:[--control-row-height:2.75rem]">
+          <div className="[--control-row-height:var(--status-bar-control-height)] flex shrink-0 flex-nowrap items-center justify-end gap-2">
             {!isConnected && (
               <Badge
                 variant="error"
@@ -515,7 +515,7 @@ export default function App() {
               variant="accent"
               size="icon"
               dense
-              className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
+              className={cn("shrink-0", coarseHitAreaCls)}
               onClick={() => settingsOverlay.open()}
               aria-label="Open settings"
               aria-haspopup="dialog"
@@ -530,7 +530,7 @@ export default function App() {
                 variant="accent"
                 size="icon"
                 dense
-                className={cn("shrink-0 pointer-coarse:min-w-11", coarseHitAreaCls)}
+                className={cn("shrink-0", coarseHitAreaCls)}
                 onClick={() => logout()}
                 aria-label="Log out"
                 title="Log out"

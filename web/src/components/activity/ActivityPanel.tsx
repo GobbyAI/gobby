@@ -103,7 +103,7 @@ function activityPanelClassName(className?: string) {
     "[&_.activity-panel-search]:px-[0.55rem] [&_.activity-panel-search]:font-[inherit] [&_.activity-panel-search]:text-[length:var(--text-base)] [&_.activity-panel-search]:font-[var(--font-weight-normal)]",
     "[&_.activity-panel-search]:text-[var(--text-primary)] [&_.activity-panel-search]:transition-colors [&_.activity-panel-search:focus]:border-accent",
     "[&_.activity-panel-search:focus-visible]:outline-2 [&_.activity-panel-search:focus-visible]:outline-accent [&_.activity-panel-search:focus-visible]:outline-offset-1",
-    "[&_.activity-panel-search::placeholder]:text-[var(--text-muted)] pointer-coarse:[&_.activity-panel-search]:min-h-11",
+    "[&_.activity-panel-search::placeholder]:text-[var(--text-muted)]",
     "[&_.activity-panel-status-bar]:flex [&_.activity-panel-status-bar]:min-h-[var(--activity-panel-bar-height)] [&_.activity-panel-status-bar]:shrink-0",
     "[&_.activity-panel-status-bar]:items-center [&_.activity-panel-status-bar]:gap-3 [&_.activity-panel-status-bar]:border-b [&_.activity-panel-status-bar]:border-border",
     "[&_.activity-panel-status-bar]:bg-[var(--bg-secondary)] [&_.activity-panel-status-bar]:px-3 [&_.activity-panel-status-bar--detail]:justify-between",
@@ -118,7 +118,10 @@ function activityPanelClassName(className?: string) {
     String.raw`[&_.activity-filter-dropdown\_\_item]:cursor-pointer [&_.activity-filter-dropdown\_\_item:hover]:bg-[var(--bg-tertiary)] [&_.activity-filter-dropdown\_\_item:hover]:text-[var(--text-primary)]`,
     String.raw`[&_.activity-filter-dropdown\_\_item--active]:bg-[color-mix(in_srgb,var(--accent)_15%,transparent)] [&_.activity-filter-dropdown\_\_item--active]:text-accent`,
     String.raw`[[data-theme=light]_&_.activity-filter-dropdown\_\_item--active]:bg-accent [[data-theme=light]_&_.activity-filter-dropdown\_\_item--active]:text-accent-foreground`,
-    String.raw`pointer-coarse:[&_.activity-panel-toolbar_.segmented-control\_\_option]:min-h-11 pointer-coarse:[&_.activity-panel-toolbar_select]:min-h-11`,
+    // Toolbar controls keep --status-bar-control-height on touch — the bar
+    // supplies the 44px row; each control's invisible ::before hit-area
+    // expansion (coarseHitAreaCls via SegmentedControl / Input / NativeSelect)
+    // floors the tap target instead of inflating the rendered box.
     String.raw`pointer-coarse:[&_.activity-filter-dropdown\_\_item]:min-h-11`,
     className,
   );
