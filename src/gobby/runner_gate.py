@@ -50,6 +50,11 @@ def _predecessor_pids(
     hub_prefix: str,
     successor_application_name: str,
 ) -> list[int]:
+    # The successor's hub opens derived connections under its own name
+    # ("<name>-listener" for the config LISTEN socket); severing those would
+    # fence the very daemon this gate protects, so the whole successor family
+    # is excluded — predecessor pools and their derived connections still
+    # match the deployment prefix and remain fenced.
     rows = conn.execute(
         """
         SELECT pid
@@ -58,9 +63,14 @@ def _predecessor_pids(
           AND pid <> pg_backend_pid()
           AND application_name LIKE %s
           AND application_name <> %s
+          AND application_name NOT LIKE %s
         ORDER BY pid
         """,
-        (f"{hub_prefix}%", successor_application_name),
+        (
+            f"{hub_prefix}%",
+            successor_application_name,
+            f"{successor_application_name}-%",
+        ),
     ).fetchall()
     return [int(row[0]) for row in rows]
 

@@ -278,10 +278,23 @@ class TestRunnerGateLiveFence:
             autocommit=True,
             application_name=f"gobby-hub-{token}-predecessor",
         )
+        predecessor_listener = psycopg.connect(
+            postgres_database_url,
+            autocommit=True,
+            application_name=f"gobby-hub-{token}-predecessor-listener",
+        )
         successor_marker = psycopg.connect(
             postgres_database_url,
             autocommit=True,
             application_name=successor_name,
+        )
+        # The successor hub derives its config LISTEN connection name from its
+        # own pool name; the gate must spare the whole successor family or it
+        # severs the daemon it is fencing for (#20065).
+        successor_listener = psycopg.connect(
+            postgres_database_url,
+            autocommit=True,
+            application_name=f"{successor_name}-listener",
         )
         try:
             await acquire_runner_gate(
@@ -292,7 +305,12 @@ class TestRunnerGateLiveFence:
             )
             with pytest.raises(psycopg.OperationalError):
                 predecessor.execute("SELECT 1")
+            with pytest.raises(psycopg.OperationalError):
+                predecessor_listener.execute("SELECT 1")
             assert successor_marker.execute("SELECT 1").fetchone() == (1,)
+            assert successor_listener.execute("SELECT 1").fetchone() == (1,)
         finally:
             predecessor.close()
+            predecessor_listener.close()
             successor_marker.close()
+            successor_listener.close()
