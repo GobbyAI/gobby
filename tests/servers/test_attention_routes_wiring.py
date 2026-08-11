@@ -16,7 +16,6 @@ pytestmark = pytest.mark.unit
 
 def test_app_reaches_attention_endpoints(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
-        config=None,
         database=temp_db,
         session_manager=None,
         task_manager=MagicMock(),

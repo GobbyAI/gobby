@@ -286,7 +286,6 @@ class TestMemoryDreamRoutes:
             }
         )
         services = ServiceContainer(
-            config=None,
             database=MagicMock(),
             session_manager=None,
             task_manager=MagicMock(),

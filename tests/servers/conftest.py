@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +11,8 @@ from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import AuthMode, BootstrapConfig
+from gobby.config.runtime import ConfigRuntime, RuntimeActiveBundle
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.http import HTTPServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -17,6 +20,29 @@ from gobby.storage.sessions import SessionManager
 
 # Sentinel to distinguish "not provided" from "explicitly None"
 _NOT_PROVIDED = object()
+
+
+class StubConfigRuntime(ConfigRuntime):
+    """Concrete ConfigRuntime double accepted by HTTP-server runtime guards."""
+
+    def __init__(self, snapshot: ConfigSnapshot, *, ready: bool = True) -> None:
+        self.current = snapshot
+        self._ready = ready
+
+    @property
+    def ready(self) -> bool:
+        return self._ready
+
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        return self.current
+
+    def capture(self) -> RuntimeActiveBundle:
+        return RuntimeActiveBundle(snapshot=self.current, services=MappingProxyType({}))
+
+    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
+        assert revision == self.current.revision
+        return self.current
 
 
 def create_http_server(

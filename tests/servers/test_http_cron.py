@@ -89,7 +89,6 @@ def http_server(
     cron_scheduler: MagicMock,
 ) -> HTTPServer:
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

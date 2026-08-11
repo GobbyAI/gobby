@@ -14,18 +14,16 @@ from __future__ import annotations
 
 import json
 import logging
-from types import SimpleNamespace
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -44,23 +42,20 @@ def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 def client(db: HubDatabase) -> TestClient:
     server = create_http_server(database=db)
     config = DaemonConfig()
-    server.services.config_runtime = cast(
-        ConfigRuntime,
-        SimpleNamespace(
-            snapshot=ConfigSnapshot(
-                revision=1,
-                desired=config,
-                active=config,
-                row_revisions={},
-                pending_restart_keys=frozenset(),
-                failed_live_keys={},
-                desired_values={},
-                active_values={
-                    "rules.enforcement_enabled": True,
-                    "rules.aggregate_blocks": True,
-                },
-            )
-        ),
+    server.services.config_runtime = StubConfigRuntime(
+        ConfigSnapshot(
+            revision=1,
+            desired=config,
+            active=config,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={
+                "rules.enforcement_enabled": True,
+                "rules.aggregate_blocks": True,
+            },
+        )
     )
     return TestClient(server.app)
 

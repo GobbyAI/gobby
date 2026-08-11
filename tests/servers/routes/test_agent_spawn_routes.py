@@ -6,7 +6,6 @@ create_http_server() with real managers backed by temp_db.
 
 from __future__ import annotations
 
-from types import MappingProxyType
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +14,6 @@ from starlette.testclient import TestClient
 
 from gobby.agents.launcher_session import get_or_create_launcher_session
 from gobby.config.app import DaemonConfig
-from gobby.config.runtime import ConfigRuntime, RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.servers.http import HTTPServer
@@ -24,29 +22,9 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.machine_id import require_machine_id
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
-
-
-class StubConfigRuntime(ConfigRuntime):
-    def __init__(self, snapshot: ConfigSnapshot) -> None:
-        self.current = snapshot
-
-    @property
-    def ready(self) -> bool:
-        return True
-
-    @property
-    def snapshot(self) -> ConfigSnapshot:
-        return self.current
-
-    def capture(self) -> RuntimeActiveBundle:
-        return RuntimeActiveBundle(snapshot=self.current, services=MappingProxyType({}))
-
-    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
-        assert revision == self.current.revision
-        return self.current
 
 
 # ---------------------------------------------------------------------------

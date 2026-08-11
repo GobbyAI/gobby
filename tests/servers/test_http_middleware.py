@@ -109,7 +109,6 @@ def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
 def test_required_by_default(temp_db: HubDatabase) -> None:
     def services(config: DaemonConfig | None) -> ServiceContainer:
         return ServiceContainer(
-            config=config,
             database=temp_db,
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -133,12 +132,12 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
 def test_cors_wraps_auth_rejections_and_protected_preflights(temp_db: HubDatabase) -> None:
     origin = "https://app.example.test"
     services = ServiceContainer(
-        config=DaemonConfig(auth_mode="required", cors_origins=[origin]),
         database=temp_db,
         session_manager=MagicMock(),
         task_manager=MagicMock(),
     )
-    client = TestClient(HTTPServer(services).app)
+    server = HTTPServer(services, startup_config=DaemonConfig(cors_origins=[origin]))
+    client = TestClient(server.app)
 
     rejected = client.get("/api/tasks", headers={"Origin": origin})
     preflight = client.options(
@@ -292,7 +291,6 @@ class TestLifespan:
         """Subprocess startup is owned by the runner after the HTTP bind."""
         runtime_manager = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -311,7 +309,6 @@ class TestLifespan:
     def test_lifespan_sets_running_flag(self, session_storage: SessionManager) -> None:
         """Test that lifespan sets _running flag."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -338,7 +335,6 @@ class TestLifespan:
 
         memory_manager = MagicMock()
         services = ServiceContainer(
-            config=mock_config,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -366,7 +362,6 @@ class TestLifespan:
     ) -> None:
         """HookManager shutdown_async must preserve its async contract."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -386,7 +381,6 @@ class TestLifespan:
     def test_lifespan_cleans_up_voice_resources(self, session_storage: SessionManager) -> None:
         """Test that lifespan uses the explicit voice cleanup hook on shutdown."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -414,7 +408,6 @@ class TestLifespan:
     ) -> None:
         """Vision cleanup failures should not abort the rest of shutdown."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

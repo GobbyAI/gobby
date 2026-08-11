@@ -140,7 +140,6 @@ def basic_http_server(session_storage: SessionManager) -> HTTPServer:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     services = ServiceContainer(
-        config=mock_config,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

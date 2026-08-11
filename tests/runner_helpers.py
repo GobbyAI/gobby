@@ -169,6 +169,19 @@ def create_base_patches(
     config_repository.current_revision.return_value = 0
     config_repository.runtime_candidate.return_value = runtime_config
 
+    # run_daemon consumers read config via config_runtime.capture().snapshot.active;
+    # the runner under test never awaits ConfigRuntime.start(), so a real runtime
+    # would raise "ConfigRuntime has not started".
+    config_runtime = MagicMock()
+    config_runtime.ready = True
+    runtime_bundle = MagicMock()
+    runtime_bundle.snapshot.active = runtime_config
+    runtime_bundle.snapshot.revision = 0
+    config_runtime.capture.return_value = runtime_bundle
+    config_runtime.snapshot = runtime_bundle.snapshot
+    config_runtime.start = AsyncMock(return_value=runtime_bundle.snapshot)
+    config_runtime.close = AsyncMock()
+
     def make_postgres_db(*_args: Any, **_kwargs: Any) -> MagicMock:
         database = MagicMock()
         database.fetchone.return_value = None
@@ -186,6 +199,12 @@ def create_base_patches(
         patch(
             "gobby.runner_init.storage.load_bootstrap",
             return_value=BootstrapConfig(database_url="postgresql://localhost/gobby_test"),
+        ),
+        # The candidate is a MagicMock here; the real overlay would try to
+        # model_dump() it. Bootstrap-owned fields are irrelevant to these tests.
+        patch(
+            "gobby.runner_init.storage.bootstrap_overlaid_config",
+            side_effect=lambda candidate, bootstrap: candidate,
         ),
         patch("gobby.runner_init.storage.setup_file_logging"),
         patch("gobby.runner_init.storage.get_machine_id", return_value=TEST_MACHINE_ID),
@@ -215,6 +234,9 @@ def create_base_patches(
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),
         patch("gobby.storage.config_repository.ConfigRepository", return_value=config_repository),
+        # init_storage_and_config imports ConfigRuntime function-locally, so the
+        # patch must target the defining module.
+        patch("gobby.config.runtime.ConfigRuntime", return_value=config_runtime),
         patch("gobby.storage.config_notifications.ConfigNotificationListener", return_value=None),
         patch("gobby.runner_init.storage.ensure_local_api_token"),
         patch("gobby.runner_init.storage.DatabaseSaturationWatchdog"),

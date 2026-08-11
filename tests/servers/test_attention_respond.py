@@ -343,7 +343,6 @@ def test_respond_returns_404_for_unknown_entry(temp_db: HubDatabase) -> None:
 
 def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
-        config=None,
         database=temp_db,
         session_manager=None,
         task_manager=MagicMock(),

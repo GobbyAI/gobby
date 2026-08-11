@@ -193,7 +193,6 @@ def test_app_wires_session_change_listener_to_websocket(session_storage, sample_
     ws_server.broadcast_session_event = AsyncMock()
     ws_server.cleanup_voice = None
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -244,7 +243,6 @@ def test_app_cancels_session_broadcast_tasks_on_shutdown(session_storage, sample
     ws_server.broadcast_session_event = AsyncMock(side_effect=_slow_broadcast)
     ws_server.cleanup_voice = None
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

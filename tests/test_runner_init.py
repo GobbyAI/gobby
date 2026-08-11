@@ -6,7 +6,7 @@ from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
@@ -296,11 +296,16 @@ class TestGobbyRunnerInit:
             dim=1536,
             query_prefix=None,
         )
+        from gobby.storage.embedding_generation_state import EmbeddingGenerationState
+
         mock_vector_store.assert_called_once_with(
             url="http://qdrant:6333",
             api_key=None,
             embedding_dim=1536,
+            generation_state=ANY,
         )
+        generation_state = mock_vector_store.call_args.kwargs["generation_state"]
+        assert isinstance(generation_state, EmbeddingGenerationState)
         runner.secret_store.get.assert_called_once_with("embeddings_api_key")
         from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 

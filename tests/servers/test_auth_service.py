@@ -20,7 +20,6 @@ from starlette.requests import Request
 import gobby.servers.auth_service as auth_service_module
 import gobby.servers.http as http_module
 from gobby.app_context import ServiceContainer
-from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.ui import AuthConfig
 from gobby.servers.auth_service import AuthService
@@ -270,7 +269,6 @@ def test_local_token_refreshes_after_rotation(
 
 def test_server_auth_mode_uses_bootstrap(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
-        config=DaemonConfig(auth_mode="required"),
         database=temp_db,
         session_manager=MagicMock(),
         task_manager=MagicMock(),

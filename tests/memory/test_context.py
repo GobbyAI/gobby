@@ -60,16 +60,11 @@ class TestFormatMemoryMetadataSuffix:
 
     def test_memory_id_only(self) -> None:
         """Formats memory ID metadata."""
-        assert (
-            format_memory_metadata_suffix("21000000-0000-4000-8000-000000000005")
-            == " (memory_id: m1)"
-        )
+        assert format_memory_metadata_suffix("m1") == " (memory_id: m1)"
 
     def test_memory_id_with_search_metadata(self) -> None:
         """Formats memory ID with search score and source."""
-        result = format_memory_metadata_suffix(
-            "21000000-0000-4000-8000-000000000005", score=0.92634, via="keyword"
-        )
+        result = format_memory_metadata_suffix("m1", score=0.92634, via="keyword")
 
         assert result == " (memory_id: m1, score: 0.9263, via: keyword)"
 
@@ -84,7 +79,7 @@ class TestBuildMemoryContext:
     def test_single_preference(self) -> None:
         """Test with single preference memory."""
         mem = Memory(
-            id="21000000-0000-4000-8000-000000000005",
+            id="m1",
             content="- Use TypeScript",
             memory_type="preference",
             created_at="2024-01-01",
@@ -101,7 +96,7 @@ class TestBuildMemoryContext:
         """Test that various bullet formats are normalized."""
         memories = [
             Memory(
-                id="21000000-0000-4000-8000-000000000005",
+                id="m1",
                 content="- dash item",
                 memory_type="preference",
                 created_at="2024-01-01",
@@ -137,7 +132,7 @@ class TestBuildMemoryContext:
         """Test with all 4 memory types present."""
         memories = [
             Memory(
-                id="21000000-0000-4000-8000-000000000005",
+                id="m1",
                 content="This is the project context",
                 memory_type="context",
                 created_at="2024-01-01",
@@ -188,7 +183,7 @@ class TestBuildMemoryContext:
     def test_context_type_no_bullet_stripping(self) -> None:
         """Test that context type content is not bullet-stripped."""
         mem = Memory(
-            id="21000000-0000-4000-8000-000000000005",
+            id="m1",
             content="- This is context with dash",
             memory_type="context",
             created_at="2024-01-01",
@@ -203,7 +198,7 @@ class TestBuildMemoryContext:
         """Test that sections appear in correct order."""
         memories = [
             Memory(
-                id="21000000-0000-4000-8000-000000000005",
+                id="m1",
                 content="fact content",
                 memory_type="fact",
                 created_at="2024-01-01",
@@ -228,7 +223,7 @@ class TestBuildMemoryContext:
         """Test that empty content after bullet stripping is skipped."""
         memories = [
             Memory(
-                id="21000000-0000-4000-8000-000000000005",
+                id="m1",
                 content="- ",  # Only bullet, no content
                 memory_type="preference",
                 created_at="2024-01-01",

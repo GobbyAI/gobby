@@ -14,7 +14,6 @@ import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
-from gobby.config.runtime import ConfigRuntime
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.auth_service import AuthService
@@ -32,30 +31,11 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
 from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
 
 LOCAL_RUNTIME_TOKEN = "configuration-route-test-token"
-
-
-class StubConfigRuntime(ConfigRuntime):
-    """Concrete runtime test double accepted by configuration route guards."""
-
-    def __init__(self, snapshot: ConfigSnapshot) -> None:
-        self.current = snapshot
-
-    @property
-    def ready(self) -> bool:
-        return False
-
-    @property
-    def snapshot(self) -> ConfigSnapshot:
-        return self.current
-
-    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
-        assert revision == self.current.revision
-        return self.current
 
 
 # ---------------------------------------------------------------------------
@@ -102,7 +82,9 @@ def server(temp_db: Any, real_config: Any, task_manager: Any, tmp_path: Any) -> 
             failed_live_keys={},
             desired_values={},
             active_values={},
-        )
+        ),
+        # These routes exercise the not-ready degrade path of the runtime guards.
+        ready=False,
     )
     http_server.auth_service = AuthService(
         lambda: temp_db,

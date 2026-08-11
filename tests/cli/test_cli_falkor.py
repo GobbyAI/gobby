@@ -25,6 +25,8 @@ class TestGetFalkorDBStatus:
         store = ConfigStore(hub_db)
         store.set("databases.falkordb.host", "127.0.0.1")
         store.set("databases.falkordb.port", 16379)
+        # Installedness requires the password recorded as a secret reference.
+        store.set("databases.falkordb.password", "$secret:falkordb_password")
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
             result = await get_falkordb_status(
                 db=hub_db,

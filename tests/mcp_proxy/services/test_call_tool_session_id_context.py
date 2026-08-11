@@ -78,6 +78,9 @@ def resolving_tool_proxy() -> tuple[ToolProxyService, MagicMock, MagicMock]:
     mcp_manager.call_tool = AsyncMock(return_value={"success": True, "ok": True})
 
     session_manager = MagicMock()
+    # ToolProxyService.session_manager prefers the manager's session_manager;
+    # leaving it as an auto-MagicMock would shadow this stub.
+    mcp_manager.session_manager = session_manager
 
     def resolve_session_reference(ref: str, project_id: str | None = None) -> str:
         return {

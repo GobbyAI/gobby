@@ -24,7 +24,6 @@ def test_one_registry_across_all_roots(
 ) -> None:
     registry = DetectionManifestRegistry(temp_db, staleness_seconds=0.0)
     services = ServiceContainer(
-        config=None,
         database=temp_db,
         session_manager=None,
         task_manager=Mock(),

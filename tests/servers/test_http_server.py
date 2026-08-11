@@ -214,7 +214,6 @@ class TestMCPEndpointsWithManager:
     ) -> HTTPServer:
         """Create HTTP server with mock MCP manager."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -338,7 +337,6 @@ class TestExceptionHandling:
         """Standard route failures preserve the HTTP 500 error contract."""
         # Create server that will raise an exception
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

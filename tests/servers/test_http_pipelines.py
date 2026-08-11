@@ -45,7 +45,6 @@ def http_server(
 ) -> HTTPServer:
     """Create an HTTP server instance for testing."""
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -162,7 +161,6 @@ class TestPipelinesRunEndpoint:
             loader=loader,
         )
         services = ServiceContainer(
-            config=None,
             database=temp_db,
             session_manager=None,
             task_manager=MagicMock(),

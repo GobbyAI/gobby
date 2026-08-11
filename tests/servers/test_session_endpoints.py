@@ -304,7 +304,6 @@ class TestSessionEndpoints:
     ) -> None:
         """Test listing sessions when session manager is None returns 503."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=None,
             task_manager=MagicMock(),
@@ -323,7 +322,6 @@ class TestSessionEndpoints:
     def test_register_without_manager(self, session_storage: SessionManager) -> None:
         """Test registering when session manager is None returns 503."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=None,
             task_manager=MagicMock(),
@@ -701,7 +699,6 @@ class TestStopSignalEndpoints:
     ) -> HTTPServer:
         """Create HTTP server with mock stop registry."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -813,7 +810,6 @@ class TestStopSignalEndpoints:
     def test_stop_signal_without_stop_registry(self, session_storage: SessionManager) -> None:
         """Test stop signal endpoints when stop registry not available."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

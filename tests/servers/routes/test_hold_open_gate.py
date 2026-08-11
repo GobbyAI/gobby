@@ -87,7 +87,6 @@ def test_rule_denial_short_circuits_before_web_chat_auto_approval(
 ) -> None:
     """A rule deny wins even when hold-open would auto-approve the tool."""
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -131,7 +130,6 @@ def test_allowed_result_still_uses_web_chat_hold_open(
     session_storage: SessionManager,
 ) -> None:
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),

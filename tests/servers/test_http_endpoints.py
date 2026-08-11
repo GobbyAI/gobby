@@ -64,7 +64,6 @@ class TestAdminEndpoints:
         task_manager = LocalTaskManager(temp_db)
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=task_manager,
@@ -93,7 +92,6 @@ class TestAdminEndpoints:
         mock_memory_manager.get_stats = AsyncMock(return_value={"total_count": 10})
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -119,7 +117,6 @@ class TestAdminEndpoints:
         mock_memory_manager.get_stats = AsyncMock(side_effect=RuntimeError("Memory error"))
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -161,7 +158,6 @@ class TestAdminEndpoints:
     def test_config_endpoint_error_handling(self, session_storage: SessionManager) -> None:
         """Test config endpoint handles errors."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -190,7 +186,6 @@ class TestMCPEndpoints:
     def mcp_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for MCP tests."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -328,7 +323,6 @@ class TestMCPEndpointsWithManager:
     ) -> HTTPServer:
         """Create HTTP server and set mcp_manager after init to avoid GobbyDaemonTools."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -391,7 +385,6 @@ class TestCodeEndpoints:
     def code_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for code endpoint tests."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -464,7 +457,6 @@ class TestHooksEndpoints:
     def test_execute_hook_with_mock_manager(self, session_storage: SessionManager) -> None:
         """Test execute hook with mocked hook manager."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -499,7 +491,6 @@ class TestHooksEndpoints:
     ) -> None:
         """Claude source controls adapter dispatch, not inner input_data field names."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -555,7 +546,6 @@ class TestHooksEndpoints:
         session_storage: SessionManager,
     ) -> None:
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -607,7 +597,6 @@ class TestHooksEndpoints:
     ) -> None:
         """Hook adapter failures should return a non-fatal hook response."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -652,7 +641,6 @@ class TestHooksEndpoints:
     ) -> None:
         """Unsupported hook-type failures should still return continue=True."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -694,7 +682,6 @@ class TestWebhooksEndpoints:
     def webhooks_server(self, session_storage: SessionManager) -> HTTPServer:
         """Create server for webhooks tests."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -724,7 +711,6 @@ class TestWebhooksEndpoints:
     def test_list_webhooks_endpoint_exists(self, session_storage: SessionManager) -> None:
         """Test webhooks endpoint works with minimal config."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -762,13 +748,13 @@ class TestWebhooksEndpoints:
             )
         )
         services = ServiceContainer(
-            config=config,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
         )
         server = HTTPServer(
             services=services,
+            startup_config=config,
             port=60887,
             test_mode=True,
             bootstrap_config=BootstrapConfig(auth_mode="disabled"),
@@ -809,7 +795,6 @@ class TestInternalRegistries:
         mock_internal_manager.get_registry.return_value = mock_registry
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -838,7 +823,6 @@ class TestInternalRegistries:
         mock_internal_manager.get_all_registries.return_value = []
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -869,7 +853,6 @@ class TestInternalRegistries:
         mock_internal_manager.get_registry.return_value = mock_registry
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -903,7 +886,6 @@ class TestInternalRegistries:
         mock_internal_manager.get_registry.return_value = mock_registry
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -938,7 +920,6 @@ class TestInternalRegistries:
         mock_internal_manager.get_registry.return_value = mock_registry
 
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
