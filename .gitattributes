@@ -1,1 +1,2 @@
 src/gobby/install/shared/skills/impeccable/scripts/** whitespace=-blank-at-eof
+*.sql text eol=lf

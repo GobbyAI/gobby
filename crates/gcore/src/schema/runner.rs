@@ -14,12 +14,13 @@ use super::verify::{VerificationReport, qualified_name, validate_identifier, ver
 /// Checksum of the immediate predecessor of the current embedded baseline.
 ///
 /// Single-hop refresh policy: the runner upgrades a hub in place only from
-/// this one predecessor revision. When `baseline.sql` changes, move this
-/// constant to the outgoing baseline's checksum and rewrite
-/// [`baseline_refresh_statement`] to accept exactly the statements added
-/// since that predecessor — the set-difference tripwire in `runner_tests`
-/// fails until both stay in lockstep. Hubs more than one hop behind must
-/// recreate from a verified backup.
+/// this one predecessor revision. When `baseline.sql` changes, re-arm all four
+/// artifacts together: move this constant to the outgoing baseline's checksum,
+/// rewrite the prefix list in [`baseline_refresh_statement`], replace
+/// `tests/fixtures/schema/predecessor_baseline.sql`, and update the predecessor
+/// reapply test. The set-difference tripwire in `runner_tests` fails until the
+/// four artifacts stay in lockstep. Hubs more than one hop behind must recreate
+/// from a verified backup.
 pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "0749c25617bdd825a561e0452fbf9cc2a80bb15e99e21bbd50f2a7ee01d44a6b";
 
@@ -458,8 +459,17 @@ pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
         "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_projection_changes",
     ]
     .iter()
-    .any(|prefix| body.starts_with(prefix));
+    .any(|prefix| statement_starts_with_identifier_boundary(body, prefix));
     refreshes_schema.then(|| statement.to_owned())
+}
+
+fn statement_starts_with_identifier_boundary(statement: &str, prefix: &str) -> bool {
+    statement.strip_prefix(prefix).is_some_and(|remainder| {
+        remainder
+            .as_bytes()
+            .first()
+            .is_none_or(|byte| !is_identifier_byte(*byte))
+    })
 }
 
 fn statement_body(mut statement: &str) -> &str {

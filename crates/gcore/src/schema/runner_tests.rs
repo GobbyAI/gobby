@@ -19,6 +19,9 @@ use super::gate::{
 use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement};
 use super::sql_splitter::split_sql_statements;
 
+const PREDECESSOR_BASELINE_SQL: &str =
+    include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
     filename: "376_recovery_probe.sql",
@@ -98,18 +101,42 @@ fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn simulate_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
-    install_baseline(client)?;
-    client.batch_execute(
-        "DROP TABLE IF EXISTS embedding_projection_changes;
-         DROP TABLE IF EXISTS embedding_generation_acks;
-         DROP TABLE IF EXISTS config_state;
-         ALTER TABLE config_store DROP COLUMN IF EXISTS revision",
+fn install_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
+    assert_eq!(
+        sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM,
+        "fixture must be the exact predecessor baseline the runner refreshes from",
+    );
+    let mut transaction = client.transaction()?;
+    for statement in split_sql_statements(PREDECESSOR_BASELINE_SQL)? {
+        transaction.batch_execute(&statement)?;
+    }
+    transaction.execute(
+        "INSERT INTO schema_migrations(version, filename, checksum, applied_at) \
+         VALUES ($1, $2, $3, NOW())",
+        &[
+            &BASELINE_VERSION,
+            &format!("baseline@{BASELINE_VERSION}"),
+            &PREDECESSOR_BASELINE_CHECKSUM,
+        ],
     )?;
-    client.execute(
-        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
-        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
-    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::Result<()> {
+    for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
+        let granted: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_daemon_runtime', $1, $2)",
+                &[&table, &privilege],
+            )?
+            .get(0);
+        assert!(
+            granted,
+            "runtime role lacks {privilege} privilege on {table}"
+        );
+    }
     Ok(())
 }
 
@@ -210,13 +237,7 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
         ]
     );
     for table in ["embedding_generation_acks", "embedding_projection_changes"] {
-        let granted: bool = client
-            .query_one(
-                "SELECT has_table_privilege('gobby_daemon_runtime', $1, 'SELECT,INSERT,UPDATE,DELETE')",
-                &[&table],
-            )?
-            .get(0);
-        assert!(granted, "runtime role lacks access to {table}");
+        assert_runtime_crud_privileges(&mut client, table)?;
     }
     Ok(())
 }
@@ -229,7 +250,7 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    simulate_predecessor_baseline(&mut client)?;
+    install_predecessor_baseline(&mut client)?;
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('preserved.key', 'preserved')",
         &[],
@@ -260,43 +281,71 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
             .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
             .get(0);
         assert!(exists, "refresh must create {table}");
-        let granted: bool = client
-            .query_one(
-                "SELECT has_table_privilege('gobby_daemon_runtime', $1, 'SELECT,INSERT,UPDATE,DELETE')",
-                &[&table],
-            )?
-            .get(0);
-        assert!(granted, "refresh must grant runtime access to {table}");
+        assert_runtime_crud_privileges(&mut client, table)?;
     }
     let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
     assert!(verification.checked_catalog_objects > 0);
     Ok(())
 }
 
-#[test]
-fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> anyhow::Result<()> {
-    let predecessor = include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
-    assert_eq!(
-        sha256_hex(predecessor.as_bytes()),
-        PREDECESSOR_BASELINE_CHECKSUM,
-        "fixture must be the exact predecessor baseline the runner refreshes from",
-    );
-
+fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow::Result<usize> {
     let predecessor_statements: BTreeSet<String> =
         split_sql_statements(predecessor)?.into_iter().collect();
+    let current_statements: BTreeSet<String> = split_sql_statements(current)?.into_iter().collect();
+    let removed: Vec<&String> = predecessor_statements
+        .difference(&current_statements)
+        .collect();
+    anyhow::ensure!(
+        removed.is_empty(),
+        "current baseline removed predecessor statements: {removed:?}"
+    );
+
     let mut refreshed = 0usize;
-    for statement in split_sql_statements(BASELINE_SQL)? {
-        let is_added = !predecessor_statements.contains(&statement);
-        let accepted = baseline_refresh_statement(&statement).is_some();
-        assert_eq!(
-            accepted, is_added,
+    for statement in &current_statements {
+        let is_added = !predecessor_statements.contains(statement);
+        let accepted = baseline_refresh_statement(statement).is_some();
+        anyhow::ensure!(
+            accepted == is_added,
             "baseline_refresh_statement must accept exactly the statements added since the \
              predecessor baseline; drifted on: {statement}",
         );
         refreshed += usize::from(accepted);
     }
-    assert!(refreshed > 0, "the refresh set must not be empty");
+    anyhow::ensure!(refreshed > 0, "the refresh set must not be empty");
+    Ok(refreshed)
+}
+
+#[test]
+fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> anyhow::Result<()> {
+    assert_eq!(
+        sha256_hex(PREDECESSOR_BASELINE_SQL.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM,
+        "fixture must be the exact predecessor baseline the runner refreshes from",
+    );
+    verify_baseline_refresh_contract(PREDECESSOR_BASELINE_SQL, BASELINE_SQL)?;
     Ok(())
+}
+
+#[test]
+fn baseline_refresh_rejects_identifier_prefix_collisions() {
+    assert!(
+        baseline_refresh_statement("CREATE TABLE IF NOT EXISTS config_state_history (id integer)")
+            .is_none()
+    );
+    assert!(
+        baseline_refresh_statement("CREATE TABLE IF NOT EXISTS config_state (id integer)")
+            .is_some()
+    );
+}
+
+#[test]
+fn baseline_refresh_contract_rejects_removed_statements() {
+    let error = verify_baseline_refresh_contract(
+        "CREATE TABLE preserved_predecessor_table (id integer);",
+        "CREATE TABLE IF NOT EXISTS config_state (id integer);",
+    )
+    .expect_err("removing a predecessor statement must trip the refresh contract");
+    assert!(error.to_string().contains("removed predecessor statements"));
 }
 
 #[test]
@@ -307,7 +356,7 @@ fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
     let Some((_database, mut client)) = test_database()? else {
         return Ok(());
     };
-    simulate_predecessor_baseline(&mut client)?;
+    install_predecessor_baseline(&mut client)?;
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('stable.key', 'stable')",
         &[],

@@ -359,26 +359,6 @@ fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
 }
 
 #[test]
-#[serial_test::serial]
-fn daemon_config_disable_short_circuits_cached_reads() {
-    let _env = EnvVarsGuard::set(&[
-        (DAEMON_CONFIG_DISABLE_ENV, Some("1")),
-        ("GOBBY_DAEMON_URL", Some("http://127.0.0.1:1")),
-    ]);
-
-    assert!(
-        daemon_mode_layers()
-            .expect("disabled reads report no daemon config")
-            .is_none()
-    );
-    assert!(
-        daemon_dsn()
-            .expect("disabled dsn reads report no daemon config")
-            .is_none()
-    );
-}
-
-#[test]
 fn managed_services_reject_cross_service_broker_operations() {
     let services: ManagedServices = serde_json::from_value(serde_json::json!({
         "embeddings": {

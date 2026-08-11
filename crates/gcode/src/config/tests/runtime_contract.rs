@@ -147,7 +147,10 @@ fn hub_fallback_reads_atomic_snapshot() {
 #[test]
 fn dynamic_segment_codec_matches_python() {
     for vector in runtime_contract_codec_vectors() {
-        assert_eq!(encode_dynamic_segment(&vector.decoded), vector.encoded);
+        assert_eq!(
+            encode_dynamic_segment(&vector.decoded).expect("encodable vector"),
+            vector.encoded
+        );
         assert_eq!(
             decode_dynamic_segment(&vector.encoded).expect("canonical vector"),
             vector.decoded
@@ -159,6 +162,7 @@ fn dynamic_segment_codec_matches_python() {
             "accepted {invalid:?}"
         );
     }
+    assert!(encode_dynamic_segment("").is_err());
     assert!(is_registered_runtime_key("launch_defaults.dot%2Esegment"));
     assert!(!is_registered_runtime_key("launch_defaults.dot.segment"));
 }
