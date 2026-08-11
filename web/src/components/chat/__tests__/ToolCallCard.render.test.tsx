@@ -34,6 +34,31 @@ describe('ToolCallCard rendering', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument()
   })
 
+  it('suppresses internal write_stdin calls while neighboring tool calls still render (#19188)', () => {
+    renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-stdin',
+            tool_name: 'write_stdin',
+            arguments: { session_id: 'sess-1', chars: 'q', yield_time_ms: 500 },
+            result: { content: 'ok', kind: 'text', truncated: false },
+          }),
+          makeCall({
+            id: 'tool-neighbor',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git status --short' },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.queryByText(/write_stdin/i)).toBeNull()
+    expect(screen.queryByText('sess-1')).toBeNull()
+    expect(screen.getByText('Bash')).toBeInTheDocument()
+    expect(screen.getByText('git status --short')).toBeInTheDocument()
+  })
+
   it('does not render completed tool calls that only carry a null result', () => {
     const { container } = renderWithProviders(
       <ToolCallCards

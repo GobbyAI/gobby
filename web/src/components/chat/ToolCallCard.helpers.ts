@@ -306,7 +306,19 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
   return segments
 }
 
+// Internal plumbing tools suppressed from the transcript entirely, regardless
+// of status or payload. write_stdin is the PTY polling call (session_id/chars/
+// yield_time_ms/max_output_tokens) and carries no user-facing value; Codex
+// also emits it under the functions. prefix.
+export const SUPPRESSED_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
+  'write_stdin',
+  'functions.write_stdin',
+])
+
 export function hasVisibleToolCall(call: ToolCall): boolean {
+  if (SUPPRESSED_INTERNAL_TOOLS.has(call.tool_name)) {
+    return false
+  }
   if (
     call.status === 'calling' ||
     call.status === 'pending' ||
