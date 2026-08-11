@@ -59,7 +59,8 @@ def test_database_concurrency_loads_from_runtime_candidate() -> None:
             "database_concurrency.pool_max_size": 72,
             "database_concurrency.executor_max_workers": 40,
             "database_concurrency.coverage_max_concurrency": 8,
-        }
+        },
+        {},
     )
 
     assert config.database_concurrency == DatabaseConcurrencyConfig(

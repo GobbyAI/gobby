@@ -184,7 +184,7 @@ class ConfigValuesService:
                         "Secret configuration value must be a string",
                         ("values", *path),
                     )
-                secret_updates[key] = SecretUpdate(plaintext=value, category="config")
+                secret_updates[key] = SecretUpdate(plaintext=value, category="general")
             elif key == VOICE_AUDIO_BINDINGS_KEY:
                 value_updates[key] = self._prepared_voice_bindings(
                     value,

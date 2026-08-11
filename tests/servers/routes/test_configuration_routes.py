@@ -26,6 +26,8 @@ from gobby.storage.auth import (
     hash_password,
     hash_token,
 )
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.prompts import LocalPromptManager
@@ -291,6 +293,53 @@ class TestSecretsEndpoints:
         data = response.json()
         assert data["ok"] is True
         assert data["secret"]["name"] == "test_secret"
+
+    def test_bound_secret_update_validates_new_plaintext_without_leaking_it(
+        self,
+        client: TestClient,
+        temp_db: HubDatabase,
+        mock_machine_id: Any,
+    ) -> None:
+        key = "databases.falkordb.password"
+        name = "bound_falkordb_password"
+        previous = "Valid-Password-123"
+        invalid = "plaintext must not leak"
+        secret_store = SecretStore(temp_db)
+        repository = ConfigRepository(temp_db, secret_store=secret_store)
+        ConfigMutations(temp_db, secret_store=secret_store).patch(
+            expected_revision=repository.current_revision(),
+            patch=ConfigPatch(
+                secrets={
+                    key: SecretUpdate(
+                        previous,
+                        name=name,
+                        category="general",
+                    )
+                }
+            ),
+        )
+
+        response = client.post(
+            "/api/config/secrets",
+            json={"name": name, "value": invalid, "category": "general"},
+        )
+
+        assert response.status_code == 400
+        assert invalid not in response.text
+        assert secret_store.get(name) == previous
+
+        patch_response = client.patch(
+            "/api/config/values",
+            json={
+                "expected_revision": repository.current_revision(),
+                "values": {"databases": {"falkordb": {"password": invalid}}},
+            },
+        )
+        assert patch_response.status_code == 422
+        assert patch_response.json()["error"]["message"] == (
+            "Secret configuration value is invalid"
+        )
+        assert invalid not in patch_response.text
 
     def test_secret_routes_accept_hub_database_protocol(
         self, non_local_hub_db: Any, real_config: Any, tmp_path: Any, mock_machine_id: Any

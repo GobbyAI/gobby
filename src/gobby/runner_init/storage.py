@@ -187,7 +187,9 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     config_repository.reconcile_registry()
     stored_config = config_repository.read()
     runner.startup_config = bootstrap_overlaid_config(
-        config_repository.runtime_candidate(dict(stored_config.overrides)),
+        config_repository.runtime_candidate(
+            dict(stored_config.overrides), stored_config.secret_bindings
+        ),
         runner.bootstrap_config,
     )
     _warn_missing_terminal_dependency(runner.startup_config)

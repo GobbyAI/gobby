@@ -31,7 +31,7 @@ def test_tool_result_offload_defaults_and_app_accessor() -> None:
 
 def test_tool_result_offload_threshold_runtime_override_wins(temp_db: HubDatabase) -> None:
     config = ConfigRepository(temp_db).runtime_candidate(
-        {"tool_result_offload.threshold_chars": 21_000}
+        {"tool_result_offload.threshold_chars": 21_000}, {}
     )
 
     assert config.tool_result_offload.threshold_chars == 21_000

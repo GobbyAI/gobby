@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 
+from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
 
 UNIVERSAL_ALLOWLIST: frozenset[str] = frozenset(
@@ -106,7 +107,8 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
 }
 
 ALL_CREDENTIAL_KEYS: frozenset[str] = frozenset(
-    {GOBBY_AGENT_API_TOKEN_ENV} | {key for keys in CLI_CREDENTIAL_KEYS.values() for key in keys}
+    {GOBBY_AGENT_API_TOKEN_ENV, CODEX_ENDPOINT_API_KEY_ENV}
+    | {key for keys in CLI_CREDENTIAL_KEYS.values() for key in keys}
 )
 
 

@@ -794,9 +794,11 @@ class TestEpoch:
                 pass
 
             def read(self, *, resolve_secrets: bool = True) -> Any:
-                return SimpleNamespace(values={})
+                return SimpleNamespace(values={}, secret_bindings={})
 
-            def runtime_candidate(self, _overrides: dict[str, object]) -> DaemonConfig:
+            def runtime_candidate(
+                self, _overrides: dict[str, object], _secret_bindings: object
+            ) -> DaemonConfig:
                 return config
 
         monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)

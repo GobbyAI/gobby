@@ -132,7 +132,7 @@ async def _inline[T](operation: Callable[[], T]) -> T:
 
 
 def _candidate(overrides: dict[str, object]) -> DaemonConfig:
-    return _CANDIDATE_REPOSITORY.runtime_candidate(overrides)
+    return _CANDIDATE_REPOSITORY.runtime_candidate(overrides, {})
 
 
 def _is_daemon_key(key: str) -> bool:

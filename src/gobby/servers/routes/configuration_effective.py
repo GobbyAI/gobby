@@ -177,7 +177,10 @@ def _managed_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
         include(AI_EMBEDDING_QUERY_PREFIX_KEY, embeddings.query_prefix)
 
     falkordb = config.databases.falkordb
-    if falkordb.password:
+    if (
+        snapshot.active_secret_fingerprint("databases.falkordb.password") is not None
+        or falkordb.password
+    ):
         values.pop("databases.falkordb.host", None)
         values.pop("databases.falkordb.port", None)
     else:
@@ -185,7 +188,11 @@ def _managed_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
         include("databases.falkordb.port", falkordb.port)
 
     qdrant = config.databases.qdrant
-    if qdrant.api_key or _url_requires_broker(qdrant.url):
+    if (
+        snapshot.active_secret_fingerprint("databases.qdrant.api_key") is not None
+        or qdrant.api_key
+        or _url_requires_broker(qdrant.url)
+    ):
         values.pop("databases.qdrant.url", None)
     elif qdrant.url:
         include("databases.qdrant.url", qdrant.url)
@@ -216,8 +223,10 @@ _QDRANT_BROKERS = (
 
 def _service_capabilities(snapshot: ConfigSnapshot) -> ServiceCapabilities:
     config = snapshot.active
-    falkordb_requires_broker = bool(config.databases.falkordb.password) or (
-        _contains_unresolved_marker(config.databases.falkordb.host)
+    falkordb_requires_broker = (
+        snapshot.active_secret_fingerprint("databases.falkordb.password") is not None
+        or bool(config.databases.falkordb.password)
+        or _contains_unresolved_marker(config.databases.falkordb.host)
     )
     return ServiceCapabilities(
         embeddings=ServiceCapability(mode="brokered", operations=_EMBEDDING_BROKERS),
@@ -228,7 +237,8 @@ def _service_capabilities(snapshot: ConfigSnapshot) -> ServiceCapabilities:
         qdrant=ServiceCapability(
             mode=(
                 "brokered"
-                if config.databases.qdrant.api_key
+                if snapshot.active_secret_fingerprint("databases.qdrant.api_key") is not None
+                or config.databases.qdrant.api_key
                 or _url_requires_broker(config.databases.qdrant.url)
                 else "direct"
             ),

@@ -16,6 +16,14 @@ VOICE_AUDIO_API_KEY_PATH = f"{VOICE_AUDIO_BINDINGS_KEY}[].api_key"
 MASKED_VOICE_AUDIO_API_KEY = "********"
 
 
+class VoiceSecretResolutionError(ValueError):
+    """A configured voice credential reference has no resolvable payload."""
+
+    def __init__(self, secret_name: str) -> None:
+        self.secret_name = secret_name
+        super().__init__(f"Voice API key secret {secret_name!r} is unavailable")
+
+
 def is_secret_reference(value: object) -> bool:
     """Return whether value is exactly one supported secret reference."""
     return isinstance(value, str) and SECRET_REF_PATTERN.fullmatch(value) is not None
@@ -139,9 +147,11 @@ def resolve_voice_binding_api_keys(
         match = SECRET_REF_PATTERN.fullmatch(value)
         if match is None:
             continue
-        plaintext = secret_resolver(match.group(1))
-        if plaintext is not None:
-            binding.api_key = plaintext
+        secret_name = match.group(1)
+        plaintext = secret_resolver(secret_name)
+        if plaintext is None:
+            raise VoiceSecretResolutionError(secret_name)
+        binding.api_key = plaintext
     return resolved_config
 
 

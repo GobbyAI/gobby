@@ -147,4 +147,4 @@ def test_runtime_candidate_rejects_removed_config_fields() -> None:
     repository = ConfigRepository(MagicMock())
 
     with pytest.raises(UnknownStoredConfigKeyError):
-        repository.runtime_candidate(dict(REMOVED_CONFIG_STORE_ROWS))
+        repository.runtime_candidate(dict(REMOVED_CONFIG_STORE_ROWS), {})

@@ -493,7 +493,9 @@ def _managed_embedding_collections_exist(config_store: ConfigStore) -> bool:
 
     async def _inspect() -> bool:
         snapshot = config_store.read_snapshot()
-        config = config_store.repository.runtime_candidate(dict(snapshot.overrides))
+        config = config_store.repository.runtime_candidate(
+            dict(snapshot.overrides), snapshot.secret_bindings
+        )
         vector_store = VectorStore(
             url=config.databases.qdrant.url,
             api_key=config.databases.qdrant.api_key,

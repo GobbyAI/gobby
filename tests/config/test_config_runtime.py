@@ -62,7 +62,9 @@ class FakeRepository:
         self.bounds.append((statement_timeout_ms, lock_timeout_ms))
         return self.read(resolve_secrets=resolve_secrets)
 
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig:
+    def runtime_candidate(
+        self, overrides: dict[str, object], _secret_bindings: object
+    ) -> DaemonConfig:
         config = DaemonConfig()
         ui_enabled = bool(overrides.get("ui.enabled", config.ui.enabled))
         test_mode = bool(overrides.get("test_mode", config.test_mode))

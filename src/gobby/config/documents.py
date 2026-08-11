@@ -278,7 +278,7 @@ class ConfigDocumentsService:
             values[key] = value
             validation_values[key] = plaintext
             return
-        secrets[key] = SecretUpdate(plaintext=value, category="config")
+        secrets[key] = SecretUpdate(plaintext=value, category="general")
         validation_values[key] = value
 
     def _dump(self, snapshot: ConfigSnapshot) -> str:

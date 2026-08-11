@@ -553,6 +553,7 @@ def test_runtime_candidate_resolves_secret_references(
     revision_db: HubDatabase,
     mutations: ConfigMutations,
     secret_store: SecretStore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Runtime consumers get plaintext for reference-secrecy keys (#20032).
 
@@ -569,10 +570,35 @@ def test_runtime_candidate_resolves_secret_references(
 
     repository = ConfigRepository(revision_db, secret_store=secret_store)
     snapshot = repository.read(resolve_secrets=True)
-    candidate = repository.runtime_candidate(dict(snapshot.values))
+
+    def reject_out_of_snapshot_read(_name: str) -> str | None:
+        raise AssertionError("runtime candidate must use the captured secret bindings")
+
+    monkeypatch.setattr(secret_store, "get", reject_out_of_snapshot_read)
+    candidate = repository.runtime_candidate(dict(snapshot.values), snapshot.secret_bindings)
 
     assert snapshot.values[key] == f"$secret:{config_key_to_secret_name(key)}"
     assert candidate.databases.falkordb.password == "falkor-plaintext-pw"
+
+
+def test_invalid_secret_candidate_error_does_not_contain_plaintext(
+    revision_db: HubDatabase,
+    mutations: ConfigMutations,
+) -> None:
+    key = "databases.falkordb.password"
+    invalid = "plaintext must not leak"
+
+    with pytest.raises(ConfigValidationError) as captured:
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(secrets={key: SecretUpdate(invalid)}),
+        )
+
+    assert captured.value.key == key
+    assert str(captured.value) == "Secret configuration value is invalid"
+    assert captured.value.__cause__ is None
+    assert captured.value.__context__ is None
+    assert invalid not in str(captured.value)
 
 
 def test_expected_revision_domain_is_rejected(mutations: ConfigMutations) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
@@ -20,6 +21,7 @@ from gobby.config.registry import (
     UnknownConfigKeyError,
     config_key_secrecy,
 )
+from gobby.config.runtime_contracts import StoredSecretBinding
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.storage.secrets import SecretStore
@@ -242,7 +244,11 @@ class ConfigRepository:
             secret_bindings=MappingProxyType(bindings),
         )
 
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig:
+    def runtime_candidate(
+        self,
+        overrides: dict[str, object],
+        secret_bindings: Mapping[str, StoredSecretBinding],
+    ) -> DaemonConfig:
         """Validate a complete prospective override set with cross-field rules."""
         candidate = DaemonConfig().model_dump(mode="python", by_alias=False)
         for key, value in overrides.items():
@@ -254,10 +260,16 @@ class ConfigRepository:
                 and isinstance(value, str)
                 and value.startswith("$secret:")
             ):
-                # Runtime consumers (FalkorDB, Qdrant, generation endpoints)
-                # need plaintext; stored rows, snapshots, and API surfaces
-                # keep the reference form.
-                value = self._secrets().get(value.removeprefix("$secret:"))
+                binding = secret_bindings.get(key)
+                if binding is None:
+                    raise ConfigRepositoryError(
+                        f"Missing resolved secret binding for configuration key {key!r}"
+                    )
+                if binding.reference != value:
+                    raise TornConfigSnapshotError(
+                        f"Secret binding changed during snapshot materialization for {key!r}"
+                    )
+                value = binding.plaintext
             path = self._runtime_path(spec, key)
             _assign_path(candidate, path, value)
         return DaemonConfig.model_validate(candidate)

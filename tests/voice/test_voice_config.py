@@ -3,7 +3,9 @@
 import pytest
 from pydantic import ValidationError
 
+from gobby.config.app import DaemonConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
+from gobby.config.voice_secrets import VoiceSecretResolutionError, resolve_voice_binding_api_keys
 
 pytestmark = pytest.mark.unit
 
@@ -136,6 +138,23 @@ class TestVoiceConfig:
         assert binding.transcription_enabled is True
         assert binding.translation_enabled is False
         assert binding.timeout_seconds == 30.0
+
+    def test_dangling_audio_api_key_reference_fails_closed(self) -> None:
+        config = DaemonConfig(
+            voice=VoiceConfig(
+                openai_compatible_audio=[
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="https://audio.example.test/v1",
+                        model="whisper-large-v3",
+                        api_key="$secret:MISSING_AUDIO_KEY",
+                    )
+                ]
+            )
+        )
+
+        with pytest.raises(VoiceSecretResolutionError, match="MISSING_AUDIO_KEY"):
+            resolve_voice_binding_api_keys(config, lambda _name: None)
 
     def test_openai_compatible_audio_api_key_guidance_requires_secret_reference(self):
         description = OpenAICompatibleAudioBindingConfig.model_fields["api_key"].description

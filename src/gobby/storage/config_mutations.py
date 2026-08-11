@@ -38,6 +38,7 @@ from gobby.storage.config_repository import (
     MAX_CONFIG_REVISION,
     ConfigReadSnapshot,
     ConfigRepository,
+    SecretBinding,
     registry_is_secret,
 )
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -364,19 +365,26 @@ class ConfigMutations:
         allow_internal: bool,
     ) -> tuple[dict[str, object], dict[str, str]]:
         candidate = dict(snapshot.overrides)
+        candidate_bindings = dict(snapshot.secret_bindings)
         values: dict[str, object] = {}
         references: dict[str, str] = {}
+        secret_error: ConfigValidationError | None = None
         try:
             for key in patch.unset:
                 spec = self._resolve(key)
                 self._authorize(spec, key, allow_internal=allow_internal)
                 candidate.pop(key, None)
+                candidate_bindings.pop(key, None)
             for key, value in patch.values.items():
                 spec = self._resolve(key)
                 self._authorize(spec, key, allow_internal=allow_internal)
                 validated = self._validate_value(spec, key, value)
                 if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                     self._validate_reference(key, validated)
+                    assert isinstance(validated, str)
+                    existing_binding = candidate_bindings.get(key)
+                    if existing_binding is None or existing_binding.reference != validated:
+                        candidate_bindings[key] = SecretBinding(validated, None)
                 if key == VOICE_AUDIO_BINDINGS_KEY:
                     try:
                         validate_voice_audio_api_key_references(
@@ -404,13 +412,26 @@ class ConfigMutations:
                 self._validate_reference(key, reference, canonical=update.name is None)
                 references[key] = reference
                 candidate[key] = reference
-            self.repository.runtime_candidate(candidate)
+                candidate_bindings[key] = SecretBinding(reference, update.plaintext)
+            self.repository.runtime_candidate(candidate, candidate_bindings)
         except ConfigValidationError:
             raise
         except (ValidationError, ValueError, TypeError) as exc:
-            raise ConfigValidationError(
-                f"Complete configuration candidate is invalid: {exc}"
-            ) from exc
+            secret_key = next(iter(patch.secrets), None)
+            if secret_key is not None:
+                secret_error = ConfigValidationError(
+                    "Secret configuration value is invalid",
+                    key=secret_key,
+                )
+            else:
+                changed_keys = (*patch.values, *patch.secrets, *patch.unset)
+                error_key = changed_keys[0] if len(changed_keys) == 1 else None
+                raise ConfigValidationError(
+                    f"Complete configuration candidate is invalid: {exc}",
+                    key=error_key,
+                ) from exc
+        if secret_error is not None:
+            raise secret_error
         return values, references
 
     @staticmethod

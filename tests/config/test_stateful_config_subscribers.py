@@ -41,7 +41,9 @@ class FakeRepository:
         assert resolve_secrets
         return self.snapshots[self.index]
 
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig:
+    def runtime_candidate(
+        self, overrides: dict[str, object], _secret_bindings: object
+    ) -> DaemonConfig:
         return DaemonConfig()
 
 

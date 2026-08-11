@@ -478,7 +478,7 @@ class ConfigRuntime:
                 replacement = prepared.get(subscriber.name)
                 if replacement is not None:
                     old_handles.append((replacement, subscriber))
-        active = self._repository.runtime_candidate(active_values)
+        active = self._repository.runtime_candidate(active_values, active_bindings)
         pending = self._pending_restart_keys(
             stored.values,
             active_values,
@@ -593,7 +593,9 @@ class ConfigRuntime:
                     statement_timeout_ms=self._statement_timeout_ms,
                     lock_timeout_ms=self._lock_timeout_ms,
                 )
-            return stored, self._repository.runtime_candidate(dict(stored.values))
+            return stored, self._repository.runtime_candidate(
+                dict(stored.values), stored.secret_bindings
+            )
 
         return await self._run_db(read)
 

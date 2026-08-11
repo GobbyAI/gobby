@@ -249,7 +249,8 @@ async def test_switch_recovery_uses_runtime_snapshot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repository = ConfigRepository(temp_db)
-    config = repository.runtime_candidate(dict(repository.read().overrides))
+    snapshot = repository.read()
+    config = repository.runtime_candidate(dict(snapshot.overrides), snapshot.secret_bindings)
 
     class Runtime:
         def __init__(self) -> None:

@@ -50,7 +50,9 @@ class _Repository:
         assert lock_timeout_ms > 0
         return self.read(resolve_secrets=resolve_secrets)
 
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig:
+    def runtime_candidate(
+        self, overrides: dict[str, object], _secret_bindings: object
+    ) -> DaemonConfig:
         config = DaemonConfig(ui={"enabled": False})
         return config.model_copy(update={"test_mode": bool(overrides.get("test_mode", False))})
 

@@ -12,6 +12,7 @@ mutation reconciliation through the real seams in one arranged world.
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import cast
@@ -27,8 +28,10 @@ from gobby.ai.embedding_switch import (
 )
 from gobby.config.documents import ConfigDocumentsService
 from gobby.config.runtime import ConfigRuntime
+from gobby.config.values import MASKED_SECRET, ConfigValuesService
 from gobby.config.voice_secrets import MASKED_VOICE_AUDIO_API_KEY, VOICE_AUDIO_BINDINGS_KEY
-from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+from gobby.mcp_proxy.tools.config import create_config_registry
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import managed_projection_targets
@@ -39,6 +42,9 @@ pytestmark = pytest.mark.integration
 
 VOICE_SECRET_NAME = "voice_audio_api_key"
 VOICE_SECRET_VALUE = "voice-plaintext-token"
+FALKOR_PASSWORD_KEY = "databases.falkordb.password"
+FALKOR_SECRET_NAME = "cross_seam_falkordb_password"
+FALKOR_SECRET_VALUE = "cross-seam-falkor-password"
 LIVE_KEY = "rules.enforcement_enabled"
 
 
@@ -53,6 +59,8 @@ class _World:
         repository: ConfigRepository,
         runtime: ConfigRuntime,
         documents: ConfigDocumentsService,
+        values: ConfigValuesService,
+        events: list[dict[str, object]],
         committed_revision: int,
         target_model: str,
         promoted_target: str,
@@ -64,6 +72,8 @@ class _World:
         self.repository = repository
         self.runtime = runtime
         self.documents = documents
+        self.values = values
+        self.events = events
         self.committed_revision = committed_revision
         self.target_model = target_model
         self.promoted_target = promoted_target
@@ -100,6 +110,18 @@ async def world(temp_db: HubDatabase, tmp_path: Path) -> AsyncIterator[_World]:
         expected_revision=repository.current_revision(),
         patch=ConfigPatch(values={VOICE_AUDIO_BINDINGS_KEY: [binding]}),
     )
+    mutations.patch(
+        expected_revision=repository.current_revision(),
+        patch=ConfigPatch(
+            secrets={
+                FALKOR_PASSWORD_KEY: SecretUpdate(
+                    FALKOR_SECRET_VALUE,
+                    name=FALKOR_SECRET_NAME,
+                    category="general",
+                )
+            }
+        ),
+    )
 
     journal, _spec = start_switch(
         store,
@@ -116,11 +138,22 @@ async def world(temp_db: HubDatabase, tmp_path: Path) -> AsyncIterator[_World]:
         repository,
         managed_resolver=managed_embedding_projection,
     )
+    events: list[dict[str, object]] = []
+
+    async def record_event(revision: int) -> None:
+        events.append({"type": "config_event", "revision": revision})
+
+    runtime.register_revision_publisher(record_event)
     await runtime.start()
+    values = ConfigValuesService(
+        runtime=runtime,
+        mutations=mutations,
+        run_blocking=_run_blocking,
+    )
     documents = ConfigDocumentsService(
         runtime=runtime,
         mutations=mutations,
-        runtime_candidate=repository.runtime_candidate,
+        runtime_candidate=lambda overrides: repository.runtime_candidate(overrides, {}),
         resolve_secret=secret_store.get,
         run_blocking=_run_blocking,
     )
@@ -133,12 +166,58 @@ async def world(temp_db: HubDatabase, tmp_path: Path) -> AsyncIterator[_World]:
             repository=repository,
             runtime=runtime,
             documents=documents,
+            values=values,
+            events=events,
             committed_revision=record.committed_revision,
             target_model=journal.target_model,
             promoted_target=record.physical_names["memories"],
         )
     finally:
         await runtime.close()
+
+
+async def test_reference_secret_is_masked_across_values_yaml_and_events(world: _World) -> None:
+    values_body = await world.values.values()
+    rendered_values = json.dumps(values_body, sort_keys=True)
+    secret_set = cast(dict[str, dict[str, bool]], values_body["secret_set"])
+
+    assert secret_set[FALKOR_PASSWORD_KEY] == {"desired": True, "active": True}
+    assert MASKED_SECRET in rendered_values
+    assert FALKOR_SECRET_VALUE not in rendered_values
+    assert f"$secret:{FALKOR_SECRET_NAME}" not in rendered_values
+
+    exported = await world.documents.export_yaml()
+    content = cast(str, exported["content"])
+    assert MASKED_SECRET in content
+    assert FALKOR_SECRET_VALUE not in content
+    assert f"$secret:{FALKOR_SECRET_NAME}" not in content
+
+    revision = await world.patch_and_reconcile({LIVE_KEY: False})
+    assert world.events[-1] == {"type": "config_event", "revision": revision}
+    rendered_events = json.dumps(world.events, sort_keys=True)
+    assert FALKOR_SECRET_VALUE not in rendered_events
+    assert f"$secret:{FALKOR_SECRET_NAME}" not in rendered_events
+
+
+async def test_invalid_reference_secret_is_redacted_from_mcp_result(world: _World) -> None:
+    invalid = "plaintext must not leak"
+    registry = create_config_registry(lambda: world.values)
+
+    result = await registry.call(
+        "patch_config_values",
+        {
+            "expected_revision": world.runtime.snapshot.revision,
+            "values": {"databases": {"falkordb": {"password": invalid}}},
+        },
+    )
+
+    assert result["error"] == {
+        "code": "validation_error",
+        "message": "Secret configuration value is invalid",
+        "path": ["values", "databases", "falkordb", "password"],
+        "retryable": False,
+    }
+    assert invalid not in json.dumps(result, sort_keys=True)
 
 
 async def test_patch_preserves_switch_installed_overrides(world: _World) -> None:

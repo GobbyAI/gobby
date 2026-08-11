@@ -45,7 +45,11 @@ class StoredConfigSnapshot(Protocol):
 class ConfigSnapshotRepository(Protocol):
     def read(self, *, resolve_secrets: bool = True) -> StoredConfigSnapshot: ...
 
-    def runtime_candidate(self, overrides: dict[str, object]) -> DaemonConfig: ...
+    def runtime_candidate(
+        self,
+        overrides: dict[str, object],
+        secret_bindings: Mapping[str, StoredSecretBinding],
+    ) -> DaemonConfig: ...
 
 
 class RegistrySpec(Protocol):

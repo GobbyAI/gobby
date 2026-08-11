@@ -57,7 +57,9 @@ class CliRuntime:
             database = self.require_database(apply_migrations=apply_migrations)
             repository = self.config_repository_factory(database)
             snapshot = repository.read(resolve_secrets=True)
-            self._config = repository.runtime_candidate(dict(snapshot.values))
+            self._config = repository.runtime_candidate(
+                dict(snapshot.values), snapshot.secret_bindings
+            )
         return self._config
 
     def require_database(self, *, apply_migrations: bool = True) -> HubDatabase:

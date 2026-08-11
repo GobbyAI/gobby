@@ -88,7 +88,8 @@ def test_runtime_candidate_overrides_system_automation_config() -> None:
         {
             "system_loops.automation.enabled": False,
             "system_loops.automation.interval_seconds": 7,
-        }
+        },
+        {},
     )
 
     assert config.system_loops.automation.enabled is False

@@ -81,8 +81,8 @@ def _snapshot(
     active_values: Mapping[str, object],
     desired: DaemonConfig | None = None,
     desired_values: Mapping[str, object] | None = None,
-    desired_secrets: Mapping[str, str] | None = None,
-    active_secrets: Mapping[str, str] | None = None,
+    desired_secrets: Mapping[str, str | None] | None = None,
+    active_secrets: Mapping[str, str | None] | None = None,
 ) -> ConfigSnapshot:
     desired_projection = desired or active
     desired_projection_values = dict(desired_values or active_values)
@@ -440,6 +440,42 @@ def test_service_capabilities_broker_credentialed_or_invalid_service_urls(
     assert "databases.qdrant.url" not in response.json()["config"]
     assert response.json()["services"]["qdrant"]["mode"] == "brokered"
     assert service_url not in response.text
+
+
+def test_unresolved_bound_secrets_keep_service_capabilities_brokered(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
+) -> None:
+    active_values = _machine_values(runtime_config)
+    active_values.update(
+        {
+            "databases.falkordb.password": "$secret:missing-falkordb-password",
+            "databases.qdrant.api_key": "$secret:missing-qdrant-api-key",
+        }
+    )
+    server.services.config_runtime.snapshot = _snapshot(
+        runtime_config,
+        active_values=active_values,
+        active_secrets={
+            "databases.falkordb.password": None,
+            "databases.qdrant.api_key": None,
+        },
+    )
+    _, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    response = TestClient(server.app).get("/api/config/service-capabilities", headers=headers)
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["services"]["falkordb"]["mode"] == "brokered"
+    assert body["services"]["qdrant"]["mode"] == "brokered"
+    assert "databases.falkordb.host" not in body["config"]
+    assert "databases.falkordb.port" not in body["config"]
+    assert "databases.qdrant.url" not in body["config"]
+    assert "$secret:" not in response.text
 
 
 def test_service_capabilities_omit_unresolved_runtime_config_markers(

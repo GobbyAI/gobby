@@ -103,7 +103,7 @@ def test_real_runtime_candidate_through_overlay_matches_daemon_startup(
     ConfigStore(temp_db).set("voice.enabled", True)
     stored = repository.read()
 
-    candidate = repository.runtime_candidate(dict(stored.overrides))
+    candidate = repository.runtime_candidate(dict(stored.overrides), stored.secret_bindings)
 
     # runtime_candidate does not overlay bootstrap fields by design; they stay
     # at their defaults until bootstrap_overlaid_config runs.
