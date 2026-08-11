@@ -2,8 +2,8 @@
  * §3.2 page editor: the edit toggle and the recipe-compliant create form over
  * `CodeMirrorEditor`, with draft state in `useDetailDraft` (shell dirty-guard
  * registration, Cmd+S) and the revision contract — the editor holds the base
- * `content_hash`, revalidates it on window focus / manual refresh / right
- * before save, and a mismatch or 412 opens the reload/overwrite conflict
+ * `content_hash`, revalidates it on window focus and right before save, and
+ * a mismatch or 412 opens the reload/overwrite conflict
  * panel. Silent last-write-wins is never allowed.
  */
 
@@ -220,10 +220,7 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
         <DetailActionButton label="Create" variant="accent" disabled={saving} onClick={() => void runSave()} />
       </>
     ) : (
-      <>
-        <DetailActionButton label="Refresh" variant="ghost" disabled={saving} onClick={() => void revalidate()} />
-        <DetailActionButton label="Close" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
-      </>
+      <DetailActionButton label="Close" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
     );
 
   return (

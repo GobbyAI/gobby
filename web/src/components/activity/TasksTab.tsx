@@ -201,7 +201,6 @@ export const TasksTab = memo(function TasksTab({
   const { handleCreateTask } = useTaskActions({
     projectId,
     fetchTasks,
-    loading,
     setShowCreateTask,
     setActionError,
   });

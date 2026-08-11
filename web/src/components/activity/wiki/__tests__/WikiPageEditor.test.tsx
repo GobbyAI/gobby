@@ -273,6 +273,8 @@ describe("WikiPageEditor edit toggle (3.2.1)", () => {
 
     await openGobbyPage(user);
     const editor = await openEditor(user);
+    // Focus revalidation replaces the manual Refresh header action (#20048).
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
     await user.type(editor, " scratch");
 
     await user.click(await screen.findByRole("button", { name: "Discard" }));

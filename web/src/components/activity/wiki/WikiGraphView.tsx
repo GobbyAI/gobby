@@ -371,13 +371,7 @@ export function WikiGraphView({
         ) : scene && scene.nodes.length === 0 ? (
           <ActivityPanelEmpty
             heading="Nothing to graph"
-            body="This wiki has no pages in the selected layers yet. Add sources or widen the layer filter, then refresh."
-            footer={
-              <DetailActionButton
-                label="Refresh"
-                onClick={() => setRetrySeq((seq) => seq + 1)}
-              />
-            }
+            body="This wiki has no pages in the selected layers yet. Add sources or widen the layer filter."
           />
         ) : scene ? (
           <WikiGraphErrorBoundary key={boundarySeq} fallback={boundaryFallback}>

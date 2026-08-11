@@ -10,7 +10,7 @@ import {
  *
  * The header (between the view dropdown and the Hide Chat button) renders one
  * toolbar whose contents follow the active tab: an optional segmented view
- * selector, then Filter / Search / Refresh / New triggers. Each tab registers
+ * selector, then Filter / Search / New triggers. Each tab registers
  * what it supports via {@link useRegisterActivityActions}; tabs that register
  * nothing render no controls. The actual surfaces (filter dropdowns, search
  * bars, modals) stay inside the tab — the header controls are dumb triggers,
@@ -48,10 +48,6 @@ export interface ActivityPanelActions {
   addLabel?: string;
   addAriaLabel?: string;
   addDisabled?: boolean;
-  onRefresh?: () => void;
-  refreshLabel?: string;
-  refreshAriaLabel?: string;
-  refreshing?: boolean;
 }
 
 export interface ActivityActionsContextValue {
@@ -70,7 +66,7 @@ export function useActivityActions(): ActivityPanelActions | null {
 
 /**
  * Register the active tab's header actions. Pass a `deps` list of the values
- * the action object closes over (callbacks + live flags like `refreshing`);
+ * the action object closes over (callbacks + live flags like `open`);
  * the registration refreshes only when they change, and clears on unmount.
  * Safe to call with no provider present (e.g. in isolated tests) — it is a
  * no-op then.

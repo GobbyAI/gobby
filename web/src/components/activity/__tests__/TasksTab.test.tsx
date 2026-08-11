@@ -151,6 +151,9 @@ describe("TasksTab", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
+    // The header registers only New; WS task events keep the list current, so
+    // no manual Refresh trigger exists (#20048).
+    expect(screen.queryByRole("button", { name: "Refresh tasks" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.change(screen.getByPlaceholderText("Task title..."), {
       target: { value: "Invalid task" },

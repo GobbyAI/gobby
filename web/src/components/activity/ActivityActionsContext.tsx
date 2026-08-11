@@ -22,27 +22,6 @@ export function ActivityActionsProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function RefreshGlyph() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="23 4 23 10 17 10" />
-      <polyline points="1 20 1 14 7 14" />
-      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
-      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
-    </svg>
-  );
-}
-
 function PlusGlyph() {
   return (
     <svg
@@ -101,25 +80,18 @@ function SearchGlyph() {
 
 /**
  * Renders the active tab's registered toolbar: selector, then Filter / Search /
- * Refresh / New triggers. Placed in the panel header between the dropdown and
- * the Hide Chat slot. Returns nothing when the active tab registers no actions.
+ * New triggers. Placed in the panel header between the dropdown and the
+ * Hide Chat slot. Returns nothing when the active tab registers no actions.
  */
 export function ActivityActionButtons() {
   const actions = useActivityActions();
   if (
     !actions ||
-    (!actions.selector &&
-      !actions.filter &&
-      !actions.search &&
-      !actions.onAdd &&
-      !actions.onRefresh)
+    (!actions.selector && !actions.filter && !actions.search && !actions.onAdd)
   ) {
     return null;
   }
 
-  const refreshLabel = actions.refreshing
-    ? "Refreshing"
-    : (actions.refreshLabel ?? "Refresh");
   const addLabel = actions.addLabel ?? "New";
 
   return (
@@ -157,22 +129,6 @@ export function ActivityActionButtons() {
           <SearchGlyph />
           <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
             Search
-          </span>
-        </Button>
-      )}
-      {actions.onRefresh && (
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          onClick={actions.onRefresh}
-          disabled={actions.refreshing}
-          aria-label={actions.refreshAriaLabel ?? refreshLabel}
-          title={actions.refreshAriaLabel ?? refreshLabel}
-        >
-          <RefreshGlyph />
-          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
-            {refreshLabel}
           </span>
         </Button>
       )}

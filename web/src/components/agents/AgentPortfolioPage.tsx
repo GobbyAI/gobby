@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import type { CanonicalTaskState } from '../../lib/taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { getCategoryColorVar } from './categoryColors'
@@ -310,7 +311,6 @@ export function AgentPortfolioPage() {
   const [filterSource, setFilterSource] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
-    setIsLoading(true)
     try {
       setError(null)
       const baseUrl = getBaseUrl()
@@ -339,6 +339,27 @@ export function AgentPortfolioPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Live updates: the portfolio derives entirely from sessions + tasks, so a
+  // coalesced background refetch on either event stream keeps it current.
+  // `isLoading` starts true and only ever flips false, so background refetches
+  // never blank the rendered list.
+  const refetchTimerRef = useRef<number | null>(null)
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimerRef.current !== null) return
+    refetchTimerRef.current = window.setTimeout(() => {
+      refetchTimerRef.current = null
+      void fetchData()
+    }, 1000)
+  }, [fetchData])
+  useEffect(
+    () => () => {
+      if (refetchTimerRef.current !== null) window.clearTimeout(refetchTimerRef.current)
+    },
+    [],
+  )
+  useWebSocketEvent('task_event', scheduleRefetch)
+  useWebSocketEvent('session_event', scheduleRefetch)
 
   // Build agent profiles from sessions + tasks
   const agents = useMemo((): AgentProfile[] => {
@@ -527,17 +548,6 @@ export function AgentPortfolioPage() {
             <option value="lastActive">Sort: Last Active</option>
             <option value="name">Sort: Name</option>
           </NativeSelect>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            dense
-            className={`agent-refresh-btn ${coarseHitAreaCls}`}
-            onClick={fetchData}
-            aria-label="Refresh agents"
-          >
-            {'↻'}
-          </Button>
         </div>
       </div>
 
