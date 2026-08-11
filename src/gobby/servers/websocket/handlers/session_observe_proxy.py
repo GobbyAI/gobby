@@ -142,23 +142,14 @@ async def handle_attach_to_session(
         )
         return
 
+    # Authorization happens at the WebSocket handshake: only authenticated
+    # connections are registered in `clients` with a user_id (bearer token via
+    # the /ws proxy route, or local-first accept). The connection's project
+    # scope is client-declared UI state that fresh connections — phone
+    # browsers, post-suspend reconnects — have not sent yet, so it must not
+    # gate observation (gobby-#20062).
     client_metadata = mixin.clients.get(websocket)
-    if not isinstance(client_metadata, dict):
-        await mixin._send_error(
-            websocket,
-            "Not authorized to observe session",
-            code="FORBIDDEN",
-        )
-        return
-
-    client_user_id = _as_str(client_metadata.get("user_id"))
-    client_project_id = _as_str(client_metadata.get("project_id"))
-    session_project_id = _as_str(getattr(session, "project_id", None))
-    if (
-        client_user_id is None
-        or client_project_id is None
-        or client_project_id != session_project_id
-    ):
+    if not isinstance(client_metadata, dict) or _as_str(client_metadata.get("user_id")) is None:
         await mixin._send_error(
             websocket,
             "Not authorized to observe session",

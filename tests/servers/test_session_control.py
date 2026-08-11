@@ -1524,15 +1524,15 @@ class TestContinueInChatTerminalKill:
     @pytest.mark.parametrize(
         "client_metadata",
         [
+            {},
             {"project_id": "project-1"},
-            {"user_id": "local-cli", "project_id": "project-2"},
         ],
     )
-    async def test_attach_to_session_rejects_unauthorized_scope(
+    async def test_attach_to_session_rejects_unauthenticated_connection(
         self,
         client_metadata: dict[str, str],
     ) -> None:
-        """Attach must authorize the client and project before subscribing."""
+        """Attach must reject connections without an authenticated user_id."""
         from gobby.servers.websocket.session_control import SessionControlMixin
 
         ws = MagicMock()
@@ -1556,10 +1556,7 @@ class TestContinueInChatTerminalKill:
         await SessionControlMixin._handle_attach_to_session(
             host,
             ws,
-            {
-                "session_id": "source-uuid",
-                "project_id": "project-1",
-            },
+            {"session_id": "source-uuid"},
         )
 
         host._send_error.assert_awaited_once_with(
@@ -1570,6 +1567,69 @@ class TestContinueInChatTerminalKill:
         ws.send.assert_not_awaited()
         assert ws.subscriptions == set()
         assert "attached_session_id" not in client_metadata
+
+    @pytest.mark.parametrize(
+        "client_metadata",
+        [
+            # Phone / non-localhost repro (gobby-#20062): a fresh browser
+            # origin connects, authenticates, and attaches straight from the
+            # Sessions list without ever declaring a project scope.
+            {"user_id": "local-cli"},
+            # Stale scope: the client last declared a different project
+            # (project switch in another tab, or a reconnect raced set_project).
+            {"user_id": "local-cli", "project_id": "project-2"},
+        ],
+    )
+    async def test_attach_to_session_allows_undeclared_or_stale_project_scope(
+        self,
+        client_metadata: dict[str, str],
+    ) -> None:
+        """Authenticated connections attach regardless of declared project scope."""
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        ws.subscriptions = set()
+
+        source_session = MagicMock()
+        source_session.id = "source-uuid"
+        source_session.external_id = "cli-session-123"
+        source_session.project_id = "project-1"
+        source_session.seq_num = 42
+        source_session.source = "claude"
+        source_session.title = "Observed Session"
+        source_session.status = "active"
+        source_session.model = "claude-sonnet-5"
+        source_session.chat_mode = "plan"
+        source_session.git_branch = "main"
+        source_session.context_window = 200000
+        source_session.session_type = "terminal"
+        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.workflow_name = None
+        source_session.agent_run_id = None
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.db = MagicMock()
+        session_manager.db.fetchone.return_value = None
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: client_metadata}
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_attach_to_session(
+            host,
+            ws,
+            {"session_id": "source-uuid"},
+        )
+
+        host._send_error.assert_not_awaited()
+        payload = ws.send.await_args_list[0].args[0]
+        response = json.loads(payload)
+        assert response["type"] == "attach_to_session_result"
+        assert client_metadata["attached_session_id"] == "source-uuid"
+        assert ws.subscriptions
 
     async def test_set_project_updates_connection_scope(self) -> None:
         """A project switch should bind the registered client to that project."""
