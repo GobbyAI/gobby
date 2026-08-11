@@ -10,7 +10,26 @@ Three lanes run in parallel. Order inside a lane is strict; gates between lanes
 are marked with **GATE**. A planning track runs alongside so no lane ever
 starves waiting for expansion.
 
-**Dispatchable today:** #20009 (Lane A), #18786 (Lane B), #19773 (Lane C).
+**Startable today (claim in a session):** #20009 (Lane A), #18786 (Lane B),
+#19773 (Lane C).
+
+## Execution model
+
+- **No `gobby build` for this epic.** It modifies the daemon, grant plumbing,
+  and dispatch-adjacent code, so autopilot agents could break the dispatcher
+  driving them mid-dispatch. `gobby build` dogfooding stays on less critical
+  internal tasks; every task in this program is worked by a claimed agent
+  session.
+- **Lanes A and B: one persistent worktree per lane.** A single claimed
+  session works the chain serially inside it — per-task commits on the lane
+  branch, merge to 0.5.0 at phase boundaries. Reusing the lane worktree keeps
+  the cargo `target/` warm across the chain.
+- **Wiki fan-outs (Lane C, P2 and P3): per-agent worktrees.** The five-leaf
+  parallel groups run as `gobby-agents` spawns with worktree isolation —
+  parallelism without the dispatcher in the loop.
+- **Add sccache before P2/P3 fan out.** No shared Rust build cache exists
+  today (no `CARGO_TARGET_DIR`/sccache config anywhere in the repo), so
+  concurrent worktrees each pay a full cold workspace build.
 
 ---
 
