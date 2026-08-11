@@ -146,7 +146,7 @@ export function SettingsOverlay({
   }
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-8 [--control-row-height:var(--status-bar-control-height)] [@media(max-width:768px)]:p-0">
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-8 [--control-row-height:var(--status-bar-control-height)] mobile:p-0">
       <Button
         type="button"
         variant="ghost"
@@ -159,7 +159,7 @@ export function SettingsOverlay({
       />
       <div
         ref={dialogRef}
-        className="relative flex h-[min(640px,100%)] max-h-full w-[min(720px,100%)] flex-col overflow-hidden rounded-xl border border-border bg-surface-secondary shadow-lg outline-none animate-settings-overlay-rise [@media(max-width:768px)]:h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:rounded-none [@media(max-width:768px)]:border-0"
+        className="relative flex h-[min(640px,100%)] max-h-full w-[min(720px,100%)] flex-col overflow-hidden rounded-xl border border-border bg-surface-secondary shadow-lg outline-none animate-settings-overlay-rise mobile:h-full mobile:w-full mobile:rounded-none mobile:border-0"
         role="dialog"
         aria-modal="true"
         aria-labelledby={headingId}
@@ -182,14 +182,14 @@ export function SettingsOverlay({
           </Button>
         </header>
         <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
-          <div className="relative inline-block [@media(max-width:768px)]:w-full">
+          <div className="relative inline-block mobile:w-full">
             <Button
               type="button"
               variant="ghost"
               size="sm"
               dense
               className={cn(
-                'min-w-56 cursor-pointer py-1.5 [font-family:inherit] [&_svg]:shrink-0 [&_svg]:text-[var(--text-muted)] aria-expanded:bg-[var(--accent-tint)] aria-expanded:text-accent aria-expanded:[&_svg]:text-accent [@media(max-width:768px)]:w-full',
+                'min-w-56 cursor-pointer py-1.5 [font-family:inherit] [&_svg]:shrink-0 [&_svg]:text-[var(--text-muted)] aria-expanded:bg-[var(--accent-tint)] aria-expanded:text-accent aria-expanded:[&_svg]:text-accent mobile:w-full',
                 coarseHitAreaCls,
               )}
               aria-haspopup="listbox"

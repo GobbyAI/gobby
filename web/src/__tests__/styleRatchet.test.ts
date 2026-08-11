@@ -100,9 +100,11 @@ const CLS_CONSTANT = /\bconst\s+[A-Za-z0-9_]*_CLS\b\s*=/g
 // Viewport width variants hand-roll a breakpoint the responsive contract
 // forbids: the tier is authored once in tailwind-theme.css (width <=767px OR
 // height <=500px, 768px desktop) and per-component width thresholds collapse
-// into the shared `mobile:` variant. `@max-[...]` container queries are
-// element-scoped and exempt.
-const TIER_VARIANT = /(?<!@)max-\[\d+px\]:/g
+// into the shared `mobile:` variant — whether written as `max-[Npx]:` or as a
+// raw `[@media(max-width:…)]:` arbitrary variant (#19183). `@max-[...]`
+// container queries are element-scoped and exempt.
+const TIER_VARIANT =
+  /(?<!@)max-\[\d+px\]:|\[@media\((?:max|min)-(?:width|height):[^\]]+\)\]:/g
 const IMPORTANT = /!\s*important\b/g
 const RAW_ELEMENTS: Record<RawElement, RegExp> = {
   button: /<button\b/g,

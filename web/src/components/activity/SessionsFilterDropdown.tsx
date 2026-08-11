@@ -164,7 +164,7 @@ export function SessionsFilterDropdown({
 
   // Width is capped at 320px on every viewport, and on desktop additionally by
   // the tab content so the popover never overflows a minimum-width activity
-  // panel (#20045). On mobile (<768px) the panel becomes a centered popup
+  // panel (#20045). On the mobile tier the panel becomes a centered popup
   // modal; on larger viewports it's a right-anchored dropdown pinned to the
   // top of the tab content, directly below the header Filter trigger. Both
   // share the same internal body, which collapses from two columns to one via

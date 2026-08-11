@@ -251,11 +251,11 @@ describe('mobile chrome CSS', () => {
 
     for (const token of [
       '[--control-row-height:var(--status-bar-control-height)]',
-      '[@media(max-width:768px)]:p-0',
-      '[@media(max-width:768px)]:h-full',
-      '[@media(max-width:768px)]:w-full',
-      '[@media(max-width:768px)]:rounded-none',
-      '[@media(max-width:768px)]:border-0',
+      'mobile:p-0',
+      'mobile:h-full',
+      'mobile:w-full',
+      'mobile:rounded-none',
+      'mobile:border-0',
       'animate-settings-overlay-fade',
       'animate-settings-overlay-rise',
       'aria-expanded:[&_svg]:text-accent',
@@ -396,14 +396,14 @@ describe('mobile chrome CSS', () => {
       'border-border',
       'px-4',
       'py-3',
-      '[@media(max-width:768px)]:gap-2',
-      '[@media(max-width:768px)]:px-3',
-      '[@media(max-width:768px)]:py-2.5',
-      '[@media(max-width:768px)]:text-[length:var(--text-2xl)]',
+      'mobile:gap-2',
+      'mobile:px-3',
+      'mobile:py-2.5',
+      'mobile:text-[length:var(--text-2xl)]',
       '[--control-row-height:var(--status-bar-control-height)]',
       'flex-nowrap',
       '[--app-brand-logo-size:2.75rem]',
-      '[@media(max-width:768px)]:[--app-brand-logo-size:1.875rem]',
+      'mobile:[--app-brand-logo-size:1.875rem]',
     ]) {
       expectClassToken(appSource, token)
     }
