@@ -1,6 +1,8 @@
 import { useState, useCallback, type FormEvent } from 'react'
 import { GobbyLogo } from '../shared/GobbyLogo'
 import { Heading } from '../shared/Heading'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 
 interface LoginPageProps {
   credentialsConfigured: boolean
@@ -52,9 +54,10 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
 
         {error && <div style={styles.error}>{error}</div>}
 
-        <label style={styles.label}>
-          Username
-          <input
+        <div style={styles.label}>
+          <label htmlFor="login-username">Username</label>
+          <Input
+            id="login-username"
             type="text"
             value={username}
             onChange={e => setUsername(e.target.value)}
@@ -63,11 +66,12 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
             required
             style={styles.input}
           />
-        </label>
+        </div>
 
-        <label style={styles.label}>
-          Password
-          <input
+        <div style={styles.label}>
+          <label htmlFor="login-password">Password</label>
+          <Input
+            id="login-password"
             type="password"
             value={password}
             onChange={e => setPassword(e.target.value)}
@@ -75,27 +79,28 @@ export function LoginPage({ credentialsConfigured, onLogin }: LoginPageProps) {
             required
             style={styles.input}
           />
-        </label>
+        </div>
 
-        <label style={styles.checkboxLabel}>
-          <input
+        <div style={styles.checkboxLabel}>
+          <Input
+            id="login-remember-me"
             type="checkbox"
+            wrapperClassName="w-auto shrink-0"
+            className="h-4 w-4 shrink-0 rounded border-border p-0 accent-accent"
             checked={rememberMe}
             onChange={e => setRememberMe(e.target.checked)}
           />
-          <span>Remember me for 30 days</span>
-        </label>
+          <label htmlFor="login-remember-me">Remember me for 30 days</label>
+        </div>
 
-        <button
+        <Button
           type="submit"
+          variant="primary"
           disabled={loading || !username || !password}
-          style={{
-            ...styles.button,
-            opacity: loading || !username || !password ? 0.6 : 1,
-          }}
+          style={styles.button}
         >
           {loading ? 'Signing in...' : 'Sign in'}
-        </button>
+        </Button>
       </form>
     </div>
   )
@@ -169,13 +174,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 500,
     color: 'var(--text-secondary)',
   },
+  // Geometry, chrome, and type scale come from the Input primitive (its
+  // error border state must stay live); only the text color is local.
   input: {
-    padding: '0.55rem 0.75rem',
-    borderRadius: 6,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-primary)',
     color: 'var(--text-primary)',
-    fontSize: 'var(--text-lg)',
   },
   checkboxLabel: {
     display: 'flex',
@@ -185,15 +187,11 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)',
     cursor: 'pointer',
   },
+  // Chrome, type scale, cursor, and disabled dimming come from the primary
+  // Button primitive; the block padding (taller than md's min-height
+  // floor) and offset are local.
   button: {
-    padding: '0.6rem',
-    borderRadius: 6,
-    border: 'none',
-    background: 'var(--accent)',
-    color: 'var(--accent-foreground)',
-    fontSize: 'var(--text-lg)',
-    fontWeight: 600,
-    cursor: 'pointer',
+    paddingBlock: '0.6rem',
     marginTop: '0.25rem',
   },
 }

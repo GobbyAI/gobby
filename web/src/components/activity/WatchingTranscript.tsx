@@ -307,7 +307,7 @@ export const WatchingTranscript = memo(function WatchingTranscript({
     <Virtuoso
       ref={virtuosoRef}
       key={sessionId ?? "none"}
-      className="flex-1 min-h-0 overflow-x-hidden chat-scaled overscroll-contain [overflow-anchor:none] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+      className="min-h-0 flex-1 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
       data={chatMessages}
       firstItemIndex={firstItemIndex}
       initialTopMostItemIndex={Math.max(chatMessages.length - 1, 0)}

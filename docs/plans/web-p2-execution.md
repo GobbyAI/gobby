@@ -8,6 +8,11 @@ session the operator watches, in dependency order. No `gobby build`
 automation for this epic. Providers: **Fable 5 xhigh** (Claude Code) and
 **GPT-5.6-Sol xhigh** (Codex).
 
+## Login credentials for the web-ui test
+
+User: <josh@gobby.ai> (ignore the angle brackets)
+Pass: gobby
+
 ## Assignment principle
 
 Four adversarial review rounds (55 repaired findings) made the sweep and

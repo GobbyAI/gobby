@@ -14,6 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.materialization import (
+    NodeRuntimeResult,
+    PreparationResult,
+    SkillMaterializationResult,
+)
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.definitions import RuleEffect
 from gobby.workflows.engine.effects import EffectsMixin
@@ -24,7 +29,7 @@ from gobby.workflows.engine.run_command import (
     _parse_command_output,
     build_run_command_payload,
     execute_run_command,
-    resolve_run_command,
+    resolve_materialized_skill_script,
 )
 
 pytestmark = pytest.mark.unit
@@ -67,6 +72,113 @@ async def _apply(effect: RuleEffect, event: HookEvent) -> list[str]:
     context_parts: list[str] = []
     await EffectsMixin()._apply_effect(effect, _ROW, {}, {"event": event}, {}, context_parts, [])
     return context_parts
+
+
+def _materialized_result(scripts_dir: Path, browser_cache: Path) -> SkillMaterializationResult:
+    return SkillMaterializationResult(
+        scripts_dir=scripts_dir,
+        files_written=1,
+        environment={"PUPPETEER_CACHE_DIR": str(browser_cache)},
+        parser_deps=PreparationResult(ready=True, warning=None),
+        browser=PreparationResult(ready=True, warning=None),
+        node=NodeRuntimeResult(version=None, satisfies_floor=None),
+    )
+
+
+@pytest.mark.parametrize("layout", ["main-project", "worktree", "clone"])
+@pytest.mark.asyncio
+async def test_skill_command_uses_materialized_script_from_event_cwd(
+    layout: str, tmp_path: Path
+) -> None:
+    event_cwd = tmp_path / layout / "frontend"
+    event_cwd.mkdir(parents=True)
+    scripts_dir = tmp_path / "cache" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    script = scripts_dir / "hook.py"
+    script.write_text(
+        "import json, os, sys\n"
+        "event = json.load(sys.stdin)\n"
+        "context = '|'.join((os.getcwd(), event['tool_name'], "
+        "os.environ['PUPPETEER_CACHE_DIR']))\n"
+        "print(json.dumps({'hookSpecificOutput': {'additionalContext': context}}))\n"
+    )
+    materialized = _materialized_result(scripts_dir, tmp_path / "browser-cache")
+    mixin = EffectsMixin()
+    resolve = AsyncMock(return_value=materialized)
+    mixin.skill_script_materializer = cast(Any, SimpleNamespace(resolve=resolve))
+    event = _event()
+    event.cwd = str(event_cwd)
+    event.project_id = "project-id"
+    context_parts: list[str] = []
+
+    await mixin._apply_effect(
+        _effect(
+            command=[sys.executable],
+            skill="impeccable",
+            script="hook.py",
+        ),
+        _ROW,
+        {},
+        {"event": event},
+        {},
+        context_parts,
+        [],
+    )
+
+    assert context_parts == [f"{event_cwd}|Edit|{tmp_path / 'browser-cache'}"]
+    resolve.assert_awaited_once_with("impeccable", project_id="project-id")
+    assert not (event_cwd / ".agents").exists()
+
+
+@pytest.mark.parametrize("layout", ["main-project", "worktree", "clone"])
+@pytest.mark.asyncio
+async def test_background_skill_command_uses_event_cwd_without_agents_tree(
+    layout: str, tmp_path: Path
+) -> None:
+    event_cwd = tmp_path / layout / "frontend"
+    event_cwd.mkdir(parents=True)
+    scripts_dir = tmp_path / "cache" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "hook.py").write_text(
+        "import json, os, pathlib, sys\n"
+        "event = json.load(sys.stdin)\n"
+        "pathlib.Path('detector-result.json').write_text(json.dumps({"
+        "'cwd': os.getcwd(), 'tool': event['tool_name'], "
+        "'cache': os.environ['PUPPETEER_CACHE_DIR']}))\n"
+        "print('{}')\n"
+    )
+    mixin = EffectsMixin()
+    resolve = AsyncMock(return_value=_materialized_result(scripts_dir, tmp_path / "browser-cache"))
+    mixin.skill_script_materializer = cast(Any, SimpleNamespace(resolve=resolve))
+    event = _event()
+    event.cwd = str(event_cwd)
+    event.project_id = "project-id"
+
+    await mixin._apply_effect(
+        _effect(
+            command=[sys.executable],
+            skill="impeccable",
+            script="hook.py",
+            background=True,
+            timeout_seconds=2.0,
+        ),
+        _ROW,
+        {},
+        {"event": event},
+        {},
+        [],
+        [],
+    )
+    task = next(iter(mixin._background_run_command_registry().values()))
+    await task
+
+    assert json.loads((event_cwd / "detector-result.json").read_text()) == {
+        "cwd": str(event_cwd),
+        "tool": "Edit",
+        "cache": str(tmp_path / "browser-cache"),
+    }
+    resolve.assert_awaited_once_with("impeccable", project_id="project-id")
+    assert not (event_cwd / ".agents").exists()
 
 
 @pytest.mark.asyncio
@@ -137,6 +249,9 @@ class TestRunCommandBackground:
                 os.getcwd(),
                 json.dumps({"tool_name": "Write"}).encode(),
                 5.0,
+                project_id=None,
+                skill=None,
+                script=None,
                 rule_name="test-rule",
                 rule_id="rule-id",
                 platform_session_id="platform-session-1",
@@ -168,6 +283,9 @@ class TestRunCommandBackground:
                 os.getcwd(),
                 json.dumps({"tool_name": "Write"}).encode(),
                 5.0,
+                project_id=None,
+                skill=None,
+                script=None,
                 rule_name="test-rule",
                 rule_id="rule-id",
                 platform_session_id=None,
@@ -226,6 +344,9 @@ class TestRunCommandDeadlines:
             timeout_seconds=0.1,
             overflow_stream=None,
             background=False,
+            phase="execution",
+            skill=None,
+            script=None,
         )
         execute = AsyncMock(return_value=result)
         context_parts: list[str] = []
@@ -268,6 +389,46 @@ class TestRunCommandDeadlines:
         audit_call = audit.await_args
         assert audit_call is not None
         assert audit_call.args[0].status == "deadline_exhausted"
+
+    async def test_skill_resolution_timeout_fails_open_with_safe_status(self) -> None:
+        mixin = EffectsMixin()
+
+        async def wait_forever(*_args: object, **_kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        mixin.skill_script_materializer = cast(
+            Any,
+            SimpleNamespace(resolve=AsyncMock(side_effect=wait_forever)),
+        )
+        with (
+            patch(
+                "gobby.workflows.engine.effects.execute_run_command", new_callable=AsyncMock
+            ) as run,
+            patch.object(mixin, "_audit_run_command", new_callable=AsyncMock) as audit,
+        ):
+            await mixin._apply_effect(
+                _effect(
+                    command=["node"],
+                    skill="impeccable",
+                    script="hook.mjs",
+                    timeout_seconds=0.01,
+                ),
+                _ROW,
+                {},
+                {"event": _event()},
+                {},
+                [],
+                [],
+            )
+
+        run.assert_not_awaited()
+        audit_call = audit.await_args
+        assert audit_call is not None
+        result = audit_call.args[0]
+        assert result.status == "skill_resolution_timeout"
+        assert result.phase == "skill_resolution"
+        assert result.skill == "impeccable"
+        assert result.script == "hook.mjs"
 
 
 @pytest.mark.asyncio
@@ -376,38 +537,50 @@ def test_run_command_payload_synthesizes_stop_only_when_missing() -> None:
     assert synthesized["hook_event_name"] == "Stop"
 
 
-def test_resolve_run_command_uses_installed_skill_tree(tmp_path: Path) -> None:
-    install_dir = tmp_path / "install"
-    expected = install_dir / "shared" / "skills" / "impeccable" / "scripts" / "hook.mjs"
+def test_resolve_materialized_skill_script_returns_contained_file(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    expected = scripts_dir / "hook.mjs"
+    expected.write_text("export {};\n")
 
-    with patch(
-        "gobby.workflows.engine.run_command.get_install_dir",
-        return_value=install_dir,
-    ):
-        resolved = resolve_run_command(
-            ["node", "gobby-skill://impeccable/scripts/hook.mjs", "--check"]
-        )
+    resolved = resolve_materialized_skill_script(scripts_dir, "hook.mjs")
 
-    assert resolved == ["node", str(expected), "--check"]
+    assert resolved == expected
 
 
 @pytest.mark.parametrize(
-    "uri",
+    "script",
     [
-        "gobby-skill://impeccable",
-        "gobby-skill://impeccable/%2e%2e/other/hook.mjs",
-        "gobby-skill://impeccable/scripts/hook.mjs?mode=unsafe",
+        "",
+        "/tmp/hook.mjs",
+        "../other/hook.mjs",
+        "nested/../../hook.mjs",
+        r"C:\\temp\\hook.mjs",
     ],
 )
-def test_resolve_run_command_rejects_invalid_skill_uri(uri: str, tmp_path: Path) -> None:
-    with (
-        patch(
-            "gobby.workflows.engine.run_command.get_install_dir",
-            return_value=tmp_path,
-        ),
-        pytest.raises(ValueError, match="installed-skill URI|Installed-skill URI"),
-    ):
-        resolve_run_command([uri])
+def test_resolve_materialized_skill_script_rejects_unsafe_path(script: str, tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    with pytest.raises(ValueError, match="relative|traverse"):
+        resolve_materialized_skill_script(scripts_dir, script)
+
+
+def test_resolve_materialized_skill_script_rejects_missing_file(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    with pytest.raises(FileNotFoundError):
+        resolve_materialized_skill_script(scripts_dir, "missing.mjs")
+
+
+def test_resolve_materialized_skill_script_rejects_symlink_escape(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    outside = tmp_path / "outside.mjs"
+    outside.write_text("export {};\n")
+    (scripts_dir / "hook.mjs").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="outside"):
+        resolve_materialized_skill_script(scripts_dir, "hook.mjs")
 
 
 @pytest.mark.parametrize(
@@ -426,6 +599,29 @@ def test_run_command_effect_rejects_invalid_bounds(
 
 
 @pytest.mark.parametrize(
+    "fields",
+    [
+        {"skill": "impeccable"},
+        {"script": "hook.mjs"},
+    ],
+)
+def test_run_command_effect_requires_skill_and_script_together(fields: dict[str, str]) -> None:
+    with pytest.raises(ValueError, match="must be provided together"):
+        RuleEffect(type="run_command", command=["node"], **fields)
+
+
+@pytest.mark.parametrize("script", ["", "/tmp/hook.mjs", "../hook.mjs", r"C:\\hook.mjs"])
+def test_run_command_effect_rejects_unsafe_script(script: str) -> None:
+    with pytest.raises(ValueError, match="non-empty|relative|traverse"):
+        RuleEffect(
+            type="run_command",
+            command=["node"],
+            skill="impeccable",
+            script=script,
+        )
+
+
+@pytest.mark.parametrize(
     "status",
     [
         "success",
@@ -435,6 +631,8 @@ def test_run_command_effect_rejects_invalid_bounds(
         "output_limit",
         "invalid_output",
         "deadline_exhausted",
+        "skill_resolution_error",
+        "skill_resolution_timeout",
     ],
 )
 @pytest.mark.asyncio
@@ -452,6 +650,9 @@ async def test_run_command_audit_contains_metadata_only(status: str) -> None:
         timeout_seconds=5.0,
         overflow_stream="stdout" if status == "output_limit" else None,
         background=False,
+        phase="skill_resolution" if status.startswith("skill_resolution") else "execution",
+        skill="impeccable",
+        script="hook.mjs",
     )
     with patch("gobby.storage.workflow_audit.WorkflowAuditManager", return_value=manager):
         await mixin._audit_run_command(
@@ -466,6 +667,9 @@ async def test_run_command_audit_contains_metadata_only(status: str) -> None:
     assert kwargs["result"] == status
     assert kwargs["rule_id"] == "rule-id"
     assert kwargs["context"] == {
+        "phase": "skill_resolution" if status.startswith("skill_resolution") else "execution",
+        "skill": "impeccable",
+        "script": "hook.mjs",
         "duration_ms": 12.5,
         "exit_code": 3,
         "stdout_bytes": 44,

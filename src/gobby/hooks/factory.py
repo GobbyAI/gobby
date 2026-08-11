@@ -573,6 +573,7 @@ class HookManagerFactory:
         daemon_loop: asyncio.AbstractEventLoop | None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
+        from gobby.skills.materialization import get_skill_script_materializer
         from gobby.workflows.engine.core import RuleEngine
         from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
         from gobby.workflows.templates import TemplateEngine
@@ -601,6 +602,7 @@ class HookManagerFactory:
             completion_registry=completion_registry,
             task_manager=storage.task,
             config_runtime=config_runtime,
+            skill_script_materializer=get_skill_script_materializer(database),
         )
 
         pipeline_executor = None

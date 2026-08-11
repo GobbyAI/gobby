@@ -1,11 +1,11 @@
-// Style-debt ratchet allowlist — the recorded ceiling for legacy styling
-// idioms (see docs/guides/frontend-style-guide.md).
+// Style-debt ratchet allowlist — pure bans and pinned sanctioned floors for
+// legacy styling idioms (see docs/guides/frontend-style-guide.md).
 //
-// Attrition contract: entries may only be DELETED or DECREASED. Never add an
-// entry, never increase a count, never raise the line ceiling. When you migrate
-// a file (onto components/ui primitives + Tailwind utilities), the stale-count
-// check in styleRatchet.test.ts forces you to shrink its entry here so the
-// ratchet can never loosen.
+// Attrition contract: allowance entries may only be DELETED or DECREASED.
+// Never add an entry or increase a count. When you migrate a file (onto
+// components/ui primitives + Tailwind utilities), the stale-count check in
+// styleRatchet.test.ts forces you to shrink its entry here so the ratchet can
+// never loosen.
 
 // `btn`/`btn-*` class tokens per file (string literals in ts/tsx). Empty:
 // the .btn system is retired — this is a pure ban.
@@ -17,242 +17,38 @@ export type RawElement = 'button' | 'input' | 'select' | 'textarea'
 // primitives have to render the real element).
 export const RAW_ELEMENT_ALLOWLIST: Record<RawElement, Record<string, number>> = {
   button: {
-    'src/App.tsx': 1,
-    'src/components/FilesPage.tsx': 4,
-    'src/components/ProjectSelector.tsx': 2,
-    'src/components/Settings.tsx': 4,
-    'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/ActivityFilterDropdown.tsx': 1,
-    'src/components/activity/ActivityMcpTab.tsx': 4,
-    'src/components/activity/ActivityPanel.tsx': 2,
-    'src/components/activity/CronTab.tsx': 2,
-    'src/components/activity/FileChangesTab.tsx': 2,
-    'src/components/activity/FilesTab.tsx': 9,
-    'src/components/activity/IntegrationsTab.tsx': 1,
-    'src/components/activity/MemoryTab.tsx': 1,
-    'src/components/activity/PipelinesTab.tsx': 3,
-    'src/components/activity/PlanReviewCard.tsx': 1,
-    'src/components/activity/QuickMenu.tsx': 2,
-    'src/components/activity/RulesTab.tsx': 1,
-    'src/components/activity/SessionInteractionModal.tsx': 2,
-    'src/components/activity/SessionsFilterDropdown.tsx': 1,
-    'src/components/activity/SessionsTab.tsx': 1,
-    'src/components/activity/SessionsTabDetail.tsx': 1,
-    'src/components/activity/SessionsTabList.tsx': 1,
-    'src/components/activity/SkillsTab.tsx': 1,
-    'src/components/activity/StagesTab.tsx': 1,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
-    'src/components/activity/TaskTreeRow.tsx': 2,
-    'src/components/activity/TasksTabDetailPanel.tsx': 1,
-    'src/components/activity/TracesTab.tsx': 2,
-    'src/components/activity/WikiSourceRemovalDialog.tsx': 2,
-    'src/components/activity/WikiTab.tsx': 3,
-    'src/components/activity/agents/AgentsTabList.tsx': 1,
-    'src/components/activity/fields/FieldPrimitives.tsx': 1,
-    'src/components/activity/fields/KeyValueField.tsx': 2,
-    'src/components/activity/integrations/ChannelDetailPanel.tsx': 1,
-    'src/components/activity/integrations/ChannelsList.tsx': 1,
-    'src/components/activity/memory/KnowledgeGraph.tsx': 5,
-    'src/components/activity/memory/MemoryDetailPanel.tsx': 1,
-    'src/components/activity/memory/MemoryTabList.tsx': 1,
-    'src/components/activity/pipelines/PipelineEditor.tsx': 3,
-    'src/components/activity/pipelines/PipelineStepFields.tsx': 2,
-    'src/components/activity/pipelines/PipelineStepList.tsx': 6,
-    'src/components/activity/pipelines/PipelinesDefsList.tsx': 1,
-    'src/components/activity/rules/RulesTabList.tsx': 1,
-    'src/components/activity/skills/SkillsHubView.tsx': 1,
-    'src/components/activity/skills/SkillsInstalledList.tsx': 1,
-    'src/components/activity/stages/ProfilesList.tsx': 1,
-    'src/components/activity/stages/StagesList.tsx': 1,
-    'src/components/activity/taskdetail/TaskDetailKV.tsx': 1,
-    'src/components/activity/taskdetail/TaskDetailRelationships.tsx': 1,
-    'src/components/activity/terminal/TerminalKeysBar.tsx': 2,
-    'src/components/activity/terminal/TerminalView.tsx': 2,
-    'src/components/activity/wiki/WikiAskMode.tsx': 7,
-    'src/components/activity/wiki/WikiBacklinks.tsx': 3,
-    'src/components/activity/wiki/WikiPageReader.tsx': 7,
-    'src/components/activity/wiki/WikiPageTree.tsx': 2,
-    'src/components/activity/wiki/WikiSourcesManager.tsx': 3,
-    'src/components/activity/wiki/WikiTabToolbar.tsx': 1,
-    'src/components/agents/AgentEditForm.tsx': 8,
-    'src/components/agents/AgentPortfolioPage.tsx': 2,
-    'src/components/agents/AgentRulesEditor.tsx': 11,
-    'src/components/agents/AgentSkillsEditor.tsx': 2,
-    'src/components/agents/AgentStepsEditor.tsx': 10,
-    'src/components/agents/AgentToolBlocksEditor.tsx': 2,
-    'src/components/agents/AgentVariablesEditor.tsx': 5,
-    'src/components/app/AppErrorBoundary.tsx': 2,
-    'src/components/auth/LoginPage.tsx': 1,
-    'src/components/chat/ActiveAgentIndicator.tsx': 1,
-    'src/components/chat/AgentPickerDropdown.tsx': 4,
-    'src/components/chat/BranchIndicator.tsx': 3,
-    'src/components/chat/ChatCommandPalette.tsx': 1,
-    'src/components/chat/ChatInput.tsx': 1,
-    'src/components/chat/ChatInputModelControls.tsx': 1,
-    'src/components/chat/ChatInputPrimaryButton.tsx': 1,
-    'src/components/chat/ChatInputQueuedFiles.tsx': 2,
-    'src/components/chat/CodeBlockRenderers.tsx': 1,
-    'src/components/chat/CommandBar.tsx': 1,
-    'src/components/chat/ProviderPicker.tsx': 3,
-    'src/components/chat/ResumeSessionModal.tsx': 1,
-    'src/components/chat/ToolCallCard.tsx': 2,
-    'src/components/chat/ToolResultImage.tsx': 1,
-    'src/components/code-graph/CodeGraphExplorer.tsx': 6,
-    'src/components/command-browser/SkillBrowserModal.tsx': 3,
-    'src/components/command-browser/ToolBrowserModal.tsx': 4,
-    'src/components/settings/SettingsOverlay.tsx': 2,
-    'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
-    'src/components/shared/DiffBlock.tsx': 1,
-    'src/components/shared/MermaidBlock.tsx': 1,
-    'src/components/shared/SidebarPanel.tsx': 1,
-    'src/components/shared/TabBar.tsx': 1,
-    'src/components/tasks/QuickCaptureTask.tsx': 2,
-    'src/components/tasks/TaskCreateForm.tsx': 3,
+    'src/components/chat/ChatInput.tsx': 1, // moat 05198494: composer icon button
+    'src/components/chat/ChatInputModelControls.tsx': 1, // moat 05198494: composer icon button
+    'src/components/chat/ChatInputPrimaryButton.tsx': 1, // moat 05198494: composer icon button
+    'src/components/chat/ChatInputQueuedFiles.tsx': 2, // moat 05198494: composer icon buttons
   },
-  input: {
-    'src/components/ProjectSelector.tsx': 1,
-    'src/components/Settings.tsx': 1,
-    'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/ActivityPanelSearch.tsx': 1,
-    'src/components/activity/FilesTab.tsx': 3,
-    'src/components/activity/FilterPrimitives.tsx': 1,
-    'src/components/activity/MemoryTab.tsx': 3,
-    'src/components/activity/SessionsFilterDropdown.tsx': 5,
-    'src/components/activity/TaskFieldEditors.tsx': 2,
-    'src/components/activity/WikiSourceRemovalDialog.tsx': 1,
-    'src/components/activity/WikiTab.tsx': 3,
-    'src/components/activity/fields/DateTimeField.tsx': 1,
-    'src/components/activity/fields/FieldPrimitives.tsx': 4,
-    'src/components/activity/fields/KeyValueField.tsx': 2,
-    'src/components/activity/integrations/ChannelDetailPanel.tsx': 1,
-    'src/components/activity/memory/KnowledgeGraph.tsx': 5,
-    'src/components/activity/pipelines/PipelineEditor.tsx': 1,
-    'src/components/activity/pipelines/PipelineStepFields.tsx': 10,
-    'src/components/activity/pipelines/PipelineStepList.tsx': 1,
-    'src/components/activity/skills/SkillsHubView.tsx': 1,
-    'src/components/activity/terminal/TerminalKeysBar.tsx': 1,
-    'src/components/activity/wiki/WikiGraphView.tsx': 2,
-    'src/components/activity/wiki/WikiPageEditor.tsx': 1,
-    'src/components/activity/wiki/WikiQuickOpen.tsx': 1,
-    'src/components/agents/AgentEditForm.tsx': 7,
-    'src/components/agents/AgentRulesEditor.tsx': 2,
-    'src/components/agents/AgentStepsEditor.tsx': 4,
-    'src/components/agents/AgentToolBlocksEditor.tsx': 1,
-    'src/components/agents/AgentVariablesEditor.tsx': 2,
-    'src/components/auth/LoginPage.tsx': 3,
-    'src/components/chat/ChatInputToolbar.tsx': 1,
-    'src/components/chat/CommandPalette.tsx': 1,
-    'src/components/chat/ResumeSessionModal.tsx': 2,
-    'src/components/chat/ToolCallCard.tsx': 1,
-    'src/components/code-graph/CodeGraphExplorer.tsx': 5,
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/settings/fields/KeyValueMapField.tsx': 2,
-    'src/components/settings/fields/StringListField.tsx': 1,
-    'src/components/settings/sections/AppearanceSection.tsx': 1,
-    'src/components/settings/sections/McpToolsSection.tsx': 1,
-    'src/components/settings/sections/PromptsTemplatesSection.tsx': 1,
-    'src/components/settings/sections/ToolApprovalsSection.tsx': 1,
-    'src/components/tasks/QuickCaptureTask.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 2,
-  },
-  select: {
-    'src/components/activity/RulesTab.tsx': 4,
-    'src/components/activity/SkillsTab.tsx': 2,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
-    'src/components/activity/fields/FieldPrimitives.tsx': 1,
-    'src/components/activity/integrations/IntegrationsFilterPanel.tsx': 2,
-    'src/components/activity/pipelines/PipelineStepList.tsx': 1,
-    'src/components/activity/skills/SkillsHubView.tsx': 1,
-    'src/components/agents/AgentEditForm.tsx': 9,
-    'src/components/agents/AgentPortfolioPage.tsx': 2,
-    'src/components/agents/AgentRulesEditor.tsx': 3,
-    'src/components/agents/AgentSkillsEditor.tsx': 1,
-    'src/components/agents/AgentStepsEditor.tsx': 3,
-    'src/components/agents/IsolationTargetSelector.tsx': 2,
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 4,
-  },
-  textarea: {
-    'src/components/ValidationDetectionEditor.tsx': 1,
-    'src/components/activity/SessionInteractionModal.tsx': 1,
-    'src/components/activity/TaskCloseDialog.tsx': 1,
-    'src/components/activity/TaskFieldEditors.tsx': 1,
-    'src/components/activity/fields/FieldPrimitives.tsx': 1,
-    'src/components/activity/pipelines/PipelineEditor.tsx': 1,
-    'src/components/activity/pipelines/PipelineStepFields.tsx': 2,
-    'src/components/activity/wiki/WikiAskMode.tsx': 1,
-    'src/components/agents/AgentEditForm.tsx': 1,
-    'src/components/agents/AgentStepsEditor.tsx': 3,
-    'src/components/chat/ChatInput.tsx': 1,
-    'src/components/chat/PlanApprovalActions.tsx': 1,
-    'src/components/command-browser/ToolArgumentForm.tsx': 1,
-    'src/components/tasks/TaskCreateForm.tsx': 2,
-  },
+  input: {},
+  select: {},
+  textarea: {},
 }
 
 // `const *_CLS =` style-constant declarations per file.
-export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/FilesPage.tsx': 49,
-  'src/components/ValidationDetectionEditor.tsx': 9,
-  'src/components/activity/memory/KnowledgeGraph.tsx': 19,
-  'src/components/activity/pipelines/PipelineEditor.styles.ts': 47,
-  'src/components/agents/agents-styles.ts': 113,
-  'src/components/chat/AgentPickerDropdown.tsx': 11,
-  'src/components/code-graph/CodeGraphExplorer.tsx': 32,
-  'src/components/shared/executions/execution-utils.tsx': 20,
-  'src/components/tasks/QuickCaptureTask.tsx': 12,
-  'src/components/tasks/TaskBadges.tsx': 3,
-  'src/components/tasks/TaskCreateForm.tsx': 14,
-  'src/components/tasks/taskModalStyles.ts': 3,
-}
+export const CLS_CONSTANT_ALLOWLIST: Record<string, number> = {}
 
 // The complete recorded stylesheet set. New .css files are banned outright.
 export const CSS_FILE_ALLOWLIST: readonly string[] = [
-  'src/components/activity/skills/SkillsTab.css',
-  'src/components/activity/taskdetail/task-detail.css',
-  'src/components/chat/styles.css',
-  'src/components/chat/styles/activity-panel.css',
-  'src/components/chat/styles/cron-tab.css',
-  'src/components/chat/styles/empty-state.css',
-  'src/components/chat/styles/files-tab.css',
-  'src/components/chat/styles/input-base.css',
-  'src/components/chat/styles/input-composer.css',
-  'src/components/chat/styles/input-responsive.css',
-  'src/components/chat/styles/input-status.css',
-  'src/components/chat/styles/input-voice.css',
-  'src/components/chat/styles/input.css',
-  'src/components/chat/styles/layout.css',
-  'src/components/chat/styles/mcp-tab.css',
-  'src/components/chat/styles/message.css',
-  'src/components/chat/styles/pipelines-tab.css',
-  'src/components/chat/styles/rules-tab.css',
-  'src/components/chat/styles/sessions-tab.css',
-  'src/components/chat/styles/traces-tab.css',
-  'src/components/chat/styles/variables.css',
-  'src/components/shared/SidebarPanel.css',
-  'src/components/tasks/task-execution.css',
   'src/styles/accessibility.css',
-  'src/styles/app-shell.css',
   'src/styles/base.css',
-  'src/styles/dropdown-caret.css',
   'src/styles/index.css',
   'src/styles/markdown.css',
-  'src/styles/segmented-control.css',
-  'src/styles/session-primitives.css',
-  'src/styles/settings-overlay.css',
-  'src/styles/settings.css',
   'src/styles/tailwind-theme.css',
   'src/styles/tokens.css',
 ]
 
 // `!important` occurrences per file.
 export const IMPORTANT_ALLOWLIST: Record<string, number> = {
-  'src/components/chat/styles.css': 1,
-  'src/components/chat/styles/input-voice.css': 1,
-  'src/styles/base.css': 4,
+  // The voice `animation: none` relocated in 5.2 beats inline animation styles.
+  'src/styles/accessibility.css': 1,
+  // Four reduced-motion overrides beat later-layer utilities and inline animations; the
+  // tool-code-surface background relocated in 5.3 beats react-syntax-highlighter's inline style.
+  'src/styles/base.css': 5,
 }
 
-// Total lines across all recorded stylesheets. The ceiling only moves down;
-// once actual drops more than the slack below it, the test demands a tighten.
-export const CSS_TOTAL_LINE_CEILING = 7274
-export const CSS_LINE_TIGHTEN_SLACK = 200
+// Exact total lines across the recorded infrastructure stylesheets. Any infra CSS change must
+// update this pin consciously in the same commit.
+export const CSS_TOTAL_LINE_PIN = 879

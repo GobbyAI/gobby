@@ -73,7 +73,7 @@ describe("TasksTab", () => {
     expect(taskRequest).not.toMatch(/[?&]stage=/);
 
     const tasksPane = screen.getByTestId("task-tree");
-    expect(tasksPane).toHaveClass("activity-tasks-pane", "overflow-y-auto");
+    expect(tasksPane).toHaveClass("h-full", "min-h-0", "overflow-y-auto");
     expect(tasksPane.firstElementChild).toHaveAttribute("role", "treeitem");
     expect(screen.getAllByRole("treeitem")).toHaveLength(11);
     expect(screen.queryByLabelText("Task view")).toBeNull();
@@ -151,6 +151,9 @@ describe("TasksTab", () => {
       expect(screen.getByText("Review approved task")).toBeTruthy();
     });
 
+    // The header registers only New; WS task events keep the list current, so
+    // no manual Refresh trigger exists (#20048).
+    expect(screen.queryByRole("button", { name: "Refresh tasks" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "New task" }));
     fireEvent.change(screen.getByPlaceholderText("Task title..."), {
       target: { value: "Invalid task" },
@@ -500,7 +503,7 @@ describe("TasksTab", () => {
     });
 
     const titles = screen.getAllByRole("treeitem").map((node) => {
-      const titleNode = node.querySelector(".activity-task-row-title");
+      const titleNode = node.querySelector("[data-task-row-title]");
       return titleNode?.textContent ?? node.textContent;
     });
 
@@ -814,7 +817,7 @@ describe("TasksTab", () => {
     )) as HTMLInputElement;
     expect(title.value).toBe("Detail pane task");
     expect(
-      document.querySelector(".activity-task-detail-header__ref")?.textContent,
+      document.querySelector("[data-task-detail-ref]")?.textContent,
     ).toBe("#510");
 
     // Owner shown exactly once (the status line), never doubled.

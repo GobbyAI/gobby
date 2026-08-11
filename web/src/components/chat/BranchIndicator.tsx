@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import type { WorktreeInfo } from '../../hooks/useSourceControl'
+import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface BranchInfo {
   name: string
@@ -168,22 +171,26 @@ export function BranchIndicator({
 
   return (
     <div className="relative" ref={containerRef}>
-      <button
+      <Button
         type="button"
+        variant={variant === 'select' ? 'outline' : 'ghost'}
+        size="sm"
+        dense
         onClick={handleToggle}
-        className={
+        className={cn(
+          coarseHitAreaCls,
           variant === 'select'
             ? `inline-flex h-9 min-w-0 shrink-0 items-center gap-1 rounded-md border border-border bg-transparent px-2.5 py-2 text-sm transition-colors ${
                 disabled
                   ? 'cursor-not-allowed text-muted-foreground/50'
                   : 'text-muted-foreground hover:bg-muted hover:text-foreground'
               }`
-            : `flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-colors ${
+            : `flex min-h-0 items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-colors ${
                 disabled
                   ? 'cursor-not-allowed text-muted-foreground/50'
                   : 'text-muted-foreground hover:bg-muted/60'
               }`
-        }
+        )}
         title={
           disabled
             ? 'Attached session owns branch and worktree'
@@ -198,7 +205,7 @@ export function BranchIndicator({
           {displayBranch}
         </span>
         <ChevronIcon />
-      </button>
+      </Button>
 
       {isOpen && (
         <div
@@ -219,13 +226,19 @@ export function BranchIndicator({
               {worktrees.map((wt) => {
                 const isActive = worktreePath === wt.worktree_path
                 return (
-                  <button
+                  <Button
                     key={wt.id}
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    dense
                     role="option"
                     aria-selected={isActive}
-                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center gap-2 ${
-                      isActive ? 'bg-accent/20 text-accent' : ''
-                    }`}
+                    className={cn(
+                      coarseHitAreaCls,
+                      'min-h-0 w-full justify-start whitespace-normal rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal hover:bg-muted flex items-center gap-2',
+                      isActive && 'bg-accent/20 text-accent',
+                    )}
                     onClick={() => handleSelectWorktree(wt.worktree_path, wt.id)}
                     title={wt.worktree_path}
                   >
@@ -234,7 +247,7 @@ export function BranchIndicator({
                       <div className="font-medium truncate">{wt.branch_name}</div>
                       <div className="text-muted-foreground/60 truncate text-[length:var(--text-2xs)]">{wt.worktree_path}</div>
                     </div>
-                  </button>
+                  </Button>
                 )
               })}
             </>
@@ -245,16 +258,23 @@ export function BranchIndicator({
             <>
               <div className="px-3 py-1 text-[length:var(--text-2xs)] uppercase tracking-wider text-muted-foreground/50 border-b border-border">Branches</div>
               {standaloneBranches.map((b) => (
-                <button
+                <Button
                   key={b.name}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
                   role="option"
                   aria-selected={false}
-                  className="w-full text-left px-3 py-1.5 text-xs hover:bg-muted flex items-center gap-2"
+                  className={cn(
+                    coarseHitAreaCls,
+                    'min-h-0 w-full justify-start rounded-none border-0 px-3 py-1.5 text-left text-xs font-normal hover:bg-muted flex items-center gap-2',
+                  )}
                   onClick={() => { void handleSelectBranch(b.name) }}
                 >
                   <BranchIcon />
                   <span className="truncate">{b.name}</span>
-                </button>
+                </Button>
               ))}
             </>
           )}

@@ -3,7 +3,9 @@ import type { GobbySession } from '../../types/sessions'
 import { useNow } from '../../hooks/useNow'
 import { formatRelativeTime } from '../../utils/formatTime'
 import { getSessionTitleText } from '../../lib/sessionTitle'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 
 export interface CommandPaletteAction {
   id: string
@@ -197,18 +199,22 @@ export function CommandPalette({
 
   return (
     <>
-      <div className="command-palette-overlay" onClick={onClose} />
       <div
-        className="command-palette-container"
+        className="command-palette-overlay fixed inset-0 z-50 bg-[var(--surface-scrim)]"
+        onClick={onClose}
+      />
+      <div
+        className="command-palette-container fixed left-1/2 top-[20%] z-[51] flex max-h-[60vh] w-[90%] max-w-[480px] -translate-x-1/2 flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-secondary)] shadow-[var(--shadow-lg)]"
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"
       >
-        <div className="command-palette-input-wrap">
+        <div className="command-palette-input-wrap flex items-center gap-2 border-b border-[var(--border)] p-3">
           <SearchIcon />
-          <input
+          <Input
             ref={inputRef}
-            className="command-palette-input"
+            wrapperClassName="flex-1"
+            className="command-palette-input h-auto flex-1 rounded-none border-0 bg-transparent p-0 text-[length:var(--text-base)] text-[var(--text-primary)] outline-none [font-family:inherit] placeholder:text-[var(--text-muted)]"
             placeholder="Search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -229,20 +235,22 @@ export function CommandPalette({
         </div>
 
         <div
-          className="command-palette-list"
+          className="command-palette-list flex-1 overflow-y-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           ref={listRef}
           id={listboxId}
           role="listbox"
           aria-label="Command palette results"
         >
           {allItems.length === 0 && (
-            <div className="command-palette-empty">No results</div>
+            <div className="command-palette-empty p-6 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]">
+              No results
+            </div>
           )}
 
           {/* Sessions */}
           {todaySessions.length > 0 && (
             <>
-              <div className="command-palette-group-label">Today</div>
+              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Today</div>
               {todaySessions.map((s) => {
                 const idx = sessionIndexMap.get(s.id)!
                 return (
@@ -261,7 +269,7 @@ export function CommandPalette({
           )}
           {weekSessions.length > 0 && (
             <>
-              <div className="command-palette-group-label">This Week</div>
+              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">This Week</div>
               {weekSessions.map((s) => {
                 const idx = sessionIndexMap.get(s.id)!
                 return (
@@ -280,7 +288,7 @@ export function CommandPalette({
           )}
           {olderSessions.length > 0 && (
             <>
-              <div className="command-palette-group-label">Older</div>
+              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Older</div>
               {olderSessions.map((s) => {
                 const idx = sessionIndexMap.get(s.id)!
                 return (
@@ -301,7 +309,7 @@ export function CommandPalette({
           {/* Actions */}
           {filteredActions.filter((a) => a.category === 'action').length > 0 && (
             <>
-              <div className="command-palette-group-label">Actions</div>
+              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Actions</div>
               {filteredActions
                 .filter((a) => a.category === 'action')
                 .map((a) => {
@@ -323,7 +331,7 @@ export function CommandPalette({
           {/* Navigate */}
           {filteredActions.filter((a) => a.category === 'navigate').length > 0 && (
             <>
-              <div className="command-palette-group-label">Navigate</div>
+              <div className="command-palette-group-label px-3 pb-1 pt-2 text-[length:var(--text-xs)] font-semibold uppercase tracking-[0.05em] text-[var(--text-muted)]">Navigate</div>
               {filteredActions
                 .filter((a) => a.category === 'navigate')
                 .map((a) => {
@@ -343,7 +351,7 @@ export function CommandPalette({
           )}
         </div>
 
-        <div className="command-palette-footer">
+        <div className="command-palette-footer flex items-center gap-4 border-t border-[var(--border)] px-3 py-2 text-[length:var(--text-xs)] text-[var(--text-muted)] [&_kbd]:rounded-[0.125rem] [&_kbd]:border [&_kbd]:border-[var(--border)] [&_kbd]:bg-[var(--bg-tertiary)] [&_kbd]:px-1 [&_kbd]:py-px [&_kbd]:font-mono [&_kbd]:text-[length:inherit]">
           <span><kbd>&uarr;&darr;</kbd> navigate</span>
           <span><kbd>&crarr;</kbd> select</span>
           <span><kbd>#</kbd> sessions</span>
@@ -375,17 +383,22 @@ function SessionItem({
   return (
     <div
       id={id}
-      className={`command-palette-item${isSelected ? ' selected' : ''}${isActive ? ' active' : ''}`}
+      className={cn(
+        'command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]',
+        isSelected && 'bg-[var(--bg-tertiary)]',
+        isActive &&
+          'bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] text-[var(--text-primary)] hover:bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] [[data-theme=light]_&]:bg-[var(--surface-selected)] [[data-theme=light]_&]:font-semibold [[data-theme=light]_&]:hover:bg-[var(--surface-selected)]',
+      )}
       onClick={onSelect}
       onMouseEnter={onHover}
       data-selected={isSelected}
       role="option"
       aria-selected={isSelected}
     >
-      <span className="command-palette-item-dot" />
-      <span className="command-palette-item-ref" data-testid="session-ref">{seqLabel}</span>
-      <span className="command-palette-item-title">{titleText}</span>
-      <span className="command-palette-item-time">{formatRelativeTime(session.updated_at)}</span>
+      <span className="command-palette-item-dot size-[6px] shrink-0 rounded-full bg-[var(--text-muted)]" />
+      <span className="command-palette-item-ref shrink-0 text-[length:var(--text-md)] text-[var(--accent)]" data-testid="session-ref">{seqLabel}</span>
+      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">{titleText}</span>
+      <span className="command-palette-item-time shrink-0 text-[length:var(--text-sm)] text-[var(--text-muted)]">{formatRelativeTime(session.updated_at)}</span>
     </div>
   )
 }
@@ -406,15 +419,18 @@ function ActionItem({
   return (
     <div
       id={id}
-      className={`command-palette-item${isSelected ? ' selected' : ''}`}
+      className={cn(
+        'command-palette-item flex cursor-pointer items-center gap-2 px-3 py-2 text-[length:var(--text-base)] [transition:background_0.05s] hover:bg-[var(--bg-tertiary)]',
+        isSelected && 'bg-[var(--bg-tertiary)]',
+      )}
       onClick={onSelect}
       onMouseEnter={onHover}
       data-selected={isSelected}
       role="option"
       aria-selected={isSelected}
     >
-      <span className="command-palette-item-icon">{action.icon ?? (action.category === 'navigate' ? '\u2192' : '+')}</span>
-      <span className="command-palette-item-title">{action.label}</span>
+      <span className="command-palette-item-icon w-5 shrink-0 text-center text-[var(--text-muted)]">{action.icon ?? (action.category === 'navigate' ? '\u2192' : '+')}</span>
+      <span className="command-palette-item-title min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-primary)]">{action.label}</span>
     </div>
   )
 }

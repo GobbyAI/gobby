@@ -1,6 +1,9 @@
 import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import type { PipelineDefinition } from "./PipelinesDefsActions";
 
 interface PipelinesDefsListProps {
@@ -62,9 +65,10 @@ export function PipelinesDefsList({
               selected && "activity-list-row--selected",
             )}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${definition.name}`}
               onClick={() => onSelect(definition)}
             >
@@ -73,16 +77,16 @@ export function PipelinesDefsList({
                 label={definition.enabled ? "Enabled pipeline" : "Disabled pipeline"}
               />
               <span className="activity-row-title">{definition.name}</span>
-              <span className="activity-chip">
+              <Chip tone="accent" uppercase>
                 PIPELINE
-              </span>
-              <span className="activity-chip">
+              </Chip>
+              <Chip tone={definition.enabled ? "accent" : "neutral"}>
                 {definition.enabled ? "On" : "Off"}
-              </span>
-              <span className="activity-chip">
+              </Chip>
+              <Chip>
                 {steps} step{steps !== 1 ? "s" : ""}
-              </span>
-            </button>
+              </Chip>
+            </Button>
             <div className="px-1">
               <QuickMenu
                 items={menuItems}

@@ -1,6 +1,8 @@
 import { memo, useMemo, useState } from 'react'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { formatTime } from '../shared/executions/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
@@ -100,11 +102,12 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
         ) : (
           <>
             {visibleTraces.map((trace) => (
-              <button
+              <Button
                 key={trace.trace_id}
                 type="button"
+                variant="ghost"
                 data-testid="trace-row-button"
-                className={`pipeline-exec-row${selectedTraceId === trace.trace_id ? ' pipeline-exec-row--active' : ''}`}
+                className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left transition-colors duration-100 [color:inherit] [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedTraceId === trace.trace_id ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''} ${coarseHitAreaCls}`}
                 onClick={() => setSelectedTraceId(trace.trace_id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -121,12 +124,14 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                     {formatTime(trace.timestamp)}
                   </span>
                 </div>
-              </button>
+              </Button>
             ))}
             {hasMore && (
-              <button
+              <Button
                 type="button"
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors ${coarseHitAreaCls}`}
                 onClick={() =>
                   setDisplayLimitState({
                     filter: statusFilter,
@@ -135,7 +140,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                 }
               >
                 Load more
-              </button>
+              </Button>
             )}
           </>
         )}
@@ -172,14 +177,14 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
             ) : spans.length === 0 ? (
               <p className="text-xs text-muted-foreground p-2">No spans</p>
             ) : (
-              <ul className="traces-tab-spans">
+              <ul className="m-0 list-none p-0">
                 {spans.map((span) => (
-                  <li key={span.id} className="traces-tab-span">
+                  <li key={span.id} className="flex min-w-0 items-center gap-2 border-b border-[var(--border)] px-3 py-1.5 text-[length:var(--text-xs)] last:border-b-0">
                     <TraceStatusDot status={span.status} />
-                    <span className="traces-tab-span__name" title={span.name}>
+                    <span className="min-w-0 flex-1 truncate text-[var(--text-primary)]" title={span.name}>
                       {span.name}
                     </span>
-                    <span className="traces-tab-span__duration tabular-nums">
+                    <span className="shrink-0 tabular-nums text-[var(--text-muted)]">
                       {formatDurationNs(Math.max(0, span.end_time_ns - span.start_time_ns))}
                     </span>
                   </li>

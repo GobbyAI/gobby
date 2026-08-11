@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from "../ActivityPanelEmpty";
+import { Chip } from "../../ui/Chip";
 import {
   DetailActionButton,
   DetailPaneHeader,
@@ -108,9 +109,9 @@ export function PipelinesDefsDetail({
         onDiscard={draftState.discard}
         actions={
           <>
-            <span className="activity-chip">
+            <Chip tone="accent" uppercase>
               PIPELINE
-            </span>
+            </Chip>
             <DetailActionButton
               label="Edit"
               variant="accent"

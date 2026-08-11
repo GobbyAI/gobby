@@ -220,7 +220,7 @@ describe("TasksTab — filters", () => {
     });
 
     const funnel = screen.getByLabelText("Filter tasks");
-    expect(funnel.querySelector(".activity-filter-badge")).toBeNull();
+    expect(funnel.querySelector("[data-filter-active-count]")).toBeNull();
   });
 
   it("shows the active-filter badge with a symmetric-difference count after Apply", async () => {
@@ -233,7 +233,7 @@ describe("TasksTab — filters", () => {
     const getBadgeText = () =>
       screen
         .getByLabelText("Filter tasks")
-        .querySelector(".activity-filter-badge")?.textContent ?? null;
+        .querySelector("[data-filter-active-count]")?.textContent ?? null;
     const openAndApply = async (toggleLabels: string[]) => {
       const funnel = await screen.findByLabelText("Filter tasks");
       fireEvent.click(funnel);
@@ -279,7 +279,7 @@ describe("TasksTab — filters", () => {
       expect(
         screen
           .getByLabelText("Filter tasks")
-          .querySelector(".activity-filter-badge")?.textContent,
+          .querySelector("[data-filter-active-count]")?.textContent,
       ).toBe("1");
     });
 
@@ -294,7 +294,7 @@ describe("TasksTab — filters", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByLabelText("Filter tasks").querySelector(".activity-filter-badge"),
+        screen.getByLabelText("Filter tasks").querySelector("[data-filter-active-count]"),
       ).toBeNull();
       const taskFetch = taskListRequestUrls()[0];
       expect(taskFetch).toContain("include_stages=1");

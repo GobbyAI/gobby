@@ -1,7 +1,11 @@
 import type { GobbyTaskDetail } from "../../../types/tasks";
 import { isValidGithubRepoSlug } from "../../../lib/githubRepo";
+import { cn } from "../../../lib/utils";
 import { MetaKVRow } from "./TaskDetailKV";
 import { formatTaskDetailDate } from "./taskDetailFormat";
+
+const taskDetailPillClassName =
+  "inline-flex h-6 items-center gap-[0.3rem] whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-[0.55rem] text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)] [&_strong]:font-semibold [&_strong]:text-[var(--text-primary)]";
 
 /**
  * D5 §5 — collapsed-by-default Trace: timestamps, automation, commits, PR,
@@ -43,9 +47,11 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
   if (!hasTrace) return null;
 
   return (
-    <details className="activity-task-detail-trace">
-      <summary className="activity-task-detail-trace__summary">Trace</summary>
-      <div className="activity-task-detail-kv activity-task-detail-trace__body">
+    <details className="group border-b border-border bg-[var(--bg-primary)]">
+      <summary className="cursor-pointer list-none px-4 py-[0.7rem] text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] uppercase tracking-[0.08em] text-[var(--text-muted)] before:mr-[0.4rem] before:inline-block before:tracking-normal before:content-['▸'] before:transition-transform before:duration-[120ms] group-open:before:rotate-90 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+        Trace
+      </summary>
+      <div className="flex flex-col border-b-0 bg-[var(--bg-primary)] px-4 pb-[0.95rem] pt-0">
         <MetaKVRow label="Created">
           {formatTaskDetailDate(task.created_at)}
         </MetaKVRow>
@@ -59,9 +65,12 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
         )}
         {labels.length > 0 && (
           <MetaKVRow label="Labels">
-            <div className="activity-task-detail-pillrow">
+            <div className="flex flex-wrap gap-[0.4rem]">
               {labels.map((l, i) => (
-                <span key={`label-${i}`} className="activity-task-detail-label">
+                <span
+                  key={`label-${i}`}
+                  className="inline-flex h-5 items-center whitespace-nowrap rounded-full border border-border bg-[var(--bg-tertiary)] px-2 font-mono text-[length:var(--text-2xs)] font-medium tracking-[0.02em] text-[var(--text-secondary)]"
+                >
                   {l}
                 </span>
               ))}
@@ -70,10 +79,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
         )}
         {showAutomationRow && (
           <MetaKVRow label="Automation">
-            <div className="activity-task-detail-pillrow">
+            <div className="flex flex-wrap gap-[0.4rem]">
               {task.allow_automation && (
                 <span
-                  className="activity-task-detail-pill"
+                  className={taskDetailPillClassName}
                   title="Dispatcher is allowed to drive this task"
                 >
                   Dispatch on
@@ -81,7 +90,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
               )}
               {isolation && (
                 <span
-                  className="activity-task-detail-pill activity-task-detail-pill--mono"
+                  className={cn(
+                    taskDetailPillClassName,
+                    "font-mono tracking-normal",
+                  )}
                   title="Isolation kind for automated work"
                 >
                   {isolation}
@@ -89,7 +101,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
               )}
               {task.yolo && (
                 <span
-                  className="activity-task-detail-pill activity-task-detail-pill--warn"
+                  className={cn(
+                    taskDetailPillClassName,
+                    "border-[color-mix(in_srgb,var(--accent)_40%,transparent)] bg-[color-mix(in_srgb,var(--accent)_12%,transparent)] font-semibold text-accent",
+                  )}
                   title="Dispatcher uses fallback choices instead of escalating"
                 >
                   YOLO
@@ -97,7 +112,10 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
               )}
               {dispatchFailures > 0 && (
                 <span
-                  className="activity-task-detail-pill activity-task-detail-pill--blocked"
+                  className={cn(
+                    taskDetailPillClassName,
+                    "border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[color-mix(in_srgb,var(--color-warning-foreground)_10%,transparent)] text-[var(--color-warning-foreground)] [&_strong]:text-[var(--color-warning-foreground)]",
+                  )}
                   title="Consecutive dispatcher failures"
                 >
                   <strong>{dispatchFailures}</strong> dispatch fails
@@ -108,18 +126,26 @@ export function TaskDetailTrace({ task }: { task: GobbyTaskDetail }) {
         )}
         {commits.length > 0 && (
           <MetaKVRow label={`Commits (${commits.length})`}>
-            <div className="activity-task-detail-pillrow">
+            <div className="flex flex-wrap gap-[0.4rem]">
               {commits.slice(0, 3).map((sha) => (
                 <span
                   key={sha}
-                  className="activity-task-detail-pill activity-task-detail-pill--mono"
+                  className={cn(
+                    taskDetailPillClassName,
+                    "font-mono tracking-normal",
+                  )}
                   title={sha}
                 >
                   {sha.slice(0, 7)}
                 </span>
               ))}
               {commits.length > 3 && (
-                <span className="activity-task-detail-pill activity-task-detail-pill--mono activity-task-detail-pill--more">
+                <span
+                  className={cn(
+                    taskDetailPillClassName,
+                    "font-mono tracking-normal text-[var(--text-muted)]",
+                  )}
+                >
                   +{commits.length - 3}
                 </span>
               )}

@@ -156,7 +156,7 @@ function ModelProviderControls({
   if (!clientSettings || !providerSelection) {
     return (
       <Subsection title="Model & provider">
-        <p className="settings-section__pending">
+        <p className="rounded-lg border border-border bg-muted px-5 py-4 text-sm leading-[1.5] text-foreground-muted">
           Model and provider selection is unavailable — the settings provider is not mounted.
         </p>
       </Subsection>
@@ -258,7 +258,7 @@ function GenerationEndpointEditor({
   const patch = (partial: Partial<GenerationEndpoint>) => onChange({ ...value, ...partial })
 
   return (
-    <div className="settings-endpoint-editor">
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       <BoundedSelectField
         label="Protocol"
         ariaLabel={`Protocol (${name})`}

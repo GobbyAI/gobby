@@ -1,4 +1,6 @@
 import type { AcpSessionInfo, GobbySession } from "../../types/sessions";
+import { Chip } from "../ui/Chip";
+import { chipIdentityClasses } from "../ui/chipVariants";
 
 export interface RunningAgent {
   run_id: string;
@@ -48,7 +50,6 @@ export interface SessionContextMenu {
 
 export interface Badge {
   label: string;
-  className: string;
 }
 
 export const WATCHING_SESSION_ID_KEY = "gobby-watching-session-id";
@@ -101,33 +102,33 @@ export function resolveLocalFlag(
 
 function getSessionTypeBadge(sessionType: string | undefined): Badge {
   if (sessionType === "web_chat") {
-    return { label: "web", className: "chip chip--web" };
+    return { label: "web" };
   }
-  return { label: "tmux", className: "chip chip--tmux" };
+  return { label: "tmux" };
 }
 
 // The session's canonical kind. ACP rows replace the web/tmux chip with an
 // "ACP" chip so ACP reads as a first-class kind alongside WEB and TMUX.
 function getKindBadge(entry: WatchingSessionEntry): Badge {
   if (entry.acp) {
-    return { label: "ACP", className: "chip chip--acp" };
+    return { label: "ACP" };
   }
   return getSessionTypeBadge(entry.sessionType);
 }
 
 function getAgentBadge(agentRunId: string | null | undefined): Badge | null {
   if (!agentRunId) return null;
-  return { label: "auto", className: "chip chip--auto" };
+  return { label: "auto" };
 }
 
 function getSandboxBadge(sandboxEnabled: boolean): Badge | null {
   if (!sandboxEnabled) return null;
-  return { label: "SB", className: "chip chip--sandbox" };
+  return { label: "SB" };
 }
 
 function getLocalBadge(entry: WatchingSessionEntry): Badge | null {
   if (!entry.isLocal) return null;
-  return { label: "LOCAL", className: "chip chip--local" };
+  return { label: "LOCAL" };
 }
 
 export function renderBadges(entry: WatchingSessionEntry) {
@@ -147,10 +148,14 @@ export function renderBadges(entry: WatchingSessionEntry) {
 
   return (
     <>
-      <span className={kindBadge.className}>{kindBadge.label}</span>
+      <Chip tone="accent" uppercase className={chipIdentityClasses}>
+        {kindBadge.label}
+      </Chip>
       {(entry.blockedCount ?? 0) > 0 && (
-        <span
-          className="chip gap-1 border border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]"
+        <Chip
+          tone="warning"
+          uppercase
+          className="gap-1 border border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[var(--color-warning-soft)]"
           aria-label={[
             `Blocked attention: ${entry.blockedCount}`,
             ...(entry.attentionReasons ?? []),
@@ -159,15 +164,17 @@ export function renderBadges(entry: WatchingSessionEntry) {
         >
           <span aria-hidden="true">!</span>
           blocked {entry.blockedCount}
-        </span>
+        </Chip>
       )}
       {modeBadges.map((badge) => (
-        <span
-          key={`${badge.className}:${badge.label}`}
-          className={badge.className}
+        <Chip
+          key={badge.label}
+          tone="accent"
+          uppercase
+          className={chipIdentityClasses}
         >
           {badge.label}
-        </span>
+        </Chip>
       ))}
     </>
   );

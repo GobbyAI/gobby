@@ -6,6 +6,7 @@ import {
   DialogDescription,
 } from "../ui/Dialog";
 import { SourceIcon } from "../shared/SourceIcon";
+import { Button } from "../ui/Button";
 import { cn } from "../../lib/utils";
 import {
   fetchProviderModelCatalog,
@@ -198,18 +199,24 @@ export function ProviderPicker({
               in session history.
             </DialogDescription>
             <div className="flex gap-2 justify-end">
-              <button
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
                 className="px-3 py-1.5 text-xs rounded border border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
                 onClick={handleCancel}
               >
                 Cancel
-              </button>
-              <button
+              </Button>
+              <Button
+                type="button"
+                variant="primary"
+                size="sm"
                 className="px-3 py-1.5 text-xs rounded bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
                 onClick={handleConfirm}
               >
                 Switch
-              </button>
+              </Button>
             </div>
           </div>
         ) : (
@@ -263,10 +270,14 @@ export function ProviderPicker({
                         isActive && currentModel === model.value;
 
                       return (
-                        <button
+                        <Button
                           key={`${provider}-${model.value}`}
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          dense
                           className={cn(
-                            "w-full text-left px-3 py-1.5 text-xs rounded mx-1 transition-colors",
+                            "min-h-0 w-full justify-start whitespace-normal border-0 px-3 py-1.5 text-left text-xs font-normal rounded mx-1 transition-colors",
                             "hover:bg-muted",
                             isSelected
                               ? "bg-accent/10 text-accent font-medium"
@@ -279,7 +290,7 @@ export function ProviderPicker({
                           {isSelected && (
                             <span className="ml-2 text-[length:var(--text-2xs)]">●</span>
                           )}
-                        </button>
+                        </Button>
                       );
                     })}
                   </div>

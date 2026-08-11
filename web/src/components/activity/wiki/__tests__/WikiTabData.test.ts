@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  fetchAsk,
   fetchGraph,
   fetchPages,
-  normalizeAskAnswer,
   normalizeBacklinks,
   normalizeGraph,
   normalizePage,
@@ -13,8 +11,6 @@ import {
   summarizeWikiStatus,
 } from "../WikiTabData";
 import {
-  askRetrievalEnvelope,
-  askSynthesisEnvelope,
   backlinksEnvelope,
   degradedStatusEnvelope,
   graphEnvelope,
@@ -164,61 +160,6 @@ describe("normalizeBacklinks", () => {
   });
 });
 
-describe("normalizeAskAnswer", () => {
-  it("normalizes a retrieval-only response", () => {
-    const result = normalizeAskAnswer(askRetrievalEnvelope.payload);
-    expect(result.status).toBe("retrieved");
-    expect(result.answer).toBeNull();
-    expect(result.citations).toEqual([]);
-    expect(result.groundingWarnings).toEqual([]);
-    expect(result.hits).toHaveLength(1);
-    expect(result.hits[0]).toMatchObject({
-      title: "Session: c1c0c073",
-      wikiPage: "knowledge/sources/src-82182128d032cefe-session-c1c0c073.md",
-      snippet: "watcher debounce and poll intervals",
-      sources: ["bm25", "semantic"],
-    });
-    expect(result.codeCitations).toEqual([
-      { file: "code/files/src/gobby/wiki/watcher.py.md", line: null, symbol: "src/gobby/wiki/watcher.py" },
-    ]);
-  });
-
-  it("extracts wikilink citations from the synthesized answer", () => {
-    const result = normalizeAskAnswer(askSynthesisEnvelope.payload);
-    expect(result.status).toBe("answered");
-    expect(result.answer).toContain("The watcher polls");
-    expect(result.model).toBe("test-model");
-    expect(result.citations).toEqual([
-      {
-        target: "knowledge/concepts/gobby",
-        title: "Gobby",
-        resolvedPath: null,
-      },
-      {
-        target: "code/files/src/gobby/wiki/watcher.py",
-        title: "watcher.py",
-        resolvedPath: null,
-      },
-    ]);
-  });
-
-  it("resolves citations when given a resolver", () => {
-    const result = normalizeAskAnswer(askSynthesisEnvelope.payload, (target) =>
-      target === "knowledge/concepts/gobby" ? "knowledge/concepts/gobby.md" : null,
-    );
-    expect(result.citations[0].resolvedPath).toBe("knowledge/concepts/gobby.md");
-    expect(result.citations[1].resolvedPath).toBeNull();
-  });
-
-  it("surfaces grounding warnings from the citation check and payload warnings", () => {
-    const result = normalizeAskAnswer(askSynthesisEnvelope.payload);
-    expect(result.groundingWarnings).toContain(
-      "Unsupported claim: The watcher restarts the daemon on every write.",
-    );
-    expect(result.groundingWarnings).toContain("semantic search degraded");
-  });
-});
-
 describe("summarizeWikiStatus", () => {
   it("reports ready when every service is configured", () => {
     const summary = summarizeWikiStatus(statusEnvelope, healthEnvelope, null);
@@ -349,17 +290,6 @@ describe("fetchers", () => {
     await expect(fetchPages({}, undefined)).rejects.toMatchObject({
       message: "failed to read project identity",
     });
-  });
-
-  it("fetchAsk posts nothing — it reads /api/wiki/ask with llm and signal", async () => {
-    const mock = mockFetch(askRetrievalEnvelope);
-    const controller = new AbortController();
-    await fetchAsk({ projectId: "p1" }, { query: "how?", llm: true, signal: controller.signal });
-    const [url, init] = mock.mock.calls[0] as [string, RequestInit];
-    expect(String(url)).toContain("/api/wiki/ask?");
-    expect(String(url)).toContain("query=how%3F");
-    expect(String(url)).toContain("llm=true");
-    expect(init.signal).toBe(controller.signal);
   });
 
   it("throws a typed error message on non-conflict failures", async () => {

@@ -4,6 +4,9 @@ import { useSessionDetail } from "../../hooks/useSessionDetail";
 import { useSessionAttention } from "../../hooks/useSessionAttention";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import {
   countActiveFilters,
   defaultSessionsFilters,
@@ -64,6 +67,9 @@ function resolveSessionSummaryMarkdown(
 interface SessionsTabProps {
   sessions?: GobbySession[];
   isLoadingSessions?: boolean;
+  // Name of the project the catalog is scoped to. Named in the empty state so
+  // "empty because another project is selected" is self-diagnosing.
+  projectName?: string | null;
   filters?: SessionsFilters;
   onFiltersChange?: (filters: SessionsFilters) => void;
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
@@ -85,28 +91,32 @@ function FilterEmptyState({
   hasActiveFilters,
   activeFilterCount,
   onClear,
-  hint = "Matching sessions will appear here",
 }: {
   message: string;
   hasActiveFilters: boolean;
   activeFilterCount: number;
   onClear: () => void;
-  hint?: string;
 }) {
   return (
     <ActivityPanelEmpty
       icon={<SessionsEmptyIcon />}
       heading="Sessions"
-      body={hasActiveFilters && activeFilterCount > 0 ? message : hint}
+      body={message}
       footer={
         hasActiveFilters && activeFilterCount > 0 ? (
-          <button
+          <Button
             type="button"
-            className="text-xs text-accent hover:underline"
+            variant="ghost"
+            size="sm"
+            dense
+            className={cn(
+              "text-xs text-accent hover:bg-transparent hover:underline",
+              coarseHitAreaCls,
+            )}
             onClick={onClear}
           >
             Clear filters
-          </button>
+          </Button>
         ) : null
       }
     />
@@ -116,6 +126,7 @@ function FilterEmptyState({
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
   isLoadingSessions = false,
+  projectName,
   filters: filtersProp,
   onFiltersChange,
   onKillAgent,
@@ -572,11 +583,12 @@ export const SessionsTab = memo(function SessionsTab({
   ]);
 
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
+  const scopeSuffix = projectName ? ` in ${projectName}` : "";
   const emptyListMessage = hasActiveFilters
     ? "No sessions match these filters"
     : statusMode === "expired"
-      ? "No expired sessions"
-      : "No live sessions";
+      ? `No expired sessions${scopeSuffix}`
+      : `No live sessions${scopeSuffix}`;
 
   return (
     <div className="relative flex flex-col h-full">

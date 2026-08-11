@@ -358,6 +358,9 @@ describe("WikiGraphView shell (4.1.2)", () => {
 
     expect(await screen.findByText("Nothing to graph")).toBeInTheDocument();
     expect(screen.queryByTestId("force-graph-2d")).not.toBeInTheDocument();
+    // Filter changes and reopening refetch on their own; the empty state
+    // carries no manual Refresh affordance (#20048).
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
   });
 });
 

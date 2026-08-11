@@ -61,72 +61,85 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('exposes shared row-title and row-meta utility classes locked to the ladder', () => {
-    const source = readSource('src/components/chat/styles/activity-panel.css')
+    const source = readSource('src/components/activity/ActivityPanel.tsx')
 
-    expect(source).toMatch(
-      /\.activity-row-title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-row-meta\s*{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
-    )
+    expect(source).toContain('[&_.activity-row-title]:text-[length:var(--text-base)]')
+    expect(source).toContain('[&_.activity-row-title]:font-[var(--font-weight-medium)]')
+    expect(source).toContain('[&_.activity-row-meta]:text-[length:var(--text-sm)]')
+    expect(source).toContain('[&_.activity-row-meta]:font-[var(--font-weight-normal)]')
   })
 
   it('uses one shared activity status-bar height and readable title size', () => {
     const rootSource = readSource('src/styles/tokens.css')
-    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
-    const taskSource = readSource('src/components/tasks/task-execution.css')
+    const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
+    const mcpDetailSource = readSource('src/components/activity/mcp/McpDetailPanel.tsx')
+    const taskSource = readSource('src/components/activity/TasksTab.tsx')
     const sessionsSource = readSessionsSurfaceSource()
 
     // Canonical token lives in :root (src/styles/tokens.css) so .command-bar,
     // .agent-status-bar, .voice-status-bar, and the activity-panel bars all
     // inherit the same height. Inner scopes must not redeclare it.
     expect(rootSource).toContain('--activity-panel-bar-height: 2.75rem')
-    expect(activitySource).not.toMatch(/\.activity-panel\s*{[^}]*--activity-panel-bar-height:/)
-    expect(activitySource).toMatch(
-      /\.activity-panel-status-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height\)/,
+    expect(activitySource).not.toContain('[--activity-panel-bar-height:')
+    expect(activitySource).toContain(
+      '[&_.activity-panel-status-bar]:min-h-[var(--activity-panel-bar-height)]',
     )
-    expect(activitySource).toMatch(
-      /\.activity-panel-status-bar__title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
+    expect(activitySource).toContain(
+      String.raw`[&_.activity-panel-status-bar\_\_title]:text-[length:var(--text-base)]`,
     )
-    expect(taskSource).toMatch(
-      /\.activity-task-pane-bar\s*{[^}]*min-height:\s*var\(--activity-panel-bar-height,\s*2\.5rem\)/,
+    expect(activitySource).toContain(
+      String.raw`[&_.activity-panel-status-bar\_\_title]:font-[var(--font-weight-medium)]`,
+    )
+    expect(mcpDetailSource).toContain('min-h-[var(--activity-panel-bar-height)]')
+    expect(mcpDetailSource).toContain('text-[length:var(--text-base)]')
+    expect(mcpDetailSource).toContain('font-[var(--font-weight-medium)]')
+    expect(taskSource).toContain(
+      'min-h-[var(--activity-panel-bar-height,2.5rem)]',
     )
     expect(sessionsSource).toContain('activity-panel-status-bar__title')
   })
 
   it('keeps status-bar controls at desktop visual height on touch devices', () => {
     const rootSource = readSource('src/styles/tokens.css')
-    const activitySource = readSource('src/components/chat/styles/activity-panel.css')
-    const layoutSource = readSource('src/components/chat/styles/layout.css')
+    const activitySource = readSource('src/components/activity/ActivityPanel.tsx')
+    const tasksToolbarSource = readSource('src/components/activity/TasksTabToolbar.tsx')
+    const filterPrimitivesSource = readSource('src/components/activity/FilterPrimitives.tsx')
+    const commandBarSource = readSource('src/components/chat/CommandBar.tsx')
     const statusBarSource = readSource('src/components/chat/AgentStatusBar.tsx')
 
     expect(rootSource).toContain('--status-bar-control-height: 1.75rem')
     // Status-bar session actions encode the desktop-height-on-touch contract
     // via the Button `dense` prop (min-h-7 with no pointer-coarse promotion).
     expect(statusBarSource).toMatch(/variant="accent"\s+size="sm"\s+dense/)
-    expect(layoutSource).toMatch(
-      /\.command-bar-btn\s*{[^}]*min-height:\s*var\(--status-bar-control-height\)/,
-    )
-    expect(activitySource).toMatch(
-      /\.activity-panel-tabs\s*{[^}]*padding:\s*0 0\.75rem/,
-    )
-    expect(activitySource).toMatch(
-      /\.activity-filter-button\s*{[^}]*margin-left:\s*auto/,
-    )
+    expect(commandBarSource).toContain('min-h-[var(--status-bar-control-height)]')
+    expect(activitySource).toContain('activity-panel-tabs')
+    expect(activitySource).toContain('px-3')
+    expect(tasksToolbarSource).toContain('ml-auto')
+    expect(filterPrimitivesSource).toContain('relative aria-expanded:border-')
+    expect(filterPrimitivesSource).toContain('data-filter-active-count')
+    expect(filterPrimitivesSource).toContain('absolute -right-1 -top-1')
+
+    const filterButtonAuthors = readTsxSources('src')
+      .filter(([, source]) => source.includes('activity-filter-button'))
+      .map(([path]) => path)
+    expect(filterButtonAuthors).toEqual([])
+  })
+
+  it('keeps chat status-bar typography on the shared component utility ladder', () => {
+    const agentStatusSource = readSource('src/components/chat/AgentStatusBar.tsx')
+    const voiceStatusSource = readSource('src/components/chat/VoiceStatusBar.tsx')
+
+    expect(agentStatusSource).toContain('text-[length:var(--text-sm)]')
+    expect(voiceStatusSource).toContain('text-[length:var(--text-xs)]')
   })
 
   it('locks the tasks row title to --text-base / medium', () => {
-    const source = readSource('src/components/tasks/task-execution.css')
+    const source = readSource('src/components/activity/TaskTreeRow.tsx')
 
-    expect(source).toMatch(
-      /\.activity-task-row-title\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-task-row-ref\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
-    expect(source).toMatch(
-      /\.activity-task-row\s*{[^}]*font-size:\s*var\(--text-base\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-medium)]')
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).toContain('pointer-coarse:min-h-11')
   })
 
   it('keeps high/critical priority tasks bold while raising the default to medium', () => {
@@ -172,41 +185,46 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('locks cron run rows to the meta token', () => {
-    const source = readSource('src/components/chat/styles/cron-tab.css')
+    const source = readSource('src/components/activity/CronTab.tsx')
 
-    expect(source).toMatch(
-      /\.cron-tab-run\s*{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).toContain('font-[var(--font-weight-normal)]')
+    expect(source).not.toContain('cron-tab-run')
   })
 
   it('locks files-tab tree rows to --text-base and meta size to --text-sm', () => {
-    const source = readSource('src/components/chat/styles/files-tab.css')
+    const source = readSource('src/components/activity/FilesTab.tsx')
 
-    expect(source).toMatch(
-      /\.file-tree-entry\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.files-tree-item\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-medium\)/,
-    )
-    expect(source).toMatch(
-      /\.file-tree-size\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
-    expect(source).toMatch(
-      /\.files-tree-loading\s*{[^}]*font-size:\s*var\(--text-sm\)/,
-    )
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-medium)]')
+    expect(source).toContain('text-[length:var(--text-sm)]')
+    expect(source).not.toContain('files-tree-item')
+    expect(source).not.toContain('files-tree-loading')
   })
 
   it('locks the activity-tab-empty body and provides heading helpers (chat empty-state parity)', () => {
-    const source = readSource('src/components/chat/styles/empty-state.css')
+    const source = readSource('src/components/activity/ActivityPanelEmpty.tsx')
 
-    expect(source).toMatch(
-      /\.activity-tab-empty\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
+    expect(source).toContain('text-[length:var(--text-base)]')
+    expect(source).toContain('font-[var(--font-weight-normal)]')
+    expect(source).toContain('text-[length:var(--text-xl)]')
+    expect(source).toContain('text-[var(--text-secondary)]')
+    expect(source).toContain('text-[var(--text-muted)]')
+  })
+
+  it('locks the chat empty-state title and copy to the same utility ladder', () => {
+    const source = readSource('src/components/chat/MessageList.tsx')
+    const commandPaletteSource = readSource('src/components/chat/CommandPalette.tsx')
+
+    expect(source).toContain('chat-empty-state flex flex-col items-center gap-3 text-center')
+    expect(source).toContain(
+      'chat-empty-state__title text-[length:var(--text-xl)] text-[var(--text-secondary)]',
     )
-    expect(source).toMatch(
-      /\.activity-tab-empty__heading\s*{[^}]*font-size:\s*var\(--text-xl\)[^}]*color:\s*var\(--text-secondary\)/,
+    expect(source).toContain(
+      'chat-empty-state__copy max-w-[26rem] text-[length:var(--text-base)] text-[var(--text-muted)]',
     )
-    expect(source).toMatch(
-      /\.activity-tab-empty__body\s*{[^}]*font-size:\s*var\(--text-base\)[^}]*color:\s*var\(--text-muted\)/,
+    expect(commandPaletteSource).toContain(
+      'command-palette-empty p-6 text-center text-[length:var(--text-sm)] text-[var(--text-muted)]',
     )
   })
 

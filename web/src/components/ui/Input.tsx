@@ -1,26 +1,29 @@
 import { forwardRef, type InputHTMLAttributes } from 'react'
 import { cn } from '../../lib/utils'
+import { controlSurfaceCls, controlWrapperCls } from './controlStyles'
 
 export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   error?: boolean
+  /** Layout overrides for the wrapper label (flex-1, width caps, …). */
+  wrapperClassName?: string
 }
 
 export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, error, ...props }, ref) => {
+  ({ className, error, wrapperClassName, ...props }, ref) => {
     return (
-      <input
-        className={cn(
-          'flex h-9 w-full rounded-md border bg-transparent px-3 py-1 text-sm transition-colors',
-          'placeholder:text-muted-foreground',
-          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',
-          'disabled:cursor-not-allowed disabled:opacity-50',
-          error ? 'border-destructive' : 'border-border',
-          className
-        )}
-        aria-invalid={!!error}
-        ref={ref}
-        {...props}
-      />
+      <label className={cn(controlWrapperCls, wrapperClassName)}>
+        <input
+          className={cn(
+            'flex h-9 py-1',
+            controlSurfaceCls,
+            error ? 'border-destructive' : 'border-border',
+            className
+          )}
+          aria-invalid={!!error}
+          ref={ref}
+          {...props}
+        />
+      </label>
     )
   }
 )

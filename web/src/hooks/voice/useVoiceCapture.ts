@@ -705,6 +705,10 @@ export function useVoiceCapture({
   }, [cancelRecording, sttEnabled, voiceInputMode])
 
   useEffect(() => {
+    // Re-arm on every effect run: StrictMode (and any dep change) runs the
+    // cleanup and re-runs the effect on the SAME ref, so a cleanup-only
+    // `mountedRef.current = false` would permanently kill voice capture.
+    mountedRef.current = true
     return () => {
       mountedRef.current = false
       clearTranscriptionWatchdog()

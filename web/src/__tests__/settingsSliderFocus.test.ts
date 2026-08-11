@@ -1,44 +1,80 @@
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
-import postcss, { type Declaration, type Rule } from 'postcss'
-import { describe, expect, it } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { createElement } from 'react'
+import { AppearanceSection } from '../components/settings/sections/AppearanceSection'
+import {
+  SettingsSectionContext,
+  type SettingsSectionContextValue,
+} from '../components/settings/sections/SettingsSectionContext'
+import type { Settings, UseSettingsReturn } from '../hooks/useSettings'
 
-const stylesheet = postcss.parse(
-  readFileSync(resolve(process.cwd(), 'src/styles/settings.css'), 'utf8'),
-)
+afterEach(cleanup)
 
-function declarationsFor(selector: string): Map<string, string> {
-  let matchingRule: Rule | undefined
-  stylesheet.walkRules((rule) => {
-    if (rule.selector === selector) matchingRule = rule
-  })
+function renderAppearanceSlider(): HTMLElement {
+  const settings: Settings = {
+    fontSize: 16,
+    model: 'opus',
+    chatMode: 'plan',
+    theme: 'dark',
+    defaultChatMode: 'plan',
+    sttEnabled: false,
+    ttsEnabled: false,
+    voiceInputMode: 'ptt',
+    planPendingVariant: 'info',
+    density: 'comfortable',
+  }
+  const clientSettings: UseSettingsReturn = {
+    settings,
+    updateFontSize: vi.fn(),
+    updateModel: vi.fn(),
+    updateChatMode: vi.fn(),
+    updateTheme: vi.fn(),
+    updateDefaultChatMode: vi.fn(),
+    updateSttEnabled: vi.fn(),
+    updateTtsEnabled: vi.fn(),
+    updateVoiceInputMode: vi.fn(),
+    updatePlanPendingVariant: vi.fn(),
+    updateDensity: vi.fn(),
+    resetSettings: vi.fn(),
+  }
+  const context: SettingsSectionContextValue = {
+    schema: null,
+    configValues: {},
+    secretKeys: [],
+    isLoading: false,
+    saveConfig: async () => ({ ok: true }),
+    registerDirtyGuard: () => () => {},
+    clientSettings,
+  }
 
-  expect(matchingRule, `Expected CSS rule ${selector}`).toBeDefined()
-  return new Map(
-    matchingRule?.nodes
-      .filter((node): node is Declaration => node.type === 'decl')
-      .map((declaration) => [declaration.prop, declaration.value]),
+  render(
+    createElement(
+      SettingsSectionContext.Provider,
+      { value: context },
+      createElement(AppearanceSection),
+    ),
   )
+  return screen.getByRole('slider', { name: 'Font size' })
 }
 
 describe('settings slider focus treatment', () => {
-  it('shows an accent focus indicator on the track and both browser thumbs', () => {
-    expect(declarationsFor('.slider').get('outline')).toBeUndefined()
+  it('carries the accent focus-visible ring utilities with no resting outline', () => {
+    const slider = renderAppearanceSlider()
 
-    expect(declarationsFor('.slider:focus-visible')).toMatchObject(
-      new Map([
-        ['outline', '2px solid var(--accent)'],
-        ['outline-offset', '3px'],
-      ]),
+    slider.focus()
+    expect(slider).toHaveFocus()
+
+    expect(slider).toHaveClass(
+      'focus-visible:outline-2',
+      'focus-visible:outline-accent',
+      'focus-visible:outline-offset-[3px]',
+      'accent-accent',
+      'cursor-pointer',
     )
-
-    for (const selector of [
-      '.slider:focus-visible::-webkit-slider-thumb',
-      '.slider:focus-visible::-moz-range-thumb',
-    ]) {
-      expect(declarationsFor(selector).get('box-shadow')).toBe(
-        '0 0 0 2px var(--bg-primary), 0 0 0 4px var(--accent)',
-      )
-    }
+    const restingOutlineTokens = slider.className
+      .split(/\s+/)
+      .filter((token) => token.startsWith('outline'))
+    expect(restingOutlineTokens).toEqual([])
+    expect(slider.className).not.toContain('appearance-font-size__range')
   })
 })

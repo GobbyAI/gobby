@@ -2,6 +2,9 @@ import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import type { RuleSummary } from "../../../hooks/useRules";
 import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { Chip } from "../../ui/Chip";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 interface RulesTabListProps {
   rules: RuleSummary[];
@@ -23,7 +26,7 @@ export function RulesTabList({
   onDelete,
 }: RulesTabListProps) {
   return (
-    <div className="rules-list" role="list" aria-label="Rules">
+    <div className="grid" role="list" aria-label="Rules">
       {rules.map((rule) => {
         const isSelected = rule.name === selectedName;
         const isBusy = rule.name === busyRuleName;
@@ -53,9 +56,10 @@ export function RulesTabList({
             role="listitem"
             className={cn("activity-list-row", isSelected && "activity-list-row--selected")}
           >
-            <button
+            <Button
               type="button"
-              className="activity-list-row__body"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
               aria-label={`Select ${rule.name}`}
               onClick={() => onSelect(rule)}
             >
@@ -64,9 +68,9 @@ export function RulesTabList({
                 label={rule.enabled ? "Rule enabled" : "Rule disabled"}
               />
               <span className="activity-row-title">{rule.name}</span>
-              {rule.event && <span className="activity-chip rules-row__badge">{rule.event}</span>}
-              {rule.group && <span className="activity-chip rules-row__group">{rule.group}</span>}
-            </button>
+              {rule.event && <Chip className="inline-block min-w-0 max-w-40 overflow-hidden text-ellipsis leading-5">{rule.event}</Chip>}
+              {rule.group && <Chip className="inline-block min-w-0 max-w-28 overflow-hidden text-ellipsis leading-5">{rule.group}</Chip>}
+            </Button>
             <QuickMenu
               items={menuItems}
               menuLabel={`Actions for ${rule.name}`}

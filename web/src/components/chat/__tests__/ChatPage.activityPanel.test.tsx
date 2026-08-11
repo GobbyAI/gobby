@@ -21,7 +21,6 @@ import {
   showTabSpy,
   setupChatPageEnvironment,
   teardownChatPageEnvironment,
-  terminalOpenState,
   toggleFromChatSpy,
 } from "./chatPageTestSetup";
 
@@ -39,9 +38,6 @@ vi.mock("../CommandPalette", async () =>
 );
 vi.mock("../../activity/ActivityPanel", async () =>
   (await import("./chatPageTestSetup")).activityPanelMockFactory(),
-);
-vi.mock("../../activity/terminal/TerminalDock", async () =>
-  (await import("./chatPageTestSetup")).terminalDockMockFactory(),
 );
 vi.mock("../VoiceStatusBar", async () =>
   (await import("./chatPageTestSetup")).voiceStatusBarMockFactory(),
@@ -124,8 +120,7 @@ describe("ChatPage – activity panel wiring", () => {
     expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("threads terminal focus request handling into the terminal dock", async () => {
-    terminalOpenState.value = true;
+  it("threads the terminal focus request into the activity panel", async () => {
     const user = userEvent.setup();
     render(
       <ChatPage
@@ -136,23 +131,10 @@ describe("ChatPage – activity panel wiring", () => {
     );
 
     expect(
-      await screen.findByTestId("terminal-dock-focus-session-id"),
+      await screen.findByTestId("terminal-focus-session-id"),
     ).toHaveTextContent("terminal-focus");
     await user.click(screen.getByTestId("handle-terminal-focus"));
     expect(clearTerminalSessionRequestSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not render the terminal dock when it is closed", async () => {
-    render(
-      <ChatPage
-        chat={createChat()}
-        conversations={createConversations()}
-        voice={createVoice()}
-      />,
-    );
-
-    await screen.findByTestId("command-bar-panel-toggle");
-    expect(screen.queryByTestId("terminal-dock")).not.toBeInTheDocument();
   });
 
   it("dispatches terminal activity only for a viewed terminal with a database session", async () => {

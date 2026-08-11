@@ -1,18 +1,21 @@
 """Tests for SpawnExecutor unified spawn dispatch."""
 
+import asyncio
 import json
 import logging
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
+from gobby.agents import spawn_executor_support
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
@@ -28,9 +31,25 @@ from gobby.agents.spawn_executor import (
     _sandbox_config_for_spawn,
     execute_spawn,
 )
+from gobby.agents.spawn_executor_support import (
+    _deliver_codex_prompt,
+    schedule_codex_prompt_delivery,
+)
 from gobby.mcp_proxy.server import GobbyDaemonTools
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
+    """Keep the fire-and-forget Codex prompt delivery task out of spawn tests.
+
+    Codex spawns schedule a real background coroutine against the spawner's
+    tmux session manager; against MagicMock spawners that coroutine would
+    outlive the test's event loop. Tests that assert delivery use this mock.
+    """
+    with patch("gobby.agents.spawn_executor.schedule_codex_prompt_delivery") as mock_delivery:
+        yield mock_delivery
 
 
 @pytest.mark.asyncio
@@ -663,7 +682,7 @@ class TestExecuteSpawn:
             assert result.pid == 12345
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_direct_spawn(self):
+    async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery):
         """Codex spawns directly (no preflight); command is `codex ...`, never `codex resume ...`."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -759,11 +778,16 @@ class TestExecuteSpawn:
             assert spawn_kwargs.get("env") is not None
             assert spawn_kwargs["env"].get("GOBBY_SESSION_ID") == "gobby-sess-123"
 
-            # Codex gets its Gobby session id from env/hooks, not prompt text.
-            prompt_arg = command[-1]
-            assert prompt_arg == request.prompt
-            assert "gobby-sess-123" not in prompt_arg
-            assert "Your Gobby session_id is" not in prompt_arg
+            # The prompt never rides in argv: a CLI-argument prompt starts the
+            # first turn at launch and cancels Codex's in-flight MCP client
+            # startup. It is typed into the composer post-launch instead.
+            assert request.prompt not in command
+            mock_codex_prompt_delivery.assert_called_once_with(
+                mock_spawner.session_manager,
+                "agent-run-abc123def456",
+                "Test",
+                "run-abc123def456",
+            )
 
             # SpawnResult.run_id is the caller-minted id (no fabricated
             # `codex-xxxxxxxx` substitute).
@@ -1124,7 +1148,7 @@ class TestExecuteSpawn:
         assert "grok cannot prove the sensitive-root contract" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_agy_spawn_rejects_unavailable_provider(self):
+    async def test_agy_spawn_rejects_unavailable_provider(self) -> None:
         """AGY is visible but explicitly unavailable for agent spawning."""
         request = SpawnRequest(
             prompt="Test",
@@ -2014,3 +2038,74 @@ async def test_scrubbed_child_env_reaches_daemon_proxy_identity(
         assert headers["X-Gobby-Agent-Run-Id"] == run_id
         assert headers["Authorization"] == f"Bearer {capability}"
         assert all(parent_session_id not in value for value in headers.values())
+
+
+class TestCodexPromptDelivery:
+    """The spawn prompt is typed into the Codex composer, never passed in argv."""
+
+    @pytest.mark.asyncio
+    async def test_delivers_prompt_once_composer_renders(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(side_effect=[None, "› Ask Codex anything"])
+        tmux.send_keys = AsyncMock(return_value=True)
+
+        with (
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_POLL_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
+        ):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+
+        assert tmux.send_keys.await_args_list == [
+            call("sess", "Do the task\n", literal=True),
+            call("sess", "Enter", literal=False),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_never_types_into_a_pane_without_a_composer(self) -> None:
+        """A dead CLI can leave a shell pane; the watchdog owns that failure."""
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="zsh: command not found: codex")
+        tmux.send_keys = AsyncMock()
+
+        with patch.object(spawn_executor_support, "_CODEX_COMPOSER_READY_TIMEOUT_SECONDS", 0.0):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+
+        tmux.send_keys.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_failed_paste_skips_follow_up_enter(self) -> None:
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="› ")
+        tmux.send_keys = AsyncMock(return_value=False)
+
+        with (
+            patch.object(spawn_executor_support, "_CODEX_COMPOSER_SETTLE_SECONDS", 0.0),
+            patch.object(spawn_executor_support, "_CODEX_PROMPT_SUBMIT_RETRY_DELAY_SECONDS", 0.0),
+        ):
+            await _deliver_codex_prompt(tmux, "sess", "Do the task", "run-1")
+
+        tmux.send_keys.assert_awaited_once_with("sess", "Do the task\n", literal=True)
+
+    @pytest.mark.asyncio
+    async def test_schedule_skips_empty_prompt(self) -> None:
+        tmux = MagicMock()
+
+        assert schedule_codex_prompt_delivery(tmux, "sess", "", "run-1") is False
+
+        assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS
+
+    @pytest.mark.asyncio
+    async def test_schedule_tracks_and_releases_the_delivery_task(self) -> None:
+        tmux = MagicMock()
+
+        with patch.object(
+            spawn_executor_support, "_deliver_codex_prompt", new=AsyncMock()
+        ) as deliver:
+            assert schedule_codex_prompt_delivery(tmux, "sess", "Go", "run-1") is True
+            pending = list(spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS)
+            assert pending
+            await asyncio.gather(*pending)
+
+        deliver.assert_awaited_once_with(tmux, "sess", "Go", "run-1")
+        assert not spawn_executor_support._CODEX_PROMPT_DELIVERY_TASKS

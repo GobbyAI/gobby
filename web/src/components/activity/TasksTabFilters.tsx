@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ActivityFilterFooter } from './ActivityFilterFooter'
-import { FilterCheckboxRow, FilterSection } from './FilterPrimitives'
+import {
+  FilterCheckboxRow,
+  FilterDropdownShell,
+  FilterSection,
+} from './FilterPrimitives'
 import type { StageRegistryEntry } from '../../lib/taskNormalization'
 import {
   DEFAULT_FILTERS,
@@ -70,20 +74,12 @@ export function TasksTabFilters({
   }, [stages])
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-[99]"
-        role="presentation"
-        onMouseDown={(event) => {
-          if (event.button === 0) onClose()
-        }}
-      />
-      <div
-        className="absolute top-full right-2 z-[100] border border-border rounded-md shadow-xl flex flex-col w-[min(24rem,calc(100vw-1.5rem))]"
-        style={{ background: 'var(--bg-secondary)' }}
-        role="dialog"
-        aria-label="Task filters"
-      >
+    <FilterDropdownShell
+      onClose={onClose}
+      outsideInteraction="primary-mousedown"
+      ariaLabel="Task filters"
+      className="absolute top-full right-2 w-[min(24rem,calc(100vw-1.5rem))]"
+    >
         <div className="grid grid-cols-2 divide-x divide-border">
           {/* Left column: Stage list (single column, all stages) */}
           <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
@@ -132,8 +128,7 @@ export function TasksTabFilters({
         </div>
 
         <ActivityFilterFooter onReset={handleReset} onApply={handleApply} />
-      </div>
-    </>
+    </FilterDropdownShell>
   )
 }
 

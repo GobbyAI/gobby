@@ -1,15 +1,8 @@
-import { useState, useEffect } from 'react'
-import {
-  AGENT_BTN_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_RULES_ADD_BTN_CLS,
-  AGENT_RULES_ADD_SELECT_CLS,
-  AGENT_RULES_CHIP_CLS,
-  AGENT_RULES_CHIP_REMOVE_CLS,
-  AGENT_RULES_CHIPS_CLS,
-  AGENT_RULES_EDITOR_CLS,
-  AGENT_RULES_EMPTY_CLS,
-} from './agents-styles'
+import { useEffect, useState } from 'react'
+import { Button } from '../ui/Button'
+import { Chip } from '../ui/Chip'
+import { NativeSelect } from '../ui/NativeSelect'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface SkillInfo {
   name: string
@@ -29,68 +22,77 @@ export function AgentSkillsEditor({ skills, onSkillsChange, projectId }: AgentSk
   useEffect(() => {
     const params = projectId ? `?project_id=${encodeURIComponent(projectId)}` : ''
     fetch(`/api/skills${params}`)
-      .then(r => r.json())
-      .then(data => {
-        setAvailableSkills((data.skills || []).map((s: SkillInfo) => ({
-          name: s.name,
-          description: s.description,
-        })))
+      .then((response) => response.json())
+      .then((data) => {
+        setAvailableSkills(
+          (data.skills || []).map((skill: SkillInfo) => ({
+            name: skill.name,
+            description: skill.description,
+          })),
+        )
       })
       .catch(() => setAvailableSkills([]))
   }, [projectId])
 
-  const addableSkills = availableSkills.filter(s => !skills.includes(s.name))
+  const addableSkills = availableSkills.filter((skill) => !skills.includes(skill.name))
 
   return (
-    <div className={AGENT_RULES_EDITOR_CLS}>
-      <div className={AGENT_RULES_CHIPS_CLS}>
-        {skills.map(name => (
-          <span key={name} className={AGENT_RULES_CHIP_CLS}>
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {skills.map((name) => (
+          <Chip key={name} className="gap-1 border border-border pl-2.5 pr-2 text-sm">
             {name}
-            <button
+            <Button
               type="button"
-              className={AGENT_RULES_CHIP_REMOVE_CLS}
-              onClick={() => onSkillsChange(skills.filter(s => s !== name))}
+              variant="ghost"
+              size="icon"
+              dense
+              className={`${coarseHitAreaCls} min-h-0 w-auto px-0.5 text-base leading-none hover:text-[var(--color-error)]`}
+              onClick={() => onSkillsChange(skills.filter((skill) => skill !== name))}
               title={`Remove ${name}`}
             >
               &times;
-            </button>
-          </span>
+            </Button>
+          </Chip>
         ))}
         {skills.length === 0 && !adding && (
-          <span className={AGENT_RULES_EMPTY_CLS}>No skills assigned</span>
+          <span className="text-sm italic text-[var(--text-muted)]">No skills assigned</span>
         )}
       </div>
       {adding ? (
-        <select
-          className={`${AGENT_EDIT_INPUT_CLS} ${AGENT_RULES_ADD_SELECT_CLS}`}
+        <NativeSelect
+          wrapperClassName="max-w-50"
+          className="text-sm"
+          aria-label="Select skill"
           autoFocus
           value=""
-          onChange={e => {
-            if (e.target.value) {
-              onSkillsChange([...skills, e.target.value])
+          onChange={(event) => {
+            if (event.target.value) {
+              onSkillsChange([...skills, event.target.value])
               setAdding(false)
             }
           }}
           onBlur={() => setAdding(false)}
         >
           <option value="">Select skill...</option>
-          {addableSkills.map(s => (
-            <option key={s.name} value={s.name}>{s.name}</option>
+          {addableSkills.map((skill) => (
+            <option key={skill.name} value={skill.name}>
+              {skill.name}
+            </option>
           ))}
-          {addableSkills.length === 0 && (
-            <option disabled>No skills available</option>
-          )}
-        </select>
+          {addableSkills.length === 0 && <option disabled>No skills available</option>}
+        </NativeSelect>
       ) : (
-        <button
+        <Button
           type="button"
-          className={`${AGENT_BTN_CLS} ${AGENT_RULES_ADD_BTN_CLS}`}
+          size="sm"
+          dense
+          className={`${coarseHitAreaCls} self-start`}
           onClick={() => setAdding(true)}
           disabled={addableSkills.length === 0}
         >
           + Add Skill
-        </button>
+        </Button>
       )}
     </div>
   )

@@ -1,8 +1,13 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useWebSocketEvent } from '../../hooks/useWebSocketEvent'
 import type { CanonicalTaskState } from '../../lib/taskState'
 import { getCanonicalTaskState, getTaskDisplayState } from '../../lib/taskState'
 import { getCategoryColorVar } from './categoryColors'
 import { Heading } from '../shared/Heading'
+import { Button } from '../ui/Button'
+import { Card } from '../ui/Card'
+import { NativeSelect } from '../ui/NativeSelect'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 // =============================================================================
 // Types
@@ -176,8 +181,13 @@ function AgentCard({
   onToggle: () => void
 }) {
   return (
-    <div className={`agent-card ${isExpanded ? 'agent-card--expanded' : ''}`}>
-      <button className="agent-card-header" onClick={onToggle}>
+    <Card className={`agent-card ${isExpanded ? 'agent-card--expanded' : ''}`}>
+      <Button
+        type="button"
+        variant="ghost"
+        className={`agent-card-header ${coarseHitAreaCls}`}
+        onClick={onToggle}
+      >
         <div className="agent-card-identity">
           <span className="agent-card-icon">{AGENT_SOURCE_ICONS[agent.source] ?? DEFAULT_AGENT_SOURCE_ICON}</span>
           <span className="agent-card-name">{agent.name}</span>
@@ -204,7 +214,7 @@ function AgentCard({
           <span className="agent-card-time">{relativeTime(agent.lastActive)}</span>
         </div>
         <span className="agent-card-chevron">{isExpanded ? '\u25BE' : '\u25B8'}</span>
-      </button>
+      </Button>
 
       {isExpanded && (
         <div className="agent-card-detail">
@@ -283,7 +293,7 @@ function AgentCard({
           )}
         </div>
       )}
-    </div>
+    </Card>
   )
 }
 
@@ -301,7 +311,6 @@ export function AgentPortfolioPage() {
   const [filterSource, setFilterSource] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
-    setIsLoading(true)
     try {
       setError(null)
       const baseUrl = getBaseUrl()
@@ -330,6 +339,27 @@ export function AgentPortfolioPage() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // Live updates: the portfolio derives entirely from sessions + tasks, so a
+  // coalesced background refetch on either event stream keeps it current.
+  // `isLoading` starts true and only ever flips false, so background refetches
+  // never blank the rendered list.
+  const refetchTimerRef = useRef<number | null>(null)
+  const scheduleRefetch = useCallback(() => {
+    if (refetchTimerRef.current !== null) return
+    refetchTimerRef.current = window.setTimeout(() => {
+      refetchTimerRef.current = null
+      void fetchData()
+    }, 1000)
+  }, [fetchData])
+  useEffect(
+    () => () => {
+      if (refetchTimerRef.current !== null) window.clearTimeout(refetchTimerRef.current)
+    },
+    [],
+  )
+  useWebSocketEvent('task_event', scheduleRefetch)
+  useWebSocketEvent('session_event', scheduleRefetch)
 
   // Build agent profiles from sessions + tasks
   const agents = useMemo((): AgentProfile[] => {
@@ -495,8 +525,9 @@ export function AgentPortfolioPage() {
           <span className="agent-page-count">{agents.length} agents</span>
         </div>
         <div className="agent-toolbar-right">
-          <select
+          <NativeSelect
             className="agent-filter-select"
+            wrapperClassName="w-auto"
             value={filterSource ?? ''}
             onChange={e => setFilterSource(e.target.value || null)}
           >
@@ -504,9 +535,10 @@ export function AgentPortfolioPage() {
             {sources.map(s => (
               <option key={s} value={s}>{s}</option>
             ))}
-          </select>
-          <select
+          </NativeSelect>
+          <NativeSelect
             className="agent-filter-select"
+            wrapperClassName="w-auto"
             value={sortField}
             onChange={e => setSortField(e.target.value as SortField)}
           >
@@ -515,40 +547,32 @@ export function AgentPortfolioPage() {
             <option value="tokens">Sort: Tokens</option>
             <option value="lastActive">Sort: Last Active</option>
             <option value="name">Sort: Name</option>
-          </select>
-          <button
-            type="button"
-            className="agent-refresh-btn"
-            onClick={fetchData}
-            aria-label="Refresh agents"
-          >
-            {'↻'}
-          </button>
+          </NativeSelect>
         </div>
       </div>
 
       {/* Summary cards */}
       <div className="agent-summary-cards">
-        <div className="agent-summary-card">
+        <Card className="agent-summary-card">
           <span className="agent-summary-value">{totals.agents}</span>
           <span className="agent-summary-label">Agent Types</span>
-        </div>
-        <div className="agent-summary-card">
+        </Card>
+        <Card className="agent-summary-card">
           <span className="agent-summary-value">{totals.sessions}</span>
           <span className="agent-summary-label">Total Sessions</span>
-        </div>
-        <div className="agent-summary-card">
+        </Card>
+        <Card className="agent-summary-card">
           <span className="agent-summary-value">{totals.tasksClosed}</span>
           <span className="agent-summary-label">Tasks Closed</span>
-        </div>
-        <div className="agent-summary-card">
+        </Card>
+        <Card className="agent-summary-card">
           <span className="agent-summary-value">{Math.round(totals.avgSuccess * 100)}%</span>
           <span className="agent-summary-label">Avg Success</span>
-        </div>
-        <div className="agent-summary-card">
+        </Card>
+        <Card className="agent-summary-card">
           <span className="agent-summary-value">{formatTokens(totals.totalTokens)}</span>
           <span className="agent-summary-label">Total Tokens</span>
-        </div>
+        </Card>
       </div>
 
       {/* Agent list */}

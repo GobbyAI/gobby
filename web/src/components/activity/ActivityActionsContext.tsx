@@ -7,6 +7,7 @@ import {
   useActivityActions,
   type ActivityPanelActions,
 } from "./activityActions";
+import { FilterDropdownTrigger } from "./FilterPrimitives";
 
 export function ActivityActionsProvider({ children }: { children: ReactNode }) {
   const [actions, setActions] = useState<ActivityPanelActions | null>(null);
@@ -18,27 +19,6 @@ export function ActivityActionsProvider({ children }: { children: ReactNode }) {
     <ActivityActionsContext.Provider value={value}>
       {children}
     </ActivityActionsContext.Provider>
-  );
-}
-
-function RefreshGlyph() {
-  return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <polyline points="23 4 23 10 17 10" />
-      <polyline points="1 20 1 14 7 14" />
-      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
-      <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14" />
-    </svg>
   );
 }
 
@@ -100,29 +80,22 @@ function SearchGlyph() {
 
 /**
  * Renders the active tab's registered toolbar: selector, then Filter / Search /
- * Refresh / New triggers. Placed in the panel header between the dropdown and
- * the Hide Chat slot. Returns nothing when the active tab registers no actions.
+ * New triggers. Placed in the panel header between the dropdown and the
+ * Hide Chat slot. Returns nothing when the active tab registers no actions.
  */
 export function ActivityActionButtons() {
   const actions = useActivityActions();
   if (
     !actions ||
-    (!actions.selector &&
-      !actions.filter &&
-      !actions.search &&
-      !actions.onAdd &&
-      !actions.onRefresh)
+    (!actions.selector && !actions.filter && !actions.search && !actions.onAdd)
   ) {
     return null;
   }
 
-  const refreshLabel = actions.refreshing
-    ? "Refreshing"
-    : (actions.refreshLabel ?? "Refresh");
   const addLabel = actions.addLabel ?? "New";
 
   return (
-    <span className="activity-panel-actions-slot">
+    <span className="activity-panel-actions-slot flex min-w-0 shrink items-center gap-2">
       {actions.selector && (
         <SegmentedControl<string>
           value={actions.selector.value}
@@ -130,55 +103,33 @@ export function ActivityActionButtons() {
           options={actions.selector.options}
           ariaLabel={actions.selector.ariaLabel}
           controlHeight="sm"
-          className="activity-panel-header-segmented"
+          className="activity-panel-header-segmented min-w-0 shrink @max-[479px]/activity-panel:[&>.segmented-control\_\_option]:[--segmented-option-px:0.5rem]"
         />
       )}
       {actions.filter && (
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn"
+        <FilterDropdownTrigger
+          open={actions.filter.open}
+          activeCount={actions.filter.activeCount}
+          icon={<FilterGlyph />}
           onClick={actions.filter.onToggle}
           aria-label={actions.filter.ariaLabel}
           title={actions.filter.ariaLabel}
-          aria-expanded={actions.filter.open}
-        >
-          <FilterGlyph />
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {(actions.filter.activeCount ?? 0) > 0 && (
-            <span className="activity-filter-badge">{actions.filter.activeCount}</span>
-          )}
-        </Button>
+        />
       )}
       {actions.search && (
         <Button
           type="button"
           variant="accent"
           size="sm"
-          className="activity-panel-action-btn"
           onClick={actions.search.onToggle}
           aria-label={actions.search.ariaLabel}
           title={actions.search.ariaLabel}
           aria-expanded={actions.search.open}
         >
           <SearchGlyph />
-          <span className="activity-panel-action-btn__label">Search</span>
-        </Button>
-      )}
-      {actions.onRefresh && (
-        <Button
-          type="button"
-          variant="accent"
-          size="sm"
-          className="activity-panel-action-btn"
-          onClick={actions.onRefresh}
-          disabled={actions.refreshing}
-          aria-label={actions.refreshAriaLabel ?? refreshLabel}
-          title={actions.refreshAriaLabel ?? refreshLabel}
-        >
-          <RefreshGlyph />
-          <span className="activity-panel-action-btn__label">{refreshLabel}</span>
+          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+            Search
+          </span>
         </Button>
       )}
       {actions.onAdd && (
@@ -186,14 +137,15 @@ export function ActivityActionButtons() {
           type="button"
           variant="accent"
           size="sm"
-          className="activity-panel-action-btn"
           onClick={actions.onAdd}
           disabled={actions.addDisabled}
           aria-label={actions.addAriaLabel ?? addLabel}
           title={actions.addAriaLabel ?? addLabel}
         >
           <PlusGlyph />
-          <span className="activity-panel-action-btn__label">{addLabel}</span>
+          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+            {addLabel}
+          </span>
         </Button>
       )}
     </span>

@@ -1,5 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import { ResizeHandle } from '../shared/ResizeHandle'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun, CronRunChild } from '../../hooks/useCronJobs'
@@ -200,9 +202,10 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                   key={job.id}
                   className={`activity-list-row${selectedJob?.id === job.id ? ' activity-list-row--selected' : ''}`}
                 >
-                  <button
+                  <Button
                     type="button"
-                    className="activity-list-row__body"
+                    variant="ghost"
+                    className={`activity-list-row__body ${coarseHitAreaCls}`}
                     aria-label={`Select ${jobLabel}`}
                     onClick={() => selectJob(job)}
                   >
@@ -211,7 +214,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                     <span className="activity-row-meta shrink-0">
                       {formatNextFiring(job, now)}
                     </span>
-                  </button>
+                  </Button>
                   <div className="flex items-center px-1">
                     <QuickMenu
                       items={menuItems}
@@ -223,9 +226,11 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
               )
             })}
             {hasMore && (
-              <button
+              <Button
                 type="button"
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors ${coarseHitAreaCls}`}
                 onClick={() =>
                   setDisplayLimitState({
                     filter: statusFilter,
@@ -234,7 +239,7 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                 }
               >
                 Load more
-              </button>
+              </Button>
             )}
           </>
         )}
@@ -284,17 +289,17 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
             ) : runs.length === 0 ? (
               <p className="text-xs text-muted-foreground p-2">No runs yet</p>
             ) : (
-              <ul className="cron-tab-runs">
+              <ul className="m-0 list-none p-0">
                 {runs.map((run) => (
-                  <li key={run.id} className="cron-tab-run">
+                  <li key={run.id} className="flex min-w-0 items-center gap-2 border-b border-[var(--border)] px-3 py-1.5 text-[length:var(--text-sm)] font-[var(--font-weight-normal)] last:border-b-0">
                     <RunStatusGlyph status={run.status} />
-                    <span className="cron-tab-run__body">
-                      <span className="cron-tab-run__time">
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <span className="min-w-0 truncate text-[var(--text-secondary)]">
                         {formatDateTime(run.triggered_at)}
                       </span>
                       {run.child && <RunChildStatus child={run.child} />}
                     </span>
-                    <span className="cron-tab-run__status">{formatRunStatus(run.status)}</span>
+                    <span className="shrink-0 capitalize tabular-nums text-[var(--text-muted)]">{formatRunStatus(run.status)}</span>
                   </li>
                 ))}
               </ul>
@@ -336,7 +341,7 @@ function RunStatusGlyph({ status }: { status: string }) {
 function RunChildStatus({ child }: { child: CronRunChild }) {
   const status = child.missing ? 'missing' : (child.status ?? 'unknown')
   return (
-    <span className="cron-tab-run__child">
+    <span className="inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-[length:var(--text-xs)] text-[var(--text-muted)] [&>span:last-child]:truncate">
       <ActivityRowStatusDot
         kind={childStatusKind(child)}
         pulse={!child.terminal && !child.missing}

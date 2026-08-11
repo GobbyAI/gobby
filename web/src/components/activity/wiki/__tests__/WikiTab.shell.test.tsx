@@ -82,16 +82,18 @@ afterEach(() => {
 });
 
 describe("WikiTab shell", () => {
-  it("renders the three-mode segmented control and defaults to wiki mode", async () => {
+  it("renders the two-mode segmented control and defaults to wiki mode", async () => {
     stubWikiFetch();
     renderShell(<WikiTab projectId="p1" />);
 
     const group = await screen.findByRole("radiogroup", { name: /wiki mode/i });
     expect(group).toBeInTheDocument();
-    for (const label of ["Wiki", "Code", "Ask"]) {
+    for (const label of ["Wiki", "Code"]) {
       expect(screen.getByRole("radio", { name: label })).toBeInTheDocument();
     }
-    expect(screen.queryByRole("radio", { name: "Research" })).not.toBeInTheDocument();
+    for (const retired of ["Ask", "Research"]) {
+      expect(screen.queryByRole("radio", { name: retired })).not.toBeInTheDocument();
+    }
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -126,7 +128,7 @@ describe("WikiTab shell", () => {
       </DirtyGuardProvider>,
     );
 
-    await user.click(await screen.findByRole("radio", { name: "Ask" }));
+    await user.click(await screen.findByRole("radio", { name: "Code" }));
     expect(confirmLeave).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
@@ -134,9 +136,9 @@ describe("WikiTab shell", () => {
     );
 
     confirmLeave.mockResolvedValueOnce(true);
-    await user.click(screen.getByRole("radio", { name: "Ask" }));
+    await user.click(screen.getByRole("radio", { name: "Code" }));
     await waitFor(() =>
-      expect(screen.getByRole("radio", { name: "Ask" })).toHaveAttribute(
+      expect(screen.getByRole("radio", { name: "Code" })).toHaveAttribute(
         "aria-checked",
         "true",
       ),
@@ -168,8 +170,18 @@ describe("WikiTab shell", () => {
     expect(banner.textContent).toMatch(/falkordb/);
   });
 
-  it("disables the ask composer when the gateway is unavailable", async () => {
+  it("falls back to wiki mode when a retired mode is stored", async () => {
     window.localStorage.setItem(WIKI_TAB_KEYS.mode, "ask");
+    stubWikiFetch();
+    renderShell(<WikiTab projectId="p1" />);
+
+    expect(await screen.findByRole("radio", { name: "Wiki" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("shows the offline banner when the gateway is unavailable", async () => {
     stubWikiFetch({
       status: jsonResponse({ detail: "wiki gateway offline" }, 503),
       health: jsonResponse({ detail: "wiki gateway offline" }, 503),
@@ -178,7 +190,6 @@ describe("WikiTab shell", () => {
     renderShell(<WikiTab projectId="p1" />);
 
     expect(await screen.findByText(/gateway offline/i)).toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /ask the wiki/i })).toBeDisabled();
   });
 
   it("opens the sources manager from the kebab menu", async () => {

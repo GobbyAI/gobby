@@ -1,12 +1,9 @@
-import "./styles.css";
-
 import { useEffect, useRef } from "react";
 
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { useFileChanges } from "../../hooks/useFileChanges";
 import { ActivityPanel } from "../activity/ActivityPanel";
-import { TerminalDock } from "../activity/terminal/TerminalDock";
 import { useActivityPanel } from "../activity/useActivityPanel";
 import { AppErrorBoundary } from "../app/AppErrorBoundary";
 import { Heading } from "../shared/Heading";
@@ -25,6 +22,7 @@ export function ChatPage({
   conversations,
   voice,
   projectId,
+  projectName,
   showPlanRef,
   agentDefinitions = [],
   agentGlobalDefs = [],
@@ -154,13 +152,7 @@ export function ChatPage({
         Chat
       </Heading>
       {ConfirmDialogElement}
-      <div
-        className={
-          activity.terminalOpen && activity.terminalExpanded
-            ? "hidden"
-            : "relative flex min-h-0 flex-1 overflow-hidden"
-        }
-      >
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
       {showChatColumn && (
         <ChatMainColumn
           chat={chat}
@@ -220,6 +212,7 @@ export function ChatPage({
           changesError={fileChanges.error}
           onRetryChanges={fileChanges.refresh}
           projectId={projectId}
+          projectName={projectName}
           sessions={activitySessions ?? allProjectSessions}
           sessionsLoading={activitySessionsLoading ?? allProjectSessionsLoading}
           sessionsFilters={sessionsFilters}
@@ -236,23 +229,14 @@ export function ChatPage({
           onSwapSession={routing.handleSwapSession}
           onResumeSession={routing.handleResumeSessionFromActivity}
           onAddFileToChat={routing.handleAddFileToChat}
+          terminalFocusSessionId={activity.terminalSessionRequest}
+          onTerminalFocusHandled={activity.clearTerminalSessionRequest}
           isMobile={isMobile}
           requestPanelOverride={requestPanelOverride}
           releasePanelOverride={releasePanelOverride}
         />
       </AppErrorBoundary>
       </div>
-
-      {activity.terminalOpen ? (
-        <TerminalDock
-          sessions={activitySessions ?? allProjectSessions}
-          focusSessionId={activity.terminalSessionRequest}
-          onFocusHandled={activity.clearTerminalSessionRequest}
-          expanded={activity.terminalExpanded}
-          onToggleExpanded={activity.toggleTerminalExpanded}
-          onClose={activity.closeTerminal}
-        />
-      ) : null}
 
       <CommandPalette
         isOpen={commandPalette.showCommandPalette}

@@ -197,11 +197,9 @@ describe('SettingsOverlay', () => {
   })
 
   it('closes when the backdrop is clicked', async () => {
-    const { container } = render(<Harness />)
+    render(<Harness />)
     await openOverlay()
-    const backdrop = container.querySelector('.settings-overlay-shell__backdrop')
-    expect(backdrop).not.toBeNull()
-    fireEvent.click(backdrop as Element)
+    fireEvent.click(screen.getByTestId('settings-overlay-backdrop'))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 

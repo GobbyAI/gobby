@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import type { RuleDetail } from "../../../hooks/useRules";
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { SegmentedControl } from "../../ui/SegmentedControl";
 import {
@@ -43,9 +44,9 @@ function optionsWithCurrent(
 
 function ReadOnlySummary({ label, value }: { label: string; value: unknown }) {
   return (
-    <div className="rules-readonly">
-      <span className="rules-readonly__label">{label}</span>
-      <pre className="rules-readonly__value">{formatRuleSummaryValue(value)}</pre>
+    <div className="grid min-w-0 gap-[0.3rem]">
+      <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">{label}</span>
+      <pre className="max-h-48 min-h-16 overflow-auto whitespace-pre-wrap rounded-md border border-[var(--border)] bg-[var(--bg-deep)] p-[0.6rem] text-[length:var(--text-xs)] leading-[1.45] text-[var(--text-secondary)] [overflow-wrap:anywhere]">{formatRuleSummaryValue(value)}</pre>
     </div>
   );
 }
@@ -180,7 +181,7 @@ export function RulesDetailPanel({
   };
 
   return (
-    <div className="rules-detail">
+    <div className="flex h-full min-h-0 flex-col">
       <DetailPaneHeader
         title={draft.name || detail.name}
         dirty={draftState.dirty}
@@ -201,7 +202,7 @@ export function RulesDetailPanel({
           />
         }
       />
-      <div className="rules-detail__body">
+      <div className="grid min-h-0 gap-[0.85rem] overflow-auto p-[0.85rem]">
         {detailView === "yaml" ? (
           <RulesYamlView
             detail={detail}
@@ -213,10 +214,10 @@ export function RulesDetailPanel({
         ) : (
           <>
             {bundled ? (
-              <div className="rules-locked-name">
-                <span className="rules-locked-name__label">Name</span>
-                <span className="rules-locked-name__value">{detail.name}</span>
-                <span className="rules-locked-name__hint">
+              <div className="grid min-w-0 gap-1">
+                <span className="text-[length:var(--text-xs)] font-[var(--font-weight-medium)] text-[var(--text-muted)]">Name</span>
+                <span className="min-h-11 rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-[0.65rem] text-[length:var(--text-sm)] text-[var(--text-primary)] [overflow-wrap:anywhere]">{detail.name}</span>
+                <span className="text-[length:var(--text-xs)] text-[var(--text-muted)]">
                   Bundled template rule names are read-only
                 </span>
               </div>
@@ -234,7 +235,7 @@ export function RulesDetailPanel({
               value={draft.description}
               onChange={(value) => draftState.setField("description", value)}
             />
-            <div className="rules-detail__grid">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
               <SelectField
                 label="Event"
                 ariaLabel="Event"
@@ -287,9 +288,9 @@ export function RulesDetailPanel({
             />
             <div className="flex min-h-8 items-center gap-2">
               <span className="text-sm font-medium text-muted-foreground">Source</span>
-              <span className="activity-chip rules-detail__source">{detail.source}</span>
+              <Chip className="inline-block min-w-0 max-w-40 overflow-hidden text-ellipsis leading-5">{detail.source}</Chip>
             </div>
-            <div className="rules-detail__readonly-grid">
+            <div className="grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-3">
               <ReadOnlySummary label="When" value={draft.when} />
               <ReadOnlySummary label="Match" value={draft.match} />
               <ReadOnlySummary label="Effects" value={draft.effects} />

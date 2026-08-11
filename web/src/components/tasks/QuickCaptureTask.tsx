@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { DEFAULT_TASK_PRIORITY } from '../../lib/taskOptions'
-import { inputFocusCls } from '../shared/focusStyles'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
+import { Dialog, DialogContent, DialogTitle } from '../ui/Dialog'
+import { Input } from '../ui/Input'
 
 interface QuickCaptureTaskProps {
   isOpen: boolean
@@ -9,25 +11,6 @@ interface QuickCaptureTaskProps {
 }
 
 const TYPE_OPTIONS = ['task', 'bug', 'feature', 'epic', 'chore']
-
-const BACKDROP_CLS = 'fixed inset-0 z-[1000] bg-[var(--surface-scrim)]'
-const MODAL_CLS =
-  'fixed left-1/2 top-[20%] z-[1001] w-[480px] max-w-[90vw] -translate-x-1/2 rounded-[12px] border border-[var(--border)] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-xl)]'
-const FORM_CLS = 'flex flex-col gap-[10px]'
-const INPUT_CLS =
-  `box-border w-full rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-[10px] font-[var(--font-sans)] text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] ${inputFocusCls}`
-const ROW_CLS = 'flex items-center justify-between gap-[10px]'
-const TYPES_CLS = 'flex gap-1'
-const TYPE_BTN_CLS =
-  'cursor-pointer rounded-md border border-[var(--border)] bg-[var(--bg-tertiary)] px-[10px] py-1 text-[length:var(--text-sm)] text-[var(--text-secondary)] transition-[background-color,color,border-color] duration-150 hover:border-[var(--text-muted)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11'
-const TYPE_BTN_ACTIVE_CLS =
-  'border-[var(--accent)] bg-[var(--accent)] text-[var(--accent-foreground)] hover:border-[var(--accent)] hover:text-[var(--accent-foreground)]'
-const SUBMIT_CLS =
-  'cursor-pointer rounded-md border-none bg-[var(--accent)] px-4 py-1.5 text-[length:var(--text-md)] font-medium text-[var(--accent-foreground)] transition-opacity duration-150 hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11'
-const ERROR_CLS = 'text-[length:var(--text-sm)] text-[var(--color-error)]'
-const HINT_CLS = 'text-center text-[length:var(--text-xs)] text-[var(--text-muted)]'
-const KBD_CLS =
-  'inline-block rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-[5px] py-[1px] font-[inherit] text-[length:var(--text-2xs)]'
 
 function getBaseUrl(): string {
   return ''
@@ -39,8 +22,6 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const dialogRef = useRef<HTMLDivElement>(null)
-  useDialogFocus({ ref: dialogRef, isOpen, onClose })
 
   useEffect(() => {
     if (isOpen) {
@@ -87,53 +68,63 @@ export function QuickCaptureTask({ isOpen, onClose }: QuickCaptureTaskProps) {
   if (!isOpen) return null
 
   return (
-    <div className={BACKDROP_CLS} onClick={onClose}>
-      <div
-        ref={dialogRef}
-        className={MODAL_CLS}
-        role="dialog"
-        aria-modal="true"
+    <Dialog
+      open={isOpen}
+      onOpenChange={open => {
+        if (!open) onClose()
+      }}
+    >
+      <DialogContent
+        className="top-[20%] w-[480px] max-w-[90vw] translate-y-0 rounded-[12px] bg-[var(--bg-secondary)] p-4 shadow-[var(--shadow-xl)]"
         aria-label="Quick capture task"
-        tabIndex={-1}
-        onClick={e => e.stopPropagation()}
+        aria-describedby={undefined}
       >
-        <form className={FORM_CLS} onSubmit={handleSubmit}>
-          <input
+        <DialogTitle className="sr-only">Quick capture task</DialogTitle>
+        <form className="flex flex-col gap-[10px]" onSubmit={handleSubmit}>
+          <Input
             ref={inputRef}
             type="text"
-            className={INPUT_CLS}
+            className="box-border h-auto rounded-lg bg-[var(--bg-primary)] py-[10px] font-[var(--font-sans)] text-[length:var(--text-base)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)]"
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Task title..."
             required
           />
-          <div className={ROW_CLS}>
-            <div className={TYPES_CLS}>
+          <div className="flex items-center justify-between gap-[10px]">
+            <div className="flex gap-1">
               {TYPE_OPTIONS.map(t => (
-                <button
+                <Button
                   key={t}
                   type="button"
-                  className={taskType === t ? `${TYPE_BTN_CLS} ${TYPE_BTN_ACTIVE_CLS}` : TYPE_BTN_CLS}
+                  variant={taskType === t ? 'primary' : 'secondary'}
+                  size="sm"
+                  className={coarseHitAreaCls}
                   onClick={() => setTaskType(t)}
                 >
                   {t}
-                </button>
+                </Button>
               ))}
             </div>
-            <button
+            <Button
               type="submit"
-              className={SUBMIT_CLS}
+              variant="primary"
+              className={coarseHitAreaCls}
               disabled={!title.trim() || submitting}
             >
               {submitting ? 'Creating...' : 'Create'}
-            </button>
+            </Button>
           </div>
-          {error && <p className={ERROR_CLS} role="alert">{error}</p>}
-          <div className={HINT_CLS}>
-            <kbd className={KBD_CLS}>Enter</kbd> to create &middot; <kbd className={KBD_CLS}>Esc</kbd> to cancel
+          {error && (
+            <p className="text-[length:var(--text-sm)] text-[var(--color-error)]" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="text-center text-[length:var(--text-xs)] text-[var(--text-muted)]">
+            <kbd className="inline-block rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-[5px] py-[1px] font-[inherit] text-[length:var(--text-2xs)]">Enter</kbd> to create &middot;{' '}
+            <kbd className="inline-block rounded-[3px] border border-[var(--border)] bg-[var(--bg-tertiary)] px-[5px] py-[1px] font-[inherit] text-[length:var(--text-2xs)]">Esc</kbd> to cancel
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -35,40 +35,43 @@ export function CommandBar({
   agentHasProject: _agentHasProject = false,
 }: CommandBarProps) {
   return (
-    <div className="command-bar">
+    <div className="command-bar flex min-h-[var(--activity-panel-bar-height)] shrink-0 items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg-secondary)] px-3">
       {/* Left cluster — Session context */}
-      <div className="command-bar-left">
-        <button
+      <div className="command-bar-left flex min-w-0 flex-1 items-center gap-1">
+        <Button
           type="button"
-          className="command-bar-session"
+          variant="ghost"
+          size="sm"
+          dense
+          className="command-bar-session min-w-0 max-w-full flex-1 basis-auto justify-start rounded border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] [font-weight:var(--font-weight-medium)] text-[var(--text-primary)] [transition:background_0.1s] hover:bg-[var(--bg-tertiary)]"
           data-testid="chat-session-selector"
           onClick={onOpenPalette}
           title="Switch session (Cmd+K)"
         >
           {sessionSource && (
-            <span className="command-bar-source" aria-hidden="true">
+            <span className="command-bar-source inline-flex shrink-0 items-center text-[var(--text-secondary)]" aria-hidden="true">
               <SourceIcon source={sessionSource} size={14} />
             </span>
           )}
           {sessionRef && (
-            <span className="command-bar-ref">{sessionRef}</span>
+            <span className="command-bar-ref shrink-0 text-[var(--accent)] [font-weight:var(--font-weight-medium)]">{sessionRef}</span>
           )}
-          <span className="command-bar-title">
+          <span className="command-bar-title min-w-0 flex-1 basis-auto overflow-hidden text-ellipsis whitespace-nowrap text-left text-[var(--text-primary)] [font-weight:var(--font-weight-medium)] max-md:max-w-none">
             {getSessionTitleText(title)}
           </span>
           <DropdownCaret />
-        </button>
+        </Button>
       </div>
 
       {/* Right cluster — Actions */}
-      <div className="command-bar-right">
+      <div className="command-bar-right flex shrink-0 items-center gap-1.5">
         {onTogglePanel && (
           <Button
             type="button"
             variant="accent"
             size="sm"
             dense
-            className="command-bar-btn"
+            className="command-bar-btn min-h-[var(--status-bar-control-height)] shrink-0"
             onClick={onTogglePanel}
             aria-label={panelVisible ? 'Hide activity panel' : 'Show activity panel'}
             title={panelVisible ? 'Hide activity panel' : 'Show activity panel'}

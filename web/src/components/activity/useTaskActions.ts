@@ -7,7 +7,6 @@ import { getBaseUrl } from "./TasksTabData";
 interface UseTaskActionsOptions {
   projectId?: string | null;
   fetchTasks: () => void;
-  loading: boolean;
   setShowCreateTask: Dispatch<SetStateAction<boolean>>;
   setActionError: Dispatch<SetStateAction<string | null>>;
 }
@@ -42,7 +41,6 @@ function throwCreateTaskError(
 export function useTaskActions({
   projectId,
   fetchTasks,
-  loading,
   setShowCreateTask,
   setActionError,
 }: UseTaskActionsOptions): UseTaskActionsResult {
@@ -102,12 +100,8 @@ export function useTaskActions({
     {
       onAdd: handleOpenCreateTask,
       addAriaLabel: "New task",
-      onRefresh: fetchTasks,
-      refreshing: loading,
-      refreshLabel: "Refresh",
-      refreshAriaLabel: "Refresh tasks",
     },
-    [handleOpenCreateTask, fetchTasks, loading],
+    [handleOpenCreateTask],
   );
 
   return { handleCreateTask };

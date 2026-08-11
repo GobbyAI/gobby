@@ -21,6 +21,9 @@ import {
 } from "../../hooks/useTreeKeyboardNavigation";
 import { cn } from "../../lib/utils";
 import { ResizeHandle } from "../shared/ResizeHandle";
+import { Button } from "../ui/Button";
+import { Chip } from "../ui/Chip";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { ActivityToolbarSearchRow } from "./ActivityPanelSearch";
 import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
@@ -504,7 +507,7 @@ export function ActivityMcpTab({
   }
 
   return (
-    <div className="activity-mcp-tab">
+    <div className="flex h-full min-h-0 flex-col">
       {ConfirmDialogElement}
       {searchOpen && (
         <ActivityToolbarSearchRow
@@ -517,25 +520,27 @@ export function ActivityMcpTab({
       )}
 
       {actionError && (
-        <button
+        <Button
           type="button"
-          className="activity-mcp-error"
+          variant="destructive"
+          size="sm"
+          className={cn("w-full cursor-pointer rounded-none border-0 border-b border-[var(--border)] bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)] px-3 py-[0.4rem] text-left text-[length:var(--text-xs)] text-[var(--color-error)]", coarseHitAreaCls)}
           onClick={() => setActionError(null)}
           aria-label={`Dismiss error: ${actionError}`}
         >
           {actionError}
-        </button>
+        </Button>
       )}
 
       <div
         className={cn(
-          "activity-mcp-tree-shell",
-          selection && "activity-mcp-tree-shell--split",
+          "flex min-h-0 flex-[1_1_auto] flex-col",
+          selection && "flex-[0_0_auto]",
         )}
         style={selection ? { height: `${topHeight}%` } : undefined}
       >
         <div
-          className="activity-mcp-tree"
+          className="min-h-0 flex-[1_1_auto] overflow-y-auto bg-[var(--bg-primary)]"
           role="tree"
           aria-label="MCP servers and tools"
           aria-live="polite"
@@ -577,16 +582,18 @@ export function ActivityMcpTab({
                       serverType === "internal" ? "Internal" : "External"
                     }`}
                     className={cn(
-                      "activity-mcp-row activity-mcp-server-row",
-                      disabled && "activity-mcp-server-row--disabled",
-                      serverSelected && "activity-mcp-row--selected",
+                      "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pl-3 pr-1 text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)] [&:not(:first-child)]:border-t [&:not(:first-child)]:border-[var(--border)]",
+                      disabled && "opacity-[0.55]",
+                      serverSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
                     )}
                     onClick={() => selectRow(serverId)}
                     onKeyDown={(event) => handleKeyDown(serverId, event)}
                   >
-                    <button
+                    <Button
                       type="button"
-                      className="activity-mcp-row-toggle"
+                      variant="ghost"
+                      size="icon"
+                      className={cn("inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-[0.35rem] border-0 bg-transparent p-0 text-[var(--text-muted)] transition-colors duration-150 hover:bg-[var(--bg-primary)] hover:text-[var(--text-primary)]", coarseHitAreaCls)}
                       aria-label={`${expanded ? "Collapse" : "Expand"} ${
                         server.name
                       } tools`}
@@ -597,25 +604,20 @@ export function ActivityMcpTab({
                       }}
                     >
                       <ChevronIcon open={expanded} />
-                    </button>
+                    </Button>
                     <ActivityRowStatusDot
                       kind={healthToStatusKind(health)}
                       title={`Health: ${health}`}
                     />
                     <span className="activity-row-title">{server.name}</span>
-                    <span
-                      className={cn(
-                        "activity-mcp-chip",
-                        serverType === "internal"
-                          ? "activity-mcp-chip--internal"
-                          : "activity-mcp-chip--external",
-                      )}
-                    >
+                    <Chip tone={serverType === "internal" ? "accent" : "info"}>
                       {serverType === "internal" ? "Internal" : "External"}
-                    </span>
-                    <button
+                    </Chip>
+                    <Button
                       type="button"
-                      className="task-more-btn"
+                      variant="ghost"
+                      size="icon"
+                      className={cn("task-more-btn", coarseHitAreaCls)}
                       aria-label={`Open actions for ${server.name} server`}
                       onClick={(event) =>
                         openMenu(event, {
@@ -627,12 +629,12 @@ export function ActivityMcpTab({
                       }
                     >
                       <KebabIcon />
-                    </button>
+                    </Button>
                   </div>
                   {expanded &&
                     (visibleTools.length === 0 ? (
                       <div
-                        className="activity-mcp-empty-row"
+                        className="py-[0.45rem] pl-[2.55rem] pr-3 text-[length:var(--text-sm)] text-[var(--text-secondary)]"
                         role="treeitem"
                         aria-level={2}
                         aria-disabled="true"
@@ -661,26 +663,28 @@ export function ActivityMcpTab({
                                 : `${tool.name} tool`
                             }
                             className={cn(
-                              "activity-mcp-row activity-mcp-tool-row",
-                              toolSelected && "activity-mcp-row--selected",
+                              "flex min-h-[var(--activity-panel-row-height)] cursor-pointer items-center gap-[0.45rem] py-[0.35rem] pl-[2.55rem] pr-1 text-[var(--text-primary)] transition-[background,box-shadow] duration-150 hover:bg-[var(--bg-tertiary)]",
+                              toolSelected && "bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]",
                             )}
                             onClick={() => selectRow(toolId)}
                             onKeyDown={(event) => handleKeyDown(toolId, event)}
                           >
-                            <span className="activity-row-title activity-mcp-tool-title">
+                            <span className="activity-row-title flex-[0_1_auto]">
                               {tool.name}
                             </span>
                             {tool.brief && (
                               <span
-                                className="activity-row-meta activity-mcp-tool-brief"
+                                className="activity-row-meta min-w-0 flex-[1_1_auto] truncate"
                                 title={tool.brief}
                               >
                                 {tool.brief}
                               </span>
                             )}
-                            <button
+                            <Button
                               type="button"
-                              className="task-more-btn"
+                              variant="ghost"
+                              size="icon"
+                              className={cn("task-more-btn", coarseHitAreaCls)}
                               aria-label={`Open actions for ${server.name}.${tool.name}`}
                               onClick={(event) =>
                                 openMenu(event, {
@@ -691,7 +695,7 @@ export function ActivityMcpTab({
                               }
                             >
                               <KebabIcon />
-                            </button>
+                            </Button>
                           </div>
                         );
                       })

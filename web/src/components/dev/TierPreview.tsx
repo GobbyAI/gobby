@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Card } from '../ui/Card'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { TIERS, type TierId } from './tierPreviewConfig'
 
@@ -71,30 +72,28 @@ export function TierPreview() {
         className="flex min-h-0 flex-1 items-center justify-center overflow-hidden p-4"
       >
         {fills ? (
-          <iframe
-            title="Gobby tier preview"
-            src="/"
-            data-testid="tier-frame"
-            className="h-full w-full rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]"
-          />
+          <Card asChild className="h-full w-full bg-[color:var(--bg-secondary)]">
+            <iframe title="Gobby tier preview" src="/" data-testid="tier-frame" />
+          </Card>
         ) : (
           <div
             data-testid="tier-frame-wrap"
             className="shrink-0"
             style={{ width: width * scale, height: height * scale }}
           >
-            <iframe
-              title="Gobby tier preview"
-              src="/"
-              data-testid="tier-frame"
-              className="rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]"
-              style={{
-                width: `${width}px`,
-                height: `${height}px`,
-                transform: `scale(${scale})`,
-                transformOrigin: 'top left',
-              }}
-            />
+            <Card asChild className="bg-[color:var(--bg-secondary)]">
+              <iframe
+                title="Gobby tier preview"
+                src="/"
+                data-testid="tier-frame"
+                style={{
+                  width: `${width}px`,
+                  height: `${height}px`,
+                  transform: `scale(${scale})`,
+                  transformOrigin: 'top left',
+                }}
+              />
+            </Card>
           </div>
         )}
       </div>

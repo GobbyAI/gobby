@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { Chip } from "../../ui/Chip";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import {
   DetailActionButton,
@@ -95,7 +96,7 @@ export function SkillsInstalledDetail({
         actions={
           <>
             {skillSourceKey(draft) !== "installed" && (
-              <span className="activity-chip">{skillSourceLabel(draft)}</span>
+              <Chip>{skillSourceLabel(draft)}</Chip>
             )}
             {viewMode === "content" ? (
               <DetailActionButton label="Close" onClick={() => setViewMode("detail")} />

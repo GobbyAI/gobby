@@ -255,7 +255,7 @@ export function useChatInputPrimaryAction({
       ? 'border border-border bg-transparent text-foreground hover:bg-muted'
       : 'bg-accent text-accent-foreground hover:bg-accent-hover',
     primaryButtonKind === 'mic-recording' &&
-      'ring-2 ring-[var(--color-error)]/70 ring-offset-2 ring-offset-background animate-pulse motion-reduce:animate-none',
+      'animate-pulse ring-2 ring-[var(--color-error)]/70 ring-offset-2 ring-offset-background',
   )
 
   return {

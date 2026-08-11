@@ -370,8 +370,27 @@ class TmuxSessionManager:
         await self._run("set-option", "-t", session_name, option, value, timeout=5.0)
 
     async def refresh_client(self, session_name: str) -> None:
-        """Redraw clients attached to a tmux session."""
-        await self._run("refresh-client", "-t", session_name, timeout=5.0)
+        """Redraw every client attached to a tmux session.
+
+        refresh-client targets a client tty, not a session, so the session's
+        clients are resolved first. A session with no attached clients is a
+        no-op; a client that detaches between the two commands is ignored.
+        """
+        rc, stdout, stderr = await self._run(
+            "list-clients", "-t", session_name, "-F", "#{client_tty}", timeout=5.0
+        )
+        if rc != 0:
+            raise RuntimeError(f"tmux list-clients failed for '{session_name}': {stderr.strip()}")
+        for tty in (line.strip() for line in stdout.splitlines()):
+            if not tty:
+                continue
+            refresh_rc, _stdout, refresh_stderr = await self._run(
+                "refresh-client", "-t", tty, timeout=5.0
+            )
+            if refresh_rc != 0:
+                logger.debug(
+                    "tmux refresh-client failed for tty %s: %s", tty, refresh_stderr.strip()
+                )
 
     async def create_session(
         self,

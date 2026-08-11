@@ -8,6 +8,7 @@ import {
 import type { PaletteItem } from "../../hooks/useColonAutocomplete";
 import type { Settings } from "../../hooks/useSettings";
 import type { CommandPaletteAction } from "../chat/CommandPalette";
+import type { SettingsOverlayController } from "../settings/useSettingsOverlay";
 import type { ChatMode, QueuedFile } from "../../types/chat";
 import { ACTIVITY_PANEL_TABS, type ActivityTab } from "../activity/ActivityPanelTabs";
 import { requestDaemonRestart } from "../../lib/api";
@@ -35,7 +36,7 @@ interface UseAppCommandPaletteArgs {
   sendMode: (mode: ChatMode) => void;
   addSystemMessage: (content: string) => void;
   setActiveModal: Dispatch<SetStateAction<ActiveModal>>;
-  setSettingsOpen: Dispatch<SetStateAction<boolean>>;
+  settingsOverlay: Pick<SettingsOverlayController, "open">;
   setResumeModalOpen: Dispatch<SetStateAction<boolean>>;
   showPlanRef: RefObject<(() => void) | null>;
   openActivityTab: (tab: ActivityTab) => void;
@@ -52,7 +53,7 @@ export function useAppCommandPalette({
   sendMode,
   addSystemMessage,
   setActiveModal,
-  setSettingsOpen,
+  settingsOverlay,
   setResumeModalOpen,
   showPlanRef,
   openActivityTab,
@@ -114,7 +115,7 @@ export function useAppCommandPalette({
         return;
       }
       if (item.action === "open_settings") {
-        setSettingsOpen(true);
+        settingsOverlay.open();
         return;
       }
       if (item.action === "clear_history") {
@@ -158,7 +159,7 @@ export function useAppCommandPalette({
       openActivityTab,
       setActiveModal,
       setResumeModalOpen,
-      setSettingsOpen,
+      settingsOverlay,
       settings.chatMode,
       showPlanRef,
       updateChatMode,
@@ -193,7 +194,7 @@ export function useAppCommandPalette({
         label: "Settings",
         icon: "\u2699",
         category: "action",
-        onSelect: () => setSettingsOpen(true),
+        onSelect: () => settingsOverlay.open(),
       },
       {
         id: "clear",
@@ -224,7 +225,7 @@ export function useAppCommandPalette({
     openActivityTab,
     restartDaemon,
     setResumeModalOpen,
-    setSettingsOpen,
+    settingsOverlay,
     startNewChat,
   ]);
 

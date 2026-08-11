@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { forwardRef, useImperativeHandle, useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,31 +18,44 @@ vi.mock("../../../../hooks/useTmuxSessions", () => ({
   useTmuxSessions: mockUseTmuxSessions,
 }));
 
-vi.mock("../TerminalSessionPicker", () => ({
-  TerminalSessionPicker: ({
+vi.mock("../TerminalSessionList", () => ({
+  TerminalSessionList: ({
     sessions,
     value,
     onChange,
+    onTerminate,
   }: {
     sessions: JoinedTerminalSession[];
     value: string | null;
     onChange: (value: string) => void;
+    onTerminate: (session: JoinedTerminalSession) => void;
   }) => (
-    <select
-      aria-label="Terminal session"
-      value={value ?? ""}
-      onChange={(event) => onChange(event.target.value)}
-    >
+    <>
+      <select
+        aria-label="Terminal session"
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {sessions.map((session) => (
+          <option
+            key={`${session.tmux.socket}:${session.tmux.name}`}
+            value={`${session.tmux.socket}:${session.tmux.name}`}
+            data-external={session.external}
+          >
+            {session.label}
+          </option>
+        ))}
+      </select>
       {sessions.map((session) => (
-        <option
-          key={`${session.tmux.socket}:${session.tmux.name}`}
-          value={`${session.tmux.socket}:${session.tmux.name}`}
-          data-external={session.external}
+        <button
+          key={`terminate-${session.tmux.socket}:${session.tmux.name}`}
+          type="button"
+          onClick={() => onTerminate(session)}
         >
-          {session.label}
-        </option>
+          Terminate {session.label}
+        </button>
       ))}
-    </select>
+    </>
   ),
 }));
 
@@ -227,7 +240,7 @@ describe("attach lifecycle", () => {
     );
   });
 
-  it("selects the first row when every pane is dead and disables the composer", async () => {
+  it("selects the first row when every pane is dead and hides the keys bar", async () => {
     hookState = makeHookState({
       sessionsLoaded: true,
       sessions: [makeTmuxSession({ name: "finished", pane_dead: true })],
@@ -239,11 +252,8 @@ describe("attach lifecycle", () => {
       expect(hookState.attachSession).toHaveBeenCalledWith("finished", "default");
     });
     expect(screen.getByRole("log", { name: "Terminal output (read-only)" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Enable input" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
-      "title",
-      "This pane has exited. Terminal input is unavailable.",
-    );
+    // A dead pane accepts no input, so the special-keys bar is withheld.
+    expect(screen.queryByRole("button", { name: "Esc" })).toBeNull();
   });
 
   it("detaches before switching targets and filters globally broadcast output", async () => {
@@ -418,6 +428,7 @@ describe("ready handshake repaint", () => {
       .getAttribute("data-mount-id");
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).not.toHaveBeenCalled();
+    expect(hookState.refreshTerminal).not.toHaveBeenCalled();
 
     hookState = {
       ...hookState,
@@ -435,6 +446,10 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(1);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
+    // Output streamed before readiness was dropped, so every ready handshake
+    // must force a full tmux repaint even when the size is already known.
+    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(1);
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
     await waitFor(() => {
       expect(screen.queryByText("Attaching terminal…")).not.toBeInTheDocument();
     });
@@ -452,9 +467,11 @@ describe("ready handshake repaint", () => {
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
     expect(hookState.resizeTerminal).toHaveBeenLastCalledWith(31, 97);
+    expect(hookState.refreshTerminal).toHaveBeenCalledTimes(2);
+    expect(hookState.refreshTerminal).toHaveBeenLastCalledWith("wide", "default");
   });
 
-  it("requires fresh readiness and closes the composer when a reconnect reuses a stream id", async () => {
+  it("requires fresh readiness when a reconnect reuses a stream id", async () => {
     const user = userEvent.setup();
     const tmux = makeTmuxSession({ name: "reused" });
     hookState = makeHookState({
@@ -471,11 +488,6 @@ describe("ready handshake repaint", () => {
       );
     });
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
-    await user.click(screen.getByRole("button", { name: "Enable input" }));
-    expect(screen.getByRole("button", { name: "Disable input" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
 
     hookState = {
       ...hookState,
@@ -495,18 +507,29 @@ describe("ready handshake repaint", () => {
       streamingId: "same-stream",
     };
     rendered.rerender(<TerminalTab />);
-    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
     expect(screen.getByText("Attaching terminal…")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
     expect(hookState.resizeTerminal).toHaveBeenCalledTimes(2);
   });
 });
 
-describe("composer only input", () => {
-  it("keeps the terminal surface inert while forwarding composer and protocol input", async () => {
+describe("terminate action", () => {
+  it("kills the row's tmux session via the list terminate action", async () => {
+    const user = userEvent.setup();
+    const tmux = makeTmuxSession({ name: "doomed", socket: "gobby" });
+    hookState = makeHookState({ sessionsLoaded: true, sessions: [tmux] });
+    render(<TerminalTab />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Terminate doomed" }),
+    );
+    expect(hookState.killSession).toHaveBeenCalledTimes(1);
+    expect(hookState.killSession).toHaveBeenCalledWith("doomed", "gobby");
+  });
+});
+
+describe("direct input", () => {
+  it("forwards renderer input and quick-keys composer input without a gate", async () => {
     const user = userEvent.setup();
     const tmux = makeTmuxSession({ name: "interactive" });
     hookState = makeHookState({
@@ -518,25 +541,13 @@ describe("composer only input", () => {
     render(<TerminalTab />);
     await user.click(screen.getByRole("button", { name: "Renderer ready" }));
 
-    expect(screen.getByRole("button", { name: "Enable input" })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-    const terminalSurface = screen.getByRole("log", { name: "Terminal output (read-only)" });
-    fireEvent.keyDown(terminalSurface, { key: "x", code: "KeyX" });
-    expect(hookState.sendInput).not.toHaveBeenCalled();
-
+    // Renderer-emitted input — typed keys and protocol replies alike — flows
+    // straight through to the PTY. There is no enable-input gate anymore.
     await user.click(screen.getByRole("button", { name: "Protocol reply" }));
     expect(hookState.sendInput).toHaveBeenCalledWith("\u001b[6n");
 
-    await user.click(screen.getByRole("button", { name: "Enable input" }));
-    expect(screen.getByRole("button", { name: "Disable input" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
-    await user.type(screen.getByLabelText("Terminal input"), "status");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(hookState.sendInput).toHaveBeenCalledWith("status\r");
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(hookState.sendInput).toHaveBeenCalledWith("\u001b");
   });
 });
 

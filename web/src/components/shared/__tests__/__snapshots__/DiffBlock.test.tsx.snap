@@ -6,7 +6,7 @@ exports[`DiffBlock — inline variant from synthetic lines > snapshot of standar
 >
   <code
     class="language-text"
-    style="white-space: pre; background: transparent; color: rgb(171, 178, 191); text-shadow: none; font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace; direction: ltr; text-align: left; word-spacing: normal; word-break: normal; line-height: 1.5; tab-size: 2; hyphens: none;"
+    style="white-space: pre; background: transparent; color: rgb(171, 178, 191); text-shadow: none; font-family: var(--font-mono); direction: ltr; text-align: left; word-spacing: normal; word-break: normal; line-height: 1.5; tab-size: 2; hyphens: none;"
   >
     <span
       style="background: transparent; display: block;"

@@ -3,8 +3,12 @@
  * everywhere — see .impeccable.md "Canonical Components". */
 export function DropdownCaret({ open = false }: { open?: boolean }) {
   return (
-    <span className="dropdown-caret" aria-hidden="true">
+    <span
+      className="dropdown-caret inline-flex shrink-0 items-center justify-center opacity-70"
+      aria-hidden="true"
+    >
       <svg
+        className="size-3"
         viewBox="0 0 16 16"
         fill="none"
         stroke="currentColor"

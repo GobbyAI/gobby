@@ -204,6 +204,28 @@ def test_registered_isolation_path_cannot_explicitly_update_repo_path(
     assert refreshed.repo_path == str(canonical_path)
 
 
+@pytest.mark.parametrize("root", ["worktrees", "clones"])
+def test_unregistered_isolation_root_path_cannot_update_repo_path(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    root: str,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    canonical_path = tmp_path / "canonical"
+    canonical_path.mkdir()
+    projects = LocalProjectManager(temp_db)
+    project = projects.create("orphan-project", repo_path=str(canonical_path))
+    orphaned_path = tmp_path / ".gobby" / root / "orphan-project" / "task-1"
+
+    with pytest.raises(IsolatedAgentProjectPathError, match="isolation path"):
+        projects.update(project.id, repo_path=str(orphaned_path))
+
+    refreshed = projects.get(project.id)
+    assert refreshed is not None
+    assert refreshed.repo_path == str(canonical_path)
+
+
 def test_nonisolated_init_can_set_missing_repo_path(
     temp_db: HubDatabase,
     tmp_path: Path,

@@ -526,7 +526,6 @@ class TestTmuxSessionManager:
                 ("demo", "status", "off"),
                 ("set-option", "-t", "demo", "status", "off"),
             ),
-            ("refresh_client", ("demo",), ("refresh-client", "-t", "demo")),
         ],
     )
     async def test_client_commands_use_base_args(
@@ -556,6 +555,57 @@ class TestTmuxSessionManager:
             *tmux_args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_refreshes_each_listed_client_tty(self) -> None:
+        mgr = TmuxSessionManager()
+        run_calls: list[tuple[str, ...]] = []
+
+        async def fake_run(*tmux_args: str, timeout: float = 0) -> tuple[int, str, str]:
+            run_calls.append(tmux_args)
+            if tmux_args[0] == "list-clients":
+                return (0, "/dev/ttys001\n/dev/ttys002\n\n", "")
+            return (0, "", "")
+
+        with patch.object(mgr, "_run", side_effect=fake_run):
+            await mgr.refresh_client("demo")
+
+        assert run_calls == [
+            ("list-clients", "-t", "demo", "-F", "#{client_tty}"),
+            ("refresh-client", "-t", "/dev/ttys001"),
+            ("refresh-client", "-t", "/dev/ttys002"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_raises_when_list_clients_fails(self) -> None:
+        mgr = TmuxSessionManager()
+
+        with (
+            patch.object(
+                mgr,
+                "_run",
+                new_callable=AsyncMock,
+                return_value=(1, "", "no such session"),
+            ),
+            pytest.raises(RuntimeError, match="list-clients failed"),
+        ):
+            await mgr.refresh_client("demo")
+
+    @pytest.mark.asyncio
+    async def test_refresh_client_no_attached_clients_is_noop(self) -> None:
+        mgr = TmuxSessionManager()
+
+        with patch.object(
+            mgr,
+            "_run",
+            new_callable=AsyncMock,
+            return_value=(0, "", ""),
+        ) as mock_run:
+            await mgr.refresh_client("demo")
+
+        mock_run.assert_awaited_once_with(
+            "list-clients", "-t", "demo", "-F", "#{client_tty}", timeout=5.0
         )
 
     @patch("shutil.which", return_value="/usr/bin/tmux")
@@ -1212,19 +1262,37 @@ class TestTmuxPTYBridge:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="gobby")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "-L", "gobby", "attach-session", "-t", "my-session"]
+        assert cmd == [
+            "tmux",
+            "-L",
+            "gobby",
+            "-T",
+            "256,RGB",
+            "attach-session",
+            "-t",
+            "my-session",
+        ]
 
     def test_build_attach_cmd_default_server(self) -> None:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "attach-session", "-t", "my-session"]
+        assert cmd == ["tmux", "-T", "256,RGB", "attach-session", "-t", "my-session"]
 
     def test_build_attach_cmd_socket_path(self) -> None:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="", socket_path="/tmp/tmux-1000/gobby")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "-S", "/tmp/tmux-1000/gobby", "attach-session", "-t", "my-session"]
+        assert cmd == [
+            "tmux",
+            "-S",
+            "/tmp/tmux-1000/gobby",
+            "-T",
+            "256,RGB",
+            "attach-session",
+            "-t",
+            "my-session",
+        ]
 
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:

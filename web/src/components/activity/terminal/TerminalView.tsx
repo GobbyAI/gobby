@@ -13,6 +13,9 @@ import {
 } from "react";
 
 import { loadGhosttyCore } from "../../../lib/ghosttyCore";
+import { cn } from "../../../lib/utils";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 
 const RESIZE_DEBOUNCE_MS = 200;
 
@@ -89,6 +92,11 @@ function applyGobbyTheme(element: HTMLElement): void {
   element.style.setProperty("--term-color-15", "var(--text-primary)");
 }
 
+// The narrowest grid the viewer will request. Below this the rendering zooms
+// out (CSS scale on the mount element) instead of shrinking the PTY, so full
+// standard-width rows stay readable in a narrow activity panel.
+const MIN_TERMINAL_COLS = 80;
+
 // wterm's built-in autoResize probes character metrics once during init and
 // silently gives up when the measurement lands at 0 (fonts not yet loaded,
 // layout not settled), leaving the grid stuck at the 80x24 default forever.
@@ -155,25 +163,58 @@ function TerminalInstance({
       .init()
       .then((readyTerminal) => {
         if (disposed) return;
-        const textarea = readyTerminal.element.querySelector("textarea");
-        if (textarea) {
-          textarea.disabled = true;
-          textarea.tabIndex = -1;
-          textarea.blur();
-        }
         // Own the container-to-grid fit: resize the terminal whenever the
         // outer container changes size (dock expand/collapse, panel resize)
         // and once fonts finish loading so the first measurement isn't
         // garbage. Observe the container, not the wterm element — the
         // renderer locks the wterm element's height to the current grid, so
         // it never reports growth on its own.
+        let appliedScale = 1;
         const applyFit = () => {
           if (disposed) return;
           const cell = measureCell(readyTerminal.element);
           if (!cell) return;
+          // Cell probes measure through any active zoom transform on the
+          // mount element; normalize back to base-font metrics so the fit
+          // math is stable across passes.
+          const charWidth = cell.charWidth / appliedScale;
+          const rowHeight = cell.rowHeight / appliedScale;
           const rect = container.getBoundingClientRect();
-          const cols = Math.max(1, Math.floor(rect.width / cell.charWidth));
-          const rows = Math.max(1, Math.floor(rect.height / cell.rowHeight));
+          // The grid must fit INSIDE the wterm element's padding box: sizing
+          // to the raw container makes the grid overflow by the padding,
+          // which leaves the element scrollable — the visible row offset then
+          // depends on the write/fit ordering instead of the layout.
+          const style = getComputedStyle(readyTerminal.element);
+          const pad = (value: string) => Number.parseFloat(value) || 0;
+          const padX = pad(style.paddingLeft) + pad(style.paddingRight);
+          const padY = pad(style.paddingTop) + pad(style.paddingBottom);
+          const availWidth = Math.max(0, rect.width - padX);
+          const availHeight = Math.max(0, rect.height - padY);
+          // Never fall below the standard terminal width. When the panel is
+          // too narrow to show MIN_COLS at the base font, keep the grid at
+          // MIN_COLS and zoom the rendering down so full rows stay visible
+          // instead of clipping or wrapping.
+          const fitCols = Math.floor(availWidth / charWidth);
+          const cols = Math.max(MIN_TERMINAL_COLS, fitCols);
+          const scale = Math.min(1, availWidth / (cols * charWidth) || 1);
+          const rows = Math.max(
+            1,
+            Math.floor(availHeight / (rowHeight * scale)),
+          );
+          if (scale !== appliedScale) {
+            appliedScale = scale;
+            if (scale < 1) {
+              mountElement.style.transform = `scale(${scale})`;
+              mountElement.style.transformOrigin = "top left";
+              mountElement.style.width = `${rect.width / scale}px`;
+              mountElement.style.height = `${rect.height / scale}px`;
+            } else {
+              mountElement.style.transform = "";
+              mountElement.style.transformOrigin = "";
+              mountElement.style.width = "";
+              mountElement.style.height = "";
+            }
+          }
           if (cols !== readyTerminal.cols || rows !== readyTerminal.rows) {
             readyTerminal.resize(cols, rows);
           }
@@ -329,14 +370,17 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
         {resolution.status === "fallback" ? (
           <div className="absolute end-2 top-2 z-10 inline-flex max-w-[calc(100%-1rem)] items-center gap-2 rounded-md border border-warning/40 bg-[var(--bg-secondary)] px-2 py-1 text-xs text-warning shadow-sm">
             <span className="truncate">Reduced terminal fidelity</span>
-            <button
+            <Button
               type="button"
-              className="shrink-0 rounded px-1.5 py-0.5 font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+              variant="ghost"
+              size="sm"
+              dense
+              className={cn("shrink-0 px-1.5 py-0.5", coarseHitAreaCls)}
               aria-label="Retry Ghostty renderer"
               onClick={retry}
             >
               Retry
-            </button>
+            </Button>
           </div>
         ) : null}
 
@@ -352,13 +396,19 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
                   {resolution.message}
                 </span>
               </div>
-              <button
+              <Button
                 type="button"
-                className="min-h-9 self-start rounded-md border border-[var(--border)] bg-[var(--bg-primary)] px-3 py-1.5 font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-tertiary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+                variant="secondary"
+                size="sm"
+                dense
+                className={cn(
+                  "min-h-9 self-start bg-[var(--bg-primary)] px-3 py-1.5 text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]",
+                  coarseHitAreaCls,
+                )}
                 onClick={retry}
               >
                 Retry terminal renderer
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}

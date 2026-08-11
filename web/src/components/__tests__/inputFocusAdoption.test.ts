@@ -3,14 +3,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-const focusManagedInputs = [
-  'ValidationDetectionEditor.tsx',
-  'activity/memory/KnowledgeGraph.tsx',
-  'activity/pipelines/PipelineEditor.styles.ts',
-  'activity/wiki/WikiQuickOpen.tsx',
-  'code-graph/CodeGraphExplorer.tsx',
-  'tasks/QuickCaptureTask.tsx',
-]
+const focusManagedInputs: readonly string[] = []
 
 describe('shared input focus styles', () => {
   it('uses inputFocusCls instead of suppressing outlines locally', () => {

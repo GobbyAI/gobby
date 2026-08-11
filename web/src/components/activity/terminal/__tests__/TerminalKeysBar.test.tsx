@@ -10,9 +10,9 @@ describe("TerminalKeysBar", () => {
     const sendInput = vi.fn();
     render(<TerminalKeysBar sendInput={sendInput} />);
 
-    const input = screen.getByRole("textbox", { name: "Terminal input" });
-    await user.type(input, "status");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    // Regular typing goes straight into the focused terminal window; the bar
+    // carries only the special keys an on-screen keyboard can't produce.
+    expect(screen.queryByRole("textbox")).toBeNull();
 
     const quickKeys = ["Esc", "Tab", "Enter", "Up", "Down", "Ctrl+C", "1", "2", "3"];
     for (const name of quickKeys) {
@@ -20,7 +20,6 @@ describe("TerminalKeysBar", () => {
     }
 
     expect(sendInput.mock.calls.map(([data]) => data)).toEqual([
-      "status\r",
       "\x1b",
       "\t",
       "\r",
@@ -31,6 +30,5 @@ describe("TerminalKeysBar", () => {
       "2",
       "3",
     ]);
-    expect(input).toHaveValue("");
   });
 });

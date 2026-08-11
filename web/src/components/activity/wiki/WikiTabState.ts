@@ -6,7 +6,6 @@
 
 import { useCallback, useRef, useState } from "react";
 
-import type { WikiAskResult } from "./WikiTabData";
 import type { WikiGraphInclude, WikiMode } from "./WikiTabModel";
 
 export const WIKI_TAB_KEYS = {
@@ -17,11 +16,9 @@ export const WIKI_TAB_KEYS = {
   lastPageWiki: "gobby:wiki-tab:last-page:wiki",
   lastPageCode: "gobby:wiki-tab:last-page:code",
   graph: "gobby:wiki-tab:graph",
-  /** sessionStorage, unlike the rest. */
-  askHistory: "gobby:wiki-tab:ask-history",
 } as const;
 
-export const WIKI_MODES: readonly WikiMode[] = ["wiki", "code", "ask"];
+export const WIKI_MODES: readonly WikiMode[] = ["wiki", "code"];
 
 export function isWikiMode(value: unknown): value is WikiMode {
   return typeof value === "string" && (WIKI_MODES as readonly string[]).includes(value);
@@ -91,68 +88,6 @@ export function storeLastPage(mode: WikiBrowseMode, path: string): void {
 /** Pages under code/ belong to code mode; everything else browses in wiki mode. */
 export function modeForPath(path: string): WikiMode {
   return path.startsWith("code/") ? "code" : "wiki";
-}
-
-// ── Ask history (§5.1) ──────────────────────────────────────────
-
-export const ASK_HISTORY_CAP = 20;
-
-/**
- * One completed ask, persisted with its already-normalized envelope so
- * restoring an entry never refetches. Citations are re-resolved against the
- * live node index at render time — only the extracted targets are trusted.
- */
-export interface AskHistoryEntry {
-  id: string;
-  question: string;
-  llm: boolean;
-  ts: number;
-  envelope: WikiAskResult;
-}
-
-function sessionStorageOr(): Storage | null {
-  try {
-    return window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
-
-function isAskHistoryEntry(value: unknown): value is AskHistoryEntry {
-  if (typeof value !== "object" || value === null) return false;
-  const entry = value as Record<string, unknown>;
-  return (
-    typeof entry.id === "string" &&
-    typeof entry.question === "string" &&
-    typeof entry.llm === "boolean" &&
-    typeof entry.ts === "number" &&
-    typeof entry.envelope === "object" &&
-    entry.envelope !== null
-  );
-}
-
-export function loadAskHistory(): AskHistoryEntry[] {
-  const storage = sessionStorageOr();
-  if (!storage) return [];
-  const raw = readStoredValue(WIKI_TAB_KEYS.askHistory, storage);
-  if (!raw) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isAskHistoryEntry).slice(0, ASK_HISTORY_CAP);
-  } catch {
-    return [];
-  }
-}
-
-export function storeAskHistory(entries: AskHistoryEntry[]): void {
-  const storage = sessionStorageOr();
-  if (!storage) return;
-  writeStoredValue(
-    WIKI_TAB_KEYS.askHistory,
-    JSON.stringify(entries.slice(0, ASK_HISTORY_CAP)),
-    storage,
-  );
 }
 
 /** §4.1 graph view settings, persisted as one JSON blob. */

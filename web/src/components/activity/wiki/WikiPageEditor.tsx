@@ -2,8 +2,8 @@
  * §3.2 page editor: the edit toggle and the recipe-compliant create form over
  * `CodeMirrorEditor`, with draft state in `useDetailDraft` (shell dirty-guard
  * registration, Cmd+S) and the revision contract — the editor holds the base
- * `content_hash`, revalidates it on window focus / manual refresh / right
- * before save, and a mismatch or 412 opens the reload/overwrite conflict
+ * `content_hash`, revalidates it on window focus and right before save, and
+ * a mismatch or 412 opens the reload/overwrite conflict
  * panel. Silent last-write-wins is never allowed.
  */
 
@@ -11,6 +11,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
 import { CodeMirrorEditor } from "../../shared/CodeMirrorEditor";
+import { Card } from "../../ui/Card";
+import { Input } from "../../ui/Input";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DetailActionButton, DetailPaneHeader, useDetailDraft } from "../fields";
 import { fetchPage, type WikiFetchScope } from "./WikiTabData";
@@ -218,10 +220,7 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
         <DetailActionButton label="Create" variant="accent" disabled={saving} onClick={() => void runSave()} />
       </>
     ) : (
-      <>
-        <DetailActionButton label="Refresh" variant="ghost" disabled={saving} onClick={() => void revalidate()} />
-        <DetailActionButton label="Close" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
-      </>
+      <DetailActionButton label="Close" variant="ghost" onClick={() => confirmIfDirty(onClose)} />
     );
 
   return (
@@ -242,7 +241,7 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             <label htmlFor="wiki-create-path" className="shrink-0 text-xs text-muted-foreground">
               Page path
             </label>
-            <input
+            <Input
               id="wiki-create-path"
               value={draft?.path ?? ""}
               onChange={(event) => {
@@ -251,7 +250,8 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
               }}
               spellCheck={false}
               placeholder="knowledge/concepts/example.md"
-              className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-2 py-1 font-mono text-xs text-foreground"
+              wrapperClassName="min-w-0 flex-1"
+              className="h-7 px-2 font-mono text-xs"
             />
           </div>
           {formError ? (
@@ -291,10 +291,10 @@ export function WikiPageEditor({ scope, intent, actions, onClose, onSaved }: Wik
             ariaLabel="Page editor"
           />
         ) : (
-          <div
+          <Card
             role="status"
             aria-label="Loading editor"
-            className="mx-4 my-6 h-24 animate-pulse rounded-lg border border-border bg-muted/30"
+            className="mx-4 my-6 h-24 animate-pulse bg-muted/30"
           />
         )}
       </div>

@@ -1,21 +1,66 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AgentPortfolioPage } from '../AgentPortfolioPage'
 
+const wsHandlers = vi.hoisted(
+  () => ({}) as Record<string, (data: Record<string, unknown>) => void>,
+)
+vi.mock('../../../hooks/useWebSocketEvent', () => ({
+  useWebSocketEvent: (
+    eventType: string,
+    handler: (data: Record<string, unknown>) => void,
+  ) => {
+    wsHandlers[eventType] = handler
+  },
+}))
+
 describe('AgentPortfolioPage', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
+    vi.useRealTimers()
+    for (const key of Object.keys(wsHandlers)) delete wsHandlers[key]
   })
 
-  it('renders the refresh arrow instead of a literal escape sequence', () => {
+  it('has no manual refresh control; toolbar and cards keep positioned wrappers', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
 
     render(<AgentPortfolioPage />)
 
-    const refreshButton = screen.getByRole('button', { name: 'Refresh agents' })
-    expect(refreshButton).toHaveTextContent('↻')
-    expect(refreshButton).not.toHaveTextContent('\\u21BB')
+    // WS-driven refetch replaces the manual Refresh button (#20048).
+    expect(screen.queryByRole('button', { name: 'Refresh agents' })).toBeNull()
+    for (const select of screen.getAllByRole('combobox')) {
+      expect(select.parentElement).toHaveClass('relative')
+    }
+    expect(screen.getByText('Agent Types').parentElement).toHaveClass('rounded-lg')
+  })
+
+  it('coalesces task/session events into one background refetch', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [], tasks: [] }),
+      } as unknown as Response),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<AgentPortfolioPage />)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2) // initial sessions + tasks
+
+    act(() => {
+      wsHandlers.task_event({})
+      wsHandlers.session_event({})
+      wsHandlers.task_event({})
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000)
+    })
+    // One coalesced refetch: sessions + tasks once, not once per event.
+    expect(fetchMock).toHaveBeenCalledTimes(4)
   })
 
   it('renders the escalated task metric once with danger styling', async () => {

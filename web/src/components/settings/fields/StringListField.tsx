@@ -1,5 +1,6 @@
-import { useId } from 'react'
 import { Button } from '../../ui/Button'
+import { FormField } from '../../ui/FormField'
+import { Input } from '../../ui/Input'
 
 export interface StringListFieldProps {
   label: string
@@ -25,8 +26,6 @@ export function StringListField({
   placeholder,
   addLabel = 'Add item',
 }: StringListFieldProps) {
-  const labelId = useId()
-
   function updateItem(index: number, next: string) {
     onChange(value.map((item, itemIndex) => (itemIndex === index ? next : item)))
   }
@@ -40,50 +39,45 @@ export function StringListField({
   }
 
   return (
-    <div className="settings-field settings-list-field" role="group" aria-labelledby={labelId}>
-      <span id={labelId} className="settings-field__label">
-        {label}
-      </span>
-      {value.length > 0 ? (
-        <ul className="settings-list-field__items">
-          {value.map((item, index) => (
-            <li key={index} className="settings-list-field__item">
-              <input
-                type="text"
-                className="settings-field__input"
-                value={item}
-                disabled={disabled}
-                placeholder={placeholder}
-                aria-label={`${ariaLabel} item ${index + 1}`}
-                onChange={(event) => updateItem(index, event.target.value)}
-              />
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="settings-list-field__remove"
-                disabled={disabled}
-                aria-label={`Remove ${ariaLabel} item ${index + 1}`}
-                onClick={() => removeItem(index)}
-              >
-                Remove
-              </Button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="settings-field__empty">No entries.</p>
+    <FormField label={label} group>
+      {() => (
+        <>
+          {value.length > 0 ? (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {value.map((item, index) => (
+                <li key={index} className="flex items-center gap-2">
+                  <Input
+                    type="text"
+                    value={item}
+                    disabled={disabled}
+                    placeholder={placeholder}
+                    aria-label={`${ariaLabel} item ${index + 1}`}
+                    onChange={(event) => updateItem(index, event.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="shrink-0"
+                    disabled={disabled}
+                    aria-label={`Remove ${ariaLabel} item ${index + 1}`}
+                    onClick={() => removeItem(index)}
+                  >
+                    Remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">No entries.</p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" size="sm" disabled={disabled} onClick={addItem}>
+              {addLabel}
+            </Button>
+          </div>
+        </>
       )}
-      <div className="settings-field__actions">
-        <Button
-          type="button"
-          size="sm"
-          disabled={disabled}
-          onClick={addItem}
-        >
-          {addLabel}
-        </Button>
-      </div>
-    </div>
+    </FormField>
   )
 }

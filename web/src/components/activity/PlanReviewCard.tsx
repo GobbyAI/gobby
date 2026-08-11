@@ -3,12 +3,15 @@ import type { Plan } from '../../types/plans'
 import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
+import { markdownBodyClassName } from '../shared/MarkdownBody'
 import { PlanApprovalActions } from '../chat/PlanApprovalActions'
 import {
   getPlanPendingColors,
   type PlanPendingVariant,
 } from '../chat/planPendingSurface'
 import { useIsMobile } from '../../hooks/useIsMobile'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface PlanReviewCardProps {
   plan: Plan
@@ -119,7 +122,12 @@ export const PlanReviewCard = memo(function PlanReviewCard({
       )}
 
       <div className="min-h-0 flex-1 overflow-auto">
-        <div className="message-content prose dark:prose-invert max-w-none p-4 leading-relaxed prose-p:leading-relaxed">
+        <div
+          className={cn(
+            'message-content prose p-4 leading-relaxed dark:prose-invert prose-p:leading-relaxed',
+            markdownBodyClassName,
+          )}
+        >
           <Markdown content={content} id={`plan-review-${plan.id}`} />
         </div>
 
@@ -146,12 +154,14 @@ function RevisionHistory({
           const isCurrent = index === plan.currentVersionIndex
           return (
             <li key={index}>
-              <button
+              <Button
                 type="button"
+                variant="ghost"
                 onClick={() => onSetVersion(plan.id, index)}
                 aria-current={isCurrent ? 'true' : undefined}
                 className={cn(
-                  'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors pointer-coarse:min-h-11',
+                  'flex w-full items-baseline justify-between gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors',
+                  coarseHitAreaCls,
                   isCurrent
                     ? 'bg-accent/10 font-medium text-foreground'
                     : 'text-muted-foreground hover:bg-muted hover:text-foreground',
@@ -159,7 +169,7 @@ function RevisionHistory({
               >
                 <span>Revision {index + 1}</span>
                 <span className="font-mono text-xs text-muted-foreground">{formatTime(v.timestamp)}</span>
-              </button>
+              </Button>
             </li>
           )
         })}

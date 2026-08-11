@@ -139,16 +139,20 @@ export function SettingsSection({
   const hasFields = ownedPaths.length > 0
 
   return (
-    <div className="settings-section">
-      <div className="settings-section__scroll">
-        <div className="settings-section__head">
-          <h3 className="settings-section__title">{section.label}</h3>
-          <p className="settings-section__desc">{section.description}</p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-7 py-6">
+        <div className="flex flex-col gap-1.5 border-b border-border pb-5">
+          <h3 className="text-lg font-semibold leading-[1.2] text-foreground">
+            {section.label}
+          </h3>
+          <p className="max-w-[60ch] text-base leading-[1.5] text-muted-foreground">
+            {section.description}
+          </p>
         </div>
-        <div className="settings-section__body">{children(fields)}</div>
+        <div className="flex flex-col gap-6">{children(fields)}</div>
         {mutationError ? (
           <p
-            className="settings-field__hint text-destructive"
+            className="max-w-[48ch] text-sm leading-[1.4] text-destructive"
             data-terminal={mutationError.terminal || undefined}
             role="alert"
           >
@@ -158,9 +162,12 @@ export function SettingsSection({
         ) : null}
       </div>
       {hasFields ? (
-        <footer className="settings-section__footer">
+        <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-surface-secondary px-5 py-3.5">
           {serverChanged ? (
-            <span className="settings-section__server-changed" role="status">
+            <span
+              className="mr-auto max-w-[40ch] text-sm leading-[1.3] text-muted-foreground"
+              role="status"
+            >
               Changed elsewhere — saving overwrites the newer value.
             </span>
           ) : null}

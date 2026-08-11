@@ -11,10 +11,13 @@ import {
 import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../types/sessions";
 import { Button } from "../../ui/Button";
+import { ResizeHandle } from "../../shared/ResizeHandle";
+import { useRegisterActivityActions } from "../activityActions";
 import { TerminalKeysBar } from "./TerminalKeysBar";
-import { TerminalSessionPicker } from "./TerminalSessionPicker";
+import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
+  type JoinedTerminalSession,
   joinTmuxSessions,
   sessionKey,
 } from "./terminalSessions";
@@ -136,10 +139,11 @@ export function TerminalTab({
     dismissEndedSession,
     sendInput,
     resizeTerminal,
+    killSession,
     onOutput,
   } = useTmuxSessions();
   const [selectedKey, setSelectedKey] = useState<string | null>(loadStoredTerminalTargetKey);
-  const [composerContext, setComposerContext] = useState<TerminalContext | null>(null);
+  const [listHeight, setListHeight] = useState(30);
   const [endedKey, setEndedKey] = useState<string | null>(null);
   const [readyContext, setReadyContext] = useState<TerminalContext | null>(null);
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
@@ -161,7 +165,6 @@ export function TerminalTab({
     () => ({ connected, streamingId }),
     [connected, streamingId],
   );
-  const controlMode = composerContext === terminalContext;
 
   useLayoutEffect(() => {
     streamingIdRef.current = streamingId;
@@ -189,7 +192,6 @@ export function TerminalTab({
       lastAttachedKeyRef.current = null;
       setEndedKey(null);
       setReadyContext(null);
-      setComposerContext(null);
       setSelectedKey(nextKey);
       clearAttachError();
       if (hookSessionEnded) dismissEndedSession();
@@ -200,6 +202,13 @@ export function TerminalTab({
   useEffect(() => {
     if (selected !== null) storeTerminalTarget(selected.tmux);
   }, [selected]);
+
+  const terminateSession = useCallback(
+    (session: JoinedTerminalSession) => {
+      killSession(session.tmux.name, session.tmux.socket);
+    },
+    [killSession],
+  );
 
   useEffect(() => {
     if (createdSession === null) return;
@@ -263,7 +272,6 @@ export function TerminalTab({
     if (hookSessionEnded || vanishedKey !== null) {
       const timer = window.setTimeout(() => {
         setEndedKey(vanishedKey ?? lastAttachedKey ?? selectedKey ?? "ended");
-        setComposerContext(null);
       }, 0);
       return () => window.clearTimeout(timer);
     }
@@ -342,9 +350,13 @@ export function TerminalTab({
       const reportedSize = rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
       if (reportedSize) {
         resizeTerminal(reportedSize.rows, reportedSize.cols);
-      } else {
-        refreshTerminal(selected.tmux.name, selected.tmux.socket);
       }
+      // Always force a full tmux repaint once the terminal can accept writes.
+      // Output that streamed while the renderer was still initializing was
+      // dropped, and tmux only sends deltas afterward — a partial first paint
+      // (or SGR state carried from a truncated escape sequence) never
+      // self-heals without this redraw.
+      refreshTerminal(selected.tmux.name, selected.tmux.socket);
       setReadyContext(terminalContext);
     },
     [
@@ -363,11 +375,22 @@ export function TerminalTab({
     setSelectedKey(null);
     setEndedKey(null);
     setReadyContext(null);
-    setComposerContext(null);
     storeTerminalTarget(null);
     clearAttachError();
     dismissEndedSession();
   }, [clearAttachError, dismissEndedSession]);
+
+  // "+ New Terminal" lives in the shared activity toolbar like every other
+  // tab's add action — the tab body contributes no chrome bar of its own.
+  useRegisterActivityActions(
+    {
+      onAdd: () => createSession(),
+      addLabel: "New Terminal",
+      addAriaLabel: "Create terminal session",
+      addDisabled: !connected || requestPending,
+    },
+    [connected, createSession, requestPending],
+  );
 
   const isAttaching =
     selected !== null &&
@@ -376,7 +399,6 @@ export function TerminalTab({
     (streamingId === null ||
       attachedKey !== selectedKey ||
       readyContext !== terminalContext);
-  const composerDisabled = selected?.dead ?? false;
   const newTerminalButton = (
     <Button
       variant="accent"
@@ -424,7 +446,7 @@ export function TerminalTab({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col gap-3">
+    <div className="relative flex h-full min-h-0 flex-col">
       {focusNotice ? (
         <div
           className="absolute end-3 top-12 z-30 rounded-md border border-warning/40 bg-[var(--bg-secondary)] px-3 py-2 text-xs text-warning shadow-sm"
@@ -434,42 +456,38 @@ export function TerminalTab({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="min-w-0 flex-1">
-          <TerminalSessionPicker
-            sessions={joinedSessions}
-            value={selectedKey}
-            onChange={chooseSession}
-          />
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {newTerminalButton}
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-pressed={controlMode}
-            title={
-              composerDisabled
-                ? "This pane has exited. Terminal input is unavailable."
-                : "The terminal is read-only until input is enabled."
-            }
-            disabled={composerDisabled}
-            onClick={() =>
-              setComposerContext((context) =>
-                context === terminalContext ? null : terminalContext,
-              )
-            }
-          >
-            {controlMode ? "Disable input" : "Enable input"}
-          </Button>
-        </div>
+      {/* Terminal list mirrors the sessions-list placement: rows on top,
+          the selected terminal's view below its Watching status bar. */}
+      <div
+        className="min-h-0 overflow-y-auto"
+        style={{ height: `${listHeight}%` }}
+      >
+        <TerminalSessionList
+          sessions={joinedSessions}
+          value={selectedKey}
+          onChange={chooseSession}
+          onTerminate={terminateSession}
+        />
       </div>
 
-      <div
-        className={`relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-[var(--bg-primary)] transition-colors ${
-          controlMode ? "border-accent" : "border-border"
-        }`}
-      >
+      <ResizeHandle
+        direction="vertical"
+        onResize={setListHeight}
+        panelHeight={listHeight}
+        minHeight={15}
+        maxHeight={70}
+      />
+
+      <div className="activity-panel-status-bar border-t">
+        <span className="activity-panel-status-bar__title">
+          <span className="activity-panel-status-bar__watching-prefix">
+            Watching{" "}
+          </span>
+          {selected ? selected.label : "terminal"}
+        </span>
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--bg-primary)]">
         <TerminalView
           key={streamingId ?? "pending"}
           ref={viewRef}
@@ -518,8 +536,8 @@ export function TerminalTab({
         ) : null}
       </div>
 
-      {controlMode && selected && !selected.dead ? (
-        <div className="rounded-lg border border-accent/45 bg-accent/5 p-3">
+      {selected && !selected.dead ? (
+        <div className="shrink-0 border-t border-border px-2.5 py-1.5">
           <TerminalKeysBar sendInput={sendInput} />
         </div>
       ) : null}

@@ -159,7 +159,7 @@ export function TasksTabList({
       <Virtuoso
         {...treeProps}
         ref={virtuosoRef}
-        className="activity-tasks-pane min-h-0 h-full"
+        className="h-full min-h-0"
         data={visibleRows}
         computeItemKey={(_index, row) => row.node.task.id}
         initialItemCount={Math.min(TASK_TREE_INITIAL_ITEM_COUNT, visibleRows.length)}
@@ -172,7 +172,7 @@ export function TasksTabList({
   return (
     <div
       {...treeProps}
-      className="activity-tasks-pane min-h-0 h-full overflow-y-auto"
+      className="h-full min-h-0 overflow-y-auto"
     >
       {isEmpty ? (
         <ActivityPanelEmpty

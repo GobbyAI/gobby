@@ -1,6 +1,6 @@
 import type { StageRegistryEntry } from "../../hooks/useStagesRegistry";
-import { Button } from "../ui/Button";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { FilterDropdownTrigger } from "./FilterPrimitives";
 import { TasksTabFilters } from "./TasksTabFilters";
 import type { TaskFilterKey } from "./TasksTabModel";
 
@@ -36,34 +36,29 @@ export function TasksTabToolbar({
         onChange={onSearchChange}
         placeholder="Search"
       />
-      <Button
-        type="button"
-        variant="accent"
-        size="sm"
-        className="activity-panel-action-btn activity-filter-button"
+      <FilterDropdownTrigger
+        open={showFilterDropdown}
+        activeCount={activeFilterCount}
         onClick={onToggleFilterDropdown}
+        className="ml-auto"
         title="Filter by task state"
         aria-label="Filter tasks"
-        aria-expanded={showFilterDropdown}
-      >
-        <svg
-          width="14"
-          height="14"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-        </svg>
-        <span className="activity-panel-action-btn__label">Filter</span>
-        {activeFilterCount > 0 && (
-          <span className="activity-filter-badge">{activeFilterCount}</span>
-        )}
-      </Button>
+        icon={
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+          </svg>
+        }
+      />
       {showFilterDropdown && (
         <TasksTabFilters
           filters={statusFilters}

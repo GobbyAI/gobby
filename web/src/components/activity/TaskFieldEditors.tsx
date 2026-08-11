@@ -5,6 +5,12 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
+import { Input } from "../ui/Input";
+import { NativeSelect } from "../ui/NativeSelect";
+import { Textarea } from "../ui/Textarea";
 
 /**
  * D4 — inline field editors for PATCH-family task fields.
@@ -32,6 +38,7 @@ interface TaskTextFieldProps extends CommonEditorProps {
   value: string;
   onCommit: (next: string) => void;
   placeholder?: string;
+  className?: string;
 }
 
 function useSkipNextBlurCommit() {
@@ -53,6 +60,7 @@ export function TaskTextField({
   disabled,
   ariaLabel,
   placeholder,
+  className,
 }: TaskTextFieldProps) {
   const [editorState, setEditorState] = useState(() => ({
     sourceValue: value,
@@ -85,9 +93,12 @@ export function TaskTextField({
   }, [committed, skipNextBlurCommit, value]);
 
   return (
-    <input
+    <Input
       type="text"
-      className="task-inline-edit task-inline-edit--text"
+      className={cn(
+        "w-full rounded-[0.35rem] border-border bg-[var(--bg-secondary)] px-[0.55rem] py-[0.4rem] text-[length:var(--text-sm)] text-[var(--text-primary)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60",
+        className,
+      )}
       aria-label={ariaLabel}
       placeholder={placeholder}
       value={draft}
@@ -186,8 +197,8 @@ export function TaskTextAreaField({
   );
 
   return (
-    <textarea
-      className="task-inline-edit task-inline-edit--textarea"
+    <Textarea
+      className="min-h-[4.5rem] w-full resize-y rounded-[0.35rem] border-border bg-[var(--bg-secondary)] px-[0.55rem] py-[0.4rem] text-[length:var(--text-sm)] leading-normal text-[var(--text-primary)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
       aria-label={ariaLabel}
       placeholder={placeholder}
       rows={rows}
@@ -224,8 +235,8 @@ export function TaskSelectField({
   ariaLabel,
 }: TaskSelectFieldProps) {
   return (
-    <select
-      className="task-inline-edit task-inline-edit--select"
+    <NativeSelect
+      className="w-full rounded-[0.35rem] border-border bg-[var(--bg-secondary)] px-[0.55rem] py-[0.4rem] text-[length:var(--text-sm)] text-[var(--text-primary)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-60"
       aria-label={ariaLabel}
       value={value}
       disabled={disabled}
@@ -238,7 +249,7 @@ export function TaskSelectField({
           {option.label}
         </option>
       ))}
-    </select>
+    </NativeSelect>
   );
 }
 
@@ -315,27 +326,37 @@ export function TaskTagsField({
 
   return (
     <div
-      className="task-inline-edit task-inline-edit--tags"
+      className="flex flex-wrap items-center gap-[0.3rem] rounded-[0.35rem] border border-border bg-[var(--bg-secondary)] px-[0.4rem] py-[0.3rem]"
       role="group"
       aria-label={ariaLabel}
     >
       {tags.map((tag) => (
-        <span key={tag} className="task-inline-edit__tag">
+        <span
+          key={tag}
+          className="inline-flex h-5 items-center gap-1 rounded-full bg-[var(--accent-tint)] px-2 font-sans text-[length:var(--text-2xs)] font-[var(--font-weight-semibold)] text-accent"
+        >
           {tag}
-          <button
+          <Button
             type="button"
-            className="task-inline-edit__tag-remove"
+            variant="ghost"
+            size="icon"
+            dense
+            className={cn(
+              coarseHitAreaCls,
+              "h-auto min-h-0 w-auto cursor-pointer p-0 text-[length:var(--text-sm)] leading-none text-[var(--text-muted)] hover:text-[var(--text-primary)]",
+            )}
             aria-label={`Remove label ${tag}`}
             disabled={disabled}
             onClick={() => removeTag(tag)}
           >
             ×
-          </button>
+          </Button>
         </span>
       ))}
-      <input
+      <Input
         type="text"
-        className="task-inline-edit__tag-input"
+        className="min-w-16 flex-[1_1_4rem] border-0 bg-transparent px-[0.2rem] py-[0.15rem] text-[length:var(--text-sm)] text-[var(--text-primary)] focus-visible:border-accent focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent"
+        wrapperClassName="w-auto min-w-16 flex-1"
         aria-label="Add label"
         value={entry}
         disabled={disabled}

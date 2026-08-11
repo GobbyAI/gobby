@@ -25,7 +25,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     const { container, getByText } = render(
       <TasksTabDetailPanel task={makeTask()} />,
     );
-    const header = container.querySelector(".activity-task-detail-header");
+    const header = container.querySelector("header");
     expect(header).not.toBeNull();
     expect(header?.textContent).toContain("#101");
     expect(getByText("Sample task")).toBeTruthy();
@@ -66,9 +66,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
       },
     });
     const { container } = render(<TasksTabDetailPanel task={task} />);
-    const refs = container.querySelectorAll(
-      ".activity-task-detail-statusline__owner-ref",
-    );
+    const refs = container.querySelectorAll("[data-task-owner-ref]");
     expect(refs).toHaveLength(1);
     expect(refs[0].textContent).toBe("#5122");
     expect(container.textContent).not.toContain(uuid);
@@ -82,9 +80,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
       <TasksTabDetailPanel task={makeTask({ agent_name: null })} />,
     );
     expect(
-      container.querySelector(
-        ".activity-task-detail-statusline__owner--unassigned",
-      )?.textContent,
+      container.querySelector("[data-task-owner]")?.textContent,
     ).toContain("Unassigned");
   });
 
@@ -100,9 +96,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     const { container: a } = render(
       <TasksTabDetailPanel task={makeTask()} />,
     );
-    expect(
-      a.querySelector(".activity-task-detail-section--escalated"),
-    ).toBeNull();
+    expect(a.querySelector("[data-task-detail-escalation]")).toBeNull();
 
     const { container: b } = render(
       <TasksTabDetailPanel
@@ -112,7 +106,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
         })}
       />,
     );
-    const block = b.querySelector(".activity-task-detail-section--escalated");
+    const block = b.querySelector("[data-task-detail-escalation]");
     expect(block).not.toBeNull();
     expect(block?.textContent).toContain("needs human");
   });
@@ -124,9 +118,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     const { container, getByText } = render(
       <TasksTabDetailPanel task={task} />,
     );
-    const trace = container.querySelector(
-      "details.activity-task-detail-trace",
-    ) as HTMLDetailsElement;
+    const trace = container.querySelector("details") as HTMLDetailsElement;
     expect(trace).not.toBeNull();
     expect(trace.hasAttribute("open")).toBe(false);
     expect(getByText("Trace")).toBeTruthy();
@@ -189,7 +181,7 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     expect(getByText("Labels")).toBeTruthy();
     expect(getByText("backend")).toBeTruthy();
     expect(getByText("bug")).toBeTruthy();
-    expect(container.querySelector(".activity-task-detail-core")).toBeNull();
+    expect(container.querySelector("[data-task-detail-core]")).toBeNull();
   });
 
   it("surfaces a single inline edit error with a dismiss control", () => {
@@ -233,18 +225,14 @@ describe("TasksTabDetailPanel — D5 IA (#14772)", () => {
     const { container: a } = render(
       <TasksTabDetailPanel task={makeTask()} />,
     );
-    expect(
-      a.querySelector(".activity-task-detail-validation-row"),
-    ).toBeNull();
+    expect(a.querySelector("[data-task-detail-validation]")).toBeNull();
 
     const { container: b, getByText } = render(
       <TasksTabDetailPanel
         task={makeTask({ validation_status: "pending" })}
       />,
     );
-    expect(
-      b.querySelector(".activity-task-detail-validation-row"),
-    ).not.toBeNull();
+    expect(b.querySelector("[data-task-detail-validation]")).not.toBeNull();
     expect(getByText("Validation")).toBeTruthy();
   });
 });

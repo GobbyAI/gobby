@@ -1,19 +1,15 @@
 import { useState } from 'react'
-import {
-  AGENT_BTN_CLS,
-  AGENT_EDIT_FIELD_CLS,
-  AGENT_EDIT_INPUT_CLS,
-  AGENT_EDIT_LABEL_CLS,
-  STEP_CHIP_ADD_BTN_CLS,
-  STEP_CHIP_ADD_ROW_CLS,
-  STEP_CHIP_CLS,
-  STEP_CHIP_FIELD_CLS,
-  STEP_CHIP_INPUT_CLS,
-  STEP_CHIP_REMOVE_CLS,
-  STEP_CHIPS_CLS,
-} from './agents-styles'
+import { Button } from '../ui/Button'
+import { Chip } from '../ui/Chip'
+import { FormField } from '../ui/FormField'
+import { Input } from '../ui/Input'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
-function ChipInput({ values, onChange, placeholder }: {
+function ChipInput({
+  values,
+  onChange,
+  placeholder,
+}: {
   values: string[]
   onChange: (values: string[]) => void
   placeholder?: string
@@ -21,32 +17,56 @@ function ChipInput({ values, onChange, placeholder }: {
   const [input, setInput] = useState('')
 
   const handleAdd = () => {
-    const v = input.trim()
-    if (v && !values.includes(v)) {
-      onChange([...values, v])
-    }
+    const value = input.trim()
+    if (value && !values.includes(value)) onChange([...values, value])
     setInput('')
   }
 
   return (
-    <div className={STEP_CHIP_INPUT_CLS}>
-      <div className={STEP_CHIPS_CLS}>
-        {values.map(v => (
-          <span key={v} className={STEP_CHIP_CLS}>
-            {v}
-            <button type="button" className={STEP_CHIP_REMOVE_CLS} onClick={() => onChange(values.filter(x => x !== v))}>&times;</button>
-          </span>
+    <div className="flex flex-col gap-1">
+      <div className="flex flex-wrap gap-1">
+        {values.map((value) => (
+          <Chip key={value} className="gap-1 border border-border pl-2 pr-1.5 text-xs">
+            {value}
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              dense
+              className={`${coarseHitAreaCls} min-h-0 w-auto px-px text-sm leading-none hover:text-[var(--color-error)]`}
+              onClick={() => onChange(values.filter((item) => item !== value))}
+              aria-label={`Remove ${value}`}
+            >
+              &times;
+            </Button>
+          </Chip>
         ))}
       </div>
-      <div className={STEP_CHIP_ADD_ROW_CLS}>
-        <input
-          className={`${AGENT_EDIT_INPUT_CLS} ${STEP_CHIP_FIELD_CLS}`}
+      <div className="flex items-center gap-1">
+        <Input
+          wrapperClassName="min-w-0 flex-1"
+          className="px-2 text-sm"
           value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAdd() } }}
+          onChange={(event) => setInput(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              handleAdd()
+            }
+          }}
           placeholder={placeholder}
         />
-        <button type="button" className={`${AGENT_BTN_CLS} ${STEP_CHIP_ADD_BTN_CLS}`} onClick={handleAdd} disabled={!input.trim()}>+</button>
+        <Button
+          type="button"
+          size="sm"
+          dense
+          className={coarseHitAreaCls}
+          onClick={handleAdd}
+          disabled={!input.trim()}
+          aria-label="Add blocked tool"
+        >
+          +
+        </Button>
       </div>
     </div>
   )
@@ -68,24 +88,26 @@ export function AgentToolBlocksEditor({
   return (
     <div className="flex flex-col gap-3">
       {onBlockedToolsChange && (
-        <div className={AGENT_EDIT_FIELD_CLS}>
-          <span className={AGENT_EDIT_LABEL_CLS}>Blocked Native Tools</span>
-          <ChipInput
-            values={blockedTools}
-            onChange={onBlockedToolsChange}
-            placeholder="e.g. Edit, Write, Bash"
-          />
-        </div>
+        <FormField label="Blocked Native Tools" group>
+          {() => (
+            <ChipInput
+              values={blockedTools}
+              onChange={onBlockedToolsChange}
+              placeholder="e.g. Edit, Write, Bash"
+            />
+          )}
+        </FormField>
       )}
       {onBlockedMcpToolsChange && (
-        <div className={AGENT_EDIT_FIELD_CLS}>
-          <span className={AGENT_EDIT_LABEL_CLS}>Blocked MCP Tools</span>
-          <ChipInput
-            values={blockedMcpTools}
-            onChange={onBlockedMcpToolsChange}
-            placeholder="e.g. gobby-tasks-ops:submit_for_review"
-          />
-        </div>
+        <FormField label="Blocked MCP Tools" group>
+          {() => (
+            <ChipInput
+              values={blockedMcpTools}
+              onChange={onBlockedMcpToolsChange}
+              placeholder="e.g. gobby-tasks-ops:submit_for_review"
+            />
+          )}
+        </FormField>
       )}
     </div>
   )

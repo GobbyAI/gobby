@@ -189,6 +189,92 @@ describe('useSettings', () => {
     expect(result.current.settings.density).toBe('comfortable')
   })
 
+  it.each([
+    [12, 12],
+    [24, 24],
+    [48, 24],
+  ])('normalizes persisted font size %s to %s', (persisted, expected) => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ fontSize: persisted }))
+
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.fontSize).toBe(expected)
+  })
+
+  it.each([null, '18'])('falls back for invalid persisted font size %s', (persisted) => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ fontSize: persisted }))
+
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.fontSize).toBe(16)
+  })
+
+  it('preserves the default font size when local storage omits the field', () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ theme: 'light' }))
+
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.fontSize).toBe(16)
+  })
+
+  it.each(['invalid-root', null, []])('discards malformed persisted root %j', (persisted) => {
+    localStorage.setItem('gobby-settings', JSON.stringify(persisted))
+
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings).toMatchObject({ fontSize: 16, theme: 'dark' })
+  })
+
+  it.each([
+    [12, 12],
+    [24, 24],
+    [48, 24],
+    [null, 16],
+    ['18', 16],
+    [Number.NaN, 16],
+    [Number.POSITIVE_INFINITY, 16],
+    [undefined, 16],
+  ])('normalizes API font size %s to %s', async (remoteFontSize, expected) => {
+    const remote = { fontSize: remoteFontSize }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => remote })),
+    )
+
+    const { result } = renderHook(() => useSettings())
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('gobby-settings') ?? '{}').fontSize).toBe(expected)
+    })
+    expect(result.current.settings.fontSize).toBe(expected)
+  })
+
+  it('preserves a valid local font size when the API omits the field', async () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ fontSize: 20 }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => ({ theme: 'light' }) })),
+    )
+
+    const { result } = renderHook(() => useSettings())
+
+    await waitFor(() => expect(result.current.settings.theme).toBe('light'))
+    expect(result.current.settings.fontSize).toBe(20)
+  })
+
+  it('discards a malformed API root while preserving valid local settings', async () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ fontSize: 20 }))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, json: async () => 'invalid-root' })),
+    )
+
+    const { result } = renderHook(() => useSettings())
+
+    await act(async () => Promise.resolve())
+    expect(result.current.settings.fontSize).toBe(20)
+  })
+
   it('preserves and persists changes made while remote settings are loading', async () => {
     let resolveRemote!: (response: Response) => void
     const remoteResponse = new Promise<Response>((resolve) => {

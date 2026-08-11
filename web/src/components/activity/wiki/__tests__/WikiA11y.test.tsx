@@ -1,16 +1,15 @@
 /**
  * §6.1 keyboard-only operation acceptance (6.1.2): every interactive surface
- * in all three wiki modes stays operable without a pointer — the mode
- * radiogroup cycles with arrows/Home/End, the page tree supports
- * arrows + Home/End jumps, quick-open selects with arrows + Enter, the reader
- * kebab opens/navigates/closes from the keyboard and Escape hands focus back
- * to its trigger, code mode keeps the same tree contract alongside the
- * freshness strip, and ask citations activate from the keyboard.
+ * in both wiki modes stays operable without a pointer — the mode radiogroup
+ * cycles with arrows/Home/End, the page tree supports arrows + Home/End
+ * jumps, quick-open selects with arrows + Enter, the reader kebab
+ * opens/navigates/closes from the keyboard and Escape hands focus back to
+ * its trigger, and code mode keeps the same tree contract alongside the
+ * freshness strip.
  *
  * Complements (not duplicates) existing coverage: tree arrows + Enter
  * (WikiBrowse), Cmd+K open / Escape close (WikiBrowse), graph Escape + zoom
- * keys (WikiGraph), ask Enter submit (WikiAskMode), editor Cmd+S
- * (WikiPageEditor).
+ * keys (WikiGraph), editor Cmd+S (WikiPageEditor).
  */
 
 import { render, screen, waitFor, within } from "@testing-library/react";
@@ -124,40 +123,6 @@ function stubA11yFetch() {
   vi.stubGlobal("fetch", fetchMock);
 }
 
-const ASK_HISTORY_KEY = "gobby:wiki-tab:ask-history";
-
-/** Pre-normalized ask entry with one resolvable citation (Gobby). */
-function seedAskHistory() {
-  window.sessionStorage.setItem(
-    ASK_HISTORY_KEY,
-    JSON.stringify([
-      {
-        id: "seed-citations",
-        question: "What is Gobby?",
-        llm: true,
-        ts: Date.now() - 5 * 60_000,
-        envelope: {
-          status: "answered",
-          degraded: false,
-          degradedSources: [],
-          answer: "Gobby is the daemon; see [[knowledge/concepts/gobby|Gobby]].",
-          model: null,
-          citations: [
-            { target: "knowledge/concepts/gobby", title: "Gobby", resolvedPath: null },
-          ],
-          groundingWarnings: [],
-          hits: [],
-          codeCitations: [],
-          warnings: [],
-          hint: null,
-          aiStatus: null,
-          aiError: null,
-        },
-      },
-    ]),
-  );
-}
-
 function seedMode(mode: string) {
   window.localStorage.setItem("gobby:wiki-tab:mode", mode);
 }
@@ -178,7 +143,7 @@ afterEach(() => {
 // ── Mode switcher ───────────────────────────────────────────────
 
 describe("mode switcher keyboard operation", () => {
-  it("cycles through all four modes with arrows and jumps with Home/End", async () => {
+  it("cycles through both modes with arrows and jumps with Home/End", async () => {
     stubA11yFetch();
     const user = userEvent.setup();
     render(<WikiTab projectId="p1" />);
@@ -197,26 +162,19 @@ describe("mode switcher keyboard operation", () => {
     ).toBeInTheDocument();
 
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("radio", { name: "Ask" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(await screen.findByRole("textbox", { name: /ask the wiki/i })).toBeInTheDocument();
-
-    await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-
-    await user.keyboard("{Home}");
     expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
 
     await user.keyboard("{End}");
-    expect(screen.getByRole("radio", { name: "Ask" })).toHaveAttribute(
+    expect(screen.getByRole("radio", { name: "Code" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    await user.keyboard("{Home}");
+    expect(screen.getByRole("radio", { name: "Wiki" })).toHaveAttribute(
       "aria-checked",
       "true",
     );
@@ -344,27 +302,3 @@ describe("code mode keyboard operation", () => {
   });
 });
 
-// ── Ask mode ────────────────────────────────────────────────────
-
-describe("ask mode keyboard operation", () => {
-  it("reopens a history answer and activates a citation chip by key", async () => {
-    stubA11yFetch();
-    const user = userEvent.setup();
-    seedMode("ask");
-    seedAskHistory();
-    render(<WikiTab projectId="p1" />);
-
-    const history = await screen.findByRole("list", { name: "Ask history" });
-    const entry = within(history).getByRole("button", { name: /^what is gobby/i });
-    entry.focus();
-    await user.keyboard("{Enter}");
-
-    const citations = await screen.findByRole("list", { name: "Citations" });
-    const chip = within(citations).getByRole("button", { name: "Gobby" });
-    chip.focus();
-    await user.keyboard("{Enter}");
-
-    expect(await screen.findByRole("heading", { level: 1, name: /gobby/i })).toBeInTheDocument();
-    expect(window.localStorage.getItem("gobby:wiki-tab:mode")).toBe("wiki");
-  });
-});

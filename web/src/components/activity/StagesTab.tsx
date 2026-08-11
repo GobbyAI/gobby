@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ResizeHandle } from "../shared/ResizeHandle";
 import { Button } from "../ui/Button";
+import { coarseHitAreaCls } from "../ui/controlStyles";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
@@ -196,7 +197,7 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
             type="button"
             variant="accent"
             size="sm"
-            className="activity-panel-action-btn ml-auto"
+            className={`activity-panel-action-btn ml-auto ${coarseHitAreaCls}`}
             onClick={handleCreateProfile}
           >
             <PlusIcon />
@@ -205,14 +206,16 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
         )}
       </div>
       {error && (
-        <button
+        <Button
           type="button"
-          className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+          variant="destructive"
+          size="sm"
+          className={`w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm text-error ${coarseHitAreaCls}`}
           onClick={() => setError(null)}
           aria-label={`Dismiss error: ${error}`}
         >
           {error}
-        </button>
+        </Button>
       )}
       <div className="flex min-h-0 flex-1 flex-col">
         <div

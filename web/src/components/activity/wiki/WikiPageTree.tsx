@@ -15,6 +15,8 @@ import { useMemo, useState } from "react";
 import { Virtuoso } from "react-virtuoso";
 
 import { useTreeKeyboardNavigation } from "../../../hooks/useTreeKeyboardNavigation";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import {
@@ -118,13 +120,19 @@ interface SearchMatch {
 function MatchRow({ match, onOpen }: { match: SearchMatch; onOpen: (path: string) => void }) {
   return (
     <li>
-      <button type="button" className={ROW_CLASS} onClick={() => onOpen(match.page.path)}>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={`${coarseHitAreaCls} ${ROW_CLASS} justify-start`}
+        onClick={() => onOpen(match.page.path)}
+      >
         <KindIcon kind={match.kind} isFolder={false} />
         <span className="truncate">{match.page.title}</span>
         <span className="ml-auto truncate pl-2 font-mono text-2xs text-muted-foreground">
           {match.page.path}
         </span>
-      </button>
+      </Button>
     </li>
   );
 }
@@ -215,13 +223,15 @@ export function WikiPageTree({
         heading="Wiki pages unavailable"
         body={error}
         footer={
-          <button
+          <Button
             type="button"
-            className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+            variant="secondary"
+            size="sm"
+            className={coarseHitAreaCls}
             onClick={onRetry}
           >
             Retry
-          </button>
+          </Button>
         }
       />
     );

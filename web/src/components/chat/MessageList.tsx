@@ -57,6 +57,13 @@ export const MessageList = memo(
     const scrollerRef = useRef<HTMLDivElement | null>(null);
     const userScrolledUpRef = useRef(false);
     const pendingScrollFrameRef = useRef<number | null>(null);
+    // Loading a transcript scrolls to bottom once, but Virtuoso measures tall
+    // items progressively — the scroll height keeps growing afterwards. Pin
+    // the scroller to the bottom until it first actually reports at-bottom;
+    // otherwise a paused session's history lands mid-list with a blank
+    // estimated-height region above, and the layout shift latches
+    // userScrolledUpRef and suppresses every later auto-scroll.
+    const pinToBottomRef = useRef(false);
 
     const setScrollerRef = useCallback(
       (
@@ -115,6 +122,7 @@ export const MessageList = memo(
       () => ({
         scrollToBottom() {
           userScrolledUpRef.current = false;
+          pinToBottomRef.current = true;
           scrollScrollerToBottom();
           virtuosoRef.current?.scrollToIndex({
             index: "LAST",
@@ -129,15 +137,34 @@ export const MessageList = memo(
 
     const handleAtBottomStateChange = useCallback(
       (atBottom: boolean) => {
+        if (atBottom) {
+          pinToBottomRef.current = false;
+          userScrolledUpRef.current = false;
+          return;
+        }
+        // While pinned, off-bottom reports are programmatic layout shifts
+        // from progressive measurement, never user intent — re-bottom.
+        if (pinToBottomRef.current) {
+          scheduleScrollScrollerToBottom();
+          return;
+        }
         // Don't flip the flag during streaming — content growth can briefly
         // push us past atBottomThreshold before followOutput scrolls back,
         // which causes the "bounce" where auto-scroll stops mid-stream.
         if (!isStreaming) {
-          userScrolledUpRef.current = !atBottom;
+          userScrolledUpRef.current = true;
         }
       },
-      [isStreaming],
+      [isStreaming, scheduleScrollScrollerToBottom],
     );
+
+    // Progressive item measurement grows the list height after the initial
+    // scroll; while pinned, chase the growth so the transcript stays bottomed.
+    const handleTotalListHeightChanged = useCallback(() => {
+      if (pinToBottomRef.current) {
+        scheduleScrollScrollerToBottom();
+      }
+    }, [scheduleScrollScrollerToBottom]);
 
     // Reset scroll flag when streaming starts so stale scroll-up state
     // from before the agent began doesn't prevent auto-scroll.
@@ -153,6 +180,7 @@ export const MessageList = memo(
     // is appended in rapid chunks.
     useLayoutEffect(() => {
       if (!isStreaming && !userScrolledUpRef.current && messages.length > 0) {
+        pinToBottomRef.current = true;
         scrollScrollerToBottom();
         virtuosoRef.current?.scrollToIndex({
           index: "LAST",
@@ -277,17 +305,22 @@ export const MessageList = memo(
 
     if (messages.length === 0 && !isThinking) {
       return (
-        <div className="chat-scaled flex-1 min-h-0 flex items-center justify-center">
-          <div className="chat-empty-state">
+        <div className="flex min-h-0 flex-1 items-center justify-center [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)]">
+          <div className="chat-empty-state flex flex-col items-center gap-3 text-center text-[var(--text-muted)]">
             {isLoadingMessages ? (
               <p className="text-sm animate-pulse">Loading messages...</p>
             ) : (
               <>
-                <div className="chat-empty-state__icon" aria-hidden="true">
+                <div
+                  className="chat-empty-state__icon inline-flex items-center justify-center opacity-[0.35]"
+                  aria-hidden="true"
+                >
                   <ChatEmptyIcon />
                 </div>
-                <div className="chat-empty-state__title">Chat</div>
-                <p className="chat-empty-state__copy">
+                <div className="chat-empty-state__title text-[length:var(--text-xl)] text-[var(--text-secondary)]">
+                  Chat
+                </div>
+                <p className="chat-empty-state__copy max-w-[26rem] text-[length:var(--text-base)] text-[var(--text-muted)]">
                   Start a conversation with Gobby
                 </p>
               </>
@@ -300,7 +333,7 @@ export const MessageList = memo(
     return (
       <Virtuoso
         ref={virtuosoRef}
-        className="chat-scaled flex-1 min-h-0 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
+        className="min-h-0 flex-1 overflow-x-hidden overscroll-contain [overflow-anchor:none] [&_.text-sm]:text-[length:var(--text-base)] [&_.text-xs]:text-[length:var(--text-sm)] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border [scrollbar-width:thin] [scrollbar-color:var(--border)_transparent]"
         data={messages}
         computeItemKey={(_, message) => message.id}
         itemContent={itemContent}
@@ -311,6 +344,7 @@ export const MessageList = memo(
         }}
         atBottomThreshold={400}
         atBottomStateChange={handleAtBottomStateChange}
+        totalListHeightChanged={handleTotalListHeightChanged}
         overscan={400}
         increaseViewportBy={200}
         components={virtuosoComponents}

@@ -152,8 +152,7 @@ afterEach(() => {
 });
 
 describe("TerminalView", () => {
-  it("read only and ready handshake", async () => {
-    const user = userEvent.setup();
+  it("direct input and ready handshake", async () => {
     const onProtocolResponse = vi.fn();
     const onReady = vi.fn();
     const terminalRef = createRef<TerminalViewHandle>();
@@ -180,24 +179,15 @@ describe("TerminalView", () => {
     expect(view).not.toHaveAttribute("aria-multiline");
     expect(view).not.toHaveAttribute("aria-readonly");
     expect(view).not.toHaveAttribute("tabindex");
-    expect(instance.textarea).toBeDisabled();
-    expect(instance.textarea).toHaveAttribute("tabindex", "-1");
-    expect(document.activeElement).not.toBe(instance.textarea);
+    // Direct input: the renderer's textarea stays enabled so clicking the
+    // terminal focuses it and typing flows to the PTY via onData.
+    expect(instance.textarea).not.toBeDisabled();
     expect(instance.element.style.getPropertyValue("--term-bg")).toBe(
       "var(--bg-primary)",
     );
     expect(instance.element.style.getPropertyValue("--term-font-family")).toBe(
       "var(--font-mono)",
     );
-
-    await user.click(instance.marker);
-    expect(document.activeElement).not.toBe(instance.textarea);
-
-    await user.click(screen.getByRole("button", { name: "Before terminal" }));
-    await user.tab();
-    expect(screen.getByRole("button", { name: "After terminal" })).toHaveFocus();
-    await user.keyboard("terminal input must stay inert");
-    expect(onProtocolResponse).not.toHaveBeenCalled();
 
     const selection = window.getSelection();
     const range = document.createRange();
@@ -246,6 +236,60 @@ describe("TerminalView", () => {
       await waitFor(() => expect(onSizeChange).toHaveBeenCalledWith(20, 100));
     } finally {
       rectSpy.mockRestore();
+    }
+  });
+
+  it("subtracts the wterm element's padding from the fitted grid", async () => {
+    const rect = (width: number, height: number): DOMRect =>
+      ({
+        width,
+        height,
+        x: 0,
+        y: 0,
+        top: 0,
+        left: 0,
+        bottom: height,
+        right: width,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    const rectSpy = vi
+      .spyOn(Element.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: Element) {
+        if (this instanceof HTMLSpanElement) return rect(8, 16);
+        if (this.classList.contains("term-row")) return rect(800, 16);
+        return rect(800, 320);
+      });
+    // A grid sized to the raw container overflows the element by its padding
+    // and leaves it scrollable — the fit must subtract the padding box.
+    const fitCallbacks: Array<() => void> = [];
+    class ManualResizeObserver {
+      constructor(callback: () => void) {
+        fitCallbacks.push(callback);
+      }
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal("ResizeObserver", ManualResizeObserver);
+
+    try {
+      render(<TerminalView />);
+      await settleAsyncWork();
+
+      const instance = latestInstance();
+      instance.element.style.paddingTop = "12px";
+      instance.element.style.paddingBottom = "12px";
+      instance.element.style.paddingLeft = "12px";
+      instance.element.style.paddingRight = "12px";
+      act(() => {
+        for (const callback of fitCallbacks) callback();
+      });
+
+      // (800-24)px / 8px per char = 97 cols; (320-24)px / 16px = 18.5 -> 18.
+      expect(instance.resize).toHaveBeenCalledWith(97, 18);
+    } finally {
+      rectSpy.mockRestore();
+      vi.unstubAllGlobals();
     }
   });
 

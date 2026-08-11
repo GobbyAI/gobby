@@ -5,6 +5,7 @@ Effect types: block, set_variable, inject_context, mcp_call, observe,
 rewrite_input, load_skill.
 """
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -20,6 +21,10 @@ from gobby.config.runtime_models import ConfigSnapshot
 from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.skills.materialization import (
+    SkillScriptMaterializer,
+    get_skill_script_materializer,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -114,6 +119,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         completion_registry: Any | None = None,
         task_manager: Any | None = None,
         config_runtime: ConfigRuntimeReader | None = None,
+        skill_script_materializer: SkillScriptMaterializer | None = None,
     ):
         self.db = db
         self.definition_manager = LocalWorkflowDefinitionManager(db)
@@ -126,8 +132,49 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self._completion_registry = completion_registry
         self._task_manager = task_manager
         self._config_runtime = config_runtime
+        self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
+            db
+        )
         self._agent_def_cache_revision = get_workflow_definitions_revision()
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
+
+    async def prewarm_skill_scripts(self, *, project_id: str | None) -> None:
+        """Prepare skill scripts referenced by enabled rules."""
+        try:
+            rows = await offload(
+                self.definition_manager.list_all,
+                project_id=project_id,
+                workflow_type="rule",
+                enabled=True,
+            )
+        except Exception:
+            logger.warning("Workflow skill prewarm could not load enabled rules")
+            return
+
+        skills: set[str] = set()
+        for row in rows:
+            try:
+                body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            except Exception:
+                logger.warning("Workflow skill prewarm skipped an invalid rule definition")
+                continue
+            skills.update(
+                effect.skill
+                for effect in body.resolved_effects
+                if effect.type == "run_command"
+                and effect.skill is not None
+                and effect.script is not None
+            )
+        results = await asyncio.gather(
+            *(
+                self.skill_script_materializer.resolve(skill, project_id=project_id)
+                for skill in skills
+            ),
+            return_exceptions=True,
+        )
+        failures = sum(isinstance(result, BaseException) for result in results)
+        if failures:
+            logger.warning("Workflow skill prewarm failed for %d skill(s)", failures)
 
     async def evaluate(
         self,

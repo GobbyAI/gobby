@@ -54,9 +54,9 @@ describe("TasksTab row layout (#14247)", () => {
     expect(rows.length).toBeGreaterThan(0);
 
     for (const row of rows) {
-      const title = row.querySelector(".activity-task-row-title");
-      const stage = row.querySelector(".activity-task-row-stage");
-      const menu = row.querySelector(".task-more-btn");
+      const title = row.querySelector("[data-task-row-title]");
+      const stage = row.querySelector("[data-task-row-stage]");
+      const menu = row.querySelector('[aria-label="Task actions"]');
 
       expect(title).not.toBeNull();
       expect(menu).not.toBeNull();
@@ -82,7 +82,7 @@ describe("TasksTab row layout (#14247)", () => {
       expect(screen.getByText("Open task 2")).toBeTruthy();
     });
 
-    const title = document.querySelector(".activity-task-row-title")
-    expect(title).not.toBeNull()
+    const title = document.querySelector("[data-task-row-title]");
+    expect(title).toHaveClass("flex-1", "truncate");
   });
 });

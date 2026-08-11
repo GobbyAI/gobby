@@ -75,13 +75,17 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
             <span className="text-xs text-muted-foreground">({filtered.length})</span>
           )}
         </div>
-        <button
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          dense
           onClick={onClose}
-          className="text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-md hover:bg-muted"
+          className="min-h-0 w-auto text-muted-foreground hover:text-foreground transition-colors p-1.5 rounded-md hover:bg-muted"
           aria-label="Close"
         >
           <XIcon />
-        </button>
+        </Button>
       </div>
 
       {/* Mobile: stacked layout. Desktop: side-by-side */}
@@ -112,10 +116,14 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
               </p>
             ) : (
               filtered.map((skill) => (
-                <button
+                <Button
                   key={skill.id}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  dense
                   className={cn(
-                    'w-full text-left px-3 py-2.5 text-sm transition-colors border-b border-border/30',
+                    'min-h-0 w-full items-stretch justify-start whitespace-normal rounded-none border-x-0 border-t-0 px-3 py-2.5 text-left text-sm font-normal transition-colors border-b border-border/30',
                     selectedSkillId === skill.id
                       ? 'bg-accent/15 text-foreground'
                       : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
@@ -129,7 +137,7 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
                   {skill.description && (
                     <div className="text-xs opacity-60 truncate mt-0.5">{skill.description}</div>
                   )}
-                </button>
+                </Button>
               ))
             )}
           </ScrollArea>
@@ -148,13 +156,17 @@ export function SkillBrowserModal({ onSendMessage, onClose }: SkillBrowserModalP
           ) : (
             <>
               {/* Mobile back button */}
-              <button
-                className="md:hidden flex items-center gap-1 px-3 py-2 text-sm text-accent hover:bg-muted/50 border-b border-border shrink-0"
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                dense
+                className="min-h-0 md:hidden flex items-center justify-start gap-1 rounded-none border-x-0 border-t-0 px-3 py-2 text-sm text-accent hover:bg-muted/50 border-b border-border shrink-0"
                 onClick={() => setSelectedSkillId(null)}
               >
                 <ChevronLeftIcon />
                 Back to list
-              </button>
+              </Button>
 
               <div className="px-4 py-3 border-b border-border shrink-0 bg-muted/20">
                 <div className="flex items-center gap-2 flex-wrap">

@@ -1,6 +1,8 @@
 import type { ReactElement, RefObject } from 'react'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import { cn } from '../../lib/utils'
+import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 
 interface ChatCommandPaletteProps {
   items: PaletteItem[]
@@ -23,20 +25,24 @@ export function ChatCommandPalette({
     <div
       ref={paletteRef}
       id={listboxId}
-      className="command-palette font-sans"
+      className="command-palette absolute bottom-full left-6 right-6 z-10 mb-2 max-h-80 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] font-sans shadow-[var(--shadow-popover-up,0_-4px_12px_oklch(0%_0_0/0.3))]"
       role="listbox"
       aria-label="Chat commands"
     >
       {items.map((item, index) => (
-        <button
+        <Button
           key={
             item.kind === 'command'
               ? item.name
               : `${item.parentCommand}:${item.name}${item.serverName ? `:${item.serverName}` : ''}`
           }
           id={`${optionIdPrefix}-${index}`}
+          variant="ghost"
+          size="sm"
+          dense
           className={cn(
-            'block w-full px-3 py-2 text-left text-sm cursor-pointer',
+            'block min-h-0 w-full justify-start whitespace-normal rounded-none border-0 px-3 py-2 text-left text-sm font-normal cursor-pointer',
+            coarseHitAreaCls,
             index === selectedIndex
               ? 'bg-accent/20 text-foreground'
               : 'text-muted-foreground hover:bg-muted',
@@ -72,7 +78,7 @@ export function ChatCommandPalette({
               )}
             </>
           )}
-        </button>
+        </Button>
       ))}
     </div>
   )

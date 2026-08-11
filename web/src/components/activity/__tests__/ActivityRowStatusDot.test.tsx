@@ -124,8 +124,10 @@ describe('ActivityRowStatusDot — deutan-safe state rendering (#14586)', () => 
     expect(span.getAttribute('data-kind')).toBe('active')
     expect(span.style.color).toBe('var(--accent)')
     expect(span.getAttribute('class')).toContain(
-      'activity-row-status-dot--pulse',
+      'animate-[pulse_1.5s_ease-in-out_infinite]',
     )
+    expect(span.getAttribute('class')).toContain('inline-flex')
+    expect(span.getAttribute('class')).toContain('size-3')
     expect(svg?.getAttribute('class')).toContain(
       'activity-row-status-dot__glyph--active',
     )
@@ -169,7 +171,7 @@ describe('ActivityRowStatusDot — deutan-safe state rendering (#14586)', () => 
   it('applies the pulse class when pulse=true', () => {
     const span = renderDot('info', { pulse: true, label: 'Running' })
     expect(span.getAttribute('class')).toContain(
-      'activity-row-status-dot--pulse',
+      'animate-[pulse_1.5s_ease-in-out_infinite]',
     )
   })
 

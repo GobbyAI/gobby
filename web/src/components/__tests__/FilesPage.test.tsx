@@ -139,7 +139,7 @@ describe('FilesPage tab closing', () => {
 })
 
 describe('FilesPage keyboard operation', () => {
-  it('activates open-file tabs and tree rows with Enter and Space', async () => {
+  it('uses roving file tabs and activates tree rows with Space', async () => {
     const user = userEvent.setup()
     const onSetActiveFile = vi.fn()
     const onExpandDir = vi.fn()
@@ -179,9 +179,17 @@ describe('FilesPage keyboard operation', () => {
       />,
     )
 
+    const tabs = screen.getAllByRole('tab')
     const tab = screen.getByRole('tab', { name: /other\.txt/i })
-    tab.focus()
-    await user.keyboard('{Enter}')
+    const closeButton = screen.getByRole('button', { name: 'Close other.txt' })
+
+    expect(tabs[0]).toHaveAttribute('tabindex', '0')
+    expect(tab).toHaveAttribute('tabindex', '-1')
+    expect(tab).not.toContainElement(closeButton)
+
+    tabs[0].focus()
+    await user.keyboard('{ArrowRight}')
+    expect(tab).toHaveFocus()
     expect(onSetActiveFile).toHaveBeenCalledWith(1)
 
     const directory = screen.getByRole('button', { name: /src/i })

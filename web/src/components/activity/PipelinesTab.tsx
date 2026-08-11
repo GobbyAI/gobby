@@ -3,11 +3,13 @@ import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { ResizeHandle } from '../shared/ResizeHandle'
 import { Button } from '../ui/Button'
 import { SegmentedControl } from '../ui/SegmentedControl'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
 import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityFilterDropdown } from './ActivityFilterDropdown'
+import { FilterDropdownTrigger } from './FilterPrimitives'
 import {
   deletePipelineDefinition,
   exportPipelineYaml,
@@ -409,34 +411,29 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
           className="activity-panel-toolbar-segmented"
         />
         {segment === 'live' && (
-          <Button
-            type="button"
-            variant="accent"
-            size="sm"
-            className="activity-panel-action-btn activity-filter-button ml-auto"
+          <FilterDropdownTrigger
+            open={showFilterDropdown}
+            activeCount={statusFilter === 'all' ? 0 : 1}
+            className="ml-auto"
             onClick={() => setShowFilterDropdown((v) => !v)}
             title="Filter pipelines"
             aria-label="Filter pipelines"
-            aria-expanded={showFilterDropdown}
-          >
-            <svg
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-            </svg>
-            <span className="activity-panel-action-btn__label">Filter</span>
-            {statusFilter !== 'all' && (
-              <span className="activity-filter-badge">1</span>
-            )}
-          </Button>
+            icon={
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+            }
+          />
         )}
         {segment === 'live' && showFilterDropdown && (
           <ActivityFilterDropdown<StatusFilter>
@@ -452,14 +449,16 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
       {segment === 'defs' ? (
         <>
           {definitionError && (
-            <button
+            <Button
               type="button"
-              className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+              variant="destructive"
+              size="sm"
+              className={`w-full justify-start rounded-none border-x-0 border-t-0 border-b-border bg-error-soft px-3 py-2 text-left text-sm ${coarseHitAreaCls}`}
               onClick={() => setDefinitionError(null)}
               aria-label={`Dismiss error: ${definitionError}`}
             >
               {definitionError}
-            </button>
+            </Button>
           )}
           <div className="flex min-h-0 flex-1 flex-col">
             <div
@@ -537,10 +536,11 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
         ) : (
           <>
             {executions.map((exec) => (
-              <button
+              <Button
                 type="button"
                 key={exec.id}
-                className={`pipeline-exec-row${selectedId === exec.id ? ' pipeline-exec-row--active' : ''}`}
+                variant="ghost"
+                className={`flex min-h-[var(--activity-panel-row-height)] w-full cursor-pointer appearance-none items-center justify-between gap-2 rounded-none border-0 border-b border-[var(--border)] bg-transparent px-3 py-2 text-left transition-colors duration-100 [color:inherit] [font:inherit] hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11 pointer-coarse:min-w-11 ${selectedId === exec.id ? 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)] hover:bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]' : ''} ${coarseHitAreaCls}`}
                 onClick={() => handleSelect(exec.id)}
               >
                 <div className="flex items-center gap-2 min-w-0">
@@ -552,16 +552,19 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
                     {formatDateTime(exec.created_at)}
                   </span>
                 </div>
-              </button>
+              </Button>
             ))}
             {hasMore && (
-              <button
-                className="w-full py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted/30 transition-colors pointer-coarse:min-h-11"
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={`w-full rounded-none py-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground ${coarseHitAreaCls}`}
                 onClick={handleLoadMore}
                 disabled={loadingMore}
               >
                 {loadingMore ? 'Loading...' : 'Load more'}
-              </button>
+              </Button>
             )}
           </>
         )}

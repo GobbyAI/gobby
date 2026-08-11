@@ -1,7 +1,9 @@
 import { createElement, useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDownIcon, CloseIcon } from '../icons'
+import { cn } from '../../lib/utils'
 import { Button } from '../ui/Button'
+import { coarseHitAreaCls } from '../ui/controlStyles'
 import { ActivityFilterDropdown } from '../activity/ActivityFilterDropdown'
 import {
   getSettingsSection,
@@ -144,52 +146,61 @@ export function SettingsOverlay({
   }
 
   return (
-    <div className="settings-overlay-shell">
-      <button
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-8 [--control-row-height:var(--status-bar-control-height)] [@media(max-width:768px)]:p-0">
+      <Button
         type="button"
-        className="settings-overlay-shell__backdrop"
+        variant="ghost"
+        dense
+        className="absolute inset-0 m-0 cursor-pointer bg-[var(--surface-scrim)] hover:bg-[var(--surface-scrim)] animate-settings-overlay-fade"
+        data-testid="settings-overlay-backdrop"
         aria-label="Close settings"
         tabIndex={-1}
         onClick={onClose}
       />
       <div
         ref={dialogRef}
-        className="settings-overlay-shell__dialog"
+        className="relative flex h-[min(640px,100%)] max-h-full w-[min(720px,100%)] flex-col overflow-hidden rounded-xl border border-border bg-surface-secondary shadow-lg outline-none animate-settings-overlay-rise [@media(max-width:768px)]:h-full [@media(max-width:768px)]:w-full [@media(max-width:768px)]:rounded-none [@media(max-width:768px)]:border-0"
         role="dialog"
         aria-modal="true"
         aria-labelledby={headingId}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        <header className="settings-overlay-shell__header">
-          <h2 id={headingId} className="settings-overlay-shell__title">
+        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h2 id={headingId} className="text-lg font-semibold leading-[1.2] text-foreground">
             Settings
           </h2>
           <Button
             type="button"
             variant="ghost"
             size="icon"
-            className="settings-overlay-shell__close"
+            className="shrink-0"
             onClick={onClose}
             aria-label="Close settings"
           >
             <CloseIcon />
           </Button>
         </header>
-        <div className="settings-overlay-shell__toolbar">
-          <div className="settings-overlay-shell__section-select">
-            <button
+        <div className="flex shrink-0 items-center border-b border-border px-5 py-3">
+          <div className="relative inline-block [@media(max-width:768px)]:w-full">
+            <Button
               type="button"
-              className="settings-overlay-shell__section-trigger"
+              variant="ghost"
+              size="sm"
+              dense
+              className={cn(
+                'min-w-56 cursor-pointer py-1.5 [font-family:inherit] [&_svg]:shrink-0 [&_svg]:text-[var(--text-muted)] aria-expanded:bg-[var(--accent-tint)] aria-expanded:text-accent aria-expanded:[&_svg]:text-accent [@media(max-width:768px)]:w-full',
+                coarseHitAreaCls,
+              )}
               aria-haspopup="listbox"
               aria-expanded={sectionMenuOpen}
               onClick={() => setSectionMenuOpen((open) => !open)}
             >
-              <span className="settings-overlay-shell__section-trigger-label">
+              <span className="overflow-hidden text-left text-ellipsis whitespace-nowrap">
                 {section.label}
               </span>
               <ChevronDownIcon />
-            </button>
+            </Button>
             {sectionMenuOpen ? (
               <ActivityFilterDropdown<SettingsSectionId>
                 value={activeSection}
@@ -207,7 +218,7 @@ export function SettingsOverlay({
           providerSelection={providerSelection}
           projectSelection={projectSelection}
         >
-          <div className="settings-overlay-shell__body">
+          <div className="flex min-h-0 flex-1 flex-col">
             {/* Remount on section change so each section starts from a fresh
                 draft of its owned config paths. */}
             {createElement(getSettingsSectionComponent(activeSection), {

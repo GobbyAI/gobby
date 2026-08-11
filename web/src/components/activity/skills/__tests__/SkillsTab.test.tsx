@@ -27,7 +27,9 @@ vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
 
-vi.mock("../../../shared/MarkdownBody", () => ({
+vi.mock("../../../shared/MarkdownBody", async (importOriginal) => ({
+  markdownBodyClassName: (await importOriginal<typeof import("../../../shared/MarkdownBody")>())
+    .markdownBodyClassName,
   MarkdownBody: ({ content }: { content: string }) => (
     <div data-testid="markdown-body">{content}</div>
   ),

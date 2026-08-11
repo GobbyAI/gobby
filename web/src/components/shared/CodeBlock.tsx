@@ -37,7 +37,10 @@ export interface CodeBlockProps {
   customStyle?: React.CSSProperties
   /**
    * Per-element style override for the inner `<code>` tag. Mirrors
-   * `react-syntax-highlighter`'s `codeTagProps`.
+   * `react-syntax-highlighter`'s `codeTagProps`. NOTE: the library
+   * REPLACES its default (language className + theme code style) with
+   * this value. The theme already renders code in `var(--font-mono)`
+   * (`CODE_CHROME_TYPOGRAPHY`), so no font-only override exists.
    */
   codeTagProps?: React.HTMLProps<HTMLElement>
   /**
@@ -122,9 +125,11 @@ export function CodeBlock({
     )
   }
 
+  const themeStyles = getCodeBlockTheme(resolvedTheme)
+
   const wrapper = (
     <SyntaxHighlighter
-      style={getCodeBlockTheme(resolvedTheme)}
+      style={themeStyles}
       language={language || 'text'}
       PreTag="div"
       showLineNumbers={showLineNumbers}

@@ -4,6 +4,7 @@ import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from enum import Enum
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Any, Literal, cast
 
 from pydantic import (
@@ -202,6 +203,7 @@ class RuleEffect(BaseModel):
     # Fail-open by design: missing executable/script, non-zero exit, timeout, or
     # unparseable output never blocks the event. Reuses background/inject_result.
     command: list[str] | None = None
+    script: str | None = None
     timeout_seconds: float | None = None
 
     @model_validator(mode="after")
@@ -230,6 +232,20 @@ class RuleEffect(BaseModel):
         if self.type == "run_command":
             if not self.command:
                 raise ValueError("RuleEffect(type='run_command') requires a non-empty command")
+            if (self.skill is None) != (self.script is None):
+                raise ValueError("run_command skill and script must be provided together")
+            if self.skill is not None and not self.skill.strip():
+                raise ValueError("run_command skill must be non-empty")
+            if self.script is not None:
+                script = self.script
+                posix = PurePosixPath(script)
+                windows = PureWindowsPath(script)
+                if not script.strip():
+                    raise ValueError("run_command script must be non-empty")
+                if posix.is_absolute() or windows.is_absolute() or windows.drive:
+                    raise ValueError("run_command script must be relative")
+                if ".." in posix.parts or ".." in windows.parts:
+                    raise ValueError("run_command script cannot traverse its scripts directory")
             if self.timeout_seconds is not None and not self.timeout_seconds > 0:
                 raise ValueError(
                     "RuleEffect(type='run_command') timeout_seconds must be > 0 "
@@ -308,6 +324,8 @@ class RuleEffect(BaseModel):
             "load_skill": {"skill", *selector_fields},
             "run_command": {
                 "command",
+                "skill",
+                "script",
                 "timeout_seconds",
                 "background",
                 "inject_result",

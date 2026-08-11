@@ -1,0 +1,55 @@
+import { fireEvent, render, screen, within } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+
+import { AgentEditForm, type AgentFormData } from '../AgentEditForm'
+
+const form: AgentFormData = {
+  name: 'reviewer',
+  description: '',
+  surfaces: ['spawn'],
+  role: '',
+  goal: '',
+  personality: '',
+  instructions: '',
+  provider: 'inherit',
+  model: '',
+  reasoning_effort: 'auto',
+  reasoning_required: false,
+  mode: 'default',
+  isolation: 'none',
+  base_branch: 'inherit',
+  timeout: 0,
+  pipeline: '',
+  fallback_agent: '',
+}
+
+describe('AgentEditForm', () => {
+  it('renders the view picker as a roving tab list', () => {
+    const onViewChange = vi.fn()
+
+    render(
+      <AgentEditForm
+        isOpen
+        form={form}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        providerCatalog={[]}
+        sidebarView="form"
+        onViewChange={onViewChange}
+      />,
+    )
+
+    const tablist = screen.getByRole('tablist', { name: 'Agent editor view' })
+    const [formTab, yamlTab] = within(tablist).getAllByRole('tab')
+
+    expect(formTab).toHaveAttribute('tabindex', '0')
+    expect(yamlTab).toHaveAttribute('tabindex', '-1')
+
+    formTab.focus()
+    fireEvent.keyDown(formTab, { key: 'ArrowRight' })
+    expect(yamlTab).toHaveFocus()
+    expect(onViewChange).toHaveBeenCalledWith('yaml')
+  })
+})
