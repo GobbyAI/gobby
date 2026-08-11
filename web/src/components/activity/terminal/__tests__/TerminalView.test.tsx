@@ -152,8 +152,7 @@ afterEach(() => {
 });
 
 describe("TerminalView", () => {
-  it("read only and ready handshake", async () => {
-    const user = userEvent.setup();
+  it("direct input and ready handshake", async () => {
     const onProtocolResponse = vi.fn();
     const onReady = vi.fn();
     const terminalRef = createRef<TerminalViewHandle>();
@@ -180,24 +179,15 @@ describe("TerminalView", () => {
     expect(view).not.toHaveAttribute("aria-multiline");
     expect(view).not.toHaveAttribute("aria-readonly");
     expect(view).not.toHaveAttribute("tabindex");
-    expect(instance.textarea).toBeDisabled();
-    expect(instance.textarea).toHaveAttribute("tabindex", "-1");
-    expect(document.activeElement).not.toBe(instance.textarea);
+    // Direct input: the renderer's textarea stays enabled so clicking the
+    // terminal focuses it and typing flows to the PTY via onData.
+    expect(instance.textarea).not.toBeDisabled();
     expect(instance.element.style.getPropertyValue("--term-bg")).toBe(
       "var(--bg-primary)",
     );
     expect(instance.element.style.getPropertyValue("--term-font-family")).toBe(
       "var(--font-mono)",
     );
-
-    await user.click(instance.marker);
-    expect(document.activeElement).not.toBe(instance.textarea);
-
-    await user.click(screen.getByRole("button", { name: "Before terminal" }));
-    await user.tab();
-    expect(screen.getByRole("button", { name: "After terminal" })).toHaveFocus();
-    await user.keyboard("terminal input must stay inert");
-    expect(onProtocolResponse).not.toHaveBeenCalled();
 
     const selection = window.getSelection();
     const range = document.createRange();

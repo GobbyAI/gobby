@@ -2,6 +2,8 @@ import {
   useState,
   useEffect,
   useRef,
+  Suspense,
+  lazy,
   type CSSProperties,
 } from "react";
 
@@ -50,6 +52,14 @@ import {
 } from "./ActivityActionsContext";
 
 const noopFetchDiff = async (): Promise<string> => "";
+
+// wterm and its renderer stay a lazy asset — only loaded when the terminal
+// tab is actually opened.
+const TerminalTab = lazy(() =>
+  import("./terminal/TerminalTab").then((module) => ({
+    default: module.TerminalTab,
+  })),
+);
 
 // Width constants shared between the inline style, ResizeHandle, and the
 // `useActivityPanel` localStorage validator. CHAT_MIN_WIDTH mirrors the
@@ -160,6 +170,9 @@ interface ActivityPanelProps {
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
+  // Terminal tab — separate focus channel from the Sessions tab routing.
+  terminalFocusSessionId?: string | null;
+  onTerminalFocusHandled?: () => void;
   isMobile?: boolean;
   requestPanelOverride?: () => void;
   releasePanelOverride?: () => void;
@@ -278,6 +291,8 @@ export function ActivityPanel({
   onFocusSessionHandled,
   onSwapSession,
   onResumeSession,
+  terminalFocusSessionId = null,
+  onTerminalFocusHandled,
   isMobile = false,
   requestPanelOverride,
   releasePanelOverride,
@@ -378,6 +393,16 @@ export function ActivityPanel({
             onSwapSession={onSwapSession}
             onResumeSession={onResumeSession}
           />
+        );
+      case "terminal":
+        return (
+          <Suspense fallback={null}>
+            <TerminalTab
+              sessions={sessions}
+              focusSessionId={terminalFocusSessionId}
+              onFocusHandled={onTerminalFocusHandled}
+            />
+          </Suspense>
         );
       case "pipelines":
         return <PipelinesTab projectId={projectId} />;

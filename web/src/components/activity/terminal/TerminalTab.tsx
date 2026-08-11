@@ -11,8 +11,9 @@ import {
 import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../types/sessions";
 import { Button } from "../../ui/Button";
+import { ResizeHandle } from "../../shared/ResizeHandle";
 import { TerminalKeysBar } from "./TerminalKeysBar";
-import { TerminalSessionPicker } from "./TerminalSessionPicker";
+import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
   joinTmuxSessions,
@@ -139,7 +140,7 @@ export function TerminalTab({
     onOutput,
   } = useTmuxSessions();
   const [selectedKey, setSelectedKey] = useState<string | null>(loadStoredTerminalTargetKey);
-  const [composerContext, setComposerContext] = useState<TerminalContext | null>(null);
+  const [listHeight, setListHeight] = useState(30);
   const [endedKey, setEndedKey] = useState<string | null>(null);
   const [readyContext, setReadyContext] = useState<TerminalContext | null>(null);
   const [focusNotice, setFocusNotice] = useState<string | null>(null);
@@ -161,7 +162,6 @@ export function TerminalTab({
     () => ({ connected, streamingId }),
     [connected, streamingId],
   );
-  const controlMode = composerContext === terminalContext;
 
   useLayoutEffect(() => {
     streamingIdRef.current = streamingId;
@@ -189,7 +189,6 @@ export function TerminalTab({
       lastAttachedKeyRef.current = null;
       setEndedKey(null);
       setReadyContext(null);
-      setComposerContext(null);
       setSelectedKey(nextKey);
       clearAttachError();
       if (hookSessionEnded) dismissEndedSession();
@@ -263,7 +262,6 @@ export function TerminalTab({
     if (hookSessionEnded || vanishedKey !== null) {
       const timer = window.setTimeout(() => {
         setEndedKey(vanishedKey ?? lastAttachedKey ?? selectedKey ?? "ended");
-        setComposerContext(null);
       }, 0);
       return () => window.clearTimeout(timer);
     }
@@ -363,7 +361,6 @@ export function TerminalTab({
     setSelectedKey(null);
     setEndedKey(null);
     setReadyContext(null);
-    setComposerContext(null);
     storeTerminalTarget(null);
     clearAttachError();
     dismissEndedSession();
@@ -376,7 +373,6 @@ export function TerminalTab({
     (streamingId === null ||
       attachedKey !== selectedKey ||
       readyContext !== terminalContext);
-  const composerDisabled = selected?.dead ?? false;
   const newTerminalButton = (
     <Button
       variant="accent"
@@ -424,7 +420,7 @@ export function TerminalTab({
   }
 
   return (
-    <div className="relative flex h-full min-h-0 flex-col gap-3">
+    <div className="relative flex h-full min-h-0 flex-col">
       {focusNotice ? (
         <div
           className="absolute end-3 top-12 z-30 rounded-md border border-warning/40 bg-[var(--bg-secondary)] px-3 py-2 text-xs text-warning shadow-sm"
@@ -434,42 +430,33 @@ export function TerminalTab({
         </div>
       ) : null}
 
-      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="min-w-0 flex-1">
-          <TerminalSessionPicker
+      {/* Terminal list mirrors the sessions-list placement: rows on top,
+          the selected terminal's view below. */}
+      <div
+        className="flex min-h-0 flex-col"
+        style={{ height: `${listHeight}%` }}
+      >
+        <div className="flex shrink-0 items-center justify-end border-b border-border px-2.5 py-1.5">
+          {newTerminalButton}
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <TerminalSessionList
             sessions={joinedSessions}
             value={selectedKey}
             onChange={chooseSession}
           />
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {newTerminalButton}
-          <Button
-            variant="secondary"
-            size="sm"
-            aria-pressed={controlMode}
-            title={
-              composerDisabled
-                ? "This pane has exited. Terminal input is unavailable."
-                : "The terminal is read-only until input is enabled."
-            }
-            disabled={composerDisabled}
-            onClick={() =>
-              setComposerContext((context) =>
-                context === terminalContext ? null : terminalContext,
-              )
-            }
-          >
-            {controlMode ? "Disable input" : "Enable input"}
-          </Button>
-        </div>
       </div>
 
-      <div
-        className={`relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-[var(--bg-primary)] transition-colors ${
-          controlMode ? "border-accent" : "border-border"
-        }`}
-      >
+      <ResizeHandle
+        direction="vertical"
+        onResize={setListHeight}
+        panelHeight={listHeight}
+        minHeight={15}
+        maxHeight={70}
+      />
+
+      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-border bg-[var(--bg-primary)]">
         <TerminalView
           key={streamingId ?? "pending"}
           ref={viewRef}
@@ -518,8 +505,8 @@ export function TerminalTab({
         ) : null}
       </div>
 
-      {controlMode && selected && !selected.dead ? (
-        <div className="rounded-lg border border-accent/45 bg-accent/5 p-3">
+      {selected && !selected.dead ? (
+        <div className="shrink-0 border-t border-border px-2.5 py-1.5">
           <TerminalKeysBar sendInput={sendInput} />
         </div>
       ) : null}

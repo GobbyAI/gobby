@@ -67,54 +67,21 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.activeTab).toBe('sessions')
   })
 
-  it('never restores Terminal as the active panel tab (it lives in the dock)', () => {
+  it('restores Terminal as the active panel tab like any other tab', () => {
     localStorage.setItem(TAB_KEY, 'terminal')
 
     const { result } = renderHook(() => useActivityPanel(false))
 
-    expect(result.current.activeTab).toBe('sessions')
+    expect(result.current.activeTab).toBe('terminal')
   })
 
-  it('opens, expands, and closes the terminal dock', () => {
+  it('selects the terminal tab through setActiveTab and persists it', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 
-    expect(result.current.terminalOpen).toBe(false)
-    expect(result.current.terminalExpanded).toBe(false)
+    act(() => result.current.setActiveTab('terminal'))
 
-    act(() => result.current.openTerminal())
-    expect(result.current.terminalOpen).toBe(true)
-    expect(localStorage.getItem('gobby-terminal-dock-open')).toBe('true')
-
-    act(() => result.current.toggleTerminalExpanded())
-    expect(result.current.terminalExpanded).toBe(true)
-
-    act(() => result.current.closeTerminal())
-    expect(result.current.terminalOpen).toBe(false)
-    expect(result.current.terminalExpanded).toBe(false)
-    expect(localStorage.getItem('gobby-terminal-dock-open')).toBe('false')
-  })
-
-  it('opens the terminal dock without running a panel-leave guard on desktop', () => {
-    const confirmLeave = vi.fn(async () => false)
-    const { result } = renderHook(() => useActivityPanel(false))
-    const unregister = result.current.dirtyGuard.registerDirtyGuard({
-      isDirty: () => true,
-      confirmLeave,
-    })
-
-    act(() => result.current.openTerminal())
-
-    expect(result.current.terminalOpen).toBe(true)
-    expect(confirmLeave).not.toHaveBeenCalled()
-    unregister()
-  })
-
-  it('restores the persisted dock-open preference', () => {
-    localStorage.setItem('gobby-terminal-dock-open', 'true')
-
-    const { result } = renderHook(() => useActivityPanel(false))
-
-    expect(result.current.terminalOpen).toBe(true)
+    expect(result.current.activeTab).toBe('terminal')
+    expect(localStorage.getItem(TAB_KEY)).toBe('terminal')
   })
 
   it('toggleFromChat walks split -> chat -> split and persists', () => {
@@ -218,24 +185,22 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.effectiveMode).toBe('split')
   })
 
-  it('opens the terminal dock on the gobby:show-activity-tab event and ignores unknown tabs', () => {
+  it('selects the terminal tab on the gobby:show-activity-tab event and ignores unknown tabs', () => {
     const { result } = renderHook(() => useActivityPanel(false))
-    const initialTab = result.current.activeTab
 
     act(() => {
       window.dispatchEvent(
         new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'terminal' } }),
       )
     })
-    expect(result.current.terminalOpen).toBe(true)
-    expect(result.current.activeTab).toBe(initialTab)
+    expect(result.current.activeTab).toBe('terminal')
 
     act(() => {
       window.dispatchEvent(
         new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'bogus' } }),
       )
     })
-    expect(result.current.activeTab).toBe(initialTab)
+    expect(result.current.activeTab).toBe('terminal')
   })
 
   it('stores terminal session request', () => {
@@ -248,7 +213,7 @@ describe('useActivityPanel — desktop', () => {
         }),
       )
     })
-    expect(result.current.terminalOpen).toBe(true)
+    expect(result.current.activeTab).toBe('terminal')
     expect(result.current.terminalSessionRequest).toBe('session-focus')
 
     act(() => result.current.clearTerminalSessionRequest())
@@ -303,26 +268,16 @@ describe('useActivityPanel — mobile', () => {
     expect(result.current.effectiveMode).toBe('chat')
   })
 
-  it('opens the terminal while guarding the mobile panel-to-chat transition', async () => {
-    const confirmLeave = vi.fn(async () => false)
+  it('shows the terminal tab in the mobile panel like any other tab', async () => {
     const { result } = renderHook(() => useActivityPanel(true))
 
-    await act(async () => result.current.toggleFromChat())
-    expect(result.current.effectiveMode).toBe('panel')
-    const unregister = result.current.dirtyGuard.registerDirtyGuard({
-      isDirty: () => true,
-      confirmLeave,
-    })
-
     await act(async () => {
-      result.current.openTerminal()
+      result.current.showTab('terminal')
       await Promise.resolve()
     })
 
-    expect(result.current.terminalOpen).toBe(true)
+    expect(result.current.activeTab).toBe('terminal')
     expect(result.current.effectiveMode).toBe('panel')
-    expect(confirmLeave).toHaveBeenCalledTimes(1)
-    unregister()
   })
 
   it('does not write the desktop layout key on initial mobile render', () => {
@@ -431,9 +386,7 @@ describe('useActivityPanel — tab persistence', () => {
 
       const { result, unmount } = renderHook(() => useActivityPanel(false))
 
-      // Terminal is dock-only content: it stays in the tab registry for the
-      // dropdown but never restores as the panel's active tab.
-      expect(result.current.activeTab).toBe(id === 'terminal' ? 'sessions' : id)
+      expect(result.current.activeTab).toBe(id)
       unmount()
     }
   })

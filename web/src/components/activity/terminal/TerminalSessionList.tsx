@@ -1,18 +1,14 @@
+import { cn } from "../../../lib/utils";
 import { ActivityRowStatusDot, type StatusKind } from "../ActivityRowStatusDot";
 import { SourceIcon } from "../../shared/SourceIcon";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "../../ui/Select";
+import { Button } from "../../ui/Button";
+import { coarseHitAreaCls } from "../../ui/controlStyles";
 import {
   type JoinedTerminalSession,
   sessionKey,
 } from "./terminalSessions";
 
-interface TerminalSessionPickerProps {
+interface TerminalSessionListProps {
   sessions: JoinedTerminalSession[];
   value: string | null;
   onChange: (value: string) => void;
@@ -40,13 +36,13 @@ function lifecyclePresentation(status: string): LifecyclePresentation {
   };
 }
 
-function SessionOption({ session }: { session: JoinedTerminalSession }) {
+function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
   const lifecycle = session.gobby
     ? lifecyclePresentation(session.gobby.status)
     : null;
 
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
+    <>
       {lifecycle ? (
         <ActivityRowStatusDot
           kind={lifecycle.kind}
@@ -55,10 +51,8 @@ function SessionOption({ session }: { session: JoinedTerminalSession }) {
         />
       ) : null}
       {session.provider ? <SourceIcon source={session.provider} size={14} /> : null}
-      <span className="min-w-0 flex-1 truncate">{session.label}</span>
-      <span className="shrink-0 font-mono text-2xs text-muted-foreground">
-        {session.paneRef}
-      </span>
+      <span className="activity-row-title">{session.label}</span>
+      <span className="activity-row-meta font-mono">{session.paneRef}</span>
       <span className="flex shrink-0 items-center gap-1">
         {session.dead ? (
           <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">
@@ -79,35 +73,49 @@ function SessionOption({ session }: { session: JoinedTerminalSession }) {
           </span>
         ) : null}
       </span>
-    </div>
+    </>
   );
 }
 
-export function TerminalSessionPicker({
+/**
+ * The terminal list mirrors the sessions-list placement: rows in the tab's
+ * top area, the terminal view below. Rows use the shared
+ * `.activity-list-row` idiom from ActivityPanel so the two lists read as
+ * one family.
+ */
+export function TerminalSessionList({
   sessions,
   value,
   onChange,
-}: TerminalSessionPickerProps) {
+}: TerminalSessionListProps) {
   return (
-    <Select value={value ?? ""} onValueChange={onChange} disabled={sessions.length === 0}>
-      <SelectTrigger
-        className="min-h-9 w-full bg-[var(--bg-secondary)] text-left pointer-coarse:min-h-11"
-        aria-label="Terminal session"
-      >
-        <SelectValue placeholder={sessions.length === 0 ? "No terminal sessions" : "Select session"} />
-      </SelectTrigger>
-      <SelectContent className="max-w-[min(32rem,calc(100vw-2rem))]">
-        {sessions.map((session) => (
-          <SelectItem
-            key={sessionKey(session.tmux)}
-            value={sessionKey(session.tmux)}
-            textValue={session.label}
-            className="min-h-10 pointer-coarse:min-h-11"
+    <div className="flex flex-col" role="list" aria-label="Terminal sessions">
+      {sessions.map((session) => {
+        const key = sessionKey(session.tmux);
+        const selected = key === value;
+        return (
+          <div
+            key={key}
+            role="listitem"
+            aria-label={`${session.label} terminal`}
+            className={cn(
+              "activity-list-row",
+              selected && "activity-list-row--selected",
+            )}
           >
-            <SessionOption session={session} />
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+            <Button
+              type="button"
+              variant="ghost"
+              className={cn("activity-list-row__body", coarseHitAreaCls)}
+              aria-label={`Attach ${session.label}`}
+              aria-pressed={selected}
+              onClick={() => onChange(key)}
+            >
+              <SessionRowContent session={session} />
+            </Button>
+          </div>
+        );
+      })}
+    </div>
   );
 }

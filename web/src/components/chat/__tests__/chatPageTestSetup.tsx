@@ -25,10 +25,6 @@ export const clearTerminalSessionRequestSpy = vi.fn();
 export const terminalSessionRequestState: { value: string | null } = {
   value: "terminal-focus",
 };
-export const terminalOpenState: { value: boolean } = { value: false };
-export const openTerminalSpy = vi.fn();
-export const closeTerminalSpy = vi.fn();
-export const toggleTerminalExpandedSpy = vi.fn();
 
 const noopDirtyGuard: DirtyGuardContextValue = {
   registerDirtyGuard: () => () => {},
@@ -205,6 +201,8 @@ export const activityPanelMockFactory = () => ({
     onApprovePlan,
     onRequestPlanChanges,
     onAddFileToChat,
+    terminalFocusSessionId,
+    onTerminalFocusHandled,
   }: {
     sessions?: Array<{ id: string }>;
     onSwapSession?: (target: {
@@ -218,6 +216,8 @@ export const activityPanelMockFactory = () => ({
     onApprovePlan?: () => void;
     onRequestPlanChanges?: (feedback: string) => void;
     onAddFileToChat?: (filePath: string) => void;
+    terminalFocusSessionId?: string | null;
+    onTerminalFocusHandled?: () => void;
   }) => (
     <div data-testid="activity-panel">
       <span data-testid="activity-panel-session-count">
@@ -295,6 +295,16 @@ export const activityPanelMockFactory = () => ({
         onClick={() => onAddFileToChat?.("/tmp/context.md")}
       >
         Attach File
+      </button>
+      <span data-testid="terminal-focus-session-id">
+        {terminalFocusSessionId ?? ""}
+      </span>
+      <button
+        type="button"
+        data-testid="handle-terminal-focus"
+        onClick={() => onTerminalFocusHandled?.()}
+      >
+        Handle Terminal Focus
       </button>
     </div>
   ),
@@ -435,38 +445,10 @@ export const useActivityPanelMockFactory = () => ({
     showTab: showTabSpy,
     terminalSessionRequest: terminalSessionRequestState.value,
     clearTerminalSessionRequest: clearTerminalSessionRequestSpy,
-    terminalOpen: terminalOpenState.value,
-    terminalExpanded: false,
-    openTerminal: openTerminalSpy,
-    closeTerminal: closeTerminalSpy,
-    toggleTerminalExpanded: toggleTerminalExpandedSpy,
     toggleFromChat: toggleFromChatSpy,
     toggleFromPanel: toggleFromPanelSpy,
     dirtyGuard: noopDirtyGuard,
   }),
-});
-
-export const terminalDockMockFactory = () => ({
-  TerminalDock: ({
-    focusSessionId,
-    onFocusHandled,
-  }: {
-    focusSessionId?: string | null;
-    onFocusHandled?: () => void;
-  }) => (
-    <div data-testid="terminal-dock">
-      <span data-testid="terminal-dock-focus-session-id">
-        {focusSessionId ?? ""}
-      </span>
-      <button
-        type="button"
-        data-testid="handle-terminal-focus"
-        onClick={() => onFocusHandled?.()}
-      >
-        Handle Terminal Focus
-      </button>
-    </div>
-  ),
 });
 
 export const useFileChangesMockFactory = () => ({
@@ -559,7 +541,6 @@ export function setupChatPageEnvironment(): void {
   isMobileState.value = false;
   effectiveModeState.value = "split";
   terminalSessionRequestState.value = "terminal-focus";
-  terminalOpenState.value = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {

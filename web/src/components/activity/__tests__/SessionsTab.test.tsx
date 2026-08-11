@@ -326,11 +326,10 @@ function TerminalFocusHarness() {
     <>
       <SessionsTab sessions={[PAUSED_SESSION]} />
       <output aria-label="Active activity tab">{activity.activeTab}</output>
-      <output aria-label="Terminal dock open">{String(activity.terminalOpen)}</output>
       <output aria-label="Terminal focus request">
         {activity.terminalSessionRequest ?? ""}
       </output>
-      {activity.terminalOpen ? (
+      {activity.activeTab === "terminal" ? (
         <TerminalTab
           sessions={[PAUSED_SESSION]}
           focusSessionId={activity.terminalSessionRequest}
@@ -1626,16 +1625,13 @@ describe("SessionsTab", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("status", { name: "Terminal dock open" }),
-      ).toHaveTextContent("true");
-      expect(
-        screen.getByRole("combobox", { name: "Terminal session" }),
-      ).toHaveTextContent("#202 Paused Terminal");
+        screen.getByRole("button", { name: "Attach #202 Paused Terminal" }),
+      ).toHaveAttribute("aria-pressed", "true");
     });
-    // Terminal lives in the bottom dock now — the side panel keeps its tab.
+    // Terminal is a regular activity tab: opening it switches the panel tab.
     expect(
       screen.getByRole("status", { name: "Active activity tab" }),
-    ).toHaveTextContent("sessions");
+    ).toHaveTextContent("terminal");
     expect(terminalHook.attachSession).toHaveBeenCalledWith(
       "paused-pane",
       "default",
