@@ -8,6 +8,9 @@ from typing import Any
 
 import click
 
+from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+from gobby.ui_exposure import UiExposeError, disable_tailscale_ui
+
 from ._install_prompts import _echo_uninstall_summary, _run_standard_cli_uninstall
 from .install_setup_impeccable import remove_impeccable_runtime
 from .installers import (
@@ -18,6 +21,27 @@ from .installers import (
     uninstall_grok,
     uninstall_qwen,
 )
+
+
+def _teardown_ui_exposure() -> None:
+    """Best-effort removal of the managed Tailscale UI exposure."""
+    try:
+        bootstrap = load_bootstrap(resolve_database_url=False)
+    except BootstrapConfigError as exc:
+        click.echo(f"Warning: could not read UI exposure intent: {exc}", err=True)
+        return
+    if bootstrap.ui_expose is None:
+        return
+    try:
+        disable_tailscale_ui(bootstrap.daemon_port)
+    except UiExposeError as exc:
+        click.echo(
+            f"Warning: could not remove Tailscale UI exposure: {exc}. "
+            "Run 'gobby ui unexpose' to retry.",
+            err=True,
+        )
+        return
+    click.echo("Removed Tailscale UI exposure.")
 
 
 @click.command("uninstall")
@@ -237,6 +261,7 @@ def uninstall(
                     click.echo(f"  Warning: could not remove {fpath}: {exc}", err=True)
         click.echo("Removed global hook dispatchers from ~/.gobby/hooks/")
         click.echo("")
+        _teardown_ui_exposure()
 
     all_success = _echo_uninstall_summary(results)
     if not all_success:

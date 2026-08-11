@@ -770,3 +770,56 @@ class TestUninstallCommand:
             result = runner.invoke(uninstall, ["--all", "--yes"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No Gobby hooks found" in result.output
+
+    @staticmethod
+    def _global_uninstall(
+        tmp_path: Path,
+        runner: CliRunner,
+        bootstrap: MagicMock,
+        disable: MagicMock,
+    ) -> Any:
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text("{}")
+        with (
+            patch("gobby.cli.install.Path.home", return_value=tmp_path),
+            patch(
+                "gobby.cli.uninstall.uninstall_claude",
+                return_value={"success": True, "hooks_removed": [], "files_removed": []},
+            ),
+            patch("gobby.cli.uninstall.load_bootstrap", return_value=bootstrap),
+            patch("gobby.cli.uninstall.disable_tailscale_ui", disable),
+        ):
+            return runner.invoke(uninstall, ["--all", "--yes"], catch_exceptions=False)
+
+    def test_uninstall_all_tears_down_ui_exposure(self, runner: CliRunner, tmp_path: Path) -> None:
+        bootstrap = MagicMock(ui_expose="tailscale", daemon_port=60887)
+        disable = MagicMock()
+
+        result = self._global_uninstall(tmp_path, runner, bootstrap, disable)
+
+        assert result.exit_code == 0
+        assert "Removed Tailscale UI exposure." in result.output
+        disable.assert_called_once_with(60887)
+
+    def test_uninstall_all_skips_ui_exposure_without_intent(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        bootstrap = MagicMock(ui_expose=None)
+        disable = MagicMock()
+
+        result = self._global_uninstall(tmp_path, runner, bootstrap, disable)
+
+        assert result.exit_code == 0
+        disable.assert_not_called()
+
+    def test_uninstall_ui_exposure_failure_is_nonfatal(
+        self, runner: CliRunner, tmp_path: Path
+    ) -> None:
+        bootstrap = MagicMock(ui_expose="tailscale", daemon_port=60887)
+        disable = MagicMock(side_effect=UiExposeError("sentinel"))
+
+        result = self._global_uninstall(tmp_path, runner, bootstrap, disable)
+
+        assert result.exit_code == 0
+        assert "Warning: could not remove Tailscale UI exposure: sentinel" in result.output
+        assert "gobby ui unexpose" in result.output
