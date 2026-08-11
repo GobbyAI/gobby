@@ -36,6 +36,32 @@ function lifecyclePresentation(status: string): LifecyclePresentation {
   };
 }
 
+/** VT-100-style monitor mark for terminals Gobby didn't create — it sits in
+ * the provider-icon slot, so an external row reads like any provider row. */
+function ExternalTerminalGlyph() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="shrink-0 text-accent"
+      role="img"
+      aria-label="External terminal"
+    >
+      <title>A tmux session on this machine that Gobby didn't create</title>
+      <rect x="2" y="3" width="20" height="15" rx="2" />
+      <path d="m7 8 3 3-3 3" />
+      <path d="M13 14h4" />
+      <path d="M9 21h6" />
+    </svg>
+  );
+}
+
 function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
   const lifecycle = session.gobby
     ? lifecyclePresentation(session.gobby.status)
@@ -50,7 +76,11 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
           label={lifecycle.label}
         />
       ) : null}
-      {session.provider ? <SourceIcon source={session.provider} size={14} /> : null}
+      {session.provider ? (
+        <SourceIcon source={session.provider} size={14} />
+      ) : session.external ? (
+        <ExternalTerminalGlyph />
+      ) : null}
       <span className="activity-row-title">{session.label}</span>
       <span className="activity-row-meta font-mono">{session.paneRef}</span>
       <span className="flex shrink-0 items-center gap-1">
@@ -62,14 +92,6 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
         {session.agentManaged ? (
           <span className="rounded-full border border-info/40 bg-info-soft px-1.5 py-0.5 text-2xs font-medium text-info">
             Agent-managed
-          </span>
-        ) : null}
-        {session.external ? (
-          <span
-            className="rounded-full border border-border bg-muted/50 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
-            title="A tmux session on this machine that Gobby didn't create and isn't tracking"
-          >
-            Not Gobby-managed
           </span>
         ) : null}
       </span>

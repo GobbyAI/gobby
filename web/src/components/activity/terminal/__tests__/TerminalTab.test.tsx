@@ -511,9 +511,8 @@ describe("direct input", () => {
     await user.click(screen.getByRole("button", { name: "Protocol reply" }));
     expect(hookState.sendInput).toHaveBeenCalledWith("\u001b[6n");
 
-    await user.type(screen.getByLabelText("Terminal input"), "status");
-    await user.click(screen.getByRole("button", { name: "Send" }));
-    expect(hookState.sendInput).toHaveBeenCalledWith("status\r");
+    await user.click(screen.getByRole("button", { name: "Esc" }));
+    expect(hookState.sendInput).toHaveBeenCalledWith("\u001b");
   });
 });
 

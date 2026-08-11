@@ -12,6 +12,7 @@ import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
 import type { GobbySession } from "../../../types/sessions";
 import { Button } from "../../ui/Button";
 import { ResizeHandle } from "../../shared/ResizeHandle";
+import { useRegisterActivityActions } from "../activityActions";
 import { TerminalKeysBar } from "./TerminalKeysBar";
 import { TerminalSessionList } from "./TerminalSessionList";
 import {
@@ -366,6 +367,18 @@ export function TerminalTab({
     dismissEndedSession();
   }, [clearAttachError, dismissEndedSession]);
 
+  // "+ New Terminal" lives in the shared activity toolbar like every other
+  // tab's add action — the tab body contributes no chrome bar of its own.
+  useRegisterActivityActions(
+    {
+      onAdd: () => createSession(),
+      addLabel: "New Terminal",
+      addAriaLabel: "Create terminal session",
+      addDisabled: !connected || requestPending,
+    },
+    [connected, createSession, requestPending],
+  );
+
   const isAttaching =
     selected !== null &&
     attachError === null &&
@@ -431,21 +444,16 @@ export function TerminalTab({
       ) : null}
 
       {/* Terminal list mirrors the sessions-list placement: rows on top,
-          the selected terminal's view below. */}
+          the selected terminal's view below its Watching status bar. */}
       <div
-        className="flex min-h-0 flex-col"
+        className="min-h-0 overflow-y-auto"
         style={{ height: `${listHeight}%` }}
       >
-        <div className="flex shrink-0 items-center justify-end border-b border-border px-2.5 py-1.5">
-          {newTerminalButton}
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          <TerminalSessionList
-            sessions={joinedSessions}
-            value={selectedKey}
-            onChange={chooseSession}
-          />
-        </div>
+        <TerminalSessionList
+          sessions={joinedSessions}
+          value={selectedKey}
+          onChange={chooseSession}
+        />
       </div>
 
       <ResizeHandle
@@ -456,7 +464,16 @@ export function TerminalTab({
         maxHeight={70}
       />
 
-      <div className="relative min-h-0 flex-1 overflow-hidden border-t border-border bg-[var(--bg-primary)]">
+      <div className="activity-panel-status-bar border-t">
+        <span className="activity-panel-status-bar__title">
+          <span className="activity-panel-status-bar__watching-prefix">
+            Watching{" "}
+          </span>
+          {selected ? selected.label : "terminal"}
+        </span>
+      </div>
+
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-[var(--bg-primary)]">
         <TerminalView
           key={streamingId ?? "pending"}
           ref={viewRef}
