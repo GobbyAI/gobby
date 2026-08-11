@@ -446,4 +446,33 @@ describe('FilesTab', () => {
     await user.tab()
     expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: 'Delete' }))
   })
+
+  it('keeps tree-row focus rings inset so the scroller cannot clip them (#20046)', async () => {
+    // The base-layer ring sits 2px outside the row; the tree pane's overflow
+    // clipped it into a stray full-width accent line between rows.
+    vi.mocked(useIsMobile).mockReturnValue(false)
+    fetchMock.mockImplementation(async (input?: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/files/git-status')) return Response.json({ files: {} })
+      if (url.includes('/api/files/tree')) {
+        return Response.json([
+          { name: 'src', path: 'src', is_dir: true },
+          { name: 'README.md', path: 'README.md', is_dir: false, extension: 'md' },
+        ])
+      }
+      return Response.json([])
+    })
+
+    render(<FilesTab projectId="test-project" />)
+
+    const rows = await screen.findAllByRole('treeitem')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row).toHaveClass(
+        'focus-visible:outline-2',
+        'focus-visible:outline-accent',
+        'focus-visible:outline-offset-[-2px]',
+      )
+    }
+  })
 })

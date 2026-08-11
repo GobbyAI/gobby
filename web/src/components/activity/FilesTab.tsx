@@ -35,6 +35,12 @@ interface FilesTabProps {
   layout?: 'stack' | 'responsive-split'
 }
 
+// The base-layer focus ring sits 2px outside the row, so the tree pane's
+// overflow clips it to a stray full-width line between rows (#20046); an
+// inset ring stays fully visible inside the scroller.
+const treeRowFocusCls =
+  'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]'
+
 const FILES_TAB_LEFT_WIDTH_KEY = 'gobby:files-tab:left-width'
 const FILES_TAB_LEFT_WIDTH_DEFAULT = 320
 const FILES_TAB_LEFT_WIDTH_MIN = 200
@@ -469,6 +475,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
           <div
             className={cn(
               'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+              treeRowFocusCls,
               isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
             )}
             style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}
@@ -526,6 +533,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
         <div
           className={cn(
             'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+            treeRowFocusCls,
             isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
           )}
           style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}

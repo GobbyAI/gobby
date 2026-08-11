@@ -14,6 +14,12 @@ import type { FileEntry, OpenFile, Project, GitStatus } from '../hooks/useFiles'
 import { cn } from '../lib/utils'
 import { activateOnKeyboard } from '../lib/keyboard'
 
+// The base-layer focus ring sits 2px outside the row, so the Explorer pane's
+// overflow clips it to a stray full-width line between rows (#20046); an
+// inset ring stays fully visible inside the scroller.
+const treeRowFocusCls =
+  'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]'
+
 const GIT_STATUS_CLASS_BY_CODE: Readonly<Record<string, string>> = {
   M: 'text-[var(--color-warning-foreground)]',
   MM: 'text-[var(--color-warning-foreground)]',
@@ -361,6 +367,9 @@ function ProjectNode({ project, isExpanded, expandedDirs, loadingDirs, gitStatus
         className={cn(
           coarseHitAreaCls,
           'h-auto w-full justify-start gap-1.5 rounded-none border-0 bg-transparent px-2 py-1.5 text-left text-[length:var(--text-md)] font-medium text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
+          // Full-width row in the clipping Explorer scroller: keep the Button
+          // focus ring inside the row so it can't shear into a stray line.
+          'focus-visible:ring-inset focus-visible:ring-offset-0',
         )}
         onClick={onToggle}
         aria-expanded={isExpanded}
@@ -432,7 +441,10 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
     return (
       <div>
         <div
-          className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11"
+          className={cn(
+            'flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11',
+            treeRowFocusCls,
+          )}
           style={{ paddingLeft: `${depth * 16 + 4}px` }}
           role="button"
           tabIndex={0}
@@ -477,7 +489,10 @@ function TreeEntry({ entry, projectId, depth, expandedDirs, loadingDirs, gitFile
 
   return (
     <div
-      className="flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11"
+      className={cn(
+        'flex cursor-pointer select-none items-center gap-1.5 px-2 py-0.5 text-[length:var(--text-md)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] pointer-coarse:min-h-11',
+        treeRowFocusCls,
+      )}
       style={{ paddingLeft: `${depth * 16 + 20}px` }}
       role="button"
       tabIndex={0}
