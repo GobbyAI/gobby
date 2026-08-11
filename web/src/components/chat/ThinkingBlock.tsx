@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { DropdownCaret } from '../ui/DropdownCaret'
 import { Markdown } from './Markdown'
 
 interface ThinkingBlockProps {
@@ -34,7 +35,7 @@ export function ThinkingBlock({ content, messageId }: ThinkingBlockProps) {
           }
         }}
       >
-        <span className="text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
+        <DropdownCaret open={expanded} />
         <span className="font-medium">Thinking</span>
       </div>
       {expanded && content && (

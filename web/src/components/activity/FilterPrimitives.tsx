@@ -43,7 +43,7 @@ export const FilterDropdownTrigger = forwardRef<
       aria-expanded={open}
     >
       {icon}
-      <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+      <span className="activity-panel-action-btn__label">
         {label}
       </span>
       {activeCount > 0 && (

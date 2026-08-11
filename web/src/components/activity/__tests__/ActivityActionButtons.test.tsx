@@ -94,7 +94,12 @@ describe("ActivityActionButtons", () => {
     const button = screen.getByRole("button", { name: "Search sessions" });
     expect(button).toHaveAttribute("aria-expanded", "false");
     expect(button).not.toHaveClass("activity-panel-action-btn");
+    // The label span carries only the marker class — the panel root's shared
+    // descendant rules own the mobile-tier / narrow-panel collapse (#19187).
     expect(button.querySelector("span")).toHaveClass(
+      "activity-panel-action-btn__label",
+    );
+    expect(button.querySelector("span")).not.toHaveClass(
       "@max-[479px]/activity-panel:hidden",
     );
     fireEvent.click(button);

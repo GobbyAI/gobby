@@ -5,6 +5,7 @@ import type { ToolCall, ToolResult } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Badge } from '../ui/Badge'
 import { Button } from '../ui/Button'
+import { DropdownCaret } from '../ui/DropdownCaret'
 import { Input } from '../ui/Input'
 import { JsonBlock } from './JsonBlock'
 import { RichContentBlocks } from './RichContentBlocks'
@@ -371,7 +372,7 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         ) : null}
         <div className="flex-1" />
         {hasDetails && (
-          <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
+          <DropdownCaret open={expanded} />
         )}
       </div>
       {expanded && hasDetails && (
@@ -797,7 +798,7 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
         <Badge variant="default">×{group.tool_calls.length}</Badge>
         {serverName && serverName !== 'builtin' && <span className="text-muted-foreground text-xs">{serverName}</span>}
         <div className="flex-1" />
-        <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
+        <DropdownCaret open={expanded} />
       </div>
       {expanded && (
         <div className="pl-3">

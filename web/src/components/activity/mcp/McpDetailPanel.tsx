@@ -135,7 +135,7 @@ export function McpDetailPanel({
               title="Call tool"
             >
               <CallToolIcon />
-              <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+              <span className="activity-panel-action-btn__label">
                 {executing ? "Calling" : "Call Tool"}
               </span>
             </Button>

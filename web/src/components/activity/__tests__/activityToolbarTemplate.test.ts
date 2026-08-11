@@ -54,16 +54,29 @@ describe('activity toolbar template (#20044)', () => {
     }
   })
 
-  it('collapses header trigger labels to glyphs in narrow panels', () => {
-    const headerSource = readFileSync(
-      join(ACTIVITY_DIR, 'ActivityActionsContext.tsx'),
-      'utf8',
+  // #19187: labeled toolbar buttons collapse to icon-only through ONE shared
+  // mechanism — descendant rules on the panel root in activityPanelClassName.
+  // The mobile: rule collapses at the mobile tier (viewport-driven, the
+  // .impeccable.md mobile toolbar pattern); the container rule keeps the
+  // collapse when the panel is resized narrow on desktop. Label spans carry
+  // only the marker class.
+  it('collapses toolbar labels from the panel root at the mobile tier and in narrow panels', () => {
+    const panelSource = readFileSync(join(ACTIVITY_DIR, 'ActivityPanel.tsx'), 'utf8')
+    expect(panelSource).toContain(
+      String.raw`mobile:[&_.activity-panel-action-btn\_\_label]:hidden`,
     )
-    const filterSource = readFileSync(
-      join(ACTIVITY_DIR, 'FilterPrimitives.tsx'),
-      'utf8',
+    expect(panelSource).toContain(
+      String.raw`@max-[479px]/activity-panel:[&_.activity-panel-action-btn\_\_label]:hidden`,
     )
-    expect(headerSource).toContain('@max-[479px]/activity-panel:hidden')
-    expect(filterSource).toContain('@max-[479px]/activity-panel:hidden')
+  })
+
+  it('bans per-surface label-collapse CSS on the label spans themselves', () => {
+    // The root rule targets the label via an arbitrary variant
+    // (`…/activity-panel:[&_.…\_\_label]:hidden`), so a plain
+    // `…/activity-panel:hidden` token can only be a per-span one-off.
+    const offenders = walkTsx(ACTIVITY_DIR).filter((file) =>
+      readFileSync(file, 'utf8').includes('@max-[479px]/activity-panel:hidden'),
+    )
+    expect(offenders).toEqual([])
   })
 })

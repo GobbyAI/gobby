@@ -38,7 +38,12 @@ describe('McpDetailPanel', () => {
       'justify-between',
     )
     expect(callButton).not.toHaveClass('activity-panel-action-btn')
+    // Marker class only — the panel root's shared descendant rules own the
+    // mobile-tier / narrow-panel label collapse (#19187).
     expect(callButton.querySelector('span')).toHaveClass(
+      'activity-panel-action-btn__label',
+    )
+    expect(callButton.querySelector('span')).not.toHaveClass(
       '@max-[479px]/activity-panel:hidden',
     )
     fireEvent.change(screen.getByRole('textbox', { name: 'payload' }), {

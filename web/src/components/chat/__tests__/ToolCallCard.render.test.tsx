@@ -34,6 +34,46 @@ describe('ToolCallCard rendering', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument()
   })
 
+  it('uses the shared DropdownCaret as the tool-row expand affordance (#19187)', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-caret',
+            tool_name: 'exec_command',
+            arguments: { cmd: 'git status --short' },
+            result: { content: 'ok', kind: 'text', truncated: false },
+          }),
+        ]}
+      />,
+    )
+
+    const header = screen.getByRole('button', { expanded: false })
+    expect(header.querySelector('.dropdown-caret')).not.toBeNull()
+    // The literal play-triangle / down-triangle glyphs are retired.
+    expect(container.textContent).not.toMatch(/[▶▼]/)
+
+    fireEvent.click(header)
+    expect(header).toHaveAttribute('aria-expanded', 'true')
+    expect(header.querySelector('.dropdown-caret')).not.toBeNull()
+  })
+
+  it('uses the shared DropdownCaret on grouped tool-call headers (#19187)', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({ id: 'g-1', tool_name: 'exec_command', arguments: { cmd: 'a' } }),
+          makeCall({ id: 'g-2', tool_name: 'exec_command', arguments: { cmd: 'b' } }),
+          makeCall({ id: 'g-3', tool_name: 'exec_command', arguments: { cmd: 'c' } }),
+        ]}
+      />,
+    )
+
+    const groupHeader = screen.getByRole('button', { name: /×3/ })
+    expect(groupHeader.querySelector('.dropdown-caret')).not.toBeNull()
+    expect(container.textContent).not.toMatch(/[▶▼]/)
+  })
+
   it('suppresses internal write_stdin calls while neighboring tool calls still render (#19188)', () => {
     renderWithProviders(
       <ToolCallCards

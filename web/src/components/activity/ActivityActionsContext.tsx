@@ -127,7 +127,7 @@ export function ActivityActionButtons() {
           aria-expanded={actions.search.open}
         >
           <SearchGlyph />
-          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+          <span className="activity-panel-action-btn__label">
             Search
           </span>
         </Button>
@@ -143,7 +143,7 @@ export function ActivityActionButtons() {
           title={actions.addAriaLabel ?? addLabel}
         >
           <PlusGlyph />
-          <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+          <span className="activity-panel-action-btn__label">
             {addLabel}
           </span>
         </Button>

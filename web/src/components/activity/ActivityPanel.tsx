@@ -80,7 +80,13 @@ function activityPanelClassName(className?: string) {
     // the literals must be String.raw: Tailwind turns bare `_` into a space
     // inside arbitrary variants, silently producing dead selectors, and a
     // cooked string would strip the escape before it reaches the DOM.
+    // Mobile toolbar pattern (.impeccable.md): labeled toolbar buttons
+    // collapse to icon-only at the mobile tier, and also when the panel is
+    // resized narrow on desktop. This root rule is the single collapse
+    // authority — label spans carry only the marker class, never their own
+    // collapse CSS.
     String.raw`@max-[479px]/activity-panel:[&_.activity-panel-action-btn\_\_label]:hidden`,
+    String.raw`mobile:[&_.activity-panel-action-btn\_\_label]:hidden`,
     String.raw`@max-[360px]/activity-panel:[&_.activity-panel-status-bar\_\_watching-prefix]:hidden`,
     "[&_.activity-row-title]:flex-1 [&_.activity-row-title]:min-w-0 [&_.activity-row-title]:truncate",
     "[&_.activity-row-title]:text-[length:var(--text-base)] [&_.activity-row-title]:font-[var(--font-weight-medium)] [&_.activity-row-title]:text-[var(--text-primary)]",
@@ -528,7 +534,7 @@ export function ActivityPanel({
                       <line x1="18" y1="6" x2="6" y2="18" />
                       <line x1="6" y1="6" x2="18" y2="18" />
                     </svg>
-                    <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+                    <span className="activity-panel-action-btn__label">
                       Close
                     </span>
                   </Button>
@@ -596,7 +602,7 @@ export function ActivityPanel({
                 title={chatHidden ? "Show chat" : "Hide chat"}
               >
                 <PanelIcon visible={!chatHidden} />
-                <span className="activity-panel-action-btn__label @max-[479px]/activity-panel:hidden">
+                <span className="activity-panel-action-btn__label">
                   {chatHidden ? "Show Chat" : "Hide Chat"}
                 </span>
               </Button>
