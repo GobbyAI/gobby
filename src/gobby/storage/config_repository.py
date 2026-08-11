@@ -257,8 +257,13 @@ class ConfigRepository:
         values: dict[str, object] = {}
         for spec in self.registry.key_specs:
             if spec.has_default:
-                values[spec.key] = TypeAdapter(spec.annotation).validate_python(
-                    copy.deepcopy(spec.default)
+                # Stored overrides decode to JSON-plain values; defaults must
+                # use the same representation or rich-typed defaults (pydantic
+                # models) leak into snapshot values and break serialization.
+                adapter: TypeAdapter[object] = TypeAdapter(spec.annotation)
+                values[spec.key] = adapter.dump_python(
+                    adapter.validate_python(copy.deepcopy(spec.default)),
+                    mode="json",
                 )
         values.update(overrides)
         return values

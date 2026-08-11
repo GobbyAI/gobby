@@ -21,7 +21,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
     validate_embedding_storage_config_key,
 )
-from gobby.config.registry import ConfigRegistry, decode_dynamic_segment
+from gobby.config.registry import ConfigRegistry, UnknownConfigKeyError, decode_dynamic_segment
 from gobby.storage.config_mutations import (
     ConfigConflictError,
     ConfigMutationResult,
@@ -682,13 +682,25 @@ def flatten_config(
                 ) from exc
         full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
         if isinstance(value, dict):
-            if value:
+            if registry is not None and _is_registered_leaf(registry, full_key):
+                # An object-valued registered key is a leaf: recursing would
+                # splice its fields into unregistered dotted keys.
+                flat[full_key] = value
+            elif value:
                 flat.update(flatten_config(value, full_key, registry=registry))
             else:
                 flat[full_key] = {}
         else:
             flat[full_key] = value
     return flat
+
+
+def _is_registered_leaf(registry: ConfigRegistry, key: str) -> bool:
+    try:
+        registry.resolve(key)
+    except UnknownConfigKeyError:
+        return False
+    return True
 
 
 def unflatten_config(flat_dict: dict[str, Any]) -> dict[str, Any]:

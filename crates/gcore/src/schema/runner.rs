@@ -186,11 +186,13 @@ enum BaselineState {
     CorruptPartial,
 }
 
-const GCORE_CODE_INDEX_TABLES: [&str; 6] = [
+const GCORE_CODE_INDEX_TABLES: [&str; 8] = [
     "code_calls",
     "code_content_chunks",
     "code_imports",
+    "code_indexed_file_states",
     "code_indexed_files",
+    "code_indexed_project_states",
     "code_indexed_projects",
     "code_symbols",
 ];
@@ -591,14 +593,29 @@ fn adopted_column_contracts() -> BTreeMap<&'static str, &'static [&'static str]>
     BTreeMap::from([
         (
             "code_indexed_projects",
+            &["id", "created_at", "updated_at"] as &[_],
+        ),
+        (
+            "code_indexed_project_states",
             &[
-                "id",
+                "machine_id",
+                "project_id",
                 "root_path",
                 "total_files",
                 "total_symbols",
                 "last_indexed_at",
                 "index_duration_ms",
                 "created_at",
+                "updated_at",
+            ] as &[_],
+        ),
+        (
+            "code_indexed_file_states",
+            &[
+                "machine_id",
+                "project_id",
+                "file_path",
+                "content_hash",
                 "updated_at",
             ] as &[_],
         ),

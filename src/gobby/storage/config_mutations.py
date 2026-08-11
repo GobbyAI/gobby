@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_core import to_jsonable_python
+from pydantic_core import to_json, to_jsonable_python
 
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
@@ -439,7 +439,14 @@ class ConfigMutations:
                 raise ConfigValidationError(f"Unsupported patterned configuration key {key!r}")
             annotation = field_spec.annotation
         try:
-            return cast(object, TypeAdapter(annotation).validate_python(value, strict=True))
+            # Values arrive as decoded JSON/YAML documents, so strictness must
+            # use JSON semantics: '5' never coerces to 5, but enum-keyed maps
+            # accept their canonical string keys (python-strict would reject
+            # the JSON form of a key's own default).
+            return cast(
+                object,
+                TypeAdapter(annotation).validate_json(to_json(value), strict=True),
+            )
         except ValidationError as exc:
             raise ConfigValidationError(
                 f"Invalid value for configuration key {key!r}: {exc}",

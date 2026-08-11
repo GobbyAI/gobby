@@ -742,7 +742,7 @@ class TestSessionManagerPruning:
     async def test_workflow_audit_maintenance_unblocks_empty_session_pruning(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
 
@@ -773,10 +773,20 @@ class TestSessionManagerPruning:
             nonlocal shutdown_requested
             shutdown_requested = True
 
+        from types import SimpleNamespace
+        from typing import Any, cast
+
+        bundle = SimpleNamespace(
+            snapshot=SimpleNamespace(
+                active=SimpleNamespace(
+                    session_lifecycle=SimpleNamespace(workflow_audit_retention_days=7)
+                )
+            )
+        )
         await workflow_audit_cleanup_loop(
             session_manager.db,
             lambda: shutdown_requested,
-            retention_days=7,
+            capture_bundle=cast(Any, lambda: bundle),
             interval_seconds=0,
             sleep=stop_after_cycle,
         )

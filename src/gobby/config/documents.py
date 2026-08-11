@@ -253,6 +253,11 @@ class ConfigDocumentsService:
         secrets: dict[str, SecretUpdate],
         validation_values: dict[str, object],
     ) -> None:
+        if value in (None, ""):
+            # An unset secret contributes no override: the namespace replace
+            # clears any stored reference, and the projection default applies.
+            validation_values[key] = None
+            return
         if not isinstance(value, str):
             raise self._invalid_key(key, "Secret configuration value must be a string")
         if value == MASKED_SECRET:
@@ -290,7 +295,13 @@ class ConfigDocumentsService:
             ):
                 continue
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
-                values[key] = MASKED_SECRET
+                # Only a persisted $secret: reference is masked; an unset
+                # secret has nothing to hide, and masking it would export a
+                # document replace_yaml must reject ("no persisted reference").
+                if isinstance(value, str) and value.startswith("$secret:"):
+                    values[key] = MASKED_SECRET
+                else:
+                    values[key] = value
             elif key == VOICE_AUDIO_BINDINGS_KEY:
                 values[key] = mask_voice_audio_api_keys({key: value})[key]
             else:

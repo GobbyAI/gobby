@@ -51,8 +51,8 @@ def _seed_parents(temp_db: HubDatabase) -> None:
         )
         for i in range(5):
             conn.execute(
-                "INSERT INTO agent_runs (id, parent_session_id, status, provider, prompt) "
-                "VALUES (%s, %s, 'running', 'test', 'test prompt')",
+                "INSERT INTO agent_runs (id, parent_session_id, machine_id, status, provider, prompt) "
+                "VALUES (%s, %s, '21000000-0000-4000-8000-000000000001', 'running', 'test', 'test prompt')",
                 (RUN_IDS[i], SESSION_ID),
             )
 

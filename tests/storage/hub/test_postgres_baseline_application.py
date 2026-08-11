@@ -107,8 +107,8 @@ def test_gdaemon_adopts_gcode_standalone_tables(
             row_factory=dict_row,
         ) as connection:
             connection.execute(
-                "INSERT INTO code_indexed_projects (id, root_path) VALUES (%s, %s)",
-                (project_id, "/tmp/adopted-gcode"),
+                "INSERT INTO code_indexed_projects (id) VALUES (%s)",
+                (project_id,),
             )
 
         apply_schema(database_url)
@@ -119,14 +119,15 @@ def test_gdaemon_adopts_gcode_standalone_tables(
             row_factory=dict_row,
         ) as connection:
             adopted = connection.execute(
-                "SELECT root_path FROM code_indexed_projects WHERE id = %s",
+                "SELECT id FROM code_indexed_projects WHERE id = %s",
                 (project_id,),
             ).fetchone()
             receipt = connection.execute(
                 "SELECT COUNT(*) AS count FROM schema_migrations"
             ).fetchone()
 
-    assert adopted == {"root_path": "/tmp/adopted-gcode"}
+    assert adopted is not None
+    assert str(adopted["id"]) == project_id
     assert receipt == {"count": 1}
 
 

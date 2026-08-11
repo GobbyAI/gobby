@@ -86,6 +86,10 @@ class _RecordingDB:
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> _RecordingCursor:
         self.calls.append(_RecordedCall(sql, params))
+        if "RETURNING sequence" in sql:
+            # Memory writers append to the embedding projection ledger inside
+            # the same transaction; the insert reads back its sequence.
+            return _RecordingCursor(row={"sequence": 1}, rowcount=1)
         return _RecordingCursor(row=self._execute_row, rowcount=1)
 
     def fetchone(
@@ -185,12 +189,14 @@ def test_memory_timestamp_writers_and_filters_bind_datetimes() -> None:
     _assert_aware_utc(_params(db.calls[-1])[0])
 
     dreams.mark_dreamed("memory-1", hidden_as="review", when=timestamp)
-    dreamed_params = _params(db.calls[-1])
+    # The visibility write is followed by the projection-ledger advisory lock
+    # and append in the same transaction; the memory UPDATE is third-last.
+    dreamed_params = _params(db.calls[-3])
     _assert_aware_utc(dreamed_params[0])
     _assert_aware_utc(dreamed_params[1])
 
     dreams.restore_memory("memory-1", when=timestamp)
-    _assert_aware_utc(_params(db.calls[-1])[0])
+    _assert_aware_utc(_params(db.calls[-3])[0])
 
     dreams.list_dream_candidates(limit=10, redream_cutoff=timestamp, scope=ALL_MEMORIES)
     _assert_aware_utc(_params(db.calls[-1])[0])
@@ -217,8 +223,8 @@ def test_cron_run_create_binds_triggered_and_created_at_as_datetimes() -> None:
 
     assert run is None
     params = _params(db.calls[-1])
-    _assert_aware_utc(params[2])
-    _assert_aware_utc(params[11])
+    _assert_aware_utc(params[3])
+    _assert_aware_utc(params[12])
 
 
 def test_schema_hash_manager_binds_verification_timestamps_as_datetimes() -> None:
@@ -304,8 +310,8 @@ def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
     )
 
     worktree_params = _params(worktree_db.calls[-1])
-    _assert_aware_utc(worktree_params[8])
     _assert_aware_utc(worktree_params[9])
+    _assert_aware_utc(worktree_params[10])
     _assert_aware_utc(worktree_model.created_at)
     _assert_aware_utc(worktree_model.updated_at)
 
@@ -321,14 +327,16 @@ def test_worktree_and_clone_create_bind_and_return_datetimes() -> None:
     )
 
     clone_params = _params(clone_db.calls[-1])
-    _assert_aware_utc(clone_params[10])
     _assert_aware_utc(clone_params[11])
     _assert_aware_utc(clone_params[12])
+    _assert_aware_utc(clone_params[13])
     assert _assert_aware_utc(clone_model.cleanup_after) == datetime(2026, 7, 4, 1, 2, 3, tzinfo=UTC)
     _assert_aware_utc(clone_model.created_at)
     _assert_aware_utc(clone_model.updated_at)
 
     clone.update("clone-1", cleanup_after=cleanup_after)
-    update_params = _params(clone_db.calls[-2])
+    # update() re-reads the row afterwards with two SELECTs (machine-scoped
+    # read plus the cross-machine fallback probe); the UPDATE is third-last.
+    update_params = _params(clone_db.calls[-3])
     _assert_aware_utc(update_params[0])
     _assert_aware_utc(update_params[1])

@@ -36,6 +36,7 @@ from gobby.storage.config_notifications import ConfigNotificationListener
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseLost,
     EmbeddingGenerationState,
     EmbeddingServingLease,
     ProjectionChange,
@@ -151,6 +152,8 @@ class _WorkerState:
     listener_allowed: threading.Event
     startup_error: str | None
     lease: EmbeddingServingLease | None = None
+    lease_generation_state: EmbeddingGenerationState | None = None
+    lease_activated_at: float | None = None
 
 
 def _snapshot_payload(snapshot: ConfigSnapshot, subscriber: _ProbeSubscriber) -> dict[str, object]:
@@ -355,8 +358,30 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
             caught_up_watermark=watermark,
             required_watermark=watermark,
         )
+        state.lease_generation_state = generation
+        state.lease_activated_at = time.monotonic()
         await asyncio.to_thread(state.lease.activate)
         return True
+    if operation == "lease_wait_fenced":
+        if state.lease is None:
+            raise RuntimeError("serving lease is missing")
+        deadline = time.monotonic() + cast(float, request["timeout"])
+        while True:
+            try:
+                state.lease.assert_serving()
+            except EmbeddingGenerationLeaseLost as exc:
+                activated_at = state.lease_activated_at
+                if activated_at is None:
+                    raise RuntimeError("serving lease was never activated") from exc
+                return {
+                    "fenced_after": time.monotonic() - activated_at,
+                    "message": str(exc),
+                }
+            if time.monotonic() >= deadline:
+                raise RuntimeError("partitioned lease never self-fenced")
+            await asyncio.sleep(0.02)
+    if operation == "watermark":
+        return await asyncio.to_thread(EmbeddingGenerationState(state.db).watermark)
     if operation == "lease_renew":
         if state.lease is None:
             raise RuntimeError("serving lease is missing")
@@ -390,6 +415,23 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
         state.listener_allowed.clear()
         await state.listener.close()
         await asyncio.to_thread(state.db.close)
+        return True
+    if operation == "heal":
+        # Connectivity returns: allow the listener factory again and swap a
+        # fresh pool into every held storage object in place (a closed
+        # PostgresHubDatabase pool cannot reopen). The runtime and lease keep
+        # their existing object references, so this is an in-process heal —
+        # no restart, no rebuilt runtime.
+        state.listener_allowed.set()
+        healed_db = PostgresHubDatabase(state.db.conninfo)
+        state.secret_store.db = healed_db
+        state.store.db = healed_db
+        state.store.repository.db = healed_db
+        state.mutations.db = healed_db
+        state.repository.db = healed_db
+        if state.lease_generation_state is not None:
+            state.lease_generation_state.db = healed_db
+        state.db = healed_db
         return True
     raise ValueError(f"unknown worker operation: {operation}")
 
@@ -631,6 +673,19 @@ class DaemonWorker:
 
     def lease_assert(self) -> None:
         self._request_value("lease_assert")
+
+    def lease_wait_fenced(self, *, timeout: float) -> dict[str, object]:
+        """Block in-process until the lease self-fences; report seconds since activation."""
+        return cast(
+            dict[str, object],
+            self._request_value("lease_wait_fenced", timeout=timeout),
+        )
+
+    def watermark(self) -> int:
+        return cast(int, self._request_value("watermark"))
+
+    def heal(self) -> None:
+        self._request_value("heal")
 
     def can_collect(self, generation: str, revision: int) -> bool:
         return cast(

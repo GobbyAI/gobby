@@ -110,12 +110,13 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
     )
     conn.execute(
         """
-        INSERT INTO public.sessions (id, external_id, source, project_id)
-        VALUES (%s, %s, 'codex', %s)
+        INSERT INTO public.sessions (id, external_id, machine_id, source, project_id)
+        VALUES (%s, %s, %s, 'codex', %s)
         """,
         (
             fixture.session_id,
             f"agent-auth-{fixture.session_id}",
+            fixture.machine_id,
             fixture.project_id,
         ),
     )
@@ -132,12 +133,17 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
     )
     for project_id in (fixture.project_id, fixture.other_project_id):
         conn.execute(
+            "INSERT INTO public.code_indexed_projects (id) VALUES (%s)",
+            (project_id,),
+        )
+        conn.execute(
             """
-            INSERT INTO public.code_indexed_projects
-                (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
-            VALUES (%s, %s, 1, 1, NOW(), 1)
+            INSERT INTO public.code_indexed_project_states
+                (machine_id, project_id, root_path, total_files, total_symbols,
+                 last_indexed_at, index_duration_ms)
+            VALUES (%s, %s, %s, 1, 1, NOW(), 1)
             """,
-            (project_id, f"/tmp/{project_id}"),
+            (fixture.machine_id, project_id, f"/tmp/{project_id}"),
         )
         conn.execute(
             """
@@ -151,8 +157,9 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
             """
             INSERT INTO public.code_symbols (
                 id, project_id, file_path, name, qualified_name, kind, language,
-                byte_start, byte_end, line_start, line_end, content_hash
-            ) VALUES (%s, %s, 'src/lib.rs', %s, %s, 'function', 'rust', 0, 10, 1, 1, %s)
+                byte_start, byte_end, line_start, line_end, content_hash,
+                file_content_hash
+            ) VALUES (%s, %s, 'src/lib.rs', %s, %s, 'function', 'rust', 0, 10, 1, 1, %s, %s)
             """,
             (
                 uuid4(),
@@ -160,15 +167,17 @@ def _seed(conn: psycopg.Connection[Any], fixture: AuthorizationFixture) -> None:
                 f"symbol_{str(project_id).replace('-', '_')}",
                 f"crate::symbol_{str(project_id).replace('-', '_')}",
                 f"hash-{project_id}",
+                f"hash-{project_id}",
             ),
         )
         conn.execute(
             """
             INSERT INTO public.code_content_chunks
-                (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
-            VALUES (%s, %s, 'src/lib.rs', 0, 1, 1, %s, 'rust')
+                (id, project_id, file_path, chunk_index, line_start, line_end, content,
+                 language, content_hash)
+            VALUES (%s, %s, 'src/lib.rs', 0, 1, 1, %s, 'rust', %s)
             """,
-            (uuid4(), project_id, f"content-{project_id}"),
+            (uuid4(), project_id, f"content-{project_id}", f"hash-{project_id}"),
         )
 
 

@@ -152,6 +152,7 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
     ) -> None:
         runner.startup_config = desired
         runner.config_runtime = cast(ConfigRuntime, runtime)
+        runner.bootstrap_config = BootstrapConfig()
 
     observed: list[DaemonConfig] = []
     monkeypatch.setattr(GobbyRunner, "_initialize_storage", initialize_storage)
@@ -163,8 +164,11 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
 
     runner = await GobbyRunner.create()
 
-    assert runner.startup_config is active
-    assert observed == [active]
+    # create() promotes the runtime's ACTIVE snapshot (with bootstrap-owned
+    # fields overlaid) over the stored desired projection.
+    assert runner.startup_config.test_mode is active.test_mode
+    assert runner.startup_config.test_mode is not desired.test_mode
+    assert observed == [runner.startup_config]
 
 
 def test_auth_mode_is_bootstrap_owned() -> None:

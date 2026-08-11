@@ -296,6 +296,12 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
     )
 
     two_daemons.first.partition()
+    if time.monotonic() - activated < lease_seconds * 0.5:
+        # Immediately after the partition the ack row is still live: GC of
+        # the incompatible generation must stay blocked until the lease
+        # expires or fences. (Guarded: on a slow machine the TTL may already
+        # have lapsed by the time the partition lands.)
+        assert two_daemons.second.can_collect("new-generation", 1) is False
     started = time.monotonic()
     with pytest.raises(RuntimeError, match="lease renewal failed"):
         two_daemons.first.lease_renew()
@@ -304,15 +310,15 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
         # A transient renewal failure alone does not fence; the local
         # deadline (TTL minus margin) is the fence of last resort.
         two_daemons.first.lease_assert()
-    fence_deadline = time.monotonic() + lease_seconds + 1.0
-    while True:
-        try:
-            two_daemons.first.lease_assert()
-        except RuntimeError as exc:
-            assert "lease expired" in str(exc) or "serving is fenced" in str(exc)
-            break
-        assert time.monotonic() < fence_deadline, "partitioned lease never self-fenced"
-        time.sleep(0.05)
+
+    fenced = two_daemons.first.lease_wait_fenced(timeout=lease_seconds + 1.0)
+
+    # The self-fence must land strictly before the database TTL measured from
+    # activation — the deadline margin guarantees the ack row is still live
+    # when the daemon stops serving, never the other way around.
+    assert cast(float, fenced["fenced_after"]) < lease_seconds
+    message = cast(str, fenced["message"])
+    assert "lease expired" in message or "serving is fenced" in message
 
     assert (
         two_daemons.second.wait_until_collectible(
@@ -331,6 +337,44 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
         lease_seconds=lease_seconds,
     )
     two_daemons.first.lease_assert()
+
+
+def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> None:
+    lease_seconds = 5.0
+    daemon_id = uuid4()
+    first_revision = two_daemons.first.patch(
+        expected_revision=0,
+        values={"rules.enforcement_enabled": False},
+    )
+    two_daemons.second.wait_for_revision(first_revision)
+    two_daemons.second.lease_activate(
+        daemon_id,
+        "healed-generation",
+        first_revision,
+        lease_seconds=lease_seconds,
+    )
+
+    two_daemons.second.partition()
+    partitioned_revision = two_daemons.first.patch(
+        expected_revision=first_revision,
+        values={"rules.enforcement_enabled": True},
+    )
+    with pytest.raises(RuntimeError, match="lease renewal failed"):
+        two_daemons.second.lease_renew()
+
+    two_daemons.second.heal()
+
+    # The healed daemon reconciles in process: same runtime, same listener
+    # loop, no restart — the reconnect loop recovers the missed revision.
+    healed = two_daemons.second.wait_for_revision(partitioned_revision, timeout=10.0)
+    assert _value(healed, "active", "rules.enforcement_enabled") is True
+    status = two_daemons.second.status()
+    assert status["ready"] is True
+    assert status["healthy"] is True
+    # The reopened pool also carries the serving lease again: within the TTL
+    # window a renewal through the healed pool succeeds without re-activation.
+    two_daemons.second.lease_renew()
+    two_daemons.second.lease_assert()
 
 
 def test_switch_write_races_converge(two_daemons: TwoDaemonCluster) -> None:
@@ -363,3 +407,29 @@ def test_switch_write_races_converge(two_daemons: TwoDaemonCluster) -> None:
     assert [change["is_tombstone"] for change in changes] == [False, False, True, False]
     assert journal["physical_names"] == record["physical_names"]
     assert promoted_target in targets
+
+    # Replay the ledger into a recording fake store: every raced write must
+    # reach the promoted collection, and the final contents must reflect the
+    # create/update/tombstone ordering.
+    replayed: list[int] = []
+    promoted_collection: dict[str, int] = {}
+    for change in changes:
+        replayed.append(cast(int, change["sequence"]))
+        source_id = cast(str, change["source_id"])
+        if cast(bool, change["is_tombstone"]):
+            promoted_collection.pop(source_id, None)
+        else:
+            promoted_collection[source_id] = cast(int, change["sequence"])
+    assert replayed == [create_sequence, update_sequence, delete_sequence, promotion_sequence]
+    assert promoted_collection == {"promoted-record": promotion_sequence}
+
+    # A lease prepared after the race carries a caught-up watermark that
+    # covers every raced sequence; acknowledging at that watermark succeeds.
+    assert two_daemons.first.watermark() >= promotion_sequence
+    two_daemons.second.lease_activate(
+        uuid4(),
+        cast(str, record["run_id"]),
+        committed_revision,
+        lease_seconds=5.0,
+    )
+    two_daemons.second.lease_assert()
