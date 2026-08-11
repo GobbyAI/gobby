@@ -517,13 +517,14 @@ describe("SessionsTab", () => {
       providers: [
         { name: "qwen", available: false },
         { name: "codex", available: true },
+        { name: "agy", available: true },
         { name: "cron", available: true },
         { name: "pipeline", available: true },
         { name: "system", available: true },
       ],
     });
     const filters = defaultSessionsFilters();
-    filters.providers = new Set(["codex", "removed-provider"]);
+    filters.providers = new Set(["codex", "agy", "removed-provider"]);
     const onFiltersChange = vi.fn();
     const { rerender } = render(
       <SessionsTab
@@ -546,6 +547,8 @@ describe("SessionsTab", () => {
     expect(screen.queryByLabelText("Cron")).toBeNull();
     expect(screen.queryByLabelText("Pipeline")).toBeNull();
     expect(screen.queryByLabelText("System")).toBeNull();
+    // AGY is hidden throughout the UI and never offered as a filter (#20049).
+    expect(screen.queryByLabelText("AGY")).toBeNull();
 
     rerender(
       <SessionsTab

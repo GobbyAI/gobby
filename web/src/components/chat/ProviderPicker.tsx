@@ -14,6 +14,7 @@ import {
   getModelsForProvider,
   getProviderDisplayName,
   getProviderDisplayNameFromEntry,
+  isHiddenProvider,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
 
@@ -107,8 +108,9 @@ export function ProviderPicker({
   const catalogByProvider = new Map(
     catalog.map((entry) => [entry.provider.toLowerCase(), entry]),
   );
-  // Providers without a web-chat transport (AGY today) are unpickable, so
-  // they are hidden from the modal rather than shown disabled (moat 7f76d568).
+  // Hidden providers stay unpickable even when the current session or the
+  // availableProviders prop carries one (moat 7f76d568, #20049); providers
+  // without a web-chat transport are likewise hidden rather than disabled.
   const visibleProviders = getOrderedProviders(
     Array.from(
       new Set([
@@ -117,7 +119,7 @@ export function ProviderPicker({
       ]),
     ),
   ).filter((provider) => {
-    if (provider.toLowerCase() === "agy") return false;
+    if (isHiddenProvider(provider)) return false;
     return catalogByProvider.get(provider.toLowerCase())?.supports_web_chat !== false;
   });
 

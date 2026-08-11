@@ -78,10 +78,13 @@ export function loadLayoutMode(): LayoutMode {
 export function useActivityPanel(isMobile: boolean) {
   const dirtyGuard = useDirtyGuardController()
   const [mode, setMode] = useState<LayoutMode>(loadLayoutMode)
-  // Initial render always starts at chat (desktop and mobile). The desktop
-  // `panel` preference only carries onto mobile via the crossing effect
-  // below, never on a fresh mobile mount.
-  const [mobileView, setMobileView] = useState<MobileView>('chat')
+  // A fresh mobile mount derives the mobile binary from the persisted mode,
+  // same as the desktop -> mobile crossing effect below: a stored `panel`
+  // preference keeps the sessions panel reachable on portrait load, while
+  // `chat` and `split` start at chat.
+  const [mobileView, setMobileView] = useState<MobileView>(() =>
+    isMobile && loadLayoutMode() === 'panel' ? 'panel' : 'chat',
+  )
   const [viewOverride, setViewOverride] = useState<ViewOverride>(null)
 
   const [panelWidth, setPanelWidth] = useState(() => {

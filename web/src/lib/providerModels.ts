@@ -42,6 +42,16 @@ const PROVIDER_LABELS: Record<string, string> = {
   openai: "OpenAI",
 };
 
+// Providers that must never be offered as a choice anywhere in the web UI
+// (filters, pickers, spawn forms). Existing sessions from these providers
+// still render with their labels/badges. AGY is hidden until fully supported
+// (#20049).
+const HIDDEN_PROVIDERS = new Set(["agy"]);
+
+export function isHiddenProvider(value?: string | null): boolean {
+  return value ? HIDDEN_PROVIDERS.has(value.toLowerCase()) : false;
+}
+
 const CODEX_FLAVORS = [
   { token: "codex", label: "Codex", tierScore: 300 },
   { token: "mini", label: "Mini", tierScore: 200 },
@@ -75,7 +85,8 @@ export async function fetchProviderModelCatalog(): Promise<
       if (Array.isArray(data?.providers)) {
         const validModels = data.providers
           .filter(isProviderModelEntry)
-          .map(mapProviderModelEntry);
+          .map(mapProviderModelEntry)
+          .filter((entry: ProviderModelEntry) => !isHiddenProvider(entry.provider));
         cachedModels = validModels;
         cachedModelsTimestamp = now;
         return validModels;

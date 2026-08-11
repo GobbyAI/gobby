@@ -261,8 +261,15 @@ describe('useActivityPanel — mobile', () => {
     localStorage.clear()
   })
 
-  it('starts in chat on an initial mobile render regardless of desktop panel preference', () => {
+  it('renders the panel view on a fresh mobile mount when the stored mode is panel (#19180)', () => {
     localStorage.setItem(LAYOUT_KEY, 'panel')
+    const { result } = renderHook(() => useActivityPanel(true))
+
+    expect(result.current.effectiveMode).toBe('panel')
+  })
+
+  it('starts in chat on a fresh mobile mount when the stored mode is chat', () => {
+    localStorage.setItem(LAYOUT_KEY, 'chat')
     const { result } = renderHook(() => useActivityPanel(true))
 
     expect(result.current.effectiveMode).toBe('chat')
@@ -326,7 +333,6 @@ describe('useActivityPanel — mobile', () => {
     localStorage.setItem(LAYOUT_KEY, 'panel')
     const { result } = renderHook(() => useActivityPanel(true))
 
-    act(() => result.current.toggleFromChat())
     expect(result.current.effectiveMode).toBe('panel')
     act(() => result.current.dismissOnMobile())
     expect(result.current.effectiveMode).toBe('chat')

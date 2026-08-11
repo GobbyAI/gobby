@@ -14,6 +14,7 @@ import {
   buildReasoningPreferenceKey,
   fetchProviderModelCatalog,
   getPreferredReasoningEffort,
+  isHiddenProvider,
   resolveProviderModelPair,
   type ProviderModelEntry,
 } from "../../lib/providerModels";
@@ -327,7 +328,8 @@ export function useChatPageProviderState({
       .then((data) => {
         const names = (Array.isArray(data?.providers) ? data.providers : [])
           .filter((provider: { available: boolean }) => provider.available)
-          .map((provider: { name: string }) => provider.name);
+          .map((provider: { name: string }) => provider.name)
+          .filter((name: string) => !isHiddenProvider(name));
         setAvailableProviders(names);
       })
       .catch((error) => {
