@@ -4,45 +4,40 @@ Gobby uses a DB-backed daemon configuration for runtime settings, a small
 bootstrap YAML file for pre-database startup settings, and project-local JSON
 for repository verification and hook policy.
 
-```mermaid
-flowchart TB
-    A[Pydantic defaults] --> B[Bootstrap YAML]
-    B --> C[Optional config file]
-    C --> D[DB config_store]
-    D --> E[CLI overrides]
-    E --> F[Validated DaemonConfig]
-```
+## Reactive runtime configuration contract
+
+`ConfigRuntime` is the daemon's single runtime authority. It publishes immutable,
+revisioned desired and active snapshots compiled from the typed registry and the
+PostgreSQL `config_store`. Each operation captures one snapshot; consumers never
+assemble configuration from individual rows.
+
+Every persistent mutation is an atomic compare-and-swap against `config_state.revision`.
+The response distinguishes the committed desired revision from activation state:
+live keys activate in-process, restart keys remain pending until restart, and managed
+keys change only through their named lifecycle action. A committed mutation remains
+committed when local live activation fails and reports the failed-live keys.
 
 ## Configuration Sources
 
 | Source | Scope | Purpose |
 | --- | --- | --- |
 | `~/.gobby/bootstrap.yaml` | Machine | Startup values needed before the PostgreSQL hub is open |
-| `config_store` table in the PostgreSQL hub | Machine | Runtime daemon settings and user overrides |
+| `config_store` table in the PostgreSQL hub | Machine | Revisioned desired runtime overrides |
 | `~/.gobby/mcp-servers.json` | Machine | Persistent downstream MCP server registry |
 | `.gobby/project.json` | Project | Project identity, verification commands, and project hook settings |
 | `~/.gobby/build.yaml` | Machine | Build lifecycle defaults |
 | `<project>/.gobby/build.yaml` | Project | Build lifecycle defaults for one repository |
 
-`~/.gobby/config.yaml` is an export/import artifact. It is useful for backup or
-migration, but normal daemon startup reads `bootstrap.yaml`, `config_store`, and
-Pydantic defaults.
+`~/.gobby/config.yaml` is an export/import artifact. Daemon startup reads the
+bootstrap topology, registry defaults, and one coherent database snapshot.
 
 ## Runtime Configuration
 
-`DaemonConfig` is the validated runtime model. The loader merges configuration
-in this order:
-
-1. Pydantic defaults from `src/gobby/config/`.
-2. `~/.gobby/bootstrap.yaml` for startup-only fields.
-3. An optional explicit config file when one is supplied.
-4. DB overrides from `config_store`.
-5. CLI overrides passed by daemon startup code.
-
-When the daemon has a `ConfigStore`, DB values win over file values. Values in
-`config_store` are flattened dotted keys such as
-`gobby-tasks.validation.candidates`; the storage layer JSON-encodes values so numbers,
-booleans, strings, and lists keep their type.
+`DaemonConfig` is the typed active projection. Registry defaults plus database
+overrides produce its desired value; activation policy determines its active value.
+Rows use canonical dotted keys such as `gobby-tasks.validation.candidates` and a
+shared codec preserves scalar, list, object, and patterned-key values across Python,
+Rust, HTTP, MCP, browser, and YAML surfaces.
 
 Shared indexing behavior is configured under `indexing`. By default, `gcode`
 and `gwiki` respect `.gitignore`, `.git/info/exclude`, and global git excludes:
@@ -118,50 +113,39 @@ and upgrade requirements.
 
 ### Runtime Overrides
 
-Use the `gobby-config` MCP server or the web UI configuration routes for normal
-runtime changes. The MCP server exposes:
+Use the `gobby-config` MCP server or HTTP configuration API for runtime changes.
+Both transports call the same `ConfigValuesService` operations:
 
 | Tool | Purpose |
 | --- | --- |
-| `get_config` | Read one dotted key from the in-memory config |
-| `get_config_section` | Read one section as a nested object |
-| `set_config` | Validate and persist one scalar dotted key |
-| `set_config_batch` | Validate and persist several scalar keys atomically |
-| `delete_config` | Remove one DB override and fall back to defaults |
-| `list_config_keys` | List keys stored in the database |
-| `ensure_defaults` | Insert missing defaults for one section |
+| `get_config_schema` | Return the typed registry schema and field metadata |
+| `get_config_values` | Return one coherent public desired/active snapshot |
+| `patch_config_values` | Atomically set or unset values with revision CAS |
 
 Example MCP calls:
 
 ```python
-call_tool("gobby-config", "get_config", {"key": "memory.enabled"})
-call_tool("gobby-config", "get_config_section", {"prefix": "gobby-tasks.validation"})
+snapshot = call_tool("gobby-config", "get_config_values", {})
 call_tool(
     "gobby-config",
-    "set_config",
-    {"key": "gobby-tasks.validation.profile", "value": "feature_mid"},
-)
-call_tool(
-    "gobby-config",
-    "set_config_batch",
+    "patch_config_values",
     {
-        "entries": [
-            {
-                "key": "ai.generation.local.endpoints.lm-studio.api_base",
-                "value": "http://localhost:1234/v1",
-            },
-            {
-                "key": "ai.generation.local.endpoints.lm-studio.model",
-                "value": "local-model",
-            },
-        ]
+        "expected_revision": snapshot["revision"],
+        "values": {"memory": {"enabled": True}},
+        "unset": ["memory.crossref_max_links"],
     },
 )
 ```
 
-Use `set_config_batch` when a section has multiple required fields. For example,
-a named local generation endpoint requires both `api_base` and `model`, so
-setting only one key does not produce a valid `DaemonConfig`.
+`get_config_values` exposes public registry entries only. Its response contains
+`revision`, nested `desired` and `active` projections, `secret_set` metadata,
+`pending_restart_keys`, and `failed_live_keys`. Secret payloads are always masked.
+
+Every write supplies the revision from a cached snapshot. A stale revision returns
+a retryable `revision_conflict`; refresh the snapshot before composing another
+write. Successful responses report `committed`, `revision`, `changed_keys`, and
+an `apply_status` of `applied`, `pending_restart`, `failed_live`, or
+`reconcile_failed`. Persistence remains committed when live activation fails.
 
 ### HTTP Configuration API
 
@@ -169,19 +153,28 @@ The daemon exposes configuration routes under `/api/config`:
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/config/schema` | Return the JSON Schema for `DaemonConfig` |
-| `GET /api/config/values` | Return current config values with secrets masked |
-| `PUT /api/config/values` | Save a partial nested update |
-| `POST /api/config/values/validate` | Validate a nested update without saving |
-| `POST /api/config/values/reset` | Clear DB overrides and return to defaults |
-| `GET /api/config/template` | Return full current config as YAML |
-| `PUT /api/config/template` | Save YAML, storing only non-default values |
-| `POST /api/config/export` | Export config overrides, prompt overrides, and secret names |
-| `POST /api/config/import` | Import a config bundle |
+| `GET /api/config/schema` | Return the typed registry schema |
+| `GET /api/config/values` | Return the public revisioned desired/active snapshot |
+| `PATCH /api/config/values` | Apply a revisioned nested set/unset mutation |
+| `GET /api/config/effective` | Return resolved active machine configuration |
+| `GET /api/config/template` | Export daemon-owned desired values as masked YAML |
+| `PUT /api/config/template` | Atomically replace daemon-owned desired values from YAML |
+| `POST /api/config/export` | Alias the YAML export operation |
+| `POST /api/config/import` | Alias the revisioned YAML replacement operation |
+| `PUT /api/config/generation-endpoints/{name}/activate` | Probe and activate a named endpoint |
+| `GET`, `POST`, `DELETE /api/config/secrets` | Manage named secret metadata and payloads |
 
-Secret values are encrypted through the secrets store. Secret-like keys are
-masked in read responses, and masked values are skipped when saving unchanged UI
-forms.
+`GET /api/config/effective` is an authenticated machine route. It requires the
+local runtime bearer token, sets `Cache-Control: no-store`, reads one active
+snapshot, resolves active secret references, and exports machine-visible keys.
+Public-only and restricted-only keys stay outside this projection.
+
+YAML is a daemon-only desired-override document. Replacement requires
+`expected_revision`, validates the complete candidate before writing, preserves
+masked secret references, restores omitted registry defaults, and commits the
+daemon namespace in one CAS. Supplemental namespaces such as prompt overrides,
+UI settings, and tool approvals remain intact. Managed keys use their lifecycle
+route instead of YAML replacement.
 
 ### Environment And Secret Expansion
 
@@ -196,6 +189,8 @@ local_key: ${OPENAI_API_KEY:-development-key}
 `$secret:NAME` resolves only from the encrypted secrets store. `${VAR}` checks
 the secrets resolver first when one is available, then falls back to the process
 environment. `${VAR:-default}` uses the default when the value is unset or empty.
+Public reads and YAML exports preserve secrecy through masks and `secret_set`
+metadata. The authenticated effective route resolves only the active reference.
 
 ## Core Runtime Sections
 
@@ -351,6 +346,14 @@ only the endpoint changed and the LM Studio or Ollama default model is still in
 use, a failed probe falls back to that provider's default dim and the health
 check verifies it. Custom models and generic `openai-compatible` endpoints must
 probe successfully or pass `--embedding-dim` explicitly.
+
+Embedding structure is managed configuration. Change `ai.embeddings.model`,
+`dim`, `api_base`, `query_prefix`, or `catalog_key` through
+`gobby embeddings switch` or `/api/embeddings/switch/*`. The switch lifecycle
+stages new physical collections, records a durable journal, and flips the active
+generation atomically; generation leases keep collection names pinned during
+projection replay. `ai.embeddings.api_key` follows the normal live secret policy
+and can be updated through the revisioned values surface.
 
 The default is `nomic-embed-text-v1.5@f16` (768-dim, ~137M params) — a safe
 choice for any local hardware. For users with capable local hardware,

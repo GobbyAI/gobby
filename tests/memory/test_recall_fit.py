@@ -204,7 +204,12 @@ class TestReplayAlgebra:
 class TestPropensities:
     def test_label_coverage_with_smoothing(self) -> None:
         rows = [
-            _row("r1", "21000000-0000-4000-8000-000000000005", judge_useful=True, injection_position=0),
+            _row(
+                "r1",
+                "21000000-0000-4000-8000-000000000005",
+                judge_useful=True,
+                injection_position=0,
+            ),
             _row("r2", "m2", judge_useful=None, injection_position=0),
         ]
 
@@ -214,7 +219,9 @@ class TestPropensities:
         assert propensities[("context", 0)] == pytest.approx(0.5)
 
     def test_ips_weight_clips_and_falls_back_for_unseen_slots(self) -> None:
-        rare = _row("r1", "21000000-0000-4000-8000-000000000005", judge_useful=True, injection_position=7)
+        rare = _row(
+            "r1", "21000000-0000-4000-8000-000000000005", judge_useful=True, injection_position=7
+        )
         unseen = _row("r2", "m2", judge_useful=True, injection_position=3)
 
         weight = ips_weight(rare, {("context", 7): 0.05}, clip=10.0)

@@ -105,7 +105,7 @@ def create_workflows_registry(
     session_manager: SessionManager | None = None,
     db: HubDatabase | None = None,
     internal_manager: _InternalRegistryInventory | None = None,
-    mcp_manager: _ExternalMCPInventory | None = None,
+    mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None = None,
     # Pipeline dependencies (resolved lazily at call time)
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
@@ -123,7 +123,7 @@ def create_workflows_registry(
         session_manager: SessionManager instance (created from db if not provided)
         db: Database instance for creating default managers
         internal_manager: Internal registry inventory for semantic MCP checks
-        mcp_manager: External MCP manager for semantic MCP checks
+        mcp_manager_resolver: per-call resolver for the external MCP manager (optional)
         executor_getter: Callable returning PipelineExecutor (or None) at call time
         execution_manager_getter: Callable returning LocalPipelineExecutionManager
         completion_registry: CompletionEventRegistry for pipeline auto-subscriptions
@@ -221,7 +221,7 @@ def create_workflows_registry(
         """
         from gobby.workflows.dry_run import evaluate_agent_definition, evaluate_workflow
 
-        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager)
+        mcp_inventory = workflow_mcp_inventory(internal_manager, mcp_manager_resolver)
 
         project_ctx = get_project_context()
         project_id = project_ctx.get("id") if project_ctx else None
@@ -755,11 +755,13 @@ def create_workflows_registry(
 
 def workflow_mcp_inventory(
     internal_manager: _InternalRegistryInventory | None,
-    mcp_manager: _ExternalMCPInventory | None,
+    mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None,
 ) -> "_WorkflowMCPInventory | None":
-    if internal_manager is None and mcp_manager is None:
+    if internal_manager is None and mcp_manager_resolver is None:
         return None
-    return _WorkflowMCPInventory(internal_manager=internal_manager, mcp_manager=mcp_manager)
+    return _WorkflowMCPInventory(
+        internal_manager=internal_manager, mcp_manager_resolver=mcp_manager_resolver
+    )
 
 
 class _WorkflowMCPInventory:
@@ -769,21 +771,27 @@ class _WorkflowMCPInventory:
         self,
         *,
         internal_manager: _InternalRegistryInventory | None,
-        mcp_manager: _ExternalMCPInventory | None,
+        mcp_manager_resolver: Callable[[], _ExternalMCPInventory | None] | None,
     ) -> None:
         self._internal_manager = internal_manager
-        self._mcp_manager = mcp_manager
+        self._mcp_manager_resolver = mcp_manager_resolver
+
+    def _current_mcp_manager(self) -> _ExternalMCPInventory | None:
+        resolver = self._mcp_manager_resolver
+        return resolver() if resolver is not None else None
 
     def get_available_servers(self) -> list[str]:
         servers = set(self._internal_server_names())
-        if self._mcp_manager is not None:
-            servers.update(self._mcp_manager.get_available_servers())
+        mcp_manager = self._current_mcp_manager()
+        if mcp_manager is not None:
+            servers.update(mcp_manager.get_available_servers())
         return sorted(servers)
 
     async def list_tools(self) -> dict[str, list[dict[str, Any]]]:
         tools: dict[str, list[dict[str, Any]]] = {}
-        if self._mcp_manager is not None:
-            tools.update(await self._mcp_manager.list_tools())
+        mcp_manager = self._current_mcp_manager()
+        if mcp_manager is not None:
+            tools.update(await mcp_manager.list_tools())
         internal_tools = self._internal_tools()
         collisions = sorted(set(tools) & set(internal_tools))
         if collisions:

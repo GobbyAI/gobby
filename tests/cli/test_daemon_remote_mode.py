@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 
 from gobby.cli.daemon import _do_stop, _services_start, _start_dependency_errors
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
-from gobby.config.app import load_config
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import load_bootstrap
 
 
 def _write_remote_bootstrap(gobby_home: Path) -> Path:
@@ -21,7 +22,7 @@ def _write_remote_bootstrap(gobby_home: Path) -> Path:
 
 def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
     bootstrap_path = _write_remote_bootstrap(tmp_path)
-    config = load_config(config_file=str(bootstrap_path), resolve_database_url=True)
+    config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
 
     with (
         patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
@@ -50,7 +51,7 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
 
 def test_restart_skips_services_in_remote_mode(tmp_path: Path) -> None:
     bootstrap_path = _write_remote_bootstrap(tmp_path)
-    config = load_config(config_file=str(bootstrap_path), resolve_database_url=True)
+    config = DaemonConfig.model_validate(load_bootstrap(str(bootstrap_path)).to_config_dict())
     runtime = SimpleNamespace(config=config)
 
     with (

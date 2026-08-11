@@ -1,234 +1,58 @@
-"""Raw YAML configuration template routes."""
+"""Daemon configuration YAML template routes."""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-import yaml
-from fastapi import APIRouter, HTTPException
-from pydantic import ValidationError
+from fastapi import APIRouter
 
-from gobby.config.app import DaemonConfig, deep_merge
-from gobby.config.embedding_keys import (
-    runtime_embedding_config_entries_to_storage,
-    storage_embedding_config_entries_to_runtime,
-)
-from gobby.config.voice_secrets import (
-    VOICE_AUDIO_BINDINGS_KEY,
-    contains_voice_audio_bindings,
-    mask_voice_audio_api_keys,
-    resolve_voice_audio_api_keys,
-    restore_masked_voice_audio_api_keys,
-    validate_voice_audio_api_key_references,
-)
+from gobby.config.values import ConfigValuesError
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
-from gobby.servers.routes.configuration_models import SaveTemplateRequest
-from gobby.servers.routes.configuration_secrets import (
-    MASKED_SECRET,
-    add_restart_hint,
-    delete_all_except,
-    falkordb_validation_response,
-    is_secret_reference,
-    mask_secret_values,
-    validate_falkordb_secret,
-)
-from gobby.storage.config_store import (
-    embedding_mutation_context,
-    flatten_config,
-    is_secret_key_name,
-    unflatten_config,
-)
+from gobby.servers.routes.configuration_models import ConfigDocumentRequest
 
 logger = logging.getLogger(__name__)
 
 
-def _compute_diff(
-    parsed_flat: dict[str, Any],
-    defaults_flat: dict[str, Any],
-    masked_secret_keys: set[str],
-) -> dict[str, Any]:
-    return {
-        key: value
-        for key, value in parsed_flat.items()
-        if key not in masked_secret_keys
-        and (key not in defaults_flat or defaults_flat[key] != value)
-    }
-
-
-def _categorize_secret_entries(
-    diff: dict[str, Any],
-    existing_secret_keys: set[str],
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    secret_entries = {
-        key: value
-        for key, value in diff.items()
-        if is_secret_key_name(key) or key in existing_secret_keys
-    }
-    secret_reference_entries = {
-        key: value for key, value in secret_entries.items() if is_secret_reference(value)
-    }
-    secret_value_entries = {
-        key: value for key, value in secret_entries.items() if key not in secret_reference_entries
-    }
-    plain_entries = {key: value for key, value in diff.items() if key not in secret_entries}
-    return secret_entries, secret_reference_entries, secret_value_entries, plain_entries
-
-
-def _apply_transactional_changes(
-    *,
-    context: ConfigurationRouteContext,
-    masked_secret_keys: set[str],
-    secret_reference_entries: dict[str, Any],
-    secret_value_entries: dict[str, Any],
-    plain_entries: dict[str, Any],
-) -> tuple[int, int]:
-    config_store = context.get_config_store()
-    storage_secret_reference_entries = runtime_embedding_config_entries_to_storage(
-        secret_reference_entries
-    )
-    storage_secret_value_entries = runtime_embedding_config_entries_to_storage(secret_value_entries)
-    storage_plain_entries = runtime_embedding_config_entries_to_storage(plain_entries)
-    count = 0
-    secret_store = context.get_secret_store()
-    with embedding_mutation_context(config_store.db):
-        deleted_count = delete_all_except(config_store, secret_store, masked_secret_keys)
-        if storage_secret_reference_entries:
-            count += config_store.set_many(storage_secret_reference_entries, source="user")
-            config_store.mark_secret_keys(set(storage_secret_reference_entries))
-        if storage_secret_value_entries:
-            for key, value in storage_secret_value_entries.items():
-                if value is None or value == "":
-                    config_store.clear_secret(key, secret_store)
-                elif not isinstance(value, str):
-                    raise HTTPException(
-                        400,
-                        f"Secret '{key}' must be a string, got {type(value).__name__}",
-                    )
-                else:
-                    config_store.set_secret(key, value, secret_store, source="user")
-                    count += 1
-        if storage_plain_entries:
-            count += config_store.set_many(storage_plain_entries, source="user")
-    return count, deleted_count
-
-
 def register_template_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
-    """Register YAML template routes."""
+    """Register daemon YAML export and replacement routes."""
 
     @router.get("/template")
     async def get_config_template() -> JSONResponse:
-        """Return full Pydantic defaults merged with current DB overrides as YAML."""
         try:
-            defaults = DaemonConfig().model_dump(mode="json", exclude_none=True, by_alias=True)
-            config_store = context.get_config_store()
-            flat_overrides = storage_embedding_config_entries_to_runtime(config_store.get_all())
-            db_overrides = unflatten_config(mask_secret_values(flat_overrides))
-            deep_merge(defaults, db_overrides)
-            defaults = mask_voice_audio_api_keys(defaults)
-            content = yaml.safe_dump(defaults, default_flow_style=False, sort_keys=False)
-            return JSONResponse(content={"content": content})
-        except Exception as e:
-            logger.exception("Failed to generate config template: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+            result = await context.get_config_documents_service().export_yaml()
+        except Exception:
+            logger.exception("Configuration YAML export failed")
+            return _indeterminate_response("Configuration export failed")
+        return JSONResponse(content=result)
 
     @router.put("/template")
-    async def save_config_template(request: SaveTemplateRequest) -> JSONResponse:
-        """Accept YAML, diff against defaults, store only non-default values to DB."""
+    async def save_config_template(request: ConfigDocumentRequest) -> JSONResponse:
         try:
-            parsed = yaml.safe_load(request.content)
-            if parsed is None:
-                parsed = {}
-            if not isinstance(parsed, dict):
-                raise ValueError("YAML must be a mapping (dict), not a scalar or list")
-
-            config_store = context.get_config_store()
-            persisted_voice_config = {}
-            if contains_voice_audio_bindings(parsed):
-                persisted_voice_config[VOICE_AUDIO_BINDINGS_KEY] = config_store.get(
-                    VOICE_AUDIO_BINDINGS_KEY
-                )
-            parsed = restore_masked_voice_audio_api_keys(
-                parsed,
-                persisted_voice_config,
+            result = await context.get_config_documents_service().replace_yaml(
+                expected_revision=request.expected_revision,
+                content=request.content,
             )
-            validate_voice_audio_api_key_references(parsed)
-            defaults_flat = flatten_config(
-                DaemonConfig().model_dump(mode="json", exclude_none=True)
-            )
-            parsed_flat = flatten_config(parsed)
-            existing_secret_keys = set(config_store.get_secret_keys())
-            masked_secret_keys = {
-                key
-                for key, value in parsed_flat.items()
-                if value == MASKED_SECRET
-                and (is_secret_key_name(key) or key in existing_secret_keys)
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
+        except Exception:
+            logger.exception("Configuration YAML persistence outcome is indeterminate")
+            return _indeterminate_response("Configuration persistence outcome is indeterminate")
+        return JSONResponse(content=result)
+
+
+def _indeterminate_response(message: str) -> JSONResponse:
+    return JSONResponse(
+        content={
+            "error": {
+                "code": "persistence_indeterminate",
+                "message": message,
+                "path": [],
+                "retryable": False,
             }
+        },
+        status_code=500,
+    )
 
-            validation_flat = dict(parsed_flat)
-            current_flat = flatten_config(context.current_config_values())
-            for key in masked_secret_keys:
-                if key in current_flat:
-                    validation_flat[key] = current_flat[key]
-                else:
-                    validation_flat.pop(key, None)
 
-            secret_validation_keys = {
-                key
-                for key in validation_flat
-                if is_secret_key_name(key) or key in existing_secret_keys
-            }
-            try:
-                for key in secret_validation_keys:
-                    value = validation_flat[key]
-                    if value in (None, "") or is_secret_reference(value):
-                        continue
-                    validate_falkordb_secret(key, value)
-            except ValueError as e:
-                return falkordb_validation_response(e)
-
-            new_config = DaemonConfig(**unflatten_config(validation_flat))
-            runtime_config = new_config
-            if contains_voice_audio_bindings(parsed):
-                resolved_new_config = resolve_voice_audio_api_keys(
-                    new_config.model_dump(mode="json", exclude_none=True, by_alias=True),
-                    context.get_secret_store().get,
-                )
-                runtime_config = DaemonConfig(**resolved_new_config)
-
-            diff = _compute_diff(parsed_flat, defaults_flat, masked_secret_keys)
-            (
-                secret_entries,
-                secret_reference_entries,
-                secret_value_entries,
-                plain_entries,
-            ) = _categorize_secret_entries(diff, existing_secret_keys)
-            count, deleted_count = _apply_transactional_changes(
-                context=context,
-                masked_secret_keys=masked_secret_keys,
-                secret_reference_entries=secret_reference_entries,
-                secret_value_entries=secret_value_entries,
-                plain_entries=plain_entries,
-            )
-            logger.info("Template saved: %d non-default keys stored", count)
-
-            context.set_runtime_config(runtime_config)
-
-            response: dict[str, Any] = {
-                "ok": True,
-                "requires_restart": bool(diff) or deleted_count > 0,
-            }
-            add_restart_hint(response, set(secret_entries))
-            return JSONResponse(content=response)
-        except yaml.YAMLError as e:
-            raise HTTPException(status_code=400, detail=f"Invalid YAML: {e}") from e
-        except HTTPException:
-            raise
-        except ValidationError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:
-            logger.exception("Failed to save config template: %s", e)
-            raise HTTPException(status_code=500, detail="Failed to save config template") from e
+__all__ = ["register_template_routes"]

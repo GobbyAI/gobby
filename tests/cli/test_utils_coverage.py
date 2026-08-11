@@ -28,29 +28,6 @@ def test_process_start_matches_tolerates_subsecond_drift() -> None:
     assert _process_start_matches(proc, 100.0) is False
 
 
-def test_redact_exception_text_hides_dsn_and_libpq_secret_params() -> None:
-    from gobby.cli.utils_config import _redact_exception_text
-
-    message = (
-        "postgresql://user:secret@example.com/db "
-        "password='open sesame' sslcert=/tmp/client.crt sslkey=\"/tmp/client.key\" "
-        "sslrootcert=/tmp/root.crt"
-    )
-
-    redacted = _redact_exception_text(RuntimeError(message))
-
-    assert "secret" not in redacted
-    assert "open sesame" not in redacted
-    assert "/tmp/client.crt" not in redacted
-    assert "/tmp/client.key" not in redacted
-    assert "/tmp/root.crt" not in redacted
-    assert "postgresql://user:****@example.com/db" in redacted
-    assert "password=****" in redacted
-    assert "sslcert=****" in redacted
-    assert "sslkey=****" in redacted
-    assert "sslrootcert=****" in redacted
-
-
 def test_terminate_ui_process_tolerates_process_races() -> None:
     from gobby.cli.utils_ui import _terminate_ui_process
 
@@ -545,82 +522,6 @@ def test_stop_daemon_permission_error(tmp_path: Path) -> None:
     assert pid_file.exists()
 
 
-# --- load_full_config_from_db ---
-
-
-def test_load_full_config_from_db_no_db(tmp_path: Path) -> None:
-    from gobby.cli.utils import load_full_config_from_db
-
-    mock_config = MagicMock()
-    mock_config.database_url = str(tmp_path / "nonexistent.db")
-
-    with patch("gobby.cli.utils.load_config", return_value=mock_config) as mock_load:
-        result = load_full_config_from_db()
-    assert result is mock_config
-    mock_load.assert_called_once()
-
-
-def test_load_full_config_from_db_with_db(tmp_path: Path) -> None:
-    from gobby.cli.utils import load_full_config_from_db
-
-    mock_config = MagicMock()
-    mock_config.hub_backend = "postgres"
-    mock_config.database_url = "postgresql://example"
-
-    final_config = MagicMock()
-    mock_db = MagicMock()
-    runtime_cm = MagicMock()
-    runtime_cm.__enter__.return_value = mock_db
-    runtime_cm.__exit__.return_value = False
-
-    with (
-        patch("gobby.cli.utils.load_config") as mock_load,
-        patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm),
-        patch("gobby.storage.config_store.ConfigStore"),
-        patch("gobby.storage.secrets.SecretStore"),
-    ):
-        mock_load.side_effect = [mock_config, final_config]
-        result = load_full_config_from_db()
-    assert result is final_config
-    assert mock_load.call_count == 2
-
-
-@pytest.mark.no_config_protection
-def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
-    tmp_path: Path, hub_db
-) -> None:
-    """Regression for GH #10: CLI must see ui.enabled=true written to config_store."""
-    import yaml
-
-    from gobby.cli.utils import load_full_config_from_db
-    from gobby.storage.config_store import ConfigStore
-
-    ConfigStore(hub_db).set("ui.enabled", True, source="manual")
-
-    bootstrap_yaml = tmp_path / "bootstrap.yaml"
-    bootstrap_yaml.write_text(
-        yaml.safe_dump(
-            {
-                "hub_backend": "postgres",
-                "database_url": "postgresql://gobby:test@localhost:5432/gobby",
-                "daemon_port": 60887,
-                "websocket_port": 60888,
-                "ui_port": 60889,
-                "bind_host": "127.0.0.1",
-            }
-        )
-    )
-    bootstrap_yaml.chmod(0o600)
-
-    runtime_cm = MagicMock()
-    runtime_cm.__enter__.return_value = hub_db
-    runtime_cm.__exit__.return_value = False
-
-    with patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=runtime_cm):
-        result = load_full_config_from_db(config_file=str(bootstrap_yaml))
-    assert result.ui.enabled is True
-
-
 # ---------------------------------------------------------------------------
 # resolve_project_ref (lines 109-130)
 # ---------------------------------------------------------------------------
@@ -972,13 +873,10 @@ def test_init_local_storage(tmp_path: Path) -> None:
 
     mock_db = MagicMock()
     config = MagicMock()
-    config.hub_backend = "postgres"
     config.database_url = "postgresql://localhost/gobby"
-    deps = MagicMock()
-    deps.load_config.return_value = config
 
     with (
-        patch("gobby.cli.utils_config.facade", return_value=deps),
+        patch("gobby.config.bootstrap.load_bootstrap", return_value=config),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db) as mock_open,
         patch("gobby.storage.projects.ensure_personal_project") as ensure_personal,
     ):
@@ -1016,11 +914,11 @@ def test_kill_all_gobby_daemons_no_processes() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[]),
         patch("gobby.cli.utils.psutil.Process") as mock_proc_cls,
     ):
@@ -1040,7 +938,7 @@ def test_kill_all_gobby_daemons_config_fallback() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", side_effect=OSError("no config")),
+        patch("gobby.cli.utils_process.load_bootstrap", side_effect=OSError("no config")),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[]),
         patch("gobby.cli.utils.psutil.Process") as mock_proc_cls,
     ):
@@ -1059,7 +957,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     # Create a fake process that matches gobby.runner
     fake_proc = MagicMock()
@@ -1077,7 +975,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
@@ -1100,7 +998,7 @@ def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     fake_proc = MagicMock()
     fake_proc.pid = 99999
@@ -1116,7 +1014,7 @@ def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
@@ -1135,7 +1033,7 @@ def test_kill_all_gobby_daemons_skips_unverified_port_match() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     # A python process on the daemon port but not matching gobby.runner
     conn = MagicMock()
@@ -1155,7 +1053,7 @@ def test_kill_all_gobby_daemons_skips_unverified_port_match() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
@@ -1174,7 +1072,7 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
     (tmp_path / "gobby.pid").write_text("88888")
 
     fake_proc = MagicMock()
@@ -1194,7 +1092,7 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
@@ -1218,7 +1116,7 @@ def test_kill_all_gobby_daemons_skips_self() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     fake_proc = MagicMock()
     fake_proc.pid = 10000  # Same as our pid
@@ -1230,7 +1128,7 @@ def test_kill_all_gobby_daemons_skips_self() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
@@ -1247,7 +1145,7 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
 
     mock_config = MagicMock()
     mock_config.daemon_port = 60887
-    mock_config.websocket.port = 60888
+    mock_config.websocket_port = 60888
 
     fake_proc = MagicMock()
     fake_proc.pid = 77777
@@ -1259,7 +1157,7 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils_process.load_bootstrap", return_value=mock_config),
         patch("gobby.cli.utils.os.getpid", return_value=10000),
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),

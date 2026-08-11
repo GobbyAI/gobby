@@ -103,7 +103,13 @@ def test_url_scrub_hides_only_urls_and_not_real_placeholder_bugs() -> None:
 
 def _has_foreign_placeholder(sql: str) -> bool:
     scrubbed = _scrub_sql(sql)
-    return "?" in scrubbed or DOLLAR_PLACEHOLDER_RE.search(scrubbed) is not None
+    if "?" in scrubbed:
+        return True
+    if re.match(r"\s*PREPARE\b", scrubbed, re.IGNORECASE):
+        # A server-side PREPARE statement's $n markers are PostgreSQL's own
+        # prepared-parameter syntax, not a foreign client placeholder style.
+        return False
+    return DOLLAR_PLACEHOLDER_RE.search(scrubbed) is not None
 
 
 def _has_unescaped_percent(sql: str) -> bool:

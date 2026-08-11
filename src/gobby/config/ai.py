@@ -65,6 +65,7 @@ class GenerationEndpointConfig(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
+        repr=False,
         description="API key for the endpoint. Use $secret:NAME for encrypted storage.",
     )
     vision_extract: bool = Field(
@@ -227,6 +228,32 @@ def model_metadata_alias_source_key(provider: str, provider_model_id: str) -> tu
     return provider.strip().casefold(), provider_model_id.strip().casefold()
 
 
+def default_model_metadata_aliases() -> list[ModelMetadataAlias]:
+    """Return bundled provider aliases as typed configuration defaults."""
+    return [
+        ModelMetadataAlias(
+            provider="droid",
+            provider_model_id="claude-haiku-4-5-20251001",
+            openrouter_model_id="anthropic/claude-haiku-4.5",
+        ),
+        ModelMetadataAlias(
+            provider="droid",
+            provider_model_id="deepseek-v4-pro",
+            openrouter_model_id="deepseek/deepseek-v4-pro",
+        ),
+        ModelMetadataAlias(
+            provider="droid",
+            provider_model_id="grok-4.5",
+            openrouter_model_id="x-ai/grok-4.5",
+        ),
+        ModelMetadataAlias(
+            provider="droid",
+            provider_model_id="nemotron-3-ultra",
+            openrouter_model_id="nvidia/nemotron-3-ultra-550b-a55b",
+        ),
+    ]
+
+
 class AIConfig(BaseModel):
     """Daemon-owned AI configuration namespace."""
 
@@ -237,7 +264,7 @@ class AIConfig(BaseModel):
         description="Text generation configuration.",
     )
     model_metadata_aliases: list[ModelMetadataAlias] = Field(
-        default_factory=list,
+        default_factory=default_model_metadata_aliases,
         description="Provider-scoped aliases into the OpenRouter model metadata registry.",
     )
 

@@ -25,7 +25,7 @@ def test_runtime_database_receives_resolved_pool_config() -> None:
     )
 
     with (
-        patch("gobby.storage.hub.runtime.load_config", return_value=config),
+        patch("gobby.storage.hub.runtime.load_bootstrap", return_value=config),
         patch(
             "gobby.storage.hub.runtime.admitted_database_url",
             return_value=config.database_url,

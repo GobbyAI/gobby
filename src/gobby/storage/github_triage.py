@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model, utc_now
 
@@ -200,6 +201,7 @@ class GitHubTriageStore:
 
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
+        self.embedding_generation_state = EmbeddingGenerationState(db)
 
     def get_config(self, project_id: str, fallback_repo: str | None = None) -> GitHubTriageConfig:
         row = self.db.fetchone(
@@ -511,6 +513,11 @@ class GitHubTriageStore:
                 "AND issue_number = %s",
                 (project_id, repo, issue_number),
             ).fetchone()
+            self.embedding_generation_state.append_change(
+                "github_issue",
+                f"{project_id}:{repo}:{issue_number}",
+                transaction=conn,
+            )
         if row is None:
             raise RuntimeError(f"Failed to upsert GitHub issue triage row {repo}#{issue_number}")
         return GitHubIssueTriageRecord.from_row(row)
@@ -582,43 +589,53 @@ class GitHubTriageStore:
         previous: GitHubIssueTriageRecord | None,
     ) -> None:
         """Remove or restore an exact provisional audit row after comment failure."""
-        if previous is None:
-            self.db.execute(
-                "DELETE FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
-                "AND issue_number = %s AND content_hash = %s",
-                (project_id, repo, issue_number, content_hash),
+        source_id = f"{project_id}:{repo}:{issue_number}"
+        with self.db.transaction() as conn:
+            if previous is None:
+                cursor = conn.execute(
+                    "DELETE FROM gh_issues_triaged WHERE project_id = %s AND repo = %s "
+                    "AND issue_number = %s AND content_hash = %s",
+                    (project_id, repo, issue_number, content_hash),
+                )
+                if cursor.rowcount:
+                    self.embedding_generation_state.append_change(
+                        "github_issue", source_id, is_tombstone=True, transaction=conn
+                    )
+                return
+            cursor = conn.execute(
+                """
+                UPDATE gh_issues_triaged
+                   SET issue_url = %s, issue_state = %s, labels_json = %s,
+                       issue_updated_at = %s, content_hash = %s, verdict = %s,
+                       decision_json = %s, task_id = %s, vector_point_id = %s,
+                       dedup_issue_key = %s, source = %s, source_text = %s,
+                       last_triaged_at = %s, created_at = %s, updated_at = %s
+                 WHERE project_id = %s AND repo = %s AND issue_number = %s
+                   AND content_hash = %s
+                """,
+                (
+                    previous.issue_url,
+                    previous.issue_state,
+                    _json_dumps(list(previous.labels)),
+                    previous.issue_updated_at,
+                    previous.content_hash,
+                    previous.verdict,
+                    previous.decision_json,
+                    previous.task_id,
+                    previous.vector_point_id,
+                    previous.dedup_issue_key,
+                    previous.source,
+                    previous.source_text,
+                    previous.last_triaged_at,
+                    previous.created_at,
+                    previous.updated_at,
+                    project_id,
+                    repo,
+                    issue_number,
+                    content_hash,
+                ),
             )
-            return
-        self.db.execute(
-            """
-            UPDATE gh_issues_triaged
-               SET issue_url = %s, issue_state = %s, labels_json = %s,
-                   issue_updated_at = %s, content_hash = %s, verdict = %s,
-                   decision_json = %s, task_id = %s, vector_point_id = %s,
-                   dedup_issue_key = %s, source = %s, source_text = %s,
-                   last_triaged_at = %s, created_at = %s, updated_at = %s
-             WHERE project_id = %s AND repo = %s AND issue_number = %s
-               AND content_hash = %s
-            """,
-            (
-                previous.issue_url,
-                previous.issue_state,
-                _json_dumps(list(previous.labels)),
-                previous.issue_updated_at,
-                previous.content_hash,
-                previous.verdict,
-                previous.decision_json,
-                previous.task_id,
-                previous.vector_point_id,
-                previous.dedup_issue_key,
-                previous.source,
-                previous.source_text,
-                previous.last_triaged_at,
-                previous.created_at,
-                previous.updated_at,
-                project_id,
-                repo,
-                issue_number,
-                content_hash,
-            ),
-        )
+            if cursor.rowcount:
+                self.embedding_generation_state.append_change(
+                    "github_issue", source_id, transaction=conn
+                )

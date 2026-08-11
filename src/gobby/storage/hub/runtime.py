@@ -5,10 +5,9 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from gobby.config.app import load_config
 from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
-    HUB_BACKEND_POSTGRES_REQUIRED,
+    load_bootstrap,
 )
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.hub.protocol import HubDatabase
@@ -22,9 +21,7 @@ def runtime_hub_database(
     apply_migrations: bool = True,
 ) -> Iterator[HubDatabase]:
     """Yield the active runtime hub database and close it afterwards."""
-    config = load_config(config_file, resolve_database_url=True)
-    if config.hub_backend != "postgres":
-        raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
+    config = load_bootstrap(config_file, resolve_database_url=True)
     if not config.database_url:
         raise RuntimeError(HUB_BACKEND_DATABASE_URL_REQUIRED)
 

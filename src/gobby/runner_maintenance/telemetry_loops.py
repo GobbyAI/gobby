@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.runner_maintenance_helpers import _run_db
+
+if TYPE_CHECKING:
+    from gobby.config.runtime import RuntimeActiveBundle
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
@@ -16,16 +19,18 @@ _METRIC_SNAPSHOT_CLEANUP_BATCH_LIMIT = 1000
 async def span_cleanup_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
-    retention_days: int = 7,
+    *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
+    interval_seconds: float = 24 * 60 * 60,
 ) -> None:
     """Background loop for periodic span cleanup (every 24 hours)."""
-    interval_seconds = 24 * 60 * 60  # 24 hours
-
     from gobby.storage.spans import SpanStorage
 
     storage = SpanStorage(db)
 
     while not is_shutdown_requested():
+        config = capture_bundle().snapshot.active
+        retention_days = getattr(config.telemetry, "trace_retention_days", 7)
         try:
             deleted = storage.delete_old_spans(retention_days=retention_days)
             if deleted > 0:
@@ -118,8 +123,9 @@ async def metric_snapshot_loop(
 
 async def recall_drift_monitor_loop(
     db: Any,
-    memory_config: Any,
     is_shutdown_requested: Callable[[], bool],
+    *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     interval_seconds: float | None = None,
 ) -> None:
     """Background recall-quality drift monitor (#17201).
@@ -134,18 +140,23 @@ async def recall_drift_monitor_loop(
     from gobby.storage.recall_signals import RecallSignalStore
 
     store = RecallSignalStore(db)
-    if interval_seconds is None:
-        interval_hours = getattr(memory_config, "recall_drift_interval_hours", 24.0)
-        interval_seconds = float(interval_hours) * 3600.0
 
     while not is_shutdown_requested():
+        memory_config = capture_bundle().snapshot.active.memory
+        current_interval_seconds = interval_seconds
+        if current_interval_seconds is None:
+            interval_hours = getattr(memory_config, "recall_drift_interval_hours", 24.0)
+            current_interval_seconds = float(interval_hours) * 3600.0
         try:
-            run_drift_check_from_store(store, memory_config)
+            if memory_config is not None and getattr(
+                memory_config, "recall_drift_monitor_enabled", False
+            ):
+                run_drift_check_from_store(store, memory_config)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Error in recall drift monitor loop: %s", e)
         try:
-            await asyncio.sleep(interval_seconds)
+            await asyncio.sleep(current_interval_seconds)
         except asyncio.CancelledError:
             break

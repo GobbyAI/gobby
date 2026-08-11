@@ -1,9 +1,14 @@
 """Tests for the WebSocket server wrapper."""
 
+from types import MappingProxyType
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime import RuntimeActiveBundle
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer, websockets_logger
 
@@ -12,6 +17,72 @@ pytestmark = pytest.mark.unit
 
 def test_default_bind_is_localhost() -> None:
     assert WebSocketConfig().host == "localhost"
+
+
+class _LiveRuntime:
+    def __init__(self, config: DaemonConfig, *, ready: bool = True) -> None:
+        self.ready = ready
+        self.set_active(config)
+
+    def set_active(self, config: DaemonConfig) -> None:
+        self._bundle = RuntimeActiveBundle(
+            snapshot=ConfigSnapshot(
+                revision=1,
+                desired=config,
+                active=config,
+                row_revisions={},
+                pending_restart_keys=frozenset(),
+                failed_live_keys={},
+            ),
+            services=MappingProxyType({}),
+        )
+
+    def capture(self) -> RuntimeActiveBundle:
+        return self._bundle
+
+
+def test_daemon_config_reads_live_runtime_snapshot() -> None:
+    startup = DaemonConfig(voice={"enabled": False})
+    runtime = _LiveRuntime(DaemonConfig(voice={"enabled": False}))
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        daemon_config=startup,
+        config_runtime=cast(Any, runtime),
+    )
+
+    assert server.daemon_config.voice.enabled is False
+
+    runtime.set_active(DaemonConfig(voice={"enabled": True}))
+
+    assert server.daemon_config.voice.enabled is True
+
+
+def test_daemon_config_serves_one_projection_per_epoch() -> None:
+    runtime = _LiveRuntime(DaemonConfig())
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        config_runtime=cast(Any, runtime),
+    )
+
+    assert server.daemon_config is server.daemon_config
+
+
+def test_daemon_config_falls_back_before_runtime_ready() -> None:
+    startup = DaemonConfig(voice={"enabled": True})
+    runtime = _LiveRuntime(DaemonConfig(voice={"enabled": False}), ready=False)
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        daemon_config=startup,
+        config_runtime=cast(Any, runtime),
+    )
+
+    assert server.daemon_config is startup
+
+    no_runtime = WebSocketServer(config=WebSocketConfig(), mcp_manager=MagicMock())
+    assert no_runtime.daemon_config is None
 
 
 @pytest.mark.asyncio

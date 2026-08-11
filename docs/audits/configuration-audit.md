@@ -252,11 +252,12 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | databases.falkordb.graph_search | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | databases.falkordb.graph_min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
 | databases.falkordb.rrf_k | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| embeddings.model | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
-| embeddings.dim | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| embeddings.api_base | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
-| embeddings.api_key | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
-| embeddings.query_prefix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
+| ai.embeddings.model | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.dim | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.api_base | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.api_key | Registry schema via /api/config/schema; save via revisioned PATCH | Settings -> secret field | live | keep | secrets-auth |  |
+| ai.embeddings.query_prefix | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed read-only field | managed | keep | memory-knowledge |  |
+| ai.embeddings.catalog_key | Registry schema via /api/config/schema; activate via embedding switch coordinator | Settings -> managed action | managed | keep | memory-knowledge |  |
 | ai.generation.timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
 | ai.generation.candidate_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
 | ai.generation.endpoints | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=object |
@@ -339,8 +340,8 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | ui.memory_graph_limit | (removed) | (removed) | dead | drop | (none) | removed in #19157 — the 2D memory graph had no UI consumer; unified into ui.knowledge_graph_limit |
 | ui.knowledge_graph_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input; graph settings panel | live | keep | runtime-infrastructure | 0 = no limit; also editable from the knowledge-graph gear panel (#19157) |
 | ui.knowledge_graph_relationship_limit | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input; graph settings panel | live | keep | runtime-infrastructure | 0 = no limit; added in #19157 |
-| auth.username | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
-| auth.password | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | secrets-auth |  |
+| auth.username | Auth service; not a registered runtime config key | (none — dead draft editor removed in task-19645 R5) | cli-only | drop | (none) | credential management stays CLI-only until #19650 lands an auth surface |
+| auth.password | Auth service; not a registered runtime config key | (none — dead draft editor removed in task-19645 R5) | cli-only | drop | (none) | credential management stays CLI-only until #19650 lands an auth surface |
 | auth.session_secret | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | auto-generated session cookie signing secret; schema marks it ui_hidden |
 | tmux.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | tmux.command | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | automation-workflows |  |

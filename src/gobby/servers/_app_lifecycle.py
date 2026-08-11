@@ -37,16 +37,19 @@ def create_lifespan(
         if server.test_mode:
             logger.debug("Running in test mode - external connections disabled")
 
+        runtime_bundle = server.capture_runtime_bundle()
+        config = runtime_bundle.snapshot.active if runtime_bundle else server.startup_config
         hook_manager_kwargs: dict[str, Any] = {
             "daemon_host": "localhost",
             "daemon_port": server.port,
             "llm_service": server.services.llm_service,
-            "config": server.services.config,
+            "config": config,
             "broadcaster": server.broadcaster,
             "tool_proxy_getter": lambda: server.tool_proxy,
             "message_processor": server.services.message_processor,
             "agent_runner": server.services.agent_runner,
             "completion_registry": server.services.completion_registry,
+            "config_runtime": server.services.config_runtime,
             "database": server.services.database,
             "session_manager": server.services.session_manager,
             "memory_manager": server.services.memory_manager,
@@ -254,7 +257,7 @@ def create_lifespan(
             if server.codex_client.is_connected:
                 app.state.codex_sync_task = asyncio.create_task(_sync_existing_codex_sessions())
 
-        if server.services.config and server.services.config.tmux.enabled:
+        if config and config.tmux.enabled:
             try:
                 from gobby.agents.tmux import set_tmux_pane_monitor
                 from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
@@ -265,7 +268,7 @@ def create_lifespan(
                 monitor = TmuxPaneMonitor(
                     session_end_callback=app.state.hook_manager.event_handlers.handle_session_end,
                     detection_registry=detection_registry,
-                    config=server.services.config.tmux,
+                    config=config.tmux,
                     session_manager=app.state.hook_manager._session_manager,
                     attention_manager=server.services.attention_manager,
                 )
@@ -285,7 +288,7 @@ def create_lifespan(
                     app.state.hook_manager, "_dispatch_session_summaries", None
                 ),
                 message_processor=getattr(app.state.hook_manager, "_message_processor", None),
-                tmux_config=server.services.config.tmux if server.services.config else None,
+                tmux_config=config.tmux if config else None,
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)

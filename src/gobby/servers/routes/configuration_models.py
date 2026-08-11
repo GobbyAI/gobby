@@ -2,20 +2,31 @@
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Annotated
 
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Strict
 
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
-class SaveConfigRequest(BaseModel):
-    """Request body for PUT /api/config/values."""
-
-    values: dict[str, Any]
+ConfigRevision = Annotated[int, Strict(), Field(ge=0, le=MAX_CONFIG_REVISION)]
 
 
-class SaveTemplateRequest(BaseModel):
-    """Request body for PUT /api/config/template."""
+class PatchConfigRequest(BaseModel):
+    """Request body for PATCH /api/config/values."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: ConfigRevision
+    values: dict[str, object] = Field(default_factory=dict)
+    unset: frozenset[str] = frozenset()
+
+
+class ConfigDocumentRequest(BaseModel):
+    """Request body for daemon YAML replacement endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: ConfigRevision
     content: str
 
 
@@ -32,53 +43,3 @@ class SavePromptOverrideRequest(BaseModel):
     """Request body for PUT /api/config/prompts/{path}."""
 
     content: str
-
-
-class SaveUISettingsRequest(BaseModel):
-    """Request body for PUT /api/config/ui-settings."""
-
-    UI_SETTING_FIELDS: ClassVar[tuple[str, ...]] = (
-        "fontSize",
-        "model",
-        "theme",
-        "defaultChatMode",
-        "sttEnabled",
-        "ttsEnabled",
-        "voiceInputMode",
-        "planPendingVariant",
-        "selectedProjectId",
-        "selectedProvider",
-    )
-
-    fontSize: int | None = None
-    model: str | None = None
-    theme: str | None = None
-    defaultChatMode: str | None = None
-    sttEnabled: bool | None = None
-    ttsEnabled: bool | None = None
-    voiceInputMode: str | None = None
-    planPendingVariant: str | None = None
-    selectedProjectId: str | None = None
-    selectedProvider: str | None = None
-
-    @model_validator(mode="after")
-    def require_at_least_one_setting(self) -> SaveUISettingsRequest:
-        """Reject empty payloads and all-null no-op updates."""
-        if all(getattr(self, field) is None for field in self.UI_SETTING_FIELDS):
-            raise ValueError("At least one UI setting must be provided")
-        return self
-
-
-class SaveApprovalRulesRequest(BaseModel):
-    """Request body for PUT /api/config/tool-approvals/global."""
-
-    rules: list[str]
-
-
-class ImportConfigRequest(BaseModel):
-    """Request body for POST /api/config/import."""
-
-    config_store: dict[str, Any] | None = None
-    config: dict[str, Any] | None = None
-    config_secret_keys: list[str] | None = None
-    prompts: dict[str, str] | None = None

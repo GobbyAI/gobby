@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from gobby.cli.installers import compose_env
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
@@ -30,17 +31,15 @@ class _Db:
         self.close()
 
 
-class _ConfigStore:
+class _ConfigRepository:
     values: dict[str, Any] = {}
 
-    def __init__(self, _db: object) -> None:
+    def __init__(self, _db: object, **_kwargs: object) -> None:
         pass
 
-    def list_keys(self) -> list[str]:
-        return list(self.values)
-
-    def get(self, key: str) -> Any:
-        return self.values.get(key)
+    def read(self, *, resolve_secrets: bool = True) -> SimpleNamespace:
+        del resolve_secrets
+        return SimpleNamespace(values=self.values)
 
 
 class _SecretStore:
@@ -118,7 +117,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
 ) -> None:
     db = _Db()
     _SecretStore.gobby_homes = []
-    _ConfigStore.values = {
+    _ConfigRepository.values = {
         "databases.qdrant.url": "http://localhost:7333",
         "databases.qdrant.port": 7333,
         "databases.falkordb.host": "127.0.0.1",
@@ -130,7 +129,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
         "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: db,
     )
-    monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
+    monkeypatch.setattr("gobby.storage.config_repository.ConfigRepository", _ConfigRepository)
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
 
     env = compose_env._service_environment(tmp_path)
@@ -155,15 +154,16 @@ def test_service_environment_decrypts_falkor_secret_from_explicit_home(
     explicit_home = tmp_path / "managed"
     monkeypatch.setenv("GOBBY_HOME", str(ambient_home))
 
-    store = ConfigStore(hub_db)
     secret_store = SecretStore(hub_db, gobby_home=explicit_home)
-    store.set("databases.falkordb.host", "127.0.0.1", source="test")
-    store.set("databases.falkordb.port", 16379, source="test")
-    store.set_secret(
-        "databases.falkordb.password",
-        "managed-secret",
-        secret_store,
-        source="test",
+    ConfigMutations(hub_db, secret_store=secret_store).patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "databases.falkordb.host": "127.0.0.1",
+                "databases.falkordb.port": 16379,
+            },
+            secrets={"databases.falkordb.password": SecretUpdate("managed-secret")},
+        ),
     )
 
     opened_bootstrap_paths: list[str | Path] = []
@@ -189,7 +189,7 @@ def test_service_environment_decrypts_falkor_secret_from_explicit_home(
 def test_invalid_falkordb_host_is_actionable(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _ConfigStore.values = {
+    _ConfigRepository.values = {
         "databases.falkordb.host": "",
         "databases.falkordb.port": 16379,
         "databases.falkordb.password": "$secret:falkor-test",
@@ -199,7 +199,7 @@ def test_invalid_falkordb_host_is_actionable(
         "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: _Db(),
     )
-    monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
+    monkeypatch.setattr("gobby.storage.config_repository.ConfigRepository", _ConfigRepository)
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
 
     with pytest.raises(compose_env.ComposeEnvironmentError, match="host must be"):
@@ -209,7 +209,7 @@ def test_invalid_falkordb_host_is_actionable(
 def test_missing_falkordb_secret_is_actionable_without_generating(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    _ConfigStore.values = {
+    _ConfigRepository.values = {
         "databases.falkordb.host": "127.0.0.1",
         "databases.falkordb.port": 16379,
         "databases.falkordb.password": "$secret:missing",
@@ -219,7 +219,7 @@ def test_missing_falkordb_secret_is_actionable_without_generating(
         "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: _Db(),
     )
-    monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
+    monkeypatch.setattr("gobby.storage.config_repository.ConfigRepository", _ConfigRepository)
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
 
     with pytest.raises(compose_env.ComposeEnvironmentError, match="missing"):

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from typing import Any
 
 import pytest
@@ -53,7 +53,9 @@ class _FakeCodexBackend:
         prompt: str,
         *,
         context_prefix: str | None = None,
+        request_parameters: Mapping[str, object] | None = None,
     ) -> AsyncIterator[ChatEvent]:
+        del request_parameters
         for ev in self._events:
             yield ev
 

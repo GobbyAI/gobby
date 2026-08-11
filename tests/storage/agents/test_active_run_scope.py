@@ -11,6 +11,7 @@ import gobby.storage.agents._lifecycle as lifecycle_module
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -22,11 +23,14 @@ def test_local_and_global_active_run_apis(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Local readers filter by machine while global invariants retain both rows."""
-    local_machine_id = str(uuid.uuid4())
+    # Session registration rejects foreign machine identity, so the parent
+    # session must live on the real current machine; only the remote agent
+    # run carries a foreign machine id.
+    local_machine_id = require_machine_id()
     remote_machine_id = str(uuid.uuid4())
     for machine_id in (local_machine_id, remote_machine_id):
         temp_db.execute(
-            "INSERT INTO machines (id, hostname) VALUES (%s, %s)",
+            "INSERT INTO machines (id, hostname) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
             (machine_id, f"host-{machine_id}"),
         )
 

@@ -14,7 +14,8 @@ from typing import Any, cast
 import psycopg
 
 from gobby.app_context import get_app_context
-from gobby.config.sessions import SessionLifecycleConfig
+from gobby.config.app import DaemonConfig
+from gobby.config.sessions import SessionSummaryConfig
 from gobby.llm.context_windows import reconcile_model_context
 from gobby.sessions.context_usage import (
     context_window_from_raw_message,
@@ -77,14 +78,16 @@ def _session_artifacts_complete(session: Any) -> bool:
 class TranscriptProcessingMixin:
     """Transcript-processing behavior shared by the session lifecycle manager."""
 
-    config: SessionLifecycleConfig
     db: HubDatabase
-    llm_service: Any | None
     session_manager: SessionManager
-    session_summary_config: Any | None
     token_event_store: TokenEventStore
 
-    async def _process_pending_transcripts(self) -> int:
+    @property
+    def llm_service(self) -> Any | None:
+        """Provided by the host; the lifecycle manager resolves it per use."""
+        raise NotImplementedError
+
+    async def _process_pending_transcripts(self, active: DaemonConfig) -> int:
         """Process transcripts for expired sessions.
 
         Runs memory extraction and summary generation as separate steps
@@ -96,14 +99,15 @@ class TranscriptProcessingMixin:
         on-disk path is unchanged (processed once a summary exists, or when the
         LLM is unavailable).
         """
+        config = active.session_lifecycle
         sessions = self.session_manager.get_pending_transcript_sessions(
-            limit=self.config.transcript_processing_batch_size
+            limit=config.transcript_processing_batch_size
         )
 
         if not sessions:
             return 0
 
-        archive_dir = getattr(self.config, "transcript_archive_dir", None)
+        archive_dir = config.transcript_archive_dir
 
         processed = 0
         for session in sessions:
@@ -166,7 +170,7 @@ class TranscriptProcessingMixin:
 
             # Step 2: Generate artifacts — summary and/or wiki (best-effort)
             try:
-                await self._generate_artifacts_if_needed(session.id)
+                await self._generate_artifacts_if_needed(session.id, active.session_summary)
             except Exception as e:
                 logger.warning("Artifact generation failed for %s: %s", session.id, e)
 
@@ -221,7 +225,11 @@ class TranscriptProcessingMixin:
 
         return processed
 
-    async def _generate_artifacts_if_needed(self, session_id: str) -> None:
+    async def _generate_artifacts_if_needed(
+        self,
+        session_id: str,
+        session_summary_config: SessionSummaryConfig,
+    ) -> None:
         """Generate the session summary (and its mirror wiki file) when missing.
 
         Safety net for ungraceful exits — if on_session_end or /clear never
@@ -257,7 +265,7 @@ class TranscriptProcessingMixin:
                 session_id=session_id,
                 session_manager=self.session_manager,
                 llm_service=self.llm_service,
-                session_summary_config=self.session_summary_config,
+                session_summary_config=session_summary_config,
                 db=self.db,
                 set_handoff_ready=False,  # already expired, don't change status
             )

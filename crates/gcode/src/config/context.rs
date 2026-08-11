@@ -13,10 +13,11 @@ use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 use uuid::Uuid;
 
-use super::layers::read_config_layers;
+use super::layers::{ServiceSource, read_config_layers};
 use super::services::{
-    resolve_code_vector_settings, resolve_embedding_config, resolve_falkordb_config,
-    resolve_indexing_settings, resolve_qdrant_config,
+    resolve_code_vector_settings_from_source, resolve_embedding_config_from_service_source,
+    resolve_falkordb_config_from_source, resolve_indexing_settings_from_source,
+    resolve_qdrant_config_from_source,
 };
 use crate::db;
 use crate::git::{self, WorktreeKind};
@@ -197,6 +198,7 @@ type ResolvedServices = (
     Option<EmbeddingConfig>,
     IndexingSettings,
     CodeVectorSettings,
+    Option<i64>,
 );
 
 fn resolve_services(
@@ -204,28 +206,36 @@ fn resolve_services(
     layers: &super::layers::ConfigLayers,
     services: ServiceConfigSelection,
 ) -> anyhow::Result<ResolvedServices> {
+    let (mut source, revision) = ServiceSource::new(conn, layers)?;
     let falkordb = if services.falkordb {
-        resolve_falkordb_config(conn, layers)?
+        resolve_falkordb_config_from_source(&mut source)?
     } else {
         None
     };
     let qdrant = if services.qdrant {
-        resolve_qdrant_config(conn, layers)?
+        resolve_qdrant_config_from_source(&mut source)?
     } else {
         None
     };
     let embedding = if services.embedding {
-        resolve_embedding_config(conn, layers)?
+        resolve_embedding_config_from_service_source(None, &mut source)?
     } else {
         None
     };
-    let indexing = resolve_indexing_settings(conn, layers)?;
+    let indexing = resolve_indexing_settings_from_source(&mut source)?;
     let code_vectors = if services.code_vectors {
-        resolve_code_vector_settings(conn, layers)?
+        resolve_code_vector_settings_from_source(&mut source)?
     } else {
         CodeVectorSettings::default()
     };
-    Ok((falkordb, qdrant, embedding, indexing, code_vectors))
+    Ok((
+        falkordb,
+        qdrant,
+        embedding,
+        indexing,
+        code_vectors,
+        revision,
+    ))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -300,7 +310,7 @@ impl Context {
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
-        let (falkordb, qdrant, embedding, indexing, code_vectors) =
+        let (falkordb, qdrant, embedding, indexing, code_vectors, _config_revision) =
             resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
@@ -331,7 +341,7 @@ impl Context {
 
         let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
-        let (falkordb, qdrant, embedding, indexing, code_vectors) =
+        let (falkordb, qdrant, embedding, indexing, code_vectors, _config_revision) =
             resolve_services(&mut conn, &layers, services)?;
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());

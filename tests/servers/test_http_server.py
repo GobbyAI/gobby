@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.sessions import SessionManager
 
@@ -213,7 +214,6 @@ class TestMCPEndpointsWithManager:
     ) -> HTTPServer:
         """Create HTTP server with mock MCP manager."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -223,7 +223,7 @@ class TestMCPEndpointsWithManager:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
 
     @pytest.fixture
@@ -337,7 +337,6 @@ class TestExceptionHandling:
         """Standard route failures preserve the HTTP 500 error contract."""
         # Create server that will raise an exception
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

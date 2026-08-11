@@ -27,7 +27,6 @@ class TestProcessShutdown:
     async def test_terminate_streamable_http_sessions_no_mcp_server(self) -> None:
         """Termination helper should no-op when MCP server is absent."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -42,7 +41,6 @@ class TestProcessShutdown:
     async def test_terminate_streamable_http_sessions_terminates_all_transports(self) -> None:
         """Termination helper should stop each active Streamable HTTP transport."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -80,7 +78,6 @@ class TestProcessShutdown:
     ) -> None:
         """One failed transport termination should not stop the rest."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -117,7 +114,6 @@ class TestProcessShutdown:
     async def test_shutdown_no_pending_tasks(self) -> None:
         """Test shutdown with no pending background tasks."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -133,7 +129,6 @@ class TestProcessShutdown:
     async def test_shutdown_waits_for_pending_tasks(self) -> None:
         """Test shutdown waits for pending background tasks."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -156,7 +151,6 @@ class TestProcessShutdown:
     async def test_shutdown_does_not_cancel_current_background_shutdown_task(self) -> None:
         """A route-scheduled shutdown task should not cancel itself."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -178,7 +172,6 @@ class TestProcessShutdown:
     async def test_shutdown_timeout_with_slow_tasks(self) -> None:
         """Test shutdown times out with very slow tasks."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -216,7 +209,6 @@ class TestProcessShutdown:
         """Test shutdown disconnects MCP servers."""
         mock_mcp_manager = AsyncMock()
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -251,7 +243,6 @@ class TestProcessShutdown:
         mock_mcp_manager.disconnect_all.side_effect = disconnect_all
 
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -282,7 +273,6 @@ class TestProcessShutdown:
 
         mock_mcp_manager = AsyncMock()
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -319,7 +309,6 @@ class TestProcessShutdown:
         """HTTP session termination is best-effort during shutdown."""
         mock_mcp_manager = AsyncMock()
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -349,7 +338,6 @@ class TestProcessShutdown:
         mock_mcp_manager.disconnect_all.side_effect = asyncio.CancelledError
 
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -382,7 +370,6 @@ class TestProcessShutdown:
         mock_mcp_manager.disconnect_all.side_effect = RuntimeError("Disconnect failed")
 
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
@@ -405,7 +392,6 @@ class TestProcessShutdown:
     async def test_shutdown_increments_success_metric(self) -> None:
         """Test shutdown increments success metric."""
         services = ServiceContainer(
-            config=MagicMock(),
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),

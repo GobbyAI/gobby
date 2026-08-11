@@ -11,83 +11,83 @@ Exposes functionality for:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol
 
+from gobby.config.runtime import ConfigSnapshot
+from gobby.config.values import ConfigRuntimeReader, ConfigValuesError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-
-if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
-    from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["create_voice_registry"]
 
 
+class VoiceConfigService(Protocol):
+    @property
+    def runtime(self) -> ConfigRuntimeReader: ...
+
+    async def patch_flat(
+        self,
+        *,
+        expected_revision: int,
+        values: Mapping[str, object],
+    ) -> dict[str, object]: ...
+
+
+def _snapshot(service: VoiceConfigService) -> ConfigSnapshot:
+    try:
+        return service.runtime.snapshot
+    except RuntimeError as exc:
+        raise ConfigValuesError(
+            "runtime_unavailable",
+            "Configuration runtime is not ready",
+            (),
+            status_code=503,
+            retryable=True,
+        ) from exc
+
+
 def create_voice_registry(
-    config: DaemonConfig,
-    config_store: ConfigStore,
-    config_setter: Callable[[DaemonConfig], None],
+    config_service_getter: Callable[[], VoiceConfigService],
 ) -> InternalToolRegistry:
-    """
-    Create a voice tool registry for managing Whisper custom vocabulary.
-
-    Args:
-        config: Current in-memory DaemonConfig
-        config_store: DB-backed config key-value store
-        config_setter: Callback to update in-memory config on ServiceContainer
-
-    Returns:
-        InternalToolRegistry with voice tools registered
-    """
+    """Create a voice tool registry backed by typed revisioned config."""
     registry = InternalToolRegistry(
         name="gobby-voice",
         description="Whisper custom vocabulary - add_vocab, remove_vocab, list_vocab, clear_vocab",
     )
 
-    # Mutable reference so tools always read the latest config
-    _state: dict[str, DaemonConfig] = {"config": config}
-
-    def _current_vocab() -> list[str]:
-        return list(_state["config"].voice.whisper_vocabulary)
-
-    def _persist(terms: list[str]) -> None:
-        """Persist vocabulary to DB and update in-memory config."""
-        from gobby.config.app import DaemonConfig as DaemonConfigCls
-        from gobby.config.app import deep_merge
-        from gobby.storage.config_store import unflatten_config
-
-        config_store.set("voice.whisper_vocabulary", terms, source="mcp")
-
-        update_nested = unflatten_config({"voice.whisper_vocabulary": terms})
-        current_dict = _state["config"].model_dump(mode="json")
-        deep_merge(current_dict, update_nested)
-        new_config = DaemonConfigCls(**current_dict)
-        _state["config"] = new_config
-        config_setter(new_config)
-
     @registry.tool(
         name="add_vocab",
         description="Add terms to Whisper STT vocabulary. Comma-separated, deduplicates case-insensitively. Example: add_vocab(terms='Kubernetes, FastAPI')",
     )
-    def add_vocab(terms: str) -> dict[str, Any]:
+    async def add_vocab(terms: str) -> dict[str, Any]:
         """Add one or more terms to the vocabulary."""
+        service = config_service_getter()
         new_terms = [t.strip() for t in terms.split(",") if t.strip()]
         if not new_terms:
             return {"success": False, "error": "No valid terms provided"}
 
-        current = _current_vocab()
-        existing_lower = {t.lower() for t in current}
-        added = []
-        for term in new_terms:
-            if term.lower() not in existing_lower:
-                current.append(term)
-                existing_lower.add(term.lower())
-                added.append(term)
+        try:
+            snapshot = _snapshot(service)
+            # RMW must base on desired values: active lags behind pending
+            # desired writes and would silently revert them.
+            current = list(snapshot.desired.voice.whisper_vocabulary)
+            existing_lower = {t.lower() for t in current}
+            added = []
+            for term in new_terms:
+                if term.lower() not in existing_lower:
+                    current.append(term)
+                    existing_lower.add(term.lower())
+                    added.append(term)
 
-        if added:
-            _persist(current)
+            if added:
+                await service.patch_flat(
+                    expected_revision=snapshot.revision,
+                    values={"voice.whisper_vocabulary": current},
+                )
+        except ConfigValuesError as exc:
+            return exc.public_body()
 
         return {
             "success": True,
@@ -100,19 +100,27 @@ def create_voice_registry(
         name="remove_vocab",
         description="Remove terms from Whisper STT vocabulary. Comma-separated, case-insensitive matching.",
     )
-    def remove_vocab(terms: str) -> dict[str, Any]:
+    async def remove_vocab(terms: str) -> dict[str, Any]:
         """Remove one or more terms from the vocabulary."""
+        service = config_service_getter()
         to_remove = {t.strip().lower() for t in terms.split(",") if t.strip()}
         if not to_remove:
             return {"success": False, "error": "No valid terms provided"}
 
-        current = _current_vocab()
-        original_count = len(current)
-        remaining = [t for t in current if t.lower() not in to_remove]
-        removed_count = original_count - len(remaining)
+        try:
+            snapshot = _snapshot(service)
+            current = list(snapshot.desired.voice.whisper_vocabulary)
+            original_count = len(current)
+            remaining = [t for t in current if t.lower() not in to_remove]
+            removed_count = original_count - len(remaining)
 
-        if removed_count > 0:
-            _persist(remaining)
+            if removed_count > 0:
+                await service.patch_flat(
+                    expected_revision=snapshot.revision,
+                    values={"voice.whisper_vocabulary": remaining},
+                )
+        except ConfigValuesError as exc:
+            return exc.public_body()
 
         return {
             "success": True,
@@ -125,24 +133,36 @@ def create_voice_registry(
         name="list_vocab",
         description="List current Whisper STT vocabulary terms and prompt.",
     )
-    def list_vocab() -> dict[str, Any]:
+    async def list_vocab() -> dict[str, Any]:
         """List the current vocabulary and whisper_prompt."""
-        vocab = _current_vocab()
+        try:
+            config = _snapshot(config_service_getter()).active.voice
+        except ConfigValuesError as exc:
+            return exc.public_body()
+        vocab = list(config.whisper_vocabulary)
         return {
             "success": True,
             "vocabulary": vocab,
             "count": len(vocab),
-            "whisper_prompt": _state["config"].voice.whisper_prompt,
+            "whisper_prompt": config.whisper_prompt,
         }
 
     @registry.tool(
         name="clear_vocab",
         description="Clear all Whisper STT vocabulary terms.",
     )
-    def clear_vocab() -> dict[str, Any]:
+    async def clear_vocab() -> dict[str, Any]:
         """Clear all vocabulary terms."""
-        current_count = len(_current_vocab())
-        _persist([])
+        service = config_service_getter()
+        try:
+            snapshot = _snapshot(service)
+            current_count = len(snapshot.desired.voice.whisper_vocabulary)
+            await service.patch_flat(
+                expected_revision=snapshot.revision,
+                values={"voice.whisper_vocabulary": []},
+            )
+        except ConfigValuesError as exc:
+            return exc.public_body()
         return {
             "success": True,
             "cleared": current_count,

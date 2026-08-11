@@ -39,6 +39,7 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from tests._timing import wait_for_async_condition
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.config_runtime_helpers import static_runtime_capture
 from tests.storage.tasks._stage_test_helpers import stage_row
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
@@ -130,7 +131,7 @@ class MiniBuildHarness:
 
         self.loop = SystemAutomationLoop(
             db=self.db,
-            config=DaemonConfig(),
+            capture_bundle=static_runtime_capture(DaemonConfig()),
             run_db=run_inline,
         )
         self.services = SimpleNamespace(
@@ -702,7 +703,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
 
     automation_loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         run_db=run_inline,
     )
     services = SimpleNamespace(

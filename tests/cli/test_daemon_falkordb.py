@@ -8,8 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.cli.daemon import _services_start
-from gobby.config.app import load_config
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
@@ -17,36 +17,34 @@ pytestmark = pytest.mark.unit
 
 
 def _seed_falkordb_config(db: HubDatabase, password: str) -> None:
-    config_store = ConfigStore(db)
     secret_store = SecretStore(db)
-    config_store.set("databases.qdrant.url", "http://localhost:6333", source="test")
-    config_store.set("databases.qdrant.port", 6333, source="test")
-    config_store.set("databases.falkordb.host", "127.0.0.1", source="test")
-    config_store.set("databases.falkordb.port", 16379, source="test")
-    config_store.set_secret(
-        "databases.falkordb.password",
-        password,
-        secret_store,
-        source="test",
+    ConfigMutations(db, secret_store=secret_store).patch(
+        expected_revision=0,
+        patch=ConfigPatch(
+            values={
+                "databases.qdrant.url": "http://localhost:6333",
+                "databases.qdrant.port": 6333,
+                "databases.falkordb.host": "127.0.0.1",
+                "databases.falkordb.port": 16379,
+            },
+            secrets={"databases.falkordb.password": SecretUpdate(password)},
+        ),
     )
 
 
-def test_load_config_resolves_falkordb_secret_with_secret_store_get(
+def test_config_repository_resolves_falkordb_secret(
     tmp_path, monkeypatch: pytest.MonkeyPatch, postgres_db: HubDatabase
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    config_store = ConfigStore(postgres_db)
     secret_store = SecretStore(postgres_db)
-    config_store.set_secret(
-        "databases.falkordb.password",
-        "plain-secret",
-        secret_store,
-        source="test",
+    ConfigMutations(postgres_db, secret_store=secret_store).patch(
+        expected_revision=0,
+        patch=ConfigPatch(secrets={"databases.falkordb.password": SecretUpdate("plain-secret")}),
     )
 
-    config = load_config(config_store=config_store, secret_resolver=secret_store.get)
+    snapshot = ConfigRepository(postgres_db, secret_store=secret_store).read()
 
-    assert config.databases.falkordb.password == "plain-secret"
+    assert snapshot.secret_bindings["databases.falkordb.password"].plaintext == "plain-secret"
 
 
 def test_services_start_uses_falkordb_config_store_password(
@@ -80,8 +78,9 @@ def test_services_start_uses_falkordb_config_store_password(
         patch("gobby.cli.daemon.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0)
-        _services_start(tmp_path)
+        result = _services_start(tmp_path)
 
+    assert result.outcome == "success", result.detail
     cmd = mock_run.call_args.args[0]
     assert "--profile" in cmd
     assert "falkordb" in cmd

@@ -157,7 +157,7 @@ def _create_registry(
         mock_sm = MagicMock()
         mock_sm.resolve_session_reference.return_value = "resolved-session"
         MockSM.return_value = mock_sm
-        return create_task_registry(task_manager, task_validator=task_validator)
+        return create_task_registry(task_manager, task_validator_resolver=lambda: task_validator)
 
 
 def _create_stage_ops_registry(task_manager: MagicMock) -> Any:

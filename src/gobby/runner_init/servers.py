@@ -49,8 +49,17 @@ def _local_provider_metadata_exclusions() -> frozenset[str]:
     return frozenset(providers)
 
 
+def register_config_event_publisher(runner: GobbyRunner) -> None:
+    """Publish each reconciled configuration revision to WebSocket clients."""
+    websocket_server = runner.websocket_server
+    if websocket_server is None:
+        return
+    runner.config_runtime.register_revision_publisher(websocket_server.broadcast_config_event)
+
+
 def init_servers(runner: GobbyRunner) -> None:
     """Initialize HTTP server, WebSocket server, and broadcasting."""
+    config = runner.startup_config
     web_chat_session_registry = WebChatSessionRegistry()
     runner.wake_dispatcher.set_web_chat_session_registry(web_chat_session_registry)
     http_server_ref: weakref.ReferenceType[HTTPServer] | None = None
@@ -59,7 +68,7 @@ def init_servers(runner: GobbyRunner) -> None:
     model_metadata_coverage_auditor = ModelMetadataCoverageAuditor(
         provider_capability_store,
         model_metadata_store,
-        runner.config_store,
+        config.ai.model_metadata_aliases,
         run_db=getattr(runner.db_executor, "run", None),
         excluded_models=_local_model_metadata_exclusions,
         excluded_providers=_local_provider_metadata_exclusions,
@@ -73,7 +82,7 @@ def init_servers(runner: GobbyRunner) -> None:
     provider_capability_resolver = CapabilityResolver(
         provider_capability_service,
         model_metadata_store,
-        runner.config_store,
+        config.ai.model_metadata_aliases,
     )
 
     def tool_proxy_getter() -> object | None:
@@ -81,7 +90,6 @@ def init_servers(runner: GobbyRunner) -> None:
         return http_server.tool_proxy if http_server is not None else None
 
     services = ServiceContainer(
-        config=runner.config,
         database=runner.database,
         db_executor=runner.db_executor,
         worktree_delete_executor=runner.worktree_delete_executor,
@@ -124,7 +132,7 @@ def init_servers(runner: GobbyRunner) -> None:
         system_automation_loop=runner.system_automation_loop,
         skill_manager=runner.skill_manager,
         hub_manager=runner.hub_manager,
-        config_store=runner.config_store,
+        config_runtime=runner.config_runtime,
         provider_capability_service=provider_capability_service,
         provider_capability_resolver=provider_capability_resolver,
         model_metadata_coverage_auditor=model_metadata_coverage_auditor,
@@ -148,7 +156,7 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.communications_manager.store, services
         )
         runner.communications_manager.set_vision_extract_service(
-            build_daemon_vision_extract_service(runner.config)
+            build_daemon_vision_extract_service(config)
         )
 
     codex_client = None
@@ -163,14 +171,16 @@ def init_servers(runner: GobbyRunner) -> None:
 
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,
-        daemon_config=runner.config,
+        daemon_config=config,
     )
 
     runner.http_server = HTTPServer(
         services=services,
-        port=runner.config.daemon_port,
-        test_mode=runner.config.test_mode,
+        startup_config=config,
+        port=runner.bootstrap_config.daemon_port,
+        test_mode=config.test_mode,
         codex_client=codex_client,
+        bootstrap_config=runner.bootstrap_config,
     )
     http_server_ref = weakref.ref(runner.http_server)
     runner.http_server.set_runner_getter(weakref.ref(runner))
@@ -215,12 +225,12 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.pipeline_executor.tool_proxy_getter = tool_proxy_getter
 
     runner.websocket_server = None
-    if runner.config.websocket and getattr(runner.config.websocket, "enabled", True):
+    if config.websocket.enabled:
         websocket_config = WebSocketConfig(
-            host=runner.config.bind_host,
-            port=runner.config.websocket.port,
-            ping_interval=runner.config.websocket.ping_interval,
-            ping_timeout=runner.config.websocket.ping_timeout,
+            host=runner.bootstrap_config.bind_host,
+            port=runner.bootstrap_config.websocket_port,
+            ping_interval=config.websocket.ping_interval,
+            ping_timeout=config.websocket.ping_timeout,
         )
         runner.websocket_server = WebSocketServer(
             config=websocket_config,
@@ -232,7 +242,8 @@ def init_servers(runner: GobbyRunner) -> None:
             ),
             session_manager=runner.session_manager,
             db_executor=runner.db_executor,
-            daemon_config=runner.config,
+            daemon_config=config,
+            config_runtime=runner.config_runtime,
             internal_manager=runner.http_server._internal_manager,
             web_chat_session_registry=web_chat_session_registry,
             tool_proxy_getter=tool_proxy_getter,
@@ -255,7 +266,7 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.communications_manager.set_websocket_broadcast(runner.websocket_server.broadcast)
             runner.communications_manager.set_voice_transcriber_getter(
                 runner.websocket_server.get_voice_transcriber,
-                timeout_seconds=runner.config.voice.transcription_timeout_seconds,
+                timeout_seconds=config.voice.transcription_timeout_seconds,
             )
             runner.communications_manager.responder.set_backend(
                 ChatSessionCommsBackend(
@@ -278,6 +289,8 @@ def init_servers(runner: GobbyRunner) -> None:
 
         if runner.pipeline_executor:
             setup_pipeline_event_broadcasting(runner.websocket_server, runner.pipeline_executor)
+
+    register_config_event_publisher(runner)
 
     if runner.cron_scheduler and (runner.websocket_server or runner.communications_manager):
         from gobby.runner_broadcasting import setup_cron_event_broadcasting

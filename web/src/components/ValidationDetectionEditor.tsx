@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Button } from './ui/Button'
 import { Input } from './ui/Input'
 import { Textarea } from './ui/Textarea'
+import { configurationClient } from '../api/config'
 
 const DEFAULT_DETECTION_CONFIG = {
   enabled: true,
@@ -90,17 +91,12 @@ export function ValidationDetectionEditor({
     setPreviewError(null)
     try {
       const parsed = JSON.parse(editorJsonText) as Record<string, unknown>
-      const response = await fetch('/api/config/validation-detection/preview', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command, config: parsed }),
-      })
-      const data = await response.json()
-      if (!response.ok) {
-        setPreviewError(data.detail || 'Preview failed')
+      const result = await configurationClient.previewValidationDetection(command, parsed)
+      if (!result.ok) {
+        setPreviewError(typeof result.body.detail === 'string' ? result.body.detail : 'Preview failed')
         return
       }
-      setPreview(data)
+      setPreview(result.body as unknown as PreviewResult)
     } catch (error) {
       setPreviewError(error instanceof Error ? error.message : String(error))
     }

@@ -6,8 +6,7 @@ from pathlib import Path
 
 import click
 
-from gobby.cli.runtime import require_cli_database
-from gobby.config.app import load_config
+from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.task_github_import import GitHubIssueImporter
 from gobby.sync.tasks import TaskBackupManager
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 def check_tasks_enabled() -> None:
     """Check if gobby-tasks is enabled, exit if not."""
     try:
-        config = load_config()
+        config = get_cli_runtime().require_config()
         if not config.gobby_tasks.enabled:
             click.echo("Error: gobby-tasks is disabled in configuration", err=True)
             sys.exit(1)

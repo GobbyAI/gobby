@@ -16,13 +16,15 @@ if TYPE_CHECKING:
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
+from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
 )
-from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.workflow_audit import WorkflowAuditManager
@@ -66,6 +68,23 @@ from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_RULE_CONFIG_SNAPSHOT = ConfigSnapshot(
+    revision=0,
+    desired=DaemonConfig(),
+    active=DaemonConfig(),
+    row_revisions={},
+    pending_restart_keys=frozenset(),
+    failed_live_keys={},
+    desired_values={
+        "rules.enforcement_enabled": True,
+        "rules.aggregate_blocks": True,
+    },
+    active_values={
+        "rules.enforcement_enabled": True,
+        "rules.aggregate_blocks": True,
+    },
+)
+
 __all__ = [
     "RuleEngine",
     "_COMPACT_TURN_END_BYPASS_PENDING",
@@ -99,6 +118,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         runner: Any | None = None,
         completion_registry: Any | None = None,
         task_manager: Any | None = None,
+        config_runtime: ConfigRuntimeReader | None = None,
         skill_script_materializer: SkillScriptMaterializer | None = None,
     ):
         self.db = db
@@ -111,6 +131,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._config_runtime = config_runtime
         self.skill_script_materializer = skill_script_materializer or get_skill_script_materializer(
             db
         )
@@ -229,13 +250,15 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if is_turn_start:
                     variables["waiting_on_user_input"] = False
 
-                # Check global enforcement toggle
-                config_store = ConfigStore(self.db)
-                if await offload(config_store.get, "rules.enforcement_enabled") is False:
-                    return HookResponse(decision="allow")
-                aggregate_blocks = (
-                    await offload(config_store.get, "rules.aggregate_blocks") is not False
+                config_snapshot = (
+                    self._config_runtime.snapshot
+                    if self._config_runtime is not None
+                    else _DEFAULT_RULE_CONFIG_SNAPSHOT
                 )
+                config_values = config_snapshot.active_values
+                if config_values.get("rules.enforcement_enabled", True) is False:
+                    return HookResponse(decision="allow")
+                aggregate_blocks = config_values.get("rules.aggregate_blocks", True) is not False
 
                 if eval_context is None:
                     eval_context = {}

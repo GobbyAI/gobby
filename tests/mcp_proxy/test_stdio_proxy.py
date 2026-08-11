@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from mcp.server.fastmcp import FastMCP
 
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools
@@ -86,7 +87,9 @@ async def test_request_preserves_explicit_nulls_in_tool_results() -> None:
 async def test_call_tool_sends_intent_on_each_http_shape() -> None:
     deps = MagicMock()
     deps.read_project_id.return_value = None
-    deps.load_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+    runtime = MagicMock()
+    runtime.require_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+    deps.runtime_factory.return_value = runtime
     proxy = DaemonProxy(60887, deps_factory=lambda: deps)
     long_intent = "wrapper-summary" * 200
 
@@ -190,8 +193,11 @@ async def test_requests_reuse_client_and_close_it_once() -> None:
 
 
 def _create_server_with_proxy(proxy: DaemonProxy) -> FastMCP:
+    runtime = MagicMock()
+    runtime.require_config.return_value = MagicMock(daemon_port=60887)
     dependencies = StdioServerDependencies(
-        load_config=lambda: MagicMock(daemon_port=60887),
+        runtime_factory=lambda: runtime,
+        load_bootstrap=lambda: BootstrapConfig(daemon_port=60887),
         setup_internal_registries=MagicMock(),
         build_gobby_instructions=lambda: "instructions",
         fast_mcp_factory=FastMCP,

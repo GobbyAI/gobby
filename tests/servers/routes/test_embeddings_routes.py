@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import gobby.servers.routes.embeddings as embeddings_routes
 from gobby.ai.embedding_switch_service import SwitchOperationStatus
+from gobby.ai.embeddings import EmbeddingService
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.servers.routes.embeddings import create_embeddings_router
@@ -118,7 +119,7 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
         return [[0.1, 0.2, 0.3]]
 
     monkeypatch.setattr(
-        embeddings_routes.EmbeddingService,
+        EmbeddingService,
         "generate_embeddings",
         fake_generate_embeddings,
     )
@@ -187,7 +188,7 @@ def test_embeddings_post_preserves_batch_order_and_passes_is_query(
         return [[1.0], [2.0]]
 
     monkeypatch.setattr(
-        embeddings_routes.EmbeddingService,
+        EmbeddingService,
         "generate_embeddings",
         fake_generate_embeddings,
     )

@@ -3,6 +3,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Literal
 
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -12,6 +13,7 @@ MEMORY_PROJECTION_FENCE_LOCK_KEY = 4_607_187_217_790_855_201
 class MemoryStoreBase:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
+        self.embedding_generation_state = EmbeddingGenerationState(db)
         self._change_listeners: list[Callable[[], Any]] = []
 
     def add_change_listener(self, listener: Callable[[], Any]) -> None:

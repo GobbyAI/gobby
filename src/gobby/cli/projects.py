@@ -324,11 +324,11 @@ def refresh_verification(
             result = refresh_project_verification_deterministic(root, fix=fix)
         else:
             from gobby.ai import build_daemon_text_generation_service
-            from gobby.config.app import load_config
+            from gobby.cli.runtime import get_cli_runtime
             from gobby.config.feature_base import FeatureProfile
             from gobby.config.features import ProjectVerificationSynthesisConfig
 
-            config = load_config()
+            config = get_cli_runtime().require_config()
             synthesis_data = config.project_verification_synthesis.model_dump()
             if profile:
                 synthesis_data["profile"] = FeatureProfile(profile)

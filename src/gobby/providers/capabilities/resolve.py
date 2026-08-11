@@ -6,11 +6,8 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
+from gobby.config.ai import ModelMetadataAlias, model_metadata_alias_source_key
 from gobby.llm.context_window_values import positive_context_window
-from gobby.providers.capabilities.metadata_aliases import (
-    AliasConfigReader,
-    find_model_metadata_alias,
-)
 from gobby.providers.capabilities.models import (
     ActivationDescriptor,
     ModelCapability,
@@ -94,11 +91,11 @@ class CapabilityResolver:
         self,
         store: _CapabilityStore,
         model_metadata_store: _ModelMetadataStore,
-        config_store: AliasConfigReader | None = None,
+        model_metadata_aliases: list[ModelMetadataAlias] | None = None,
     ) -> None:
         self._store = store
         self._model_metadata_store = model_metadata_store
-        self._config_store = config_store
+        self._model_metadata_aliases = tuple(model_metadata_aliases or ())
 
     def resolve_context(
         self,
@@ -130,14 +127,21 @@ class CapabilityResolver:
         if metadata_value is not None:
             return ContextResolution(metadata_value, ContextSource.OPENROUTER)
 
-        if self._config_store is not None:
-            alias = find_model_metadata_alias(self._config_store, provider, model)
-            if alias is not None:
-                alias_value = positive_context_window(
-                    self._model_metadata_store.get_context_window(alias.openrouter_model_id)
-                )
-                if alias_value is not None:
-                    return ContextResolution(alias_value, ContextSource.OPENROUTER)
+        source_key = model_metadata_alias_source_key(provider, model)
+        alias = next(
+            (
+                candidate
+                for candidate in self._model_metadata_aliases
+                if (candidate.provider, candidate.provider_model_id) == source_key
+            ),
+            None,
+        )
+        if alias is not None:
+            alias_value = positive_context_window(
+                self._model_metadata_store.get_context_window(alias.openrouter_model_id)
+            )
+            if alias_value is not None:
+                return ContextResolution(alias_value, ContextSource.OPENROUTER)
         return ContextResolution(None, ContextSource.UNKNOWN)
 
     def resolve_reasoning(

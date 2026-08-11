@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Coroutine
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -649,20 +651,13 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_persists_embeddings_namespace_only(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
-
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
 
         mock_db = MagicMock()
         mock_db_class.return_value = mock_db
@@ -696,20 +691,14 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_none_provider_clears_endpoints(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)
@@ -808,7 +797,7 @@ class TestPersistEmbeddingConfig:
                 source="test",
             )
 
-            from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+            from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
             with pytest.raises(EmbeddingConfigMutationBlocked, match="already exists"):
                 _persist_embedding_config(
@@ -824,20 +813,14 @@ class TestPersistEmbeddingConfig:
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
-    @patch("gobby.config.app.load_config")
     def test_openai_provider_uses_unified_namespace(
         self,
-        mock_load_config: MagicMock,
         mock_db_class: MagicMock,
         mock_store_class: MagicMock,
         mock_secret_class: MagicMock,
-        tmp_path,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
 
-        mock_config = MagicMock()
-        mock_config.database_url = str(tmp_path / "test.db")
-        mock_load_config.return_value = mock_config
         mock_db = mock_db_class.return_value
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)
@@ -876,7 +859,8 @@ class TestPersistEmbeddingConfig:
         temp_db: HubDatabase,
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
-        from gobby.storage.config_store import ConfigStore, EmbeddingConfigMutationBlocked
+        from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
+        from gobby.storage.config_store import ConfigStore
 
         with (
             patch(
@@ -904,10 +888,11 @@ class TestPersistEmbeddingConfig:
     ) -> None:
         from gobby.cli.installers.embedding import _persist_embedding_config
         from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
-        from gobby.storage.config_store import ConfigStore, EmbeddingConfigMutationBlocked
+        from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
+        from gobby.storage.config_store import ConfigStore
 
         store = ConfigStore(temp_db)
-        store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, '{"run_id":"run-1"}')
+        store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
         collection_probe = MagicMock(return_value=False)
         with (
             patch(
@@ -939,7 +924,7 @@ class TestHealthCheck:
     def test_returns_true_on_success(self, mock_run: MagicMock) -> None:
         from gobby.cli.installers.embedding import _health_check_embedding
 
-        def close_probe(coro: object) -> bool:
+        def close_probe(coro: Coroutine[Any, Any, object]) -> bool:
             # asyncio.run is mocked, so close the created coroutine to avoid an
             # unawaited-coroutine warning while still exercising the sync path.
             coro.close()

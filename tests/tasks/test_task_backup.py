@@ -71,6 +71,12 @@ def _legacy_github_issue_task_id(repo_url: str, issue_num: int) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{repo_url}/issues/{issue_num}"))
 
 
+def _backup_file(manager: TaskBackupManager) -> Path:
+    """Narrow backup_path, which is Path | None only for machine-local defaults."""
+    assert manager.backup_path is not None
+    return manager.backup_path
+
+
 @pytest.fixture
 def backup_manager(hub_db: HubDatabase, tmp_path: Path) -> Iterator[TaskBackupManager]:
     backup_path = tmp_path / ".gobby" / "tasks.jsonl"
@@ -167,9 +173,9 @@ class TestTaskBackupManager:
 
         backup_manager.backup()
 
-        assert backup_manager.backup_path.exists()
+        assert _backup_file(backup_manager).exists()
 
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         assert len(lines) == 2
 
         data = [json.loads(line) for line in lines]
@@ -212,7 +218,7 @@ class TestTaskBackupManager:
             backup_manager.backup()
 
         assert [call.kwargs["offset"] for call in mock_list.call_args_list] == [0, 1, 2]
-        assert len(backup_manager.backup_path.read_text().splitlines()) == 2
+        assert len(_backup_file(backup_manager).read_text().splitlines()) == 2
 
     @pytest.mark.integration
     def test_jsonl_round_trip_preserves_state_packed_columns(
@@ -290,8 +296,8 @@ class TestTaskBackupManager:
         ]
 
         # Write export file
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             for task in tasks_data:
                 f.write(json.dumps(task) + "\n")
 
@@ -351,8 +357,8 @@ class TestTaskBackupManager:
                 "validation": {"criteria": "Test task completion is observable."},
             },
         ]
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(
             "".join(json.dumps(record) + "\n" for record in records)
         )
 
@@ -406,8 +412,8 @@ class TestTaskBackupManager:
         }
 
         # Write file
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(file_data) + "\n")
 
         backup_manager.restore()
@@ -438,7 +444,7 @@ class TestTaskBackupManager:
         }
 
         # Append to file
-        with open(backup_manager.backup_path, "w") as f:
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(file_data_2) + "\n")
 
         backup_manager.restore()
@@ -476,8 +482,8 @@ class TestTaskBackupManager:
             "deps_on": [],
             "validation": {"criteria": "Test task completion is observable."},
         }
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(json.dumps(file_data) + "\n")
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(json.dumps(file_data) + "\n")
 
         assert backup_manager.restore() == 0
 
@@ -503,8 +509,8 @@ class TestTaskBackupManager:
             "deps_on": [],
             "validation": {"criteria": "Test task completion is observable."},
         }
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(json.dumps(file_data) + "\n")
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(json.dumps(file_data) + "\n")
 
         task_manager.db.execute(
             """
@@ -546,11 +552,11 @@ class TestTaskBackupManager:
         backup_manager.backup()
 
         # Read correct content
-        correct_content = backup_manager.backup_path.read_text()
+        correct_content = _backup_file(backup_manager).read_text()
         assert "Task 1" in correct_content
 
         # Externally overwrite the file (simulates git checkout/merge)
-        backup_manager.backup_path.write_text(
+        _backup_file(backup_manager).write_text(
             json.dumps(
                 {
                     "id": task.id,
@@ -563,7 +569,7 @@ class TestTaskBackupManager:
 
         # Export again — should restore correct content
         backup_manager.backup()
-        restored_content = backup_manager.backup_path.read_text()
+        restored_content = _backup_file(backup_manager).read_text()
         assert restored_content == correct_content
 
     def test_backup_replaces_previous_file_with_live_database_rows(
@@ -583,12 +589,14 @@ class TestTaskBackupManager:
             "title": "Remote-only task",
             "updated_at": "2099-01-02T00:00:00Z",
         }
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(json.dumps(file_only_record) + "\n")
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(json.dumps(file_only_record) + "\n")
 
         backup_manager.backup()
 
-        records = [json.loads(line) for line in backup_manager.backup_path.read_text().splitlines()]
+        records = [
+            json.loads(line) for line in _backup_file(backup_manager).read_text().splitlines()
+        ]
         assert [record["id"] for record in records] == [local_task.id]
         assert records[0]["title"] == "Local task"
 
@@ -608,7 +616,7 @@ class TestTaskBackupManager:
         assert task_manager.delete_task(task.id)
         backup_manager.backup()
 
-        assert backup_manager.backup_path.read_text() == ""
+        assert _backup_file(backup_manager).read_text() == ""
 
         backup_manager.db.execute(
             """
@@ -664,8 +672,8 @@ class TestTaskBackupManager:
             "deps_on": [],
             "validation": {"criteria": "Test task completion is observable."},
         }
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(json.dumps(record) + "\n")
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(json.dumps(record) + "\n")
 
         backup_manager.restore()
 
@@ -681,9 +689,9 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
         original = b'{"id": "existing"}\n'
-        backup_manager.backup_path.write_bytes(original)
+        _backup_file(backup_manager).write_bytes(original)
         task_manager.create_task(
             sample_project["id"],
             "Task 1",
@@ -696,8 +704,8 @@ class TestTaskBackupManager:
 
         assert isinstance(exc_info.value.__cause__, OSError)
         assert str(exc_info.value.__cause__) == "interrupted"
-        assert backup_manager.backup_path.read_bytes() == original
-        assert list(backup_manager.backup_path.parent.glob(".tasks.jsonl.*.tmp")) == []
+        assert _backup_file(backup_manager).read_bytes() == original
+        assert list(_backup_file(backup_manager).parent.glob(".tasks.jsonl.*.tmp")) == []
 
 
 class TestImportEdgeCases:
@@ -707,7 +715,7 @@ class TestImportEdgeCases:
     def test_import_no_file_exists(self, backup_manager: TaskBackupManager) -> None:
         """Test import when file doesn't exist - should just return."""
         # Ensure file doesn't exist
-        assert not backup_manager.backup_path.exists()
+        assert not _backup_file(backup_manager).exists()
 
         # Should not raise
         backup_manager.restore()
@@ -735,8 +743,8 @@ class TestImportEdgeCases:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write("\n")  # Empty line at start
             f.write(json.dumps(tasks_data) + "\n")
             f.write("\n")  # Empty line in middle
@@ -778,8 +786,8 @@ class TestImportEdgeCases:
             "validation_criteria": "Test task completion is observable.",
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
         backup_manager.restore()
@@ -814,8 +822,8 @@ class TestImportEdgeCases:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
         backup_manager.restore()
@@ -849,8 +857,8 @@ class TestImportEdgeCases:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
         backup_manager.restore()
@@ -898,8 +906,8 @@ class TestImportEdgeCases:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
         _insert_session(backup_manager.db, _session_id("session-123"), sample_project["id"])
@@ -932,8 +940,8 @@ class TestImportEdgeCases:
             "validation": None,
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
         with pytest.raises(TaskCriteriaError, match="validation_criteria"):
@@ -964,8 +972,8 @@ class TestImportEdgeCases:
             "project_id": sample_project["id"],
             "validation": {"criteria": "Test task completion is observable."},
         }
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.write_text(json.dumps(valid_record) + "\n" + bad_line + "\n")
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).write_text(json.dumps(valid_record) + "\n" + bad_line + "\n")
 
         with pytest.raises(TaskRestoreError):
             backup_manager.restore()
@@ -1014,7 +1022,7 @@ class TestClosedStateRoundTrip:
         backup_manager.backup()
 
         # Verify JSONL has the closed fields
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = json.loads(lines[0])
         assert data["state"]["is_closed"] is True
         assert data["closed_at"] is not None
@@ -1105,8 +1113,8 @@ class TestClosedStateRoundTrip:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(jsonl_data) + "\n")
 
         backup_manager.restore()
@@ -1150,7 +1158,7 @@ class TestClosedStateRoundTrip:
 
         backup_manager.backup()
 
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = json.loads(lines[0])
         assert data["priority"] == 1
         assert data["task_type"] == "bug"
@@ -1196,7 +1204,7 @@ class TestExportEdgeCases:
 
         backup_manager.backup()
 
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = [json.loads(line) for line in lines]
 
         task3_data = next(d for d in data if d["id"] == t3.id)
@@ -1230,7 +1238,7 @@ class TestExportEdgeCases:
 
         backup_manager.backup()
 
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = json.loads(lines[0])
 
         assert data["validation"] is not None
@@ -1262,7 +1270,7 @@ class TestExportEdgeCases:
 
         backup_manager.backup()
 
-        lines = backup_manager.backup_path.read_text().strip().split("\n")
+        lines = _backup_file(backup_manager).read_text().strip().split("\n")
         data = json.loads(lines[0])
 
         assert data["commits"] == ["commit1", "commit2"]
@@ -1282,8 +1290,8 @@ class TestExportEdgeCases:
         )
 
         # Make the export path a directory to cause write error
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_manager.backup_path.mkdir()
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        _backup_file(backup_manager).mkdir()
 
         with pytest.raises(TaskBackupError) as exc_info:
             backup_manager.backup()
@@ -1295,8 +1303,8 @@ class TestExportEdgeCases:
         """Test export with no tasks creates empty file."""
         backup_manager.backup()
 
-        assert backup_manager.backup_path.exists()
-        content = backup_manager.backup_path.read_text()
+        assert _backup_file(backup_manager).exists()
+        content = _backup_file(backup_manager).read_text()
         assert content == ""
 
 
@@ -1994,8 +2002,8 @@ class TestImportSeqNumPreservation:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(task_data) + "\n")
 
         backup_manager.restore()
@@ -2040,8 +2048,8 @@ class TestImportSeqNumPreservation:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(task_data) + "\n")
 
         backup_manager.restore()
@@ -2097,8 +2105,8 @@ class TestImportSeqNumPreservation:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(task_data) + "\n")
 
         backup_manager.restore()
@@ -2148,8 +2156,8 @@ class TestImportSeqNumPreservation:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(task1) + "\n")
             f.write(json.dumps(task2) + "\n")
 
@@ -2189,8 +2197,8 @@ class TestImportSeqNumPreservation:
             # No seq_num or path_cache
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(task_data) + "\n")
 
         backup_manager.restore()
@@ -2241,8 +2249,8 @@ class TestImportSeqNumPreservation:
         }
 
         # UUID-sorted exports can place a child before its parent.
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(child) + "\n")
             f.write(json.dumps(parent) + "\n")
 
@@ -2312,8 +2320,8 @@ class TestImportSeqNumPreservation:
             "validation": {"criteria": "Test task completion is observable."},
         }
 
-        backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(backup_manager.backup_path, "w") as f:
+        _backup_file(backup_manager).parent.mkdir(parents=True, exist_ok=True)
+        with open(_backup_file(backup_manager), "w") as f:
             f.write(json.dumps(child) + "\n")
 
         backup_manager.restore()

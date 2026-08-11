@@ -15,6 +15,8 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
@@ -269,10 +271,10 @@ class TestInstallFalkorDB:
 
         assert not (tmp_path / "bootstrap.yaml").exists()
 
-        store = ConfigStore(hub_db)
-        assert store.get("databases.falkordb.host") == "127.0.0.1"
-        assert store.get("databases.falkordb.port") == 16379
-        assert store.get("databases.falkordb.password") == "$secret:falkordb_password"
+        snapshot = ConfigRepository(hub_db).read(resolve_secrets=False)
+        assert snapshot.values["databases.falkordb.host"] == "127.0.0.1"
+        assert snapshot.values["databases.falkordb.port"] == 16379
+        assert snapshot.overrides["databases.falkordb.password"] == "$secret:falkordb_password"
 
         row = hub_db.fetchone(
             "SELECT value, is_secret FROM config_store WHERE key = %s",
@@ -314,7 +316,11 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         module = _falkor_module()
-        ConfigStore(hub_db).set("databases.falkordb.host", "127.0.0.1", source="test")
+        mutations = ConfigMutations(hub_db)
+        mutations.patch(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(values={"databases.falkordb.host": "falkor.internal"}),
+        )
 
         with (
             patch.object(shutil, "which", return_value="/usr/bin/docker"),

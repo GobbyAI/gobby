@@ -105,6 +105,7 @@ async def run_daemon(
 
     ``ownership_resolution`` proves singleton ownership was resolved before construction.
     """
+    bootstrap_config = runner.bootstrap_config
     from gobby.runner_maintenance import (
         bin_freshness_loop,
         cleanup_chat_attachments_loop,
@@ -193,7 +194,7 @@ async def run_daemon(
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
-            host=runner.config.bind_host,
+            host=bootstrap_config.bind_host,
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
@@ -286,7 +287,7 @@ async def run_daemon(
             if unexpected_server_exit.is_set():
                 from gobby.runner import _healthy_daemon_running
 
-                if _healthy_daemon_running(runner.http_server.port, runner.config.bind_host):
+                if _healthy_daemon_running(runner.http_server.port, bootstrap_config.bind_host):
                     logger.info("Lost the HTTP bind race to a healthy daemon; exiting cleanly")
                     return
                 logger.error("HTTP server exited unexpectedly: %s", server_failure)

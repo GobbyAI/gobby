@@ -41,14 +41,14 @@ def create_task_registry(
 ) -> Any:
     if with_passing_validator:
         assert not args
-        assert "task_validator" not in kwargs
+        assert "task_validator_resolver" not in kwargs
         validator = AsyncMock()
         validator.validate_task.return_value = CloseVerdict(
             status="valid",
             criteria=(),
             feedback="Every criterion is satisfied by admissible evidence.",
         )
-        kwargs["task_validator"] = validator
+        kwargs["task_validator_resolver"] = lambda: validator
     return _create_task_registry(task_manager, *args, **kwargs)
 
 

@@ -36,7 +36,7 @@ def _runner_for_graph(falkordb: object | None) -> SimpleNamespace:
     if falkordb is not None:
         databases.falkordb = falkordb
     return SimpleNamespace(
-        config=SimpleNamespace(
+        startup_config=SimpleNamespace(
             memory=MemoryConfig(),
             knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
             embeddings=SimpleNamespace(
@@ -170,7 +170,7 @@ def test_memory_manager_clear_graph_clients_clears_every_falkor_reference() -> N
 def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> None:
     """Runner init gates FalkorDB construction and passes FalkorConfig fields."""
     runner = SimpleNamespace(
-        config=SimpleNamespace(
+        startup_config=SimpleNamespace(
             memory=MemoryConfig(),
             knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
             embeddings=SimpleNamespace(
@@ -212,7 +212,7 @@ def test_runner_memory_stack_uses_canonical_falkordb_enablement_and_kwargs() -> 
 
         services._init_memory_stack(cast("GobbyRunner", runner))
 
-    enabled.assert_called_once_with(runner.config.databases)
+    enabled.assert_called_once_with(runner.startup_config.databases)
     memory_manager_cls.assert_called_once()
     kwargs = memory_manager_cls.call_args.kwargs
     assert kwargs["falkordb_host"] == "127.0.0.1"
@@ -248,7 +248,7 @@ def test_runner_memory_stack_marks_configured_graph_failure_degraded() -> None:
         services._init_memory_stack(cast("GobbyRunner", runner))
 
     assert runner.memory_manager is manager
-    assert runner.degraded_services == {"memory_knowledge_graph"}
+    assert runner.degraded_services == {"embedding_serving_lease", "memory_knowledge_graph"}
     manager.start_projection_scope_repair.assert_called_once_with()
 
 
@@ -282,7 +282,7 @@ def test_runner_memory_stack_marks_core_initialization_failure_degraded() -> Non
         services._init_memory_stack(cast("GobbyRunner", runner))
 
     assert runner.memory_manager is None
-    assert runner.degraded_services == {"memory_manager"}
+    assert runner.degraded_services == {"embedding_serving_lease", "memory_manager"}
 
 
 def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
@@ -290,7 +290,7 @@ def test_runner_memory_stack_degrades_embeddings_when_config_incomplete(
 ) -> None:
     """Incomplete embedding config leaves non-vector memory services available."""
     runner = SimpleNamespace(
-        config=SimpleNamespace(
+        startup_config=SimpleNamespace(
             memory=MemoryConfig(),
             knowledge_graph_queue=SimpleNamespace(max_deterministic_attempts=3),
             embeddings=SimpleNamespace(

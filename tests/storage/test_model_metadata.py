@@ -10,11 +10,6 @@ import pytest
 from pydantic import ValidationError
 
 from gobby.config.ai import AIConfig
-from gobby.providers.capabilities.metadata_aliases import (
-    DEFAULT_MODEL_METADATA_ALIASES,
-    MODEL_METADATA_ALIASES_KEY,
-    seed_model_metadata_aliases,
-)
 from gobby.storage import model_metadata
 from gobby.storage.model_metadata import ModelMetadataStore
 
@@ -184,38 +179,3 @@ def test_model_metadata_alias_rejects_duplicate_normalized_source_keys() -> None
                 },
             ]
         )
-
-
-class _MemoryConfigStore:
-    def __init__(self, values: dict[str, object] | None = None) -> None:
-        self.values = dict(values or {})
-        self.writes: list[tuple[str, object, str]] = []
-
-    def get(self, key: str) -> object | None:
-        return self.values.get(key)
-
-    def list_keys(self, prefix: str | None = None) -> list[str]:
-        return [key for key in self.values if prefix is None or key.startswith(prefix)]
-
-    def set(self, key: str, value: object, source: str = "user") -> None:
-        self.values[key] = value
-        self.writes.append((key, value, source))
-
-
-def test_model_metadata_alias_seed_installs_current_corrections_when_absent() -> None:
-    store = _MemoryConfigStore()
-
-    assert seed_model_metadata_aliases(store) is True
-
-    expected = [alias.model_dump(mode="json") for alias in DEFAULT_MODEL_METADATA_ALIASES]
-    assert store.values[MODEL_METADATA_ALIASES_KEY] == expected
-    assert store.writes == [(MODEL_METADATA_ALIASES_KEY, expected, "default")]
-
-
-def test_model_metadata_alias_seed_preserves_operator_owned_value() -> None:
-    configured: list[dict[str, str]] = []
-    store = _MemoryConfigStore({MODEL_METADATA_ALIASES_KEY: configured})
-
-    assert seed_model_metadata_aliases(store) is False
-    assert store.values[MODEL_METADATA_ALIASES_KEY] is configured
-    assert store.writes == []

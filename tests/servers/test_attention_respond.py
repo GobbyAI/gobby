@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import (
     AttentionAnswer,
@@ -342,14 +343,15 @@ def test_respond_returns_404_for_unknown_entry(temp_db: HubDatabase) -> None:
 
 def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> None:
     services = ServiceContainer(
-        config=None,
         database=temp_db,
         session_manager=None,
         task_manager=MagicMock(),
         attention_manager=_manager(temp_db),
         detection_registry=DETECTION_REGISTRY,
     )
-    server = HTTPServer(services=services, test_mode=True, auth_mode="disabled")
+    server = HTTPServer(
+        services=services, test_mode=True, bootstrap_config=BootstrapConfig(auth_mode="disabled")
+    )
 
     paths = {route.path for route in server.app.routes}
 

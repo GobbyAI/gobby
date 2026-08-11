@@ -51,7 +51,7 @@ def _init_result(
 @patch("gobby.cli.init.install_git_hooks")
 @patch("gobby.cli.init.resolve_native_bin", return_value=None)
 @patch("gobby.cli.init.initialize_project")
-@patch("gobby.cli.load_full_config_from_db")
+@patch("gobby.cli.runtime.CliRuntime.require_config")
 def test_init_installs_hooks_for_git_root(
     mock_load_config: MagicMock,
     mock_initialize: MagicMock,
@@ -91,7 +91,7 @@ def test_init_installs_hooks_for_git_root(
 @patch("gobby.cli.init.install_git_hooks")
 @patch("gobby.cli.init.resolve_native_bin", return_value=None)
 @patch("gobby.cli.init.initialize_project")
-@patch("gobby.cli.load_full_config_from_db")
+@patch("gobby.cli.runtime.CliRuntime.require_config")
 def test_init_skips_hooks_for_monorepo_subdirectory(
     mock_load_config: MagicMock,
     mock_initialize: MagicMock,
@@ -119,7 +119,7 @@ def test_init_skips_hooks_for_monorepo_subdirectory(
 @patch("gobby.cli.init.install_git_hooks")
 @patch("gobby.cli.init.resolve_native_bin", return_value=None)
 @patch("gobby.cli.init.initialize_project")
-@patch("gobby.cli.load_full_config_from_db")
+@patch("gobby.cli.runtime.CliRuntime.require_config")
 def test_init_skips_hooks_for_non_git_directory(
     mock_load_config: MagicMock,
     mock_initialize: MagicMock,
@@ -138,6 +138,9 @@ def test_init_skips_hooks_for_non_git_directory(
 
     assert result.exit_code == 0
     mock_install_hooks.assert_not_called()
+    assert "Initialized project 'plain'" in result.output
+    assert str(target_dir.resolve()) in result.output
+    assert "gcode not installed" in result.output
 
 
 @patch("gobby.cli.init._maybe_run_linear_setup")
@@ -145,7 +148,7 @@ def test_init_skips_hooks_for_non_git_directory(
 @patch("gobby.cli.init.subprocess.run")
 @patch("gobby.cli.init.resolve_native_bin", return_value="/usr/local/bin/gcode")
 @patch("gobby.cli.init.initialize_project")
-@patch("gobby.cli.load_full_config_from_db")
+@patch("gobby.cli.runtime.CliRuntime.require_config")
 def test_init_existing_project_runs_initial_index(
     mock_load_config: MagicMock,
     mock_initialize: MagicMock,

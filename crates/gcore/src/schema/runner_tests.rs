@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::sync::{Mutex, mpsc};
@@ -8,12 +9,15 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-use super::assets::{BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
+use super::assets::{
+    BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
+};
 use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::SchemaRunner;
+use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement};
+use super::sql_splitter::split_sql_statements;
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
     version: 376,
@@ -94,6 +98,21 @@ fn install_baseline(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn simulate_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
+    install_baseline(client)?;
+    client.batch_execute(
+        "DROP TABLE IF EXISTS embedding_projection_changes;
+         DROP TABLE IF EXISTS embedding_generation_acks;
+         DROP TABLE IF EXISTS config_state;
+         ALTER TABLE config_store DROP COLUMN IF EXISTS revision",
+    )?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = $1 WHERE version = $2",
+        &[&PREDECESSOR_BASELINE_CHECKSUM, &BASELINE_VERSION],
+    )?;
+    Ok(())
+}
+
 fn current_schema_head() -> i32 {
     MIGRATIONS
         .last()
@@ -111,6 +130,240 @@ fn source_identity(client: &mut Client) -> anyhow::Result<SourceIdentity> {
         database_name: row.get(1),
         database_oid: row.get(2),
     })
+}
+
+#[test]
+fn fresh_baseline_creates_config_revision_state() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    install_baseline(&mut client)?;
+
+    let revision: i64 = client
+        .query_one("SELECT revision FROM config_state WHERE id", &[])?
+        .get(0);
+    assert_eq!(revision, 0);
+    let config_revision: i64 = client
+        .query_one(
+            "INSERT INTO config_store(key, value) VALUES ('test.key', 'value') RETURNING revision",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(config_revision, 0);
+    Ok(())
+}
+
+#[test]
+fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+
+    install_baseline(&mut client)?;
+
+    let coordination_columns: Vec<String> = client
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'embedding_generation_acks'
+             ORDER BY ordinal_position",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        coordination_columns,
+        [
+            "daemon_instance_id",
+            "generation",
+            "committed_revision",
+            "acknowledged",
+            "lease_expires_at",
+            "updated_at",
+        ]
+    );
+    let change_columns: Vec<String> = client
+        .query(
+            "SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'embedding_projection_changes'
+             ORDER BY ordinal_position",
+            &[],
+        )?
+        .into_iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        change_columns,
+        [
+            "sequence",
+            "source_kind",
+            "source_id",
+            "is_tombstone",
+            "created_at",
+        ]
+    );
+    for table in ["embedding_generation_acks", "embedding_projection_changes"] {
+        let granted: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_daemon_runtime', $1, 'SELECT,INSERT,UPDATE,DELETE')",
+                &[&table],
+            )?
+            .get(0);
+        assert!(granted, "runtime role lacks access to {table}");
+    }
+    Ok(())
+}
+
+#[test]
+fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    simulate_predecessor_baseline(&mut client)?;
+    client.execute(
+        "INSERT INTO config_store(key, value) VALUES ('preserved.key', 'preserved')",
+        &[],
+    )?;
+
+    let report = SchemaRunner::new(&mut client, "public")?.apply()?;
+
+    assert!(report.baseline_applied);
+    let row = client.query_one(
+        "SELECT value, revision FROM config_store WHERE key = 'preserved.key'",
+        &[],
+    )?;
+    assert_eq!(row.get::<_, String>(0), "preserved");
+    assert_eq!(row.get::<_, i64>(1), 0);
+    let checksum: String = client
+        .query_one(
+            "SELECT checksum FROM schema_migrations WHERE version = $1",
+            &[&BASELINE_VERSION],
+        )?
+        .get(0);
+    assert_eq!(checksum, BASELINE_CHECKSUM);
+    for table in [
+        "config_state",
+        "embedding_generation_acks",
+        "embedding_projection_changes",
+    ] {
+        let exists: bool = client
+            .query_one("SELECT to_regclass($1) IS NOT NULL", &[&table])?
+            .get(0);
+        assert!(exists, "refresh must create {table}");
+        let granted: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_daemon_runtime', $1, 'SELECT,INSERT,UPDATE,DELETE')",
+                &[&table],
+            )?
+            .get(0);
+        assert!(granted, "refresh must grant runtime access to {table}");
+    }
+    let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
+    assert!(verification.checked_catalog_objects > 0);
+    Ok(())
+}
+
+#[test]
+fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> anyhow::Result<()> {
+    let predecessor = include_str!("../../tests/fixtures/schema/predecessor_baseline.sql");
+    assert_eq!(
+        sha256_hex(predecessor.as_bytes()),
+        PREDECESSOR_BASELINE_CHECKSUM,
+        "fixture must be the exact predecessor baseline the runner refreshes from",
+    );
+
+    let predecessor_statements: BTreeSet<String> =
+        split_sql_statements(predecessor)?.into_iter().collect();
+    let mut refreshed = 0usize;
+    for statement in split_sql_statements(BASELINE_SQL)? {
+        let is_added = !predecessor_statements.contains(&statement);
+        let accepted = baseline_refresh_statement(&statement).is_some();
+        assert_eq!(
+            accepted, is_added,
+            "baseline_refresh_statement must accept exactly the statements added since the \
+             predecessor baseline; drifted on: {statement}",
+        );
+        refreshed += usize::from(accepted);
+    }
+    assert!(refreshed > 0, "the refresh set must not be empty");
+    Ok(())
+}
+
+#[test]
+fn config_revision_baseline_is_nondestructive() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    simulate_predecessor_baseline(&mut client)?;
+    client.execute(
+        "INSERT INTO config_store(key, value) VALUES ('stable.key', 'stable')",
+        &[],
+    )?;
+
+    let first = SchemaRunner::new(&mut client, "public")?.apply()?;
+    let second = SchemaRunner::new(&mut client, "public")?.apply()?;
+
+    assert!(first.baseline_applied);
+    assert!(!second.baseline_applied);
+    let value: String = client
+        .query_one(
+            "SELECT value FROM config_store WHERE key = 'stable.key'",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(value, "stable");
+    Ok(())
+}
+
+#[test]
+fn unrecognized_receipt_still_rejects() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = test_database()? else {
+        return Ok(());
+    };
+    install_baseline(&mut client)?;
+    client.execute(
+        "UPDATE schema_migrations SET checksum = 'unrecognized' WHERE version = $1",
+        &[&BASELINE_VERSION],
+    )?;
+
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("arbitrary receipt checksums must remain corrupt");
+    assert!(
+        error
+            .to_string()
+            .contains("recreate from a verified backup")
+    );
+
+    client.execute(
+        "UPDATE schema_migrations SET filename = 'unexpected@375', checksum = $1 WHERE version = $2",
+        &[&BASELINE_CHECKSUM, &BASELINE_VERSION],
+    )?;
+    let error = SchemaRunner::new(&mut client, "public")?
+        .apply()
+        .expect_err("arbitrary receipt filenames must remain corrupt");
+    assert!(
+        error
+            .to_string()
+            .contains("recreate from a verified backup")
+    );
+    Ok(())
 }
 
 #[test]

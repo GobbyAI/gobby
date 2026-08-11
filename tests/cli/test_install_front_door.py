@@ -378,7 +378,9 @@ def test_default_install_completes_required_stack_without_detected_cli(
     monkeypatch.setattr(
         install_module, "_should_initialize_project", lambda *_args, **_kwargs: False
     )
-    monkeypatch.setattr(install_module, "load_full_config_from_db", lambda: None)
+    runtime = MagicMock()
+    runtime.require_database.side_effect = RuntimeError("test hub unavailable")
+    monkeypatch.setattr(install_module, "get_cli_runtime", lambda: runtime)
     monkeypatch.setattr(
         importlib.import_module("gobby.storage.hub.runtime"),
         "runtime_hub_database",

@@ -266,6 +266,21 @@ def delete_artifacts(
                     if stored_path.exists():
                         path = stored_path
                 if path.exists():
+                    # The merged-branch preflight must check the branch's actual
+                    # merge target: the task's declared target branch when its
+                    # ref still exists (a child epic lands on its parent
+                    # integration branch, not the base its worktree was created
+                    # from). A target already deleted by this cleanup falls back
+                    # to the stored base, which the landed target was merged to.
+                    preflight_base = (
+                        stored_worktree.base_branch if stored_worktree is not None else None
+                    )
+                    if artifact.task_id is not None:
+                        target_branch = task_manager.artifacts.get_artifacts(
+                            artifact.task_id
+                        ).target_branch
+                        if target_branch and _local_branch_exists(worktree_git, target_branch):
+                            preflight_base = target_branch
                     worktree_result = worktree_git.delete_worktree(
                         path,
                         force=force,
@@ -273,9 +288,7 @@ def delete_artifacts(
                         branch_name=(
                             stored_worktree.branch_name if stored_worktree is not None else None
                         ),
-                        base_branch=(
-                            stored_worktree.base_branch if stored_worktree is not None else None
-                        ),
+                        base_branch=preflight_base,
                     )
                     if not worktree_result.success and path.exists():
                         artifact.error = worktree_result.error or worktree_result.message
@@ -381,6 +394,15 @@ def _root_cleanup_target(root: Task, artifacts: object) -> str | None:
         if value:
             return str(value)
     return None
+
+
+def _local_branch_exists(worktree_git: WorktreeGitManager, branch: str) -> bool:
+    ref = branch if branch.startswith("refs/") else f"refs/heads/{branch}"
+    result = worktree_git.run_git_command(
+        ["rev-parse", "--verify", "--quiet", ref],
+        timeout=10,
+    )
+    return result.returncode == 0
 
 
 def _is_ancestor(worktree_git: WorktreeGitManager, head: str, target_ref: str) -> bool:

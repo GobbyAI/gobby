@@ -487,13 +487,13 @@ def _managed_embedding_collections_exist(config_store: ConfigStore) -> bool:
     """Prove whether any managed active or staged vector collection already exists."""
     import asyncio
 
-    from gobby.config.app import load_config
     from gobby.memory.collection_names import CollectionNameResolver
     from gobby.memory.vectorstore import VectorStore
-    from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+    from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
     async def _inspect() -> bool:
-        config = load_config(config_store=config_store)
+        snapshot = config_store.read_snapshot()
+        config = config_store.repository.runtime_candidate(dict(snapshot.overrides))
         vector_store = VectorStore(
             url=config.databases.qdrant.url,
             api_key=config.databases.qdrant.api_key,

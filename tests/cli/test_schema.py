@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
@@ -221,3 +222,66 @@ def test_destructive_manifest_gate_refuses_each_failure_mode(
 
 def test_schema_command_is_registered_on_root_cli() -> None:
     assert "schema" in root_cli.commands
+
+
+def test_hub_bootstrap_resolves_dsn_from_bootstrap_yaml(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema_module = importlib.import_module("gobby.cli.schema")
+    from gobby.config.bootstrap import BootstrapConfig
+
+    captured: dict[str, bool] = {}
+
+    def fake_load(*, resolve_database_url: bool) -> BootstrapConfig:
+        captured["resolve_database_url"] = resolve_database_url
+        return BootstrapConfig(database_url="postgresql://gobby:pw@127.0.0.1:60892/hub")
+
+    monkeypatch.setattr(schema_module, "load_bootstrap", fake_load)
+
+    database_url, pool_config = schema_module._hub_bootstrap()
+
+    assert database_url == "postgresql://gobby:pw@127.0.0.1:60892/hub"
+    assert pool_config == BootstrapConfig().postgres_pool
+    assert captured["resolve_database_url"] is True
+
+
+def test_hub_bootstrap_refuses_missing_database_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema_module = importlib.import_module("gobby.cli.schema")
+    from gobby.config.bootstrap import BootstrapConfig
+
+    monkeypatch.setattr(
+        schema_module,
+        "load_bootstrap",
+        lambda *, resolve_database_url: BootstrapConfig(database_url=None),
+    )
+
+    with pytest.raises(SchemaGateError, match="Hub database URL is unavailable"):
+        schema_module._hub_bootstrap()
+
+
+def test_schema_apply_executor_verify_uses_bootstrap_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    schema_module = importlib.import_module("gobby.cli.schema")
+
+    monkeypatch.setattr(
+        schema_module,
+        "_hub_bootstrap",
+        lambda: ("postgresql://gobby:pw@127.0.0.1:60892/hub", MagicMock()),
+    )
+    bound = MagicMock()
+    bind = MagicMock(return_value=bound)
+    collect = MagicMock(return_value=(MagicMock(), 42))
+    monkeypatch.setattr(schema_module, "bind_maintenance_epoch", bind)
+    monkeypatch.setattr(schema_module, "collect_postgres_identity", collect)
+    monkeypatch.setattr(schema_module, "latest_schema_version", lambda: 42)
+    epoch = MagicMock(id=uuid.uuid4())
+
+    schema_module._SchemaApplyExecutor().verify(epoch, MagicMock())
+
+    bind.assert_called_once_with("postgresql://gobby:pw@127.0.0.1:60892/hub", epoch.id)
+    collect.assert_called_once_with(bound)

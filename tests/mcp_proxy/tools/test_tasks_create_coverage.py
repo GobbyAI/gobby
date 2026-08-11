@@ -515,7 +515,7 @@ class TestCreateTaskTool:
 
         registry = create_task_registry(
             mock_task_manager,
-            task_validator=mock_task_validator,
+            task_validator_resolver=lambda: mock_task_validator,
             config=mock_config,
         )
 

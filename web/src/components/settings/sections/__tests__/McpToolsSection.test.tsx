@@ -216,4 +216,32 @@ describe('McpToolsSection', () => {
       expect.objectContaining({ 'mcp_client_proxy.enabled': false }),
     )
   })
+
+  it('decodes stored hub keys for display and re-encodes them on save', async () => {
+    const ctx = makeContext({
+      configValues: {
+        ...makeConfigValues(),
+        skills: {
+          ...(makeConfigValues().skills as Record<string, unknown>),
+          // `skills.hubs.{hub}` keys are dynamic segments, stored encoded.
+          hubs: { 'my%2Ehub': { type: 'clawdhub' } },
+        },
+      },
+    })
+    renderSection(ctx)
+
+    const key = screen.getByLabelText('Skill hub key 1')
+    expect(key).toHaveValue('my.hub')
+
+    fireEvent.change(key, { target: { value: 'my.hub/v2' } })
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0]
+    expect(payload['skills.hubs']).toEqual({
+      'my%2Ehub%2Fv2': { type: 'clawdhub' },
+    })
+  })
 })

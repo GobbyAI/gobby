@@ -1027,9 +1027,9 @@ class TestRemoteTimeoutHint:
         from gobby.memory.vectorstore_client import _accepts_timeout_kwarg
 
         assert not _accepts_timeout_kwarg(AsyncQdrantClient.get_collection)
-        assert not _accepts_timeout_kwarg(AsyncQdrantClient.upsert)
-        assert not _accepts_timeout_kwarg(AsyncQdrantClient.delete)
-        assert not _accepts_timeout_kwarg(AsyncQdrantClient.set_payload)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.upsert)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.delete)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.set_payload)
         assert _accepts_timeout_kwarg(AsyncQdrantClient.query_points)
         assert _accepts_timeout_kwarg(AsyncQdrantClient.retrieve)
         assert _accepts_timeout_kwarg(AsyncQdrantClient.count)

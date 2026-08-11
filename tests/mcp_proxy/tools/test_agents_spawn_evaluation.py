@@ -41,7 +41,7 @@ async def test_evaluate_spawn_tool_runs_workflow_validation_with_combined_invent
     external_manager = MagicMock()
     external_manager.get_available_servers.return_value = ["github"]
     external_manager.list_tools = AsyncMock(return_value={"github": []})
-    inventory = workflow_mcp_inventory(internal_manager, external_manager)
+    inventory = workflow_mcp_inventory(internal_manager, lambda: external_manager)
     assert inventory is not None
 
     runner = MagicMock()

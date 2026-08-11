@@ -1,6 +1,8 @@
-import { TextField } from '../../activity/fields'
+import { useState } from 'react'
+import { DetailActionButton, TextField } from '../../activity/fields'
 import { TypedListField } from '../fields'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+import { useSettingsSectionContext } from './SettingsSectionContext'
 import {
   NumberConfigField,
   OptionsSelectField,
@@ -77,10 +79,11 @@ const RECALL_PATHS = [
 ] as const
 
 const EMBEDDINGS_PATHS = [
-  'embeddings.model',
-  'embeddings.dim',
-  'embeddings.api_base',
-  'embeddings.query_prefix',
+  'ai.embeddings.model',
+  'ai.embeddings.dim',
+  'ai.embeddings.api_base',
+  'ai.embeddings.query_prefix',
+  'ai.embeddings.catalog_key',
 ] as const
 
 const DATABASE_PATHS = [
@@ -449,6 +452,22 @@ function RecallGroup({ fields }: { fields: SettingsSectionFields }) {
 }
 
 function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
+  const { runManagedAction } = useSettingsSectionContext()
+  const storedCatalogKey = asString(fields.getValue('ai.embeddings.catalog_key'))
+  const [baseline, setBaseline] = useState(storedCatalogKey)
+  const [catalogKey, setCatalogKey] = useState(storedCatalogKey)
+  if (storedCatalogKey !== baseline) {
+    setBaseline(storedCatalogKey)
+    setCatalogKey(storedCatalogKey)
+  }
+  // Overlays the local, managed-action-driven catalog key over the draft so
+  // the catalog-key row (and only that row) renders the pending selection.
+  const catalogFields: SettingsSectionFields = {
+    ...fields,
+    getValue: (path) => path === 'ai.embeddings.catalog_key'
+      ? catalogKey
+      : fields.getValue(path),
+  }
   return (
     <Subsection
       title="Embeddings"
@@ -456,33 +475,56 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
     >
       <TextConfigField
         fields={fields}
-        path="embeddings.model"
+        path="ai.embeddings.model"
         label="Model"
         ariaLabel="Embedding model"
-        placeholder="text-embedding-3-small"
       />
       <NumberConfigField
         fields={fields}
-        path="embeddings.dim"
+        path="ai.embeddings.dim"
         label="Dimensions"
         ariaLabel="Embedding dimensions"
       />
       <TextConfigField
         fields={fields}
-        path="embeddings.api_base"
+        path="ai.embeddings.api_base"
         label="API base URL"
         ariaLabel="Embedding API base URL"
-        placeholder="Provider default"
         nullable
       />
       <TextConfigField
         fields={fields}
-        path="embeddings.query_prefix"
+        path="ai.embeddings.query_prefix"
         label="Query prefix"
         ariaLabel="Embedding query prefix"
-        placeholder="None"
         nullable
       />
+      <TextConfigField
+        fields={catalogFields}
+        path="ai.embeddings.catalog_key"
+        label="Catalog key"
+        ariaLabel="Embedding catalog key"
+        placeholder="provider/model"
+        managedAction={(value) => {
+          if (typeof value === 'string') setCatalogKey(value)
+        }}
+      />
+      <div className="settings-field__actions">
+        <DetailActionButton
+          label="Start embedding switch"
+          variant="accent"
+          disabled={!runManagedAction || !catalogKey || catalogKey === baseline}
+          onClick={() => {
+            if (runManagedAction) {
+              void runManagedAction('/api/embeddings/switch/start', {
+                catalog_key: catalogKey,
+              }).then((started) => {
+                if (started) setBaseline(catalogKey)
+              })
+            }
+          }}
+        />
+      </div>
     </Subsection>
   )
 }

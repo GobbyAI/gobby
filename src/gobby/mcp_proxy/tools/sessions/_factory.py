@@ -6,6 +6,7 @@ into a unified registry.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -19,6 +20,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
 
 if TYPE_CHECKING:
+    from gobby.config.values import ConfigValuesService
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
 
@@ -27,9 +29,10 @@ __all__ = ["create_session_messages_registry"]
 
 def create_session_messages_registry(
     session_manager: SessionManager | None = None,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
     config: Any | None = None,
+    config_service_getter: Callable[[], ConfigValuesService] | None = None,
     db: Any | None = None,
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
@@ -41,7 +44,7 @@ def create_session_messages_registry(
 
     Args:
         session_manager: SessionManager instance for session CRUD
-        llm_service: LLM service for handoff generation (optional)
+        llm_service_resolver: per-call resolver for the current LLM service (optional)
         transcript_processor: Transcript processor for handoff generation (optional)
         config: DaemonConfig for settings (optional)
         db: Database for dependency injection (optional)
@@ -59,6 +62,9 @@ def create_session_messages_registry(
     session_summary_config = (
         getattr(config, "session_summary", None) if config is not None else None
     )
+    compact_handoff_config = (
+        getattr(config, "compact_handoff", None) if config is not None else None
+    )
 
     # --- Message Tools ---
     # Register if transcript_reader or session_manager is available
@@ -71,7 +77,7 @@ def create_session_messages_registry(
         register_handoff_tools(
             registry,
             session_manager,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
             session_summary_config=session_summary_config,
             inter_session_message_manager=inter_session_message_manager,
@@ -97,7 +103,7 @@ def create_session_messages_registry(
         register_action_tools(
             registry,
             session_manager=session_manager,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
             config=config,
             db=db,
@@ -114,8 +120,10 @@ def create_session_messages_registry(
             registry,
             session_manager,
             db,
-            llm_service=llm_service,
+            llm_service_resolver=llm_service_resolver,
             session_summary_config=session_summary_config,
+            compact_handoff_config=compact_handoff_config,
+            config_service_getter=config_service_getter,
             web_chat_session_registry=web_chat_session_registry,
         )
 

@@ -6,7 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from gobby.config.persistence import EmbeddingsConfig, MemoryConfig, QdrantConfig
-from gobby.storage.config_store import config_key_to_secret_name
+from gobby.storage.config_mutations import config_key_to_secret_name
 
 pytestmark = pytest.mark.unit
 

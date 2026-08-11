@@ -2,18 +2,27 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from types import SimpleNamespace
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.runtime import RuntimeActiveBundle
+from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_maintenance import bin_freshness_loop
+from gobby.storage.hub.protocol import HubDatabase
+from tests.config_runtime_helpers import static_runtime_capture
 
 pytestmark = pytest.mark.unit
 
 T = TypeVar("T")
+
+
+def _capture_bin_config(config: BinFreshnessConfig) -> Callable[[], RuntimeActiveBundle]:
+    return static_runtime_capture(DaemonConfig(bin_freshness=config))
 
 
 @pytest.mark.asyncio
@@ -34,13 +43,15 @@ async def test_bin_freshness_loop_initial_delay_interval_jitter() -> None:
         return []
 
     await bin_freshness_loop(
-        object(),
-        BinFreshnessConfig(
-            initial_delay_seconds=3,
-            interval_seconds=10,
-            jitter_seconds=5,
-        ),
+        cast(HubDatabase, object()),
         lambda: shutdown,
+        capture_bundle=_capture_bin_config(
+            BinFreshnessConfig(
+                initial_delay_seconds=3,
+                interval_seconds=10,
+                jitter_seconds=5,
+            )
+        ),
         update_once=update_once,
         sleep=fake_sleep,
         jitter=lambda _upper: 2,
@@ -70,9 +81,11 @@ async def test_bin_freshness_loop_routes_updates_through_run_db() -> None:
         return func(*args, **kwargs)
 
     await bin_freshness_loop(
-        object(),
-        BinFreshnessConfig(initial_delay_seconds=0, interval_seconds=10, jitter_seconds=0),
+        cast(HubDatabase, object()),
         lambda: shutdown,
+        capture_bundle=_capture_bin_config(
+            BinFreshnessConfig(initial_delay_seconds=0, interval_seconds=10, jitter_seconds=0)
+        ),
         update_once=update_once,
         run_db=run_db,
         sleep=fake_sleep,
@@ -104,12 +117,14 @@ async def test_bin_freshness_loop_default_jitter_uses_system_random_source() -> 
     ):
         await bin_freshness_loop(
             object(),
-            BinFreshnessConfig(
-                initial_delay_seconds=0,
-                interval_seconds=10,
-                jitter_seconds=5,
-            ),
             lambda: shutdown,
+            capture_bundle=_capture_bin_config(
+                BinFreshnessConfig(
+                    initial_delay_seconds=0,
+                    interval_seconds=10,
+                    jitter_seconds=5,
+                )
+            ),
             update_once=update_once,
             sleep=fake_sleep,
         )
@@ -130,8 +145,8 @@ async def test_bin_freshness_loop_shutdown_exit_before_initial_delay() -> None:
 
     await bin_freshness_loop(
         object(),
-        BinFreshnessConfig(),
         lambda: True,
+        capture_bundle=_capture_bin_config(BinFreshnessConfig()),
         update_once=update_once,
     )
 
@@ -139,25 +154,35 @@ async def test_bin_freshness_loop_shutdown_exit_before_initial_delay() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bin_freshness_loop_disabled_returns_without_registration() -> None:
+async def test_bin_freshness_loop_disabled_skips_updates() -> None:
     updates = 0
+    shutdown = False
 
     def update_once(db: object, config: BinFreshnessConfig) -> list[object]:
         nonlocal updates
         updates += 1
         return []
 
+    async def fake_sleep(_duration: float) -> None:
+        nonlocal shutdown
+        shutdown = True
+
     await bin_freshness_loop(
         object(),
-        BinFreshnessConfig(enabled=False),
-        lambda: False,
+        lambda: shutdown,
+        capture_bundle=_capture_bin_config(BinFreshnessConfig(enabled=False)),
         update_once=update_once,
+        sleep=fake_sleep,
     )
 
     assert updates == 0
 
 
-def test_disabled_config_skips_periodic_task_registration() -> None:
+def test_disabled_config_keeps_periodic_task_registered_for_live_enable() -> None:
+    capture_bundle = static_runtime_capture(
+        DaemonConfig(bin_freshness=BinFreshnessConfig(enabled=False))
+    )
+
     runner = SimpleNamespace(
         metrics_manager=object(),
         metrics_event_store=object(),
@@ -166,12 +191,7 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
         _shutdown_requested=False,
-        config=SimpleNamespace(
-            telemetry=SimpleNamespace(trace_retention_days=7),
-            bin_freshness=BinFreshnessConfig(enabled=False),
-            logging=object(),
-            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
-        ),
+        config_runtime=SimpleNamespace(capture=capture_bundle),
     )
 
     async def noop(*args: object, **kwargs: object) -> None:
@@ -187,7 +207,7 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
 
     with patch("gobby.runner_lifecycle_periodic.asyncio.create_task", side_effect=fake_create_task):
         start_periodic_tasks(
-            runner,
+            cast(GobbyRunner, runner),
             tracker=None,
             metrics_cleanup_loop=noop,
             metrics_archive_loop=noop,
@@ -201,12 +221,16 @@ def test_disabled_config_skips_periodic_task_registration() -> None:
             expire_approval_timeouts_loop=noop,
         )
 
-    assert runner._bin_freshness_task is None
+    assert runner._bin_freshness_task.name == "bin-freshness"
     assert runner._metrics_cleanup_task.name == "metrics-cleanup"
     assert runner._tool_results_cleanup_task.name == "tool-result-cleanup"
 
 
-def test_chat_attachment_periodic_defaults_are_explicit() -> None:
+def test_chat_attachment_periodic_uses_runtime_capture() -> None:
+    capture_bundle = static_runtime_capture(
+        DaemonConfig(bin_freshness=BinFreshnessConfig(enabled=False))
+    )
+
     runner = SimpleNamespace(
         metrics_manager=object(),
         metrics_event_store=object(),
@@ -215,13 +239,7 @@ def test_chat_attachment_periodic_defaults_are_explicit() -> None:
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
         _shutdown_requested=False,
-        config=SimpleNamespace(
-            telemetry=SimpleNamespace(trace_retention_days=7),
-            bin_freshness=BinFreshnessConfig(enabled=False),
-            chat=None,
-            logging=object(),
-            get_tool_result_offload_config=MagicMock(return_value=MagicMock()),
-        ),
+        config_runtime=SimpleNamespace(capture=capture_bundle),
     )
     cleanup_kwargs: dict[str, object] = {}
 
@@ -242,7 +260,7 @@ def test_chat_attachment_periodic_defaults_are_explicit() -> None:
 
     with patch("gobby.runner_lifecycle_periodic.asyncio.create_task", side_effect=fake_create_task):
         start_periodic_tasks(
-            runner,
+            cast(GobbyRunner, runner),
             tracker=None,
             metrics_cleanup_loop=noop,
             metrics_archive_loop=noop,
@@ -256,5 +274,4 @@ def test_chat_attachment_periodic_defaults_are_explicit() -> None:
             expire_approval_timeouts_loop=noop,
         )
 
-    assert cleanup_kwargs["retention_hours"] == 24
-    assert cleanup_kwargs["interval_minutes"] == 60
+    assert cleanup_kwargs["capture_bundle"] is capture_bundle

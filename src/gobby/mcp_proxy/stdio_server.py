@@ -10,7 +10,9 @@ from typing import Any, Protocol
 
 from mcp.server.fastmcp import FastMCP
 
-from gobby.config.app import load_config as _load_config
+from gobby.cli.runtime import CliRuntime
+from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.bootstrap import load_bootstrap as _load_bootstrap
 from gobby.mcp_proxy.instructions import build_gobby_instructions as _build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries as _setup_internal_registries
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
@@ -26,7 +28,7 @@ class SetupInternalRegistries(Protocol):
         *,
         _config: Any,
         session_manager: Any,
-        memory_manager: Any,
+        memory_manager_resolver: Any,
     ) -> Any: ...
 
 
@@ -50,7 +52,8 @@ class FastMcpFactory(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class StdioServerDependencies:
-    load_config: Callable[[], Any]
+    runtime_factory: Callable[[], CliRuntime]
+    load_bootstrap: Callable[[], BootstrapConfig]
     setup_internal_registries: SetupInternalRegistries
     build_gobby_instructions: Callable[[], str]
     fast_mcp_factory: FastMcpFactory
@@ -60,7 +63,8 @@ class StdioServerDependencies:
 
 def default_stdio_server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
-        load_config=_load_config,
+        runtime_factory=lambda: CliRuntime(None),
+        load_bootstrap=lambda: _load_bootstrap(resolve_database_url=False),
         setup_internal_registries=_setup_internal_registries,
         build_gobby_instructions=_build_gobby_instructions,
         fast_mcp_factory=FastMCP,
@@ -84,17 +88,30 @@ def create_stdio_mcp_server(
 ) -> FastMCP:
     """Create stdio MCP server."""
     effective_deps = deps or default_stdio_server_dependencies()
-    config = effective_deps.load_config()
+    # The dial port is a pre-database bootstrap fact; the DB-backed config
+    # projection carries only the default port and must not decide it.
+    bootstrap = effective_deps.load_bootstrap()
+    runtime = effective_deps.runtime_factory()
+    config = None
+    try:
+        config = runtime.require_config(apply_migrations=False)
+    except Exception as exc:
+        # Best-effort: lifecycle tools must register even when the hub is
+        # down; proxied calls report structured per-call errors instead.
+        logger.warning(
+            "Hub configuration is unavailable; starting stdio MCP server without it: %s", exc
+        )
+    finally:
+        runtime.close()
 
     session_manager = None
-    memory_manager = None
     _ = effective_deps.setup_internal_registries(
         _config=config,
         session_manager=session_manager,
-        memory_manager=memory_manager,
+        memory_manager_resolver=None,
     )
 
-    proxy = effective_deps.proxy_factory(config.daemon_port)
+    proxy = effective_deps.proxy_factory(bootstrap.daemon_port)
 
     @asynccontextmanager
     async def proxy_lifespan(_server: FastMCP) -> AsyncIterator[None]:

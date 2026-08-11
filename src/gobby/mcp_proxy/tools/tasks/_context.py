@@ -5,6 +5,7 @@ used across task tool modules.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -40,12 +41,13 @@ class RegistryContext:
     # Core managers
     task_manager: LocalTaskManager
 
-    # Optional managers
-    task_validator: "TaskValidator | None" = None
+    # Optional managers. Runtime-replaceable services are held as resolver
+    # callables so every tool call observes the current runtime epoch.
+    task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None
     config: "DaemonConfig | None" = None
-    llm_service: "LLMService | None" = None
+    llm_service_resolver: "Callable[[], LLMService | None] | None" = None
     completion_registry: "CompletionEventRegistry | None" = None
-    mcp_manager: "MCPClientManager | None" = None
+    mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None
     review_learning_service: "ReviewLearningService | None" = None
 
     # Derived managers (initialized in __post_init__)
@@ -82,6 +84,24 @@ class RegistryContext:
             self.show_result_on_create = tasks_config.show_result_on_create
             self.validation_config = tasks_config.validation
             self.auto_generate_on_expand = self.validation_config.auto_generate_on_expand
+
+    @property
+    def task_validator(self) -> "TaskValidator | None":
+        """Resolve the current-epoch task validator per access."""
+        resolver = self.task_validator_resolver
+        return resolver() if resolver is not None else None
+
+    @property
+    def llm_service(self) -> "LLMService | None":
+        """Resolve the current-epoch LLM service per access."""
+        resolver = self.llm_service_resolver
+        return resolver() if resolver is not None else None
+
+    @property
+    def mcp_manager(self) -> "MCPClientManager | None":
+        """Resolve the current-epoch external MCP manager per access."""
+        resolver = self.mcp_manager_resolver
+        return resolver() if resolver is not None else None
 
     def get_project_repo_path(self, project_id: str | None) -> str | None:
         """Get the repo_path for a project by ID."""

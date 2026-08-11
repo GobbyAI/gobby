@@ -34,6 +34,9 @@ def _make_server() -> tuple[MagicMock, MagicMock]:
     mcp_manager = MagicMock()
     mcp_manager.project_id = None
     mcp_manager.call_tool = AsyncMock(return_value={"success": True, "ok": True})
+    # ToolProxyService.session_manager prefers the manager's session_manager;
+    # leaving it as an auto-MagicMock would shadow this stub.
+    mcp_manager.session_manager = session_manager
 
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False

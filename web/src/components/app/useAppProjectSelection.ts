@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { configurationClient } from "../../api/config";
 
 import type { ProjectWithStats } from "../../hooks/useProjects";
 import type {
@@ -100,22 +101,24 @@ export function useAppProjectSelection({
   // On mount: fetch persisted project/provider from API (DB is source of truth).
   useEffect(() => {
     let cancelled = false;
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
+    configurationClient.fetchValues()
+      .then((snapshot) => {
         if (cancelled) return;
+        const data = snapshot?.desired.ui_settings;
+        const settings = data && typeof data === "object" && !Array.isArray(data)
+          ? data as Record<string, unknown>
+          : null;
         if (
           !projectTouchedRef.current &&
-          typeof data?.selectedProjectId === "string"
+          typeof settings?.selectedProjectId === "string"
         ) {
-          setSelectedProjectId(data.selectedProjectId);
+          setSelectedProjectId(settings.selectedProjectId);
         }
         if (
           !providerTouchedRef.current &&
-          typeof data?.selectedProvider === "string"
+          typeof settings?.selectedProvider === "string"
         ) {
-          setSelectedProvider(data.selectedProvider);
+          setSelectedProvider(settings.selectedProvider);
         }
         setUiSettingsLoaded(true);
       })
@@ -134,14 +137,11 @@ export function useAppProjectSelection({
       isFirstProviderRender.current = false;
       if (!providerTouchedRef.current) return;
     }
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedProvider }),
-    }).catch((error) => {
-      console.warn("Failed to persist selected provider", error);
-    });
+    configurationClient
+      .patchLastWriteWins({ ui_settings: { selectedProvider } })
+      .catch((error) => {
+        console.warn("Failed to persist selected provider", error);
+      });
   }, [selectedProvider, uiSettingsLoaded]);
 
   const isFirstProjectRender = useRef(true);
@@ -151,12 +151,7 @@ export function useAppProjectSelection({
       isFirstProjectRender.current = false;
       if (!projectTouchedRef.current) return;
     }
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedProjectId }),
-    }).catch(() => {});
+    void configurationClient.patchLastWriteWins({ ui_settings: { selectedProjectId } });
   }, [selectedProjectId, projectReady]);
 
   const prevProjectRef = useRef<string | null>(null);

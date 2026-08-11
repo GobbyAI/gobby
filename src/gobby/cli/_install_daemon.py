@@ -20,6 +20,7 @@ from gobby.config.bootstrap import (
     DEFAULT_WEBSOCKET_PORT,
     BootstrapConfigError,
     DatastoreMode,
+    load_bootstrap,
 )
 from gobby.utils.dependency_requirements import (
     collect_dependency_report,
@@ -131,9 +132,7 @@ def _ci_environment() -> bool:
 
 def _daemon_url() -> str:
     try:
-        from gobby.config.app import load_config
-
-        port = load_config(resolve_database_url=False).daemon_port
+        port = load_bootstrap(resolve_database_url=False).daemon_port
     except (BootstrapConfigError, FileNotFoundError, PermissionError, OSError, ValueError):
         port = DEFAULT_DAEMON_PORT
     return f"http://localhost:{port}/"

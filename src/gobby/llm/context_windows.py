@@ -9,6 +9,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+import psycopg
+
 from gobby.llm.context_window_values import positive_context_window
 from gobby.providers.capabilities.resolve import (
     CapabilityResolver,
@@ -16,6 +18,7 @@ from gobby.providers.capabilities.resolve import (
 )
 
 if TYPE_CHECKING:
+    from gobby.config.ai import ModelMetadataAlias
     from gobby.storage.hub.protocol import HubDatabase
 
 ContextLengthSource = Literal[
@@ -457,11 +460,6 @@ class _UnavailableCapabilityService:
         return None
 
 
-class _UnavailableConfigStore:
-    def get(self, key: str) -> None:
-        return None
-
-
 class _RegistryMetadataStore:
     def __init__(self, db: HubDatabase | None) -> None:
         self._db = db
@@ -472,23 +470,43 @@ class _RegistryMetadataStore:
 
 def _get_capability_resolver(db: HubDatabase | None = None) -> CapabilityResolver:
     from gobby.app_context import get_app_context
-    from gobby.storage.config_store import ConfigStore
 
     ctx = get_app_context()
     resolver = getattr(ctx, "provider_capability_resolver", None) if ctx else None
     if resolver is not None and db is None:
         return cast(CapabilityResolver, resolver)
     service = getattr(ctx, "provider_capability_service", None) if ctx else None
-    config_store = (
-        ConfigStore(db)
-        if db is not None
-        else getattr(ctx, "config_store", None) or _UnavailableConfigStore()
-    )
     return CapabilityResolver(
         service if service is not None else _UnavailableCapabilityService(),
         _RegistryMetadataStore(db),
-        config_store,
+        _model_metadata_aliases(ctx, db),
     )
+
+
+def _model_metadata_aliases(
+    ctx: object | None,
+    db: HubDatabase | None,
+) -> list[ModelMetadataAlias]:
+    from gobby.config.ai import default_model_metadata_aliases, parse_model_metadata_aliases
+
+    if db is not None:
+        from gobby.storage.config_repository import ConfigRepository, ConfigRepositoryError
+
+        try:
+            value = (
+                ConfigRepository(db)
+                .read(resolve_secrets=False)
+                .values.get("ai.model_metadata_aliases")
+            )
+            return list(parse_model_metadata_aliases(value))
+        except (ConfigRepositoryError, OSError, TypeError, ValueError, psycopg.Error):
+            logger.debug("Failed to read model metadata aliases", exc_info=True)
+            return default_model_metadata_aliases()
+
+    runtime = getattr(ctx, "config_runtime", None) if ctx else None
+    if runtime is not None and runtime.ready:
+        return list(runtime.capture().snapshot.active.ai.model_metadata_aliases)
+    return default_model_metadata_aliases()
 
 
 __all__ = [

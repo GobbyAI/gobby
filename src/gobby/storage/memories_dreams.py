@@ -91,6 +91,10 @@ class MemoryDreamMixin(MemoryStoreBase):
                 hidden_as=hidden_as,
                 when=when,
             )
+            if hidden_as is not None:
+                self.embedding_generation_state.append_change(
+                    "memory", memory_id, is_tombstone=True, transaction=conn
+                )
         self.notify_changed()
         return True
 
@@ -164,6 +168,7 @@ class MemoryDreamMixin(MemoryStoreBase):
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory {memory_id} not found")
+            self.embedding_generation_state.append_change("memory", memory_id, transaction=conn)
         self.notify_changed()
         return True
 
@@ -180,6 +185,10 @@ class MemoryDreamMixin(MemoryStoreBase):
                 f"AND deleted_at IS NOT NULL AND {cutoff} RETURNING id",
                 (action, older_than_days),
             ).fetchall()
+            for row in rows:
+                self.embedding_generation_state.append_change(
+                    "memory", str(row["id"]), is_tombstone=True, transaction=conn
+                )
         ids = [row["id"] for row in rows]
         if ids:
             self.notify_changed()

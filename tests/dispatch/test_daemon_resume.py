@@ -561,3 +561,61 @@ async def test_resume_supplies_owning_completion_registry(
 
     assert result.executed == 1
     assert captured["completion_registry"] is registry
+
+
+@pytest.mark.asyncio
+async def test_resume_reads_daemon_config_from_runtime_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """The resume path reads daemon config via the services' config runtime,
+    not the removed static `services.config` field."""
+    from gobby.config.app import DaemonConfig
+    from gobby.dispatch import daemon_resume, dispatcher
+    from tests.config_runtime_helpers import static_runtime_capture
+
+    task = _task(temp_db, sample_project)
+    workspace = _workspace(tmp_path, dirty=True)
+    _seed_daemon_stop_run(temp_db, sample_project, task_id=task.id, workspace=workspace)
+    action = SpawnAgentAction(
+        task.id,
+        f"#{task.seq_num}",
+        "backend-developer",
+        "go",
+        initial_variables={"stage_name": "development", "stage_state": "in_progress"},
+    )
+    config = DaemonConfig(voice={"enabled": True})
+    captured: dict[str, object] = {}
+
+    async def fake_resume_agent_run(original_run: Any, **kwargs: Any) -> ResumeAgentResult:
+        captured["daemon_config"] = kwargs["daemon_config"]
+        return ResumeAgentResult(True, run_id="597d1971-2969-504a-b210-edfec22510d3")
+
+    monkeypatch.setattr(daemon_resume, "resume_agent_run", fake_resume_agent_run)
+    monkeypatch.setattr(
+        "gobby.dispatch.dispatcher.dispatch_rules.evaluate",
+        lambda *args, **kwargs: action,
+    )
+    monkeypatch.setattr(
+        dispatcher,
+        "spawn_agent",
+        lambda *_args, **_kwargs: pytest.fail("fresh spawn should not run"),
+    )
+    services = _services(temp_db)
+    services.config_runtime = SimpleNamespace(
+        ready=True,
+        capture=static_runtime_capture(config),
+    )
+
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=services,
+    )
+
+    assert result.executed == 1
+    resumed_config = captured["daemon_config"]
+    assert isinstance(resumed_config, DaemonConfig)
+    assert resumed_config.voice.enabled is True

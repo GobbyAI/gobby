@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.runtime import ConfigRuntime, ConfigSnapshot, RuntimeSecretBinding
 from gobby.servers.auth_service import AuthService
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.auth import LOCAL_API_TOKEN_HASH_KEY, AuthStore, hash_token
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.secrets import SecretStore
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.local_token import AgentApiTokenClaims, issue_agent_api_token
 from tests.servers.conftest import create_http_server
@@ -61,6 +61,54 @@ def runtime_config() -> DaemonConfig:
     )
 
 
+def _machine_values(config: DaemonConfig) -> dict[str, object]:
+    return {
+        "ai.embeddings.model": config.embeddings.model,
+        "ai.embeddings.dim": config.embeddings.dim,
+        "ai.embeddings.api_key": "$secret:test-embedding-key",
+        "ai.embeddings.query_prefix": config.embeddings.query_prefix,
+        "ai.embeddings.routing": "daemon",
+        "databases.falkordb.host": config.databases.falkordb.host,
+        "databases.falkordb.port": config.databases.falkordb.port,
+        "databases.qdrant.url": config.databases.qdrant.url,
+        "indexing.respect_gitignore": config.indexing.respect_gitignore,
+    }
+
+
+def _snapshot(
+    active: DaemonConfig,
+    *,
+    active_values: Mapping[str, object],
+    desired: DaemonConfig | None = None,
+    desired_values: Mapping[str, object] | None = None,
+    desired_secrets: Mapping[str, str] | None = None,
+    active_secrets: Mapping[str, str] | None = None,
+) -> ConfigSnapshot:
+    desired_projection = desired or active
+    desired_projection_values = dict(desired_values or active_values)
+    active_projection_values = dict(active_values)
+    desired_bindings = {
+        key: RuntimeSecretBinding(str(desired_projection_values[key]), value, f"desired-{key}")
+        for key, value in (desired_secrets or {}).items()
+    }
+    active_bindings = {
+        key: RuntimeSecretBinding(str(active_projection_values[key]), value, f"active-{key}")
+        for key, value in (active_secrets or {}).items()
+    }
+    return ConfigSnapshot(
+        revision=7,
+        desired=desired_projection,
+        active=active,
+        row_revisions=dict.fromkeys(desired_projection_values, 7),
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
+        desired_values=desired_projection_values,
+        active_values=active_projection_values,
+        desired_bindings=desired_bindings,
+        active_bindings=active_bindings,
+    )
+
+
 @pytest.fixture
 def server(
     hub_db: HubDatabase,
@@ -85,6 +133,13 @@ def server(
         mode="disabled",
         token_file=token_file,
     )
+    runtime = MagicMock(spec=ConfigRuntime)
+    runtime.snapshot = _snapshot(
+        runtime_config,
+        active_values=_machine_values(runtime_config),
+        active_secrets={"ai.embeddings.api_key": "daemon-embedding-key"},
+    )
+    http_server.services.config_runtime = runtime
     return http_server
 
 
@@ -138,12 +193,15 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
     hub_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
 ) -> None:
-    ConfigStore(hub_db).set_many(
-        {
-            "indexing.respect_gitignore": False,
-            "gwiki.enabled": True,
-        }
+    config = runtime_config
+    active_values = _machine_values(config)
+    active_values["indexing.respect_gitignore"] = False
+    server.services.config_runtime.snapshot = _snapshot(
+        config,
+        active_values=active_values,
+        active_secrets={"ai.embeddings.api_key": "daemon-embedding-key"},
     )
     run, headers = _agent_headers(hub_db, session_manager, sample_project)
 
@@ -207,6 +265,52 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
         "gwiki.enabled",
     ):
         assert forbidden not in response.text
+
+
+def test_service_capabilities_use_active_snapshot(
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
+) -> None:
+    server.services.config = runtime_config.model_copy(
+        update={
+            "databases": runtime_config.databases.model_copy(
+                update={
+                    "falkordb": runtime_config.databases.falkordb.model_copy(
+                        update={"password": None}
+                    )
+                }
+            )
+        }
+    )
+    active = runtime_config.model_copy(
+        update={
+            "databases": runtime_config.databases.model_copy(
+                update={
+                    "falkordb": runtime_config.databases.falkordb.model_copy(
+                        update={"password": "$secret:active-falkor-password"}
+                    )
+                }
+            )
+        }
+    )
+    server.services.config_runtime.snapshot = _snapshot(
+        active,
+        active_values=_machine_values(active),
+        active_secrets={"ai.embeddings.api_key": "daemon-embedding-key"},
+    )
+    _, headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    unauthorized = TestClient(server.app).get("/api/config/service-capabilities")
+    response = TestClient(server.app).get("/api/config/service-capabilities", headers=headers)
+
+    assert unauthorized.status_code == 401
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json()["services"]["falkordb"]["mode"] == "brokered"
+    assert "databases.falkordb.host" not in response.json()["config"]
 
 
 def test_service_capabilities_bind_managed_tool_execution(
@@ -307,9 +411,10 @@ def test_service_capabilities_broker_credentialed_or_invalid_service_urls(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     service_url: str,
+    runtime_config: DaemonConfig,
 ) -> None:
-    config = server.services.config
-    server.services.config = config.model_copy(
+    config = runtime_config
+    active = config.model_copy(
         update={
             "databases": config.databases.model_copy(
                 update={
@@ -322,6 +427,10 @@ def test_service_capabilities_broker_credentialed_or_invalid_service_urls(
                 }
             )
         }
+    )
+    server.services.config_runtime.snapshot = _snapshot(
+        active,
+        active_values=_machine_values(active),
     )
     _, headers = _agent_headers(hub_db, session_manager, sample_project)
 
@@ -338,9 +447,10 @@ def test_service_capabilities_omit_unresolved_runtime_config_markers(
     hub_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
 ) -> None:
-    config = server.services.config
-    server.services.config = config.model_copy(
+    config = runtime_config
+    active = config.model_copy(
         update={
             "embeddings": config.embeddings.model_copy(
                 update={"model": "$secret:SHARED_MODEL", "query_prefix": "${SHARED_PREFIX}"}
@@ -356,6 +466,10 @@ def test_service_capabilities_omit_unresolved_runtime_config_markers(
                 }
             ),
         }
+    )
+    server.services.config_runtime.snapshot = _snapshot(
+        active,
+        active_values=_machine_values(active),
     )
     _, headers = _agent_headers(hub_db, session_manager, sample_project)
 
@@ -374,120 +488,92 @@ def test_service_capabilities_omit_unresolved_runtime_config_markers(
 
 
 @pytest.mark.integration
-def test_effective_config_filters_resolves_stringifies_and_overlays(
+def test_effective_config_preserves_resolved_machine_contract(
     client: TestClient,
-    hub_db: HubDatabase,
+    server: Any,
     runtime_config: DaemonConfig,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = ConfigStore(hub_db)
-    secret_store = SecretStore(hub_db)
-    candidates = '[{"provider":"lmstudio","model":"candidate-model"}]'
-    monkeypatch.setenv("EFFECTIVE_CONFIG_ENV", "daemon-environment")
-
-    store.set_many(
-        {
-            "ai.embeddings.model": "stale-store-model",
-            "ai.embeddings.query_prefix": "stale-query-prefix",
-            "ai.keep_alive": True,
-            "ai.routing": "store-routing",
-            "ai.text_generate.routing": "store-text-routing",
-            "ai.text_generate.candidates": candidates,
-            "databases.falkordb.host": "stale-falkor",
-            "databases.falkordb.port": 6379,
-            "databases.qdrant.url": "http://stale-qdrant.test:6333",
-            "indexing.batch_size": 32,
-            "gwiki.enabled": False,
-            "gwiki.environment": "${EFFECTIVE_CONFIG_ENV}",
-            "gwiki.unresolved": "${EFFECTIVE_CONFIG_MISSING}",
-            "unrelated.value": "must-not-be-served",
-        }
-    )
-    store.set_secret(
-        "ai.text_generate.api_key",
-        "resolved-text-generation-key",
-        secret_store,
-    )
-    store.set(
-        "ai.text_generate.missing_secret",
-        "$secret:missing_secret",
-    )
-    store.set_secret(
-        "ai.text_generate.broken_secret",
-        "value-that-will-become-undecryptable",
-        secret_store,
-    )
-    store.set_secret(
-        "databases.falkordb.password",
-        "stale-falkor-password",
-        secret_store,
-    )
-    hub_db.execute(
-        "UPDATE secrets SET encrypted_value = %s WHERE name = %s",
-        ("not-a-valid-fernet-token", "broken_secret"),
-    )
-    store.set_internal_lifecycle(
-        "ai.embeddings.switch_run",
-        {"run_id": "effective-config-test-run"},
+    active = runtime_config.model_copy(deep=True)
+    active.embeddings.model = "active-snapshot-model"
+    active.embeddings.api_key = "$secret:active-embedding-key"
+    values = {
+        "ai.embeddings.model": "active-snapshot-model",
+        "ai.embeddings.api_key": "$secret:active-embedding-key",
+    }
+    server.services.config_runtime.snapshot = _snapshot(
+        active,
+        active_values=values,
+        desired_secrets={"ai.embeddings.api_key": "resolved-active-key"},
+        active_secrets={"ai.embeddings.api_key": "resolved-active-key"},
     )
 
     response = client.get("/api/config/effective")
 
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == "no-store"
     assert set(response.json()) == {"config"}
-    values = response.json()["config"]
-    assert values["ai.embeddings.model"] == "daemon-embedding-model"
-    assert values["ai.embeddings.dim"] == "768"
-    assert values["ai.embeddings.api_base"] == "http://daemon-embeddings.test/v1"
-    assert values["ai.embeddings.api_key"] == "daemon-embedding-key"
-    assert values["ai.embeddings.catalog_key"] == "daemon-catalog"
-    assert values["ai.keep_alive"] == "true"
-    assert values["ai.text_generate.api_key"] == "resolved-text-generation-key"
-    assert values["ai.text_generate.candidates"] == candidates
-    assert values["databases.falkordb.host"] == "daemon-falkor.test"
-    assert values["databases.falkordb.port"] == "16379"
-    assert values["databases.qdrant.url"] == "http://daemon-qdrant.test:6333"
-    assert values["databases.qdrant.api_key"] == "daemon-qdrant-key"
-    assert values["databases.postgres.dsn"] == runtime_config.database_url
-    assert values["indexing.batch_size"] == "32"
-    assert values["gwiki.enabled"] == "false"
-    assert values["gwiki.environment"] == "daemon-environment"
-
-    assert "ai.embeddings.query_prefix" not in values
-    assert "databases.falkordb.password" not in values
-    assert "ai.text_generate.missing_secret" not in values
-    assert "ai.text_generate.broken_secret" not in values
-    assert "gwiki.unresolved" not in values
-    assert "ai.routing" not in values
-    assert "ai.text_generate.routing" not in values
-    assert "ai.embeddings.switch_run" not in values
-    assert "unrelated.value" not in values
-    assert all("$secret:" not in value and "${" not in value for value in values.values())
+    assert response.json()["config"]["ai.embeddings.model"] == "active-snapshot-model"
+    assert response.json()["config"]["ai.embeddings.api_key"] == "resolved-active-key"
 
 
 @pytest.mark.integration
+def test_effective_config_uses_machine_visibility(
+    client: TestClient,
+    server: Any,
+    runtime_config: DaemonConfig,
+) -> None:
+    server.services.config_runtime.snapshot = _snapshot(
+        runtime_config,
+        active_values={
+            "ai.embeddings.model": "machine-visible",
+            "websocket.ping_interval": 17.0,
+            "auth.password": "restricted-value",
+        },
+    )
+
+    response = client.get("/api/config/effective")
+
+    assert response.status_code == 200
+    assert response.json() == {"config": {"ai.embeddings.model": "machine-visible"}}
+
+
+def test_machine_output_uses_active_secret_binding(
+    client: TestClient,
+    server: Any,
+    runtime_config: DaemonConfig,
+) -> None:
+    key = "ai.embeddings.api_key"
+    desired = runtime_config.model_copy(deep=True)
+    desired.embeddings.api_key = "$secret:rotated-key"
+    active = runtime_config.model_copy(deep=True)
+    active.embeddings.api_key = "$secret:activated-key"
+    server.services.config_runtime.snapshot = _snapshot(
+        active,
+        desired=desired,
+        desired_values={key: "$secret:rotated-key"},
+        active_values={key: "$secret:activated-key"},
+        desired_secrets={key: "rotated-unactivated-payload"},
+        active_secrets={key: "activated-payload"},
+    )
+
+    response = client.get("/api/config/effective")
+
+    assert response.status_code == 200
+    assert response.json() == {"config": {key: "activated-payload"}}
+    assert "rotated-unactivated-payload" not in response.text
+
+
 def test_post_overlay_markers_are_omitted(
     client: TestClient,
     server: Any,
+    runtime_config: DaemonConfig,
 ) -> None:
-    runtime_config = server.services.config
-    server.services.config = runtime_config.model_copy(
-        update={
-            "embeddings": runtime_config.embeddings.model_copy(
-                update={
-                    "api_key": "$secret:must-not-escape",
-                    "api_base": "${UNRESOLVED_OVERLAY_VALUE}",
-                }
-            ),
-            "databases": runtime_config.databases.model_copy(
-                update={
-                    "qdrant": runtime_config.databases.qdrant.model_copy(
-                        update={"api_key": "$secret:must-not-escape"}
-                    )
-                }
-            ),
-        }
+    server.services.config_runtime.snapshot = _snapshot(
+        runtime_config,
+        active_values={
+            "ai.embeddings.api_key": "$secret:must-not-escape",
+            "ai.embeddings.api_base": "${UNRESOLVED_OVERLAY_VALUE}",
+            "databases.qdrant.api_key": "$secret:must-not-escape",
+        },
     )
 
     response = client.get("/api/config/effective")
@@ -501,7 +587,7 @@ def test_post_overlay_markers_are_omitted(
 
 
 @pytest.mark.integration
-def test_effective_config_requires_runtime_token_even_when_auth_is_disabled(
+def test_effective_config_auth_and_cache_contract(
     server: Any,
     hub_db: HubDatabase,
 ) -> None:
@@ -531,6 +617,8 @@ def test_effective_config_requires_runtime_token_even_when_auth_is_disabled(
     assert invalid_bearer.status_code == 401
     assert bearer.status_code == 200
     assert local_header.status_code == 200
+    assert bearer.headers["Cache-Control"] == "no-store"
+    assert local_header.headers["Cache-Control"] == "no-store"
 
 
 @pytest.mark.integration
@@ -538,7 +626,7 @@ def test_effective_config_returns_503_when_runtime_config_is_unavailable(
     client: TestClient,
     server: Any,
 ) -> None:
-    server.services.config = None
+    server.services.config_runtime = None
 
     response = client.get("/api/config/effective")
 

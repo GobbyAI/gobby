@@ -8,7 +8,6 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.wiki import WikiConfig, WikiRootConfig
 from gobby.gwiki_gateway import INTERACTIVE_GWIKI_TIMEOUT_SECONDS, GwikiGateway
 from gobby.runner_lifecycle_startup import StartupTracker
@@ -21,9 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS = 24
-DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES = 60
-DEFAULT_WORKFLOW_AUDIT_RETENTION_DAYS = 7
 _RUNTIME_OUTPUT_OVER_LIMIT_SERVICE = "runtime_output_over_limit"
 
 
@@ -183,15 +179,10 @@ def start_periodic_tasks(
     **loops: Any,
 ) -> None:
     """Start all lightweight periodic background tasks."""
+    config = runner.config_runtime.capture().snapshot.active
     loops = {**_default_loops(), **loops}
     db_executor = getattr(runner, "db_executor", None)
     memory_manager = getattr(runner, "memory_manager", None)
-    session_lifecycle_config = getattr(runner.config, "session_lifecycle", None)
-    workflow_audit_retention_days = getattr(
-        session_lifecycle_config,
-        "workflow_audit_retention_days",
-        DEFAULT_WORKFLOW_AUDIT_RETENTION_DAYS,
-    )
     runner._metrics_cleanup_task = asyncio.create_task(
         loops["metrics_cleanup_loop"](
             runner.metrics_manager,
@@ -202,21 +193,16 @@ def start_periodic_tasks(
     )
     runner._test_schema_sweep_task = asyncio.create_task(
         loops["sweep_test_schemas_loop"](
-            getattr(runner.config, "database_url", None),
+            config.database_url,
             lambda: runner._shutdown_requested,
         ),
         name="test-schema-sweep",
     )
-    from gobby.storage.tool_results import ToolResultStore
-
-    tool_result_store = ToolResultStore(
-        runner.database,
-        runner.config.get_tool_result_offload_config(),
-    )
     runner._tool_results_cleanup_task = asyncio.create_task(
         loops["tool_result_cleanup_loop"](
-            tool_result_store,
+            runner.database,
             lambda: runner._shutdown_requested,
+            capture_bundle=runner.config_runtime.capture,
             run_db=getattr(db_executor, "run", None),
         ),
         name="tool-result-cleanup",
@@ -225,7 +211,7 @@ def start_periodic_tasks(
         loops["workflow_audit_cleanup_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
-            retention_days=workflow_audit_retention_days,
+            capture_bundle=runner.config_runtime.capture,
             run_db=getattr(db_executor, "run", None),
         ),
         name="workflow-audit-cleanup",
@@ -263,12 +249,11 @@ def start_periodic_tasks(
                 name="provider-capability-refresh",
             )
 
-    retention_days = 7
-    if runner.config.telemetry and hasattr(runner.config.telemetry, "trace_retention_days"):
-        retention_days = runner.config.telemetry.trace_retention_days
     runner._span_cleanup_task = asyncio.create_task(
         loops["span_cleanup_loop"](
-            runner.database, lambda: runner._shutdown_requested, retention_days=retention_days
+            runner.database,
+            lambda: runner._shutdown_requested,
+            capture_bundle=runner.config_runtime.capture,
         ),
         name="span-cleanup",
     )
@@ -289,15 +274,12 @@ def start_periodic_tasks(
         )
 
     runner._recall_drift_task = None
-    memory_config = getattr(runner.config, "memory", None)
-    if (
-        memory_manager
-        and memory_config is not None
-        and getattr(memory_config, "recall_drift_monitor_enabled", False)
-    ):
+    if memory_manager:
         runner._recall_drift_task = asyncio.create_task(
             loops["recall_drift_monitor_loop"](
-                runner.database, memory_config, lambda: runner._shutdown_requested
+                runner.database,
+                lambda: runner._shutdown_requested,
+                capture_bundle=runner.config_runtime.capture,
             ),
             name="recall-drift-monitor",
         )
@@ -314,34 +296,20 @@ def start_periodic_tasks(
         ),
         name="comms-message-cleanup",
     )
-    skills_config = getattr(runner.config, "skills", None)
-    skill_retention_days = getattr(skills_config, "soft_delete_retention_days", 30)
     runner._skill_purge_task = asyncio.create_task(
         loops["purge_deleted_skills_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
-            retention_days=skill_retention_days,
+            capture_bundle=runner.config_runtime.capture,
             run_db=getattr(db_executor, "run", None),
         ),
         name="skill-retention-purge",
-    )
-    chat_config = getattr(runner.config, "chat", None)
-    attachment_retention_hours = getattr(
-        chat_config,
-        "attachment_unbound_retention_hours",
-        DEFAULT_CHAT_ATTACHMENT_RETENTION_HOURS,
-    )
-    attachment_gc_interval_minutes = getattr(
-        chat_config,
-        "attachment_gc_interval_minutes",
-        DEFAULT_CHAT_ATTACHMENT_GC_INTERVAL_MINUTES,
     )
     runner._chat_attachments_cleanup_task = asyncio.create_task(
         loops["cleanup_chat_attachments_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
-            retention_hours=attachment_retention_hours,
-            interval_minutes=attachment_gc_interval_minutes,
+            capture_bundle=runner.config_runtime.capture,
             run_db=getattr(db_executor, "run", None),
         ),
         name="chat-attachment-cleanup",
@@ -371,9 +339,9 @@ def start_periodic_tasks(
 
     runner._resource_monitor_task = asyncio.create_task(
         loops["resource_monitor_loop"](
-            runner.config.logging,
             lambda: runner._shutdown_requested,
             set_runtime_output_over_limit,
+            capture_bundle=runner.config_runtime.capture,
         ),
         name="resource-monitor",
     )
@@ -381,18 +349,15 @@ def start_periodic_tasks(
         loops["drain_hook_inbox_loop"](runner.http_server.app, lambda: runner._shutdown_requested),
         name="hook-inbox-drain",
     )
-    runner._bin_freshness_task = None
-    bin_freshness_config = getattr(runner.config, "bin_freshness", None)
-    if isinstance(bin_freshness_config, BinFreshnessConfig) and bin_freshness_config.enabled:
-        runner._bin_freshness_task = asyncio.create_task(
-            loops["bin_freshness_loop"](
-                runner.database,
-                bin_freshness_config,
-                lambda: runner._shutdown_requested,
-                run_db=getattr(db_executor, "run", None),
-            ),
-            name="bin-freshness",
-        )
+    runner._bin_freshness_task = asyncio.create_task(
+        loops["bin_freshness_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+            capture_bundle=runner.config_runtime.capture,
+            run_db=getattr(db_executor, "run", None),
+        ),
+        name="bin-freshness",
+    )
 
     runner._approval_timeout_task = None
     from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -442,7 +407,7 @@ def start_periodic_tasks(
 
     runner._wiki_watcher = None
     runner._wiki_watcher_task = None
-    wiki_config = getattr(runner.config, "wiki", None)
+    wiki_config = config.wiki
     if isinstance(wiki_config, WikiConfig) and wiki_config.enabled and wiki_config.roots:
         roots_by_scope = _roots_by_watch_scope(wiki_config)
         scopes = [

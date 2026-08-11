@@ -75,8 +75,8 @@ def _session_reference_columns(conn: Transaction) -> list[tuple[str, str]]:
     rows = conn.execute(
         """
         SELECT
-            format('%I.%I', child_ns.nspname, child.relname) AS table_name,
-            format('%I', child_attr.attname) AS column_name
+            quote_ident(child_ns.nspname) || '.' || quote_ident(child.relname) AS table_name,
+            quote_ident(child_attr.attname) AS column_name
         FROM pg_constraint AS fk
         JOIN LATERAL unnest(fk.conkey) WITH ORDINALITY AS child_key(attnum, ord)
           ON TRUE

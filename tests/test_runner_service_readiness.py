@@ -55,22 +55,29 @@ def _client_factory(client: FakeFalkorClient) -> Any:
     return lambda **_kwargs: client
 
 
+def _config_runtime(config: SimpleNamespace) -> SimpleNamespace:
+    """Stub the runtime capture chain readiness reads its config through."""
+    return SimpleNamespace(capture=lambda: SimpleNamespace(snapshot=SimpleNamespace(active=config)))
+
+
 def _runner(*, qdrant_url: str | None, falkor_password: str | None) -> GobbyRunner:
+    config = SimpleNamespace(
+        test_mode=False,
+        databases=SimpleNamespace(
+            qdrant=SimpleNamespace(url=qdrant_url),
+            falkordb=SimpleNamespace(
+                host="127.0.0.1",
+                port=16379,
+                password=falkor_password,
+                graph_name="gobby_kg",
+            ),
+        ),
+    )
     return cast(
         "GobbyRunner",
         SimpleNamespace(
             database=SimpleNamespace(fetchone=lambda _sql: {"ready": 1}),
-            config=SimpleNamespace(
-                databases=SimpleNamespace(
-                    qdrant=SimpleNamespace(url=qdrant_url),
-                    falkordb=SimpleNamespace(
-                        host="127.0.0.1",
-                        port=16379,
-                        password=falkor_password,
-                        graph_name="gobby_kg",
-                    ),
-                )
-            ),
+            config_runtime=_config_runtime(config),
         ),
     )
 
@@ -118,16 +125,15 @@ async def test_missing_qdrant_configuration_blocks_startup() -> None:
 
 async def test_test_mode_skips_managed_service_readiness() -> None:
     managed_services = object()
+    config = SimpleNamespace(test_mode=True, databases=managed_services)
     runner = cast(
         "GobbyRunner",
-        SimpleNamespace(
-            config=SimpleNamespace(test_mode=True, databases=managed_services),
-        ),
+        SimpleNamespace(config_runtime=_config_runtime(config)),
     )
 
     await readiness.require_managed_services_ready(runner)
 
-    assert runner.config.databases is managed_services
+    assert config.databases is managed_services
 
 
 @pytest.mark.asyncio

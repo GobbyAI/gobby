@@ -570,7 +570,10 @@ def _run_tmux_payload(services: Any, run: Any) -> dict[str, object] | None:
     session_name = run.tmux_session_name
     if not isinstance(session_name, str) or not session_name:
         return None
-    tmux_config = getattr(services.config, "tmux", None)
+    config_runtime = services.config_runtime
+    if config_runtime is None:
+        raise RuntimeError("Config runtime unavailable")
+    tmux_config = config_runtime.snapshot.active.tmux
     socket_path = getattr(tmux_config, "socket_path", None)
     return {
         "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
@@ -643,7 +646,10 @@ async def _resolve_attention_pane(
 
     from gobby.agents.tmux import get_tmux_session_manager
 
-    tmux_config = services.config.tmux if services.config is not None else None
+    config_runtime = services.config_runtime
+    if config_runtime is None:
+        raise RuntimeError("Config runtime unavailable")
+    tmux_config = config_runtime.snapshot.active.tmux
     tmux = get_tmux_session_manager(tmux_config)
     session_name = run.tmux_session_name
 

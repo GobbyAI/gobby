@@ -210,9 +210,7 @@ def _notice_catalog(notice: str) -> dict[str, str]:
 
 
 def _dispatch_references(skill_body: str) -> set[str]:
-    dispatch = skill_body.split("## Sub-command Dispatch", 1)[1].split(
-        "## Design Direction", 1
-    )[0]
+    dispatch = skill_body.split("## Sub-command Dispatch", 1)[1].split("## Design Direction", 1)[0]
     table_rows = "\n".join(line for line in dispatch.splitlines() if line.startswith("| `"))
     return {match.group("path") for match in _REFERENCE_LINK.finditer(table_rows)}
 

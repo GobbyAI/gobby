@@ -6,13 +6,16 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.cli.utils import get_gobby_home
 from gobby.runner_maintenance_helpers import _positive_int_or_default, _run_db
 from gobby.runner_maintenance_recurring import _wait_for_first_maintenance_cycle
 from gobby.servers.chat_attachment_files import unlink_stale_attachment_file_sync
 from gobby.storage.schema_contract import sweep_test_schemas
+
+if TYPE_CHECKING:
+    from gobby.config.runtime import RuntimeActiveBundle
 
 logger = logging.getLogger("gobby.runner_maintenance")
 _CHAT_ATTACHMENT_CLEANUP_BATCH_LIMIT = 500
@@ -56,8 +59,8 @@ async def sweep_test_schemas_loop(
 async def purge_deleted_skills_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
-    retention_days: int = 30,
     *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     run_db: Callable[..., Awaitable[Any]] | None = None,
     interval_seconds: int = 24 * 60 * 60,
     startup_delay_seconds: float | None = None,
@@ -78,6 +81,8 @@ async def purge_deleted_skills_loop(
         return
 
     while True:
+        config = capture_bundle().snapshot.active
+        retention_days = getattr(config.skills, "soft_delete_retention_days", 30)
         try:
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
             deleted = await _run_db(
@@ -125,18 +130,14 @@ async def cleanup_chat_attachments_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
     *,
-    retention_hours: int = 24,
-    interval_minutes: int = 60,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     run_db: Callable[..., Awaitable[Any]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
 ) -> None:
     """Delete stale unbound chat uploads left behind by abandoned browser drafts."""
     from gobby.storage import chat_attachments
 
-    retention_hours = _positive_int_or_default(retention_hours, 24)
-    interval_seconds = _positive_int_or_default(interval_minutes, 60) * 60
-
-    async def cleanup_once() -> None:
+    async def cleanup_once(retention_hours: int) -> None:
         cutoff = datetime.now(UTC) - timedelta(hours=retention_hours)
         records = await _run_db(
             run_db,
@@ -157,21 +158,24 @@ async def cleanup_chat_attachments_loop(
             removed_files,
         )
 
-    try:
-        await cleanup_once()
-    except asyncio.CancelledError:
-        return
-    except Exception as e:
-        logger.error("Error in initial chat attachment cleanup: %s", e)
-
     while not is_shutdown_requested():
+        config = capture_bundle().snapshot.active.chat
+        retention_hours = _positive_int_or_default(
+            getattr(config, "attachment_unbound_retention_hours", 24), 24
+        )
+        interval_seconds = (
+            _positive_int_or_default(getattr(config, "attachment_gc_interval_minutes", 60), 60) * 60
+        )
         try:
-            await sleep(interval_seconds)
-            await cleanup_once()
+            await cleanup_once(retention_hours)
         except asyncio.CancelledError:
             break
         except Exception as e:
             logger.error("Error in chat attachment cleanup loop: %s", e)
+        try:
+            await sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
 
 
 async def expire_approval_timeouts_loop(

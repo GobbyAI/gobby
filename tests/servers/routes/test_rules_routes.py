@@ -19,10 +19,11 @@ from typing import Any, Literal
 import pytest
 from starlette.testclient import TestClient
 
-from gobby.storage.config_store import ConfigStore
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from tests.servers.conftest import create_http_server
+from tests.servers.conftest import StubConfigRuntime, create_http_server
 
 pytestmark = pytest.mark.unit
 
@@ -40,6 +41,22 @@ def def_manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
 @pytest.fixture
 def client(db: HubDatabase) -> TestClient:
     server = create_http_server(database=db)
+    config = DaemonConfig()
+    server.services.config_runtime = StubConfigRuntime(
+        ConfigSnapshot(
+            revision=1,
+            desired=config,
+            active=config,
+            row_revisions={},
+            pending_restart_keys=frozenset(),
+            failed_live_keys={},
+            desired_values={},
+            active_values={
+                "rules.enforcement_enabled": True,
+                "rules.aggregate_blocks": True,
+            },
+        )
+    )
     return TestClient(server.app)
 
 
@@ -179,36 +196,12 @@ class TestListRules:
 
 
 class TestRulesCollectionSettings:
-    """PUT /api/rules updates collection-level settings."""
+    """Collection settings are written through the generic config API."""
 
-    def test_updates_aggregate_blocks(self, client: TestClient, db: HubDatabase) -> None:
+    def test_specialized_update_is_removed(self, client: TestClient) -> None:
         resp = client.put("/api/rules", json={"aggregate_blocks": False})
 
-        assert resp.status_code == 200
-        assert resp.json() == {
-            "status": "success",
-            "enforcement_enabled": True,
-            "aggregate_blocks": False,
-        }
-        assert ConfigStore(db).get("rules.aggregate_blocks") is False
-
-    def test_updates_enforcement_and_aggregate_blocks(
-        self, client: TestClient, db: HubDatabase
-    ) -> None:
-        resp = client.put(
-            "/api/rules",
-            json={"enforcement_enabled": False, "aggregate_blocks": True},
-        )
-
-        assert resp.status_code == 200
-        assert resp.json() == {
-            "status": "success",
-            "enforcement_enabled": False,
-            "aggregate_blocks": True,
-        }
-        store = ConfigStore(db)
-        assert store.get("rules.enforcement_enabled") is False
-        assert store.get("rules.aggregate_blocks") is True
+        assert resp.status_code == 405
 
 
 # ═══════════════════════════════════════════════════════════════════════

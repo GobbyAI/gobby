@@ -589,6 +589,15 @@ CREATE TABLE completion_subscribers (
     session_id uuid NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS config_state (
+    id boolean PRIMARY KEY CHECK (id),
+    revision bigint NOT NULL
+);
+
+INSERT INTO config_state (id, revision)
+VALUES (true, 0)
+ON CONFLICT (id) DO NOTHING;
+
 CREATE TABLE config_store (
     key text NOT NULL,
     value text NOT NULL,
@@ -596,6 +605,9 @@ CREATE TABLE config_store (
     is_secret boolean DEFAULT false NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+ALTER TABLE config_store
+    ADD COLUMN IF NOT EXISTS revision bigint DEFAULT 0 NOT NULL;
 
 CREATE TABLE cron_jobs (
     id uuid NOT NULL,
@@ -674,6 +686,23 @@ CREATE TABLE detection_manifests (
     CONSTRAINT detection_manifests_provider_id_check CHECK ((provider_id ~ '^[a-z][a-z0-9_-]*$'::text)),
     CONSTRAINT detection_manifests_source_check CHECK ((source = ANY (ARRAY['bundled'::text, 'user'::text]))),
     CONSTRAINT detection_manifests_version_check CHECK ((version ~ '^[0-9]+(\.[0-9]+)*$'::text))
+);
+
+CREATE TABLE IF NOT EXISTS embedding_generation_acks (
+    daemon_instance_id uuid PRIMARY KEY,
+    generation text NOT NULL,
+    committed_revision bigint NOT NULL,
+    acknowledged boolean DEFAULT false NOT NULL,
+    lease_expires_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS embedding_projection_changes (
+    sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    source_kind text NOT NULL CHECK (source_kind IN ('memory', 'tool', 'github_issue')),
+    source_id text NOT NULL,
+    is_tombstone boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE expansion_runs (
@@ -3758,6 +3787,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE completion_subscribers TO gobby_daemo
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_store TO gobby_daemon_runtime;
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_state TO gobby_daemon_runtime;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE cron_jobs TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE cron_runs TO gobby_daemon_runtime;
@@ -3765,6 +3796,10 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE cron_runs TO gobby_daemon_runtime;
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE destructive_batches TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE detection_manifests TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_generation_acks TO gobby_daemon_runtime;
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_projection_changes TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE expansion_runs TO gobby_daemon_runtime;
 

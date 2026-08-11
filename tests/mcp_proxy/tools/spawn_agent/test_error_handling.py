@@ -1199,6 +1199,7 @@ class TestCleanupFailedSpawnWakesWaiter:
             spawn_config=MagicMock(),
             completion_registry=harness.registry,
             cleanup_isolation=False,
+            task_manager=None,
         )
 
         assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]

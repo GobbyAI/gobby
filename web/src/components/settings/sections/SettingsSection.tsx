@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
+import type { ConfigApplyFailure } from '../../../api/config'
 import { DetailActionButton } from '../../activity/fields'
 import { useDetailDraft } from '../../activity/fields/useDetailDraft'
 import { getSettingsSection } from '../sections'
 import type { SettingsSectionId } from '../sections'
+import { resolveSchemaNode } from '../configSchema'
 import { useSettingsSectionContext } from './SettingsSectionContext'
 
 /**
@@ -13,9 +15,12 @@ import { useSettingsSectionContext } from './SettingsSectionContext'
  */
 export interface SettingsSectionFields {
   getValue: (path: string) => unknown
+  getActiveValue?: (path: string) => unknown
   setValue: (path: string, value: unknown) => void
   schema: Record<string, unknown> | null
   secretKeys: string[]
+  pendingRestartKeys?: string[]
+  failedLiveKeys?: Record<string, ConfigApplyFailure>
   isLoading: boolean
 }
 
@@ -71,8 +76,18 @@ export function SettingsSection({
   saveDisabled = false,
   children,
 }: SettingsSectionProps) {
-  const { configValues, schema, secretKeys, isLoading, saveConfig, registerDirtyGuard } =
-    useSettingsSectionContext()
+  const {
+    configValues,
+    activeConfigValues = {},
+    schema,
+    secretKeys,
+    pendingRestartKeys = [],
+    failedLiveKeys = {},
+    mutationError,
+    isLoading,
+    saveConfig,
+    registerDirtyGuard,
+  } = useSettingsSectionContext()
   const section = getSettingsSection(sectionId)
 
   const source = useMemo(
@@ -84,7 +99,15 @@ export function SettingsSection({
     useDetailDraft<SectionDraft>({
       source,
       onSave: async (merged) => {
-        const result = await saveConfig(merged)
+        // Managed-activation paths (e.g. the embedding switch's structural
+        // keys) are mutated only through their coordinator action; the store
+        // rejects direct writes, so submitting them bricks the whole save.
+        const payload = Object.fromEntries(
+          Object.entries(merged).filter(
+            ([path]) => resolveSchemaNode(schema, path)?.activation !== 'managed',
+          ),
+        )
+        const result = await saveConfig(payload)
         return result.ok
       },
     })
@@ -104,9 +127,12 @@ export function SettingsSection({
 
   const fields: SettingsSectionFields = {
     getValue: (path) => draft?.[path],
+    getActiveValue: (path) => getByPath(activeConfigValues, path),
     setValue: (path, value) => setField(path, value),
     schema,
     secretKeys,
+    pendingRestartKeys,
+    failedLiveKeys,
     isLoading,
   }
 
@@ -124,6 +150,16 @@ export function SettingsSection({
           </p>
         </div>
         <div className="flex flex-col gap-6">{children(fields)}</div>
+        {mutationError ? (
+          <p
+            className="max-w-[48ch] text-sm leading-[1.4] text-destructive"
+            data-terminal={mutationError.terminal || undefined}
+            role="alert"
+          >
+            {mutationError.terminal ? 'Terminal configuration error: ' : ''}
+            {mutationError.message}
+          </p>
+        ) : null}
       </div>
       {hasFields ? (
         <footer className="flex shrink-0 items-center justify-end gap-2 border-t border-border bg-surface-secondary px-5 py-3.5">

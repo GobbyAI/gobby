@@ -371,6 +371,7 @@ async def _resolve_provisional_daemon_resume_row(
     )
     from gobby.storage.agent_resume import rollback_prepared_daemon_resume
 
+    config = runner.config_runtime.capture().snapshot.active
     if runner.agent_runner is None:
         return False
     run_storage = runner.agent_runner.run_storage
@@ -462,7 +463,7 @@ async def _resolve_provisional_daemon_resume_row(
         resume_metadata=parked.resume_metadata_json or metadata,
         runner=runner.agent_runner,
         session_manager=runner.session_manager,
-        daemon_config=runner.config,
+        daemon_config=config,
         completion_registry=runner.completion_registry,
     )
     if not result.success:
@@ -736,6 +737,7 @@ async def _retry_parked_non_task_resumes(runner: GobbyRunner) -> int:
     otherwise sit parked until the recovery-window reaper. Retries share the
     dispatcher's failure budget; exhausted candidates wait for the reaper.
     """
+    config = runner.config_runtime.capture().snapshot.active
     if runner.agent_runner is None:
         return 0
 
@@ -768,7 +770,7 @@ async def _retry_parked_non_task_resumes(runner: GobbyRunner) -> int:
                 resume_metadata=metadata,
                 runner=runner.agent_runner,
                 session_manager=runner.session_manager,
-                daemon_config=runner.config,
+                daemon_config=config,
                 completion_registry=runner.completion_registry,
             )
         except Exception:
@@ -797,6 +799,7 @@ async def _cleanup_missing_tmux_agent_run(
     session_name: str,
 ) -> bool:
     """Park and immediately resume a run whose tmux session did not survive."""
+    config = runner.config_runtime.capture().snapshot.active
     monitor = runner.agent_lifecycle_monitor
     if monitor is None or runner.agent_runner is None:
         return False
@@ -816,7 +819,7 @@ async def _cleanup_missing_tmux_agent_run(
         resume_metadata=parked.resume_metadata_json or {},
         runner=runner.agent_runner,
         session_manager=runner.session_manager,
-        daemon_config=runner.config,
+        daemon_config=config,
         completion_registry=runner.completion_registry,
     )
     if not result.success:

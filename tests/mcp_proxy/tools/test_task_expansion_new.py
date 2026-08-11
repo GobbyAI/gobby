@@ -60,7 +60,7 @@ def test_session(session_manager, test_project):
 def expansion_registry(task_manager):
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator=None,
+        task_validator_resolver=None,
         config=None,
     )
     return create_expansion_registry(ctx)

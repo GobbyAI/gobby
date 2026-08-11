@@ -11,6 +11,7 @@ from gobby.mcp_proxy.bundled import (
     is_bundled_external_mcp_server,
     normalize_bundled_managed_args,
 )
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
 from gobby.storage.mcp_secrets import cleanup_replaced_mcp_secrets, protect_mcp_mapping
@@ -176,21 +177,35 @@ class MCPServerStorageMixin:
         )
         return [Tool.from_row(row) for row in rows]
 
-    def _replace_tools_for_server_id(self, server_id: str, tools: list[Tool]) -> None:
-        """Replace cached tools for a server ID."""
-        self.db.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server_id,))
+    def _replace_tools_for_server_id(
+        self,
+        conn: Any,
+        server_id: str,
+        tools: list[Tool],
+    ) -> None:
+        """Replace cached tools for a server ID inside the caller's transaction."""
+        generation_state = EmbeddingGenerationState(self.db)
+        stale_rows = conn.execute(
+            "SELECT id FROM tools WHERE mcp_server_id = %s", (server_id,)
+        ).fetchall()
+        conn.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server_id,))
+        for stale_row in stale_rows:
+            generation_state.append_change(
+                "tool", str(stale_row["id"]), is_tombstone=True, transaction=conn
+            )
         if not tools:
             return
 
         now = utc_now()
         for tool in tools:
-            self.db.execute(
+            tool_id = str(uuid.uuid4())
+            conn.execute(
                 """
                 INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    str(uuid.uuid4()),
+                    tool_id,
                     server_id,
                     tool.name,
                     tool.description,
@@ -199,6 +214,7 @@ class MCPServerStorageMixin:
                     now,
                 ),
             )
+            generation_state.append_change("tool", tool_id, transaction=conn)
 
     @staticmethod
     def _merge_tools_for_servers(tool_sets: Iterable[list[Tool]]) -> list[Tool]:
@@ -459,13 +475,21 @@ class MCPServerStorageMixin:
                 if tools_to_preserve and (
                     len(servers) > 1 or canonical_source.id != canonical_server.id
                 ):
-                    self._replace_tools_for_server_id(canonical_server.id, tools_to_preserve)
+                    self._replace_tools_for_server_id(conn, canonical_server.id, tools_to_preserve)
                     stats["tools_migrated"] += len(tools_to_preserve)
 
                 duplicate_ids = [
                     server.id for server in servers if server.id != canonical_server.id
                 ]
+                generation_state = EmbeddingGenerationState(self.db)
                 for server_id in duplicate_ids:
+                    stale_tool_rows = conn.execute(
+                        "SELECT id FROM tools WHERE mcp_server_id = %s", (server_id,)
+                    ).fetchall()
+                    for stale_row in stale_tool_rows:
+                        generation_state.append_change(
+                            "tool", str(stale_row["id"]), is_tombstone=True, transaction=conn
+                        )
                     conn.execute("DELETE FROM mcp_servers WHERE id = %s", (server_id,))
 
             if (

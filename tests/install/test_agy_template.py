@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,8 +19,10 @@ from gobby.adapters.agy_contract import (
 pytestmark = pytest.mark.unit
 
 
-def _template(repo_root: Path) -> dict:
-    return json.loads((repo_root / "src/gobby/install/agy/hooks-template.json").read_text())
+def _template(repo_root: Path) -> dict[str, Any]:
+    data = json.loads((repo_root / "src/gobby/install/agy/hooks-template.json").read_text())
+    assert isinstance(data, dict)
+    return data
 
 
 def test_agy_template_is_keyed_by_hook_name_not_literal_hooks(repo_root: Path) -> None:

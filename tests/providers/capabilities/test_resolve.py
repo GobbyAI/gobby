@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 
+from gobby.config.ai import ModelMetadataAlias
 from gobby.providers.capabilities.models import (
     ActivationDescriptor,
     FactProvenance,
@@ -42,14 +43,6 @@ class _ModelMetadataStore:
 
     def get_context_window(self, model: str) -> int | None:
         return self.context_lengths.get(model)
-
-
-class _ConfigStore:
-    def __init__(self, aliases: list[dict[str, str]] | None = None) -> None:
-        self.aliases = aliases
-
-    def get(self, key: str) -> object | None:
-        return self.aliases
 
 
 def _snapshot(
@@ -151,19 +144,17 @@ def test_context_precedence_order() -> None:
 
 def test_direct_metadata_match_precedes_provider_alias() -> None:
     metadata = _ModelMetadataStore({"model": 32_000, "registry-model": 64_000})
-    config = _ConfigStore(
-        [
-            {
-                "provider": "provider",
-                "provider_model_id": "model",
-                "openrouter_model_id": "registry-model",
-            }
-        ]
-    )
+    aliases = [
+        ModelMetadataAlias(
+            provider="provider",
+            provider_model_id="model",
+            openrouter_model_id="registry-model",
+        )
+    ]
     resolver = CapabilityResolver(
         _CapabilityStore(_snapshot(context_length=None)),
         metadata,
-        config,
+        aliases,
     )
 
     result = resolver.resolve_context("provider", "model")
@@ -171,53 +162,53 @@ def test_direct_metadata_match_precedes_provider_alias() -> None:
     assert (result.value, result.source) == (32_000, ContextSource.OPENROUTER)
 
 
-def test_provider_alias_is_scoped_and_config_edits_are_live() -> None:
+def test_provider_alias_is_scoped_and_resolver_snapshot_is_stable() -> None:
     metadata = _ModelMetadataStore({"registry-model": 64_000})
-    config = _ConfigStore(
-        [
-            {
-                "provider": "other-provider",
-                "provider_model_id": "model",
-                "openrouter_model_id": "registry-model",
-            }
-        ]
-    )
+    aliases = [
+        ModelMetadataAlias(
+            provider="other-provider",
+            provider_model_id="model",
+            openrouter_model_id="registry-model",
+        )
+    ]
     resolver = CapabilityResolver(
         _CapabilityStore(_snapshot(context_length=None)),
         metadata,
-        config,
+        aliases,
     )
 
     assert resolver.resolve_context("provider", "model").source is ContextSource.UNKNOWN
 
-    config.aliases = [
-        {
-            "provider": " Provider ",
-            "provider_model_id": " MODEL ",
-            "openrouter_model_id": "registry-model",
-        }
+    aliases[:] = [
+        ModelMetadataAlias(
+            provider=" Provider ",
+            provider_model_id=" MODEL ",
+            openrouter_model_id="registry-model",
+        )
     ]
-    resolved = resolver.resolve_context("provider", "model")
-    assert (resolved.value, resolved.source) == (64_000, ContextSource.OPENROUTER)
-
-    config.aliases = []
     assert resolver.resolve_context("provider", "model").source is ContextSource.UNKNOWN
+
+    refreshed = CapabilityResolver(
+        _CapabilityStore(_snapshot(context_length=None)),
+        metadata,
+        aliases,
+    )
+    resolved = refreshed.resolve_context("provider", "model")
+    assert (resolved.value, resolved.source) == (64_000, ContextSource.OPENROUTER)
 
 
 def test_missing_alias_target_remains_unknown() -> None:
-    config = _ConfigStore(
-        [
-            {
-                "provider": "provider",
-                "provider_model_id": "model",
-                "openrouter_model_id": "missing-registry-model",
-            }
-        ]
-    )
+    aliases = [
+        ModelMetadataAlias(
+            provider="provider",
+            provider_model_id="model",
+            openrouter_model_id="missing-registry-model",
+        )
+    ]
     resolver = CapabilityResolver(
         _CapabilityStore(_snapshot(context_length=None)),
         _ModelMetadataStore(None),
-        config,
+        aliases,
     )
 
     result = resolver.resolve_context("provider", "model")

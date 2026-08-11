@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -11,6 +12,7 @@ import yaml
 
 from gobby.cli.installers import compose_env, falkor, qdrant
 from gobby.config.persistence import DatabasesConfig
+from gobby.storage.config_mutations import ConfigPatch
 
 pytestmark = pytest.mark.unit
 
@@ -24,19 +26,15 @@ class _ConfigStore:
     def __init__(self, values: dict[str, Any]) -> None:
         self.values = values
 
-    def get(self, key: str) -> Any:
-        return self.values.get(key)
+    def read_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(revision=0, values=self.values, overrides=self.values)
 
-    def set(self, key: str, value: Any, *, source: str) -> None:
-        _ = source
-        self.values[key] = value
-
-    def set_secret(self, key: str, value: str, _secret_store: object, *, source: str) -> None:
-        _ = source
-        self.values[key] = value
-
-    def delete(self, key: str) -> None:
-        self.values.pop(key, None)
+    def patch(self, *, expected_revision: int, patch: ConfigPatch) -> None:
+        assert expected_revision == 0
+        self.values.update(patch.values)
+        self.values.update({key: f"$secret:{key.replace('.', '_')}" for key in patch.secrets})
+        for key in patch.unset:
+            self.values.pop(key, None)
 
 
 def test_templates_parameterized_and_identical() -> None:
@@ -96,7 +94,10 @@ def test_installers_respect_published_host(
         "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: nullcontext(database),
     )
-    monkeypatch.setattr("gobby.storage.config_store.ConfigStore", lambda _db: store)
+    monkeypatch.setattr(
+        "gobby.storage.config_store.ConfigStore",
+        lambda _db, **_kwargs: store,
+    )
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", lambda *_args, **_kwargs: object())
 
     falkor._update_config(port=16379, password="secret", gobby_home=tmp_path)

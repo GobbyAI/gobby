@@ -405,7 +405,7 @@ class TestPipelinesRun:
         mock_loader.load_pipeline_sync.return_value = mock_pipeline
 
         with (
-            patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
+            patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),
             patch("gobby.cli.pipelines.get_workflow_loader", return_value=mock_loader),
             patch("gobby.cli.pipelines.get_project_path", return_value=None),
         ):
@@ -621,7 +621,7 @@ class TestPipelinesDaemonApproval:
                 return FakeResponse()
 
         with (
-            patch("gobby.config.app.load_config", return_value=MagicMock(daemon_port=1234)),
+            patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:1234"),
             patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
             patch("gobby.cli.pipelines.get_pipeline_executor") as get_local_executor,
         ):
@@ -674,7 +674,7 @@ class TestPipelinesDaemonApproval:
         mock_executor.approve = AsyncMock(return_value=mock_execution)
 
         with (
-            patch("gobby.config.app.load_config", return_value=MagicMock(daemon_port=1234)),
+            patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:1234"),
             patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
             patch("gobby.cli.pipelines._cli_actor", return_value="test-user"),
             patch("gobby.cli.pipelines.get_pipeline_executor", return_value=mock_executor),

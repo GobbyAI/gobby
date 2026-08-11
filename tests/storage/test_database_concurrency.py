@@ -6,11 +6,11 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.app import load_config
 from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.storage.concurrency import (
     CoverageExecutor,
@@ -19,6 +19,7 @@ from gobby.storage.concurrency import (
     resolve_database_concurrency,
 )
 from gobby.storage.concurrency_watchdog import DatabaseSaturationWatchdog
+from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.executor import DatabaseExecutorStats
 
 
@@ -52,16 +53,14 @@ def test_database_concurrency_config_rejects_invalid_values(value: object) -> No
         DatabaseConcurrencyConfig(executor_max_workers=value)  # type: ignore[arg-type]
 
 
-def test_database_concurrency_loads_from_config_store() -> None:
-    class Store:
-        def get_all(self) -> dict[str, int]:
-            return {
-                "database_concurrency.pool_max_size": 72,
-                "database_concurrency.executor_max_workers": 40,
-                "database_concurrency.coverage_max_concurrency": 8,
-            }
-
-    config = load_config(config_store=Store())  # type: ignore[arg-type]
+def test_database_concurrency_loads_from_runtime_candidate() -> None:
+    config = ConfigRepository(MagicMock()).runtime_candidate(
+        {
+            "database_concurrency.pool_max_size": 72,
+            "database_concurrency.executor_max_workers": 40,
+            "database_concurrency.coverage_max_concurrency": 8,
+        }
+    )
 
     assert config.database_concurrency == DatabaseConcurrencyConfig(
         pool_max_size=72,

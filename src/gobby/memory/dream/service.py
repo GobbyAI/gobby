@@ -16,8 +16,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from weakref import WeakKeyDictionary
 
 from gobby.config.persistence import MemoryDreamConfig
@@ -79,14 +80,36 @@ class MemoryDreamService:
         llm_service: MemoryDreamLLMProtocol | None = None,
         daemon_config: Any = None,
         current_project_id: str | None = None,
+        capture_bundle: Callable[[], Any] | None = None,
     ) -> None:
-        self.memory_manager = memory_manager
+        self._seed_memory_manager = memory_manager
         self.dream_config = dream_config or MemoryDreamConfig()
-        self.llm_service = llm_service
+        self._seed_llm_service = llm_service
+        self._capture_bundle = capture_bundle
         self._daemon_config = daemon_config
         self.current_project_id = current_project_id
         self.store = MemoryDreamStore(memory_manager.db)
         self._aggregate_runner = _AggregateDreamRunner(self)
+
+    @property
+    def memory_manager(self) -> MemoryDreamManagerProtocol:
+        """Resolve the current runtime epoch's memory manager per use."""
+        if self._capture_bundle is not None:
+            service = self._capture_bundle().services.get("memory_services")
+            manager = getattr(service, "memory_manager", None)
+            if manager is not None:
+                return cast(MemoryDreamManagerProtocol, manager)
+        return self._seed_memory_manager
+
+    @property
+    def llm_service(self) -> MemoryDreamLLMProtocol | None:
+        """Resolve the current runtime epoch's LLM service per use."""
+        if self._capture_bundle is not None:
+            service = self._capture_bundle().services.get("ai_services")
+            resolved = getattr(service, "llm_service", None)
+            if resolved is not None:
+                return cast(MemoryDreamLLMProtocol, resolved)
+        return self._seed_llm_service
 
     async def run(self, options: DreamRunOptions) -> dict[str, Any]:
         async with _execution_lock():

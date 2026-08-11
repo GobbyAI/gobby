@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import click
 
+from gobby.cli.runtime import get_cli_runtime
+
 from ._install_embedding_prompts import (
     _infer_embedding_provider_from_url,
     _run_embedding_install,
@@ -187,9 +189,7 @@ def _prompt_hub_api_keys(
     }
 
     try:
-        from gobby.cli.utils import load_full_config_from_db
-
-        skills_cfg = load_full_config_from_db().skills
+        skills_cfg = get_cli_runtime().require_config().skills
     except Exception as e:
         click.echo(f"  Warning: Could not initialize hub key prompt: {e}")
         return result
@@ -546,10 +546,16 @@ def _run_voice_install(
     click.echo("-" * 40)
 
     try:
-        from gobby.storage.config_store import ConfigStore
+        from gobby.cli.config_writes import apply_cas_config_patch
+        from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
         with _ensure_db_and_secrets(db, None) as (_db, _store):
-            ConfigStore(_db).set("voice.enabled", install_voice)
+            mutations = ConfigMutations(_db)
+            apply_cas_config_patch(
+                read_snapshot=lambda: mutations.repository.read(resolve_secrets=False),
+                build_patch=lambda _snapshot: ConfigPatch(values={"voice.enabled": install_voice}),
+                patch=mutations.patch,
+            )
         state = "enabled" if install_voice else "disabled"
         click.echo(f"Voice {state} in daemon config")
         results["voice"] = {"success": True, "enabled": install_voice}

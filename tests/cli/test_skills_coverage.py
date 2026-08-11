@@ -888,7 +888,7 @@ class TestSkillsHub:
 
     @patch("gobby.cli.skills.require_cli_database")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.cli.utils.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hub_add_success(
         self,
         mock_config: MagicMock,
@@ -908,7 +908,7 @@ class TestSkillsHub:
 
     @patch("gobby.cli.skills.require_cli_database")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.cli.utils.load_full_config_from_db")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_hub_add_already_exists(
         self,
         mock_config: MagicMock,

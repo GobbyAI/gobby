@@ -5,6 +5,7 @@ import App from "../App";
 import { useChat } from "../hooks/useChat";
 import { useSessionCatalog } from "../hooks/useSessionCatalog";
 import { useAuth } from "../hooks/useAuth";
+import { configurationClient } from "../api/config";
 
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
 const settingsOverlayRenderSpy = vi.hoisted(() => vi.fn());
@@ -290,6 +291,7 @@ Object.defineProperty(window, "matchMedia", {
 
 describe("App wiring", () => {
   beforeEach(() => {
+    configurationClient.reset();
     vi.clearAllMocks();
     vi.mocked(useChat).mockReturnValue(makeChatHookState() as never);
     vi.mocked(useSessionCatalog).mockReturnValue(makeSessionCatalogState() as never);
@@ -313,11 +315,25 @@ describe("App wiring", () => {
       writable: true,
     });
 
-    globalThis.fetch = vi.fn(() =>
+    globalThis.fetch = vi.fn((_input: RequestInfo | URL, init?: RequestInit) =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({}),
-      }),
+        json: () => Promise.resolve(init?.method === "PATCH" ? {
+          committed: true,
+          revision: 1,
+          changed_keys: [],
+          apply_status: "applied",
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        } : {
+          revision: 0,
+          desired: { ui_settings: {} },
+          active: { ui_settings: {} },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
+      } as Response),
     ) as unknown as typeof fetch;
   });
 
@@ -403,14 +419,21 @@ describe("App wiring", () => {
   it("waits for persisted project hydration before syncing the project", async () => {
     let resolveSettings: ((response: Response) => void) | undefined;
     globalThis.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      if (input === "/api/config/ui-settings" && !init) {
+      if (input === "/api/config/values" && !init) {
         return new Promise<Response>((resolve) => {
           resolveSettings = resolve;
         });
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({}),
+        json: () => Promise.resolve({
+          committed: true,
+          revision: 2,
+          changed_keys: [],
+          apply_status: "applied",
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
       } as Response);
     }) as unknown as typeof fetch;
 
@@ -425,7 +448,14 @@ describe("App wiring", () => {
     await act(async () => {
       resolveSettings?.({
         ok: true,
-        json: () => Promise.resolve({ selectedProjectId: "personal" }),
+        json: () => Promise.resolve({
+          revision: 1,
+          desired: { ui_settings: { selectedProjectId: "personal" } },
+          active: { ui_settings: { selectedProjectId: "personal" } },
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
       } as Response);
     });
 
@@ -475,15 +505,29 @@ describe("App wiring", () => {
       if (!init) {
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ selectedProvider: "codex" }),
-        });
+          json: () => Promise.resolve({
+            revision: 3,
+            desired: { ui_settings: { selectedProvider: "codex" } },
+            active: { ui_settings: { selectedProvider: "codex" } },
+            secret_set: {},
+            pending_restart_keys: [],
+            failed_live_keys: {},
+          }),
+        } as Response);
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
-    }) as unknown as typeof fetch;
-    globalThis.fetch = fetchMock;
+        json: () => Promise.resolve({
+          committed: true,
+          revision: 4,
+          changed_keys: ["ui_settings.selectedProvider"],
+          apply_status: "applied",
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
+      } as Response);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
 
     const { rerender } = render(<App />);
 
@@ -500,12 +544,16 @@ describe("App wiring", () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/config/ui-settings",
+        "/api/config/values",
         expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({ selectedProvider: "qwen" }),
+          method: "PATCH",
         }),
       );
+      const patchCall = fetchMock.mock.calls.find(([, init]) => init?.method === "PATCH");
+      expect(JSON.parse(String(patchCall?.[1]?.body))).toMatchObject({
+        expected_revision: 3,
+        values: { ui_settings: { selectedProvider: "qwen" } },
+      });
     });
   });
 

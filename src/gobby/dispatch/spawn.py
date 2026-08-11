@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.dispatch.context import services_daemon_config
 from gobby.dispatch.prompts import attach_plan_review_evidence
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn_artifacts import (
@@ -343,7 +344,7 @@ async def spawn_agent(
             session_manager=session_manager,
             db=db,
             completion_registry=getattr(services, "completion_registry", None),
-            daemon_config=getattr(services, "config", None),
+            daemon_config=services_daemon_config(services),
             code_index=getattr(services, "code_indexer", None),
             held_task_mutex=mutex,
         )

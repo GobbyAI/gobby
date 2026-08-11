@@ -13,7 +13,6 @@ from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.providers.capabilities.models import ActivationDescriptor, SpeedMode
 from gobby.providers.capabilities.resolve import SpeedResolution, SpeedStatus
-from gobby.servers.routes.agent_spawn import LaunchDefaultsRequest
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -118,7 +117,6 @@ async def test_droid_fast_selector_spawn() -> None:
 async def test_speed_mode_not_persisted() -> None:
     _, spawn_request = await _spawn_fast()
 
-    assert "speed_mode" not in LaunchDefaultsRequest.model_fields
     assert spawn_request.resume_metadata_json is not None
     assert "speed_mode" not in spawn_request.resume_metadata_json
     assert "speed" not in spawn_request.resume_metadata_json

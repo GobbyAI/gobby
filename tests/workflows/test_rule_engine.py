@@ -6,12 +6,14 @@ import json
 import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 from jinja2.exceptions import SecurityError
 
+from gobby.config.app import DaemonConfig
+from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.sessions.compact_continuation import WORKFLOW_REQUESTED_SKILLS_VARIABLE
@@ -2304,7 +2306,9 @@ class TestInlineMcpCallDispatch:
             ),
         )
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             return {
                 "success": True,
                 "inject_result": True,
@@ -2350,7 +2354,9 @@ class TestInlineMcpCallDispatch:
             ),
         )
 
-        async def mock_dispatcher_fail(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher_fail(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             return {"success": False, "result": {"error": "skill not found"}}
 
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_fail)
@@ -2390,7 +2396,9 @@ class TestInlineMcpCallDispatch:
             ),
         )
 
-        async def mock_dispatcher_raise(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher_raise(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             raise RuntimeError("connection refused")
 
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher_raise)
@@ -2425,7 +2433,9 @@ class TestInlineMcpCallDispatch:
             ),
         )
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             return {"success": False, "result": {"error": "skill not found"}}
 
         engine = RuleEngine(db, mcp_dispatcher=mock_dispatcher)
@@ -2465,7 +2475,9 @@ class TestInlineMcpCallDispatch:
             ),
         )
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             return {
                 "success": True,
                 "result": {"skill": {"name": "python", "content": "# Python"}},
@@ -2508,7 +2520,9 @@ class TestInlineMcpCallDispatch:
 
         call_count = 0
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"success": True, "result": {}}
@@ -2576,7 +2590,9 @@ class TestInlineMcpCallDispatch:
 
         call_count = 0
 
-        async def mock_dispatcher(server: str, tool: str, args: dict, event: Any) -> dict:
+        async def mock_dispatcher(
+            server: str, tool: str, args: dict[str, Any], event: Any
+        ) -> dict[str, Any]:
             nonlocal call_count
             call_count += 1
             return {"success": True, "result": {}}
@@ -2820,8 +2836,6 @@ class TestEnforcementToggle:
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When enforcement is globally disabled, all events are allowed."""
-        from gobby.storage.config_store import ConfigStore
-
         _insert_rule(
             manager,
             "should-block",
@@ -2831,17 +2845,24 @@ class TestEnforcementToggle:
             ),
         )
 
-        config_store = ConfigStore(db)
-        config_store.set("rules.enforcement_enabled", False)
-
-        engine = RuleEngine(db)
+        config = DaemonConfig()
+        runtime = SimpleNamespace(
+            snapshot=ConfigSnapshot(
+                revision=1,
+                desired=config,
+                active=config,
+                row_revisions={},
+                pending_restart_keys=frozenset(),
+                failed_live_keys={},
+                desired_values={"rules.enforcement_enabled": False},
+                active_values={"rules.enforcement_enabled": False},
+            )
+        )
+        engine = RuleEngine(db, config_runtime=cast(Any, runtime))
         event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Edit"})
         response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
 
         assert response.decision == "allow"
-
-        # Clean up
-        config_store.set("rules.enforcement_enabled", None)
 
 
 class TestUnmappedEventType:
@@ -2909,7 +2930,9 @@ class TestTurnEndResolution:
         assert variables["stop_attempts"] == 0
 
     @pytest.mark.asyncio
-    async def test_turn_end_rule_fires_for_stop(self, db: HubDatabase, manager) -> None:
+    async def test_turn_end_rule_fires_for_stop(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         _insert_rule(
             manager,
             "turn-end-stop",
@@ -2927,7 +2950,9 @@ class TestTurnEndResolution:
         assert variables["stop_attempts"] == 1
 
     @pytest.mark.asyncio
-    async def test_turn_end_rule_fires_for_after_agent(self, db: HubDatabase, manager) -> None:
+    async def test_turn_end_rule_fires_for_after_agent(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
         _insert_rule(
             manager,
             "turn-end-after-agent",
@@ -2946,7 +2971,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_raw_stop_rule_does_not_fire_for_after_agent(
-        self, db: HubDatabase, manager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -2965,7 +2990,7 @@ class TestTurnEndResolution:
 
     @pytest.mark.asyncio
     async def test_raw_after_agent_rule_does_not_fire_for_stop(
-        self, db: HubDatabase, manager
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         _insert_rule(
             manager,
@@ -3176,7 +3201,7 @@ class TestLiveActiveRuleSelection:
                 effects=[RuleEffect(type="set_variable", variable="matched", value=True)],
             ).model_dump_json(),
             project_id=project.id,
-            source="test",
+            source="custom",
         )
         engine = RuleEngine(db)
 

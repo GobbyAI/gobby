@@ -65,7 +65,7 @@ def test_aggregate_exhaustion_defers_current_and_later_messages_in_order() -> No
 
     assert result.context is not None
     assert len(result.context) <= PENDING_MESSAGE_CONTEXT_BUDGET
-    assert result.represented_message_ids == ("m0", "21000000-0000-4000-8000-000000000005", "m2")
+    assert result.represented_message_ids == ("m0", "m1", "m2")
     assert result.deferred_message_ids == ("m3", "m4")
     assert "sentinel-2-" in result.context
     assert "sentinel-3-" not in result.context

@@ -51,7 +51,7 @@ from .test_quality import test_quality
 from .test_types import test_types
 from .tokens import tokens
 from .ui import ui
-from .utils import get_gobby_home, load_full_config_from_db
+from .utils import get_gobby_home
 from .workflows import workflows
 from .worktrees import worktrees
 
@@ -82,13 +82,7 @@ def cli(ctx: click.Context, config: str | None) -> None:
     """Gobby - Local-first daemon for AI coding assistants."""
     if ctx.invoked_subcommand == "start":
         load_bootstrap(str(get_gobby_home() / "bootstrap.yaml"))
-    runtime = CliRuntime(
-        config_file=config,
-        config_loader=lambda config_file, database: load_full_config_from_db(
-            config_file,
-            database=database,
-        ),
-    )
+    runtime = CliRuntime(config_file=config)
     ctx.obj = runtime
     ctx.call_on_close(runtime.close)
 

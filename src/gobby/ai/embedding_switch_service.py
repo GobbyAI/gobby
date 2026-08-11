@@ -22,11 +22,6 @@ from gobby.ai.embedding_switch_runner import (
     _provider_api_base,
     detect_provider_from_config,
 )
-from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_BASE_KEY,
-    AI_EMBEDDING_CATALOG_KEY,
-    AI_EMBEDDING_DIM_KEY,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +66,7 @@ class EmbeddingSwitchCoordinator:
         config_store: Any,
         db: Any,
         fence: Any,
+        config_runtime: Any | None = None,
         runner_factory: RunnerFactory | None = None,
         start_journal: Callable[..., Any] | None = None,
         load_journal: Callable[[], Any | None] | None = None,
@@ -78,7 +74,8 @@ class EmbeddingSwitchCoordinator:
         self.config_store = config_store
         self.db = db
         self.fence = fence
-        self._runner_factory = runner_factory or _default_runner_factory
+        self.config_runtime = config_runtime
+        self._runner_factory = runner_factory
         self._start_journal = start_journal or self._start_default_journal
         self._load_journal = load_journal or (lambda: get_switch_status(config_store))
         self._lock = asyncio.Lock()
@@ -101,7 +98,8 @@ class EmbeddingSwitchCoordinator:
     async def start(self, catalog_key: str, provider: str | None) -> SwitchOperationStatus:
         async with self._lock:
             self._raise_if_active()
-            provider_name = provider or detect_provider_from_config(self.config_store)
+            config = self._active_config()
+            provider_name = provider or detect_provider_from_config(config)
             journal = self._start_journal(
                 self.config_store,
                 catalog_key,
@@ -185,7 +183,16 @@ class EmbeddingSwitchCoordinator:
         self.control = EmbeddingSwitchControl()
         if str(journal.phase) in (PHASE_FLIPPING, PHASE_ACTIVE, PHASE_GC):
             self.control.mark_flipping_started()
-        runner = self._runner_factory(self.config_store, self.db, self.control, self.fence)
+        if self._runner_factory is None:
+            runner = _default_runner_factory(
+                self.config_store,
+                self.db,
+                self.control,
+                self.fence,
+                self.config_runtime,
+            )
+        else:
+            runner = self._runner_factory(self.config_store, self.db, self.control, self.fence)
         run_id = str(journal.run_id)
         self._run_id = run_id
         task = asyncio.create_task(runner.run(journal))
@@ -213,9 +220,10 @@ class EmbeddingSwitchCoordinator:
             raise EmbeddingSwitchTaskActive(f"Embedding switch {run_id} is already active")
 
     def _start_default_journal(self, _store: Any, catalog_key: str, provider: str) -> Any:
-        current_dim = self.config_store.get(AI_EMBEDDING_DIM_KEY)
-        current_catalog_id = self.config_store.get(AI_EMBEDDING_CATALOG_KEY)
-        current_api_base = self.config_store.get(AI_EMBEDDING_API_BASE_KEY)
+        config = self._active_config()
+        current_dim = config.embeddings.dim
+        current_catalog_id = config.embeddings.catalog_id
+        current_api_base = config.embeddings.api_base
         journal, _spec = start_switch(
             self.config_store,
             catalog_key,
@@ -229,11 +237,26 @@ class EmbeddingSwitchCoordinator:
         )
         return journal
 
+    def _active_config(self) -> Any:
+        if self.config_runtime is None:
+            from gobby.config.app import DaemonConfig
+
+            return DaemonConfig()
+        snapshot = self.config_runtime.snapshot
+        return (snapshot() if callable(snapshot) else snapshot).active
+
 
 def _default_runner_factory(
     config_store: Any,
     db: Any,
     control: EmbeddingSwitchControl,
     fence: Any,
+    config_runtime: Any | None,
 ) -> SwitchRunner:
-    return EmbeddingSwitchRunner(config_store, db, control=control, fence=fence)
+    return EmbeddingSwitchRunner(
+        config_store,
+        db,
+        control=control,
+        fence=fence,
+        config_runtime=config_runtime,
+    )

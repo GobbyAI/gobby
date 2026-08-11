@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any, Protocol, cast
 
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp_models import MCPServer, Tool
 from gobby.utils.datetime import utc_now
@@ -67,8 +68,17 @@ class MCPToolStorageMixin:
         entries = _normalized_tool_entries(tools)
 
         now = utc_now()
+        generation_state = EmbeddingGenerationState(self.db)
         with self.db.transaction() as conn:
+            stale_rows = conn.execute(
+                "SELECT id FROM tools WHERE mcp_server_id = %s",
+                (server.id,),
+            ).fetchall()
             conn.execute("DELETE FROM tools WHERE mcp_server_id = %s", (server.id,))
+            for stale_row in stale_rows:
+                generation_state.append_change(
+                    "tool", str(stale_row["id"]), is_tombstone=True, transaction=conn
+                )
             for tool_name, tool in entries:
                 tool_id = str(uuid.uuid4())
                 input_schema = _tool_input_schema(tool)
@@ -87,6 +97,7 @@ class MCPToolStorageMixin:
                         now,
                     ),
                 )
+                generation_state.append_change("tool", tool_id, transaction=conn)
 
         return len(entries)
 

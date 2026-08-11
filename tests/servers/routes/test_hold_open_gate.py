@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from starlette.datastructures import State
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.mcp.hook_hold_open import MAX_PENDING_PER_SESSION, _maybe_hold_open
 from gobby.storage.sessions import SessionManager
@@ -86,7 +87,6 @@ def test_rule_denial_short_circuits_before_web_chat_auto_approval(
 ) -> None:
     """A rule deny wins even when hold-open would auto-approve the tool."""
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -95,7 +95,7 @@ def test_rule_denial_short_circuits_before_web_chat_auto_approval(
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
     mock_hook_manager = MagicMock()
     server.app.state.hook_manager = mock_hook_manager
@@ -130,7 +130,6 @@ def test_allowed_result_still_uses_web_chat_hold_open(
     session_storage: SessionManager,
 ) -> None:
     services = ServiceContainer(
-        config=None,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -139,7 +138,7 @@ def test_allowed_result_still_uses_web_chat_hold_open(
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
     mock_hook_manager = MagicMock()
     server.app.state.hook_manager = mock_hook_manager

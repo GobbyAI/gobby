@@ -21,10 +21,12 @@ import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
+from gobby.config.app import DaemonConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from tests._timing import wait_for_async_condition
+from tests.config_runtime_helpers import static_runtime_capture
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -46,6 +48,12 @@ def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
             await asyncio.sleep(0)
 
     return AsyncMock(side_effect=serve)
+
+
+def _runner_with_static_runtime() -> GobbyRunner:
+    runner = GobbyRunner()
+    runner.config_runtime._bundle = static_runtime_capture(DaemonConfig())()
+    return runner
 
 
 def test_pipeline_heartbeat_without_startup_project_is_cross_project(
@@ -108,7 +116,7 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
 
             async def stop_after_mcp_connect() -> None:
                 runner._shutdown_requested = True
@@ -145,7 +153,7 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner._shutdown_requested = True
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
@@ -174,7 +182,7 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner._shutdown_requested = True
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
@@ -215,7 +223,7 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
 
             async def stop_after_mcp_connect() -> None:
                 runner._shutdown_requested = True
@@ -261,7 +269,7 @@ class TestGobbyRunnerRun:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
 
             assert runner.http_server.websocket_server == mock_ws_server
             assert mock_http.websocket_server == mock_ws_server
@@ -355,12 +363,15 @@ class TestInitSubsystems:
                 self,
                 *,
                 services: object,
+                startup_config: object,
                 port: int,
                 test_mode: bool,
                 codex_client: object | None,
+                bootstrap_config: object,
             ) -> None:
                 http_init.update(
                     services=services,
+                    startup_config=startup_config,
                     port=port,
                     test_mode=test_mode,
                     codex_client=codex_client,
@@ -393,12 +404,14 @@ class TestInitSubsystems:
             pass
 
         runner = RunnerStub()
-        runner.config = config
+        runner.startup_config = config
+        runner.bootstrap_config = config
         runner.codex_client = None
-        runner.text_generation_service = build_daemon_text_generation_service(
+        text_generation_service = build_daemon_text_generation_service(
             config,
             registry=registry,
         )
+        runner.text_generation_service = text_generation_service
         runner.database = object()
         runner.db_executor = None
         runner.worktree_delete_executor = None
@@ -439,6 +452,7 @@ class TestInitSubsystems:
         runner.skill_manager = None
         runner.hub_manager = None
         runner.config_store = None
+        runner.config_runtime = SimpleNamespace(capture=static_runtime_capture(config))
         runner.prompt_manager = None
         runner.tool_chat_service = None
         runner._dev_mode = False
@@ -466,7 +480,7 @@ class TestInitSubsystems:
         assert web_chat_init["codex_client"] is fake_client
         assert http_init["codex_client"] is fake_client
         services = cast(ServiceContainer, http_init["services"])
-        assert services.text_generation_service is runner.text_generation_service
+        assert services.text_generation_service is text_generation_service
         assert services.llm_service is None
         assert services.provider_capability_service is capability_service
         capability_service.prepare.assert_called_once_with()
@@ -495,6 +509,23 @@ class TestInitSubsystems:
                 bind_host="localhost",
                 code_index=SimpleNamespace(enabled=False),
             ),
+            config_runtime=SimpleNamespace(
+                capture=static_runtime_capture(
+                    DaemonConfig(
+                        embeddings={
+                            "model": "nomic-embed-text",
+                            "api_base": "http://localhost:1234/v1",
+                            "api_key": "lm-studio",
+                            "dim": 768,
+                        },
+                        code_index={"enabled": False},
+                    )
+                )
+            ),
+            startup_config=SimpleNamespace(
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost")
+            ),
+            agent_runner=None,
             memory_manager=None,
             metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
             vector_store=None,
@@ -522,7 +553,7 @@ class TestInitSubsystems:
                 "gobby.cli.services.get_local_embedding_service_failure_reason",
                 return_value="LM Studio server start failed: boom",
             ),
-            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
         ):
             mock_tmux_manager.return_value.health_check = AsyncMock()
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
@@ -561,6 +592,18 @@ class TestInitSubsystems:
                 bind_host="localhost",
                 code_index=SimpleNamespace(enabled=False),
             ),
+            config_runtime=SimpleNamespace(
+                capture=static_runtime_capture(
+                    DaemonConfig(
+                        databases={"qdrant": {"url": "http://localhost:6333"}},
+                        code_index={"enabled": False},
+                    )
+                )
+            ),
+            startup_config=SimpleNamespace(
+                ui=SimpleNamespace(enabled=False, mode="prod", port=5173, host="localhost")
+            ),
+            agent_runner=None,
             memory_manager=None,
             metrics_manager=SimpleNamespace(cleanup_old_metrics=MagicMock(return_value=0)),
             vector_store=vector_store,
@@ -579,7 +622,7 @@ class TestInitSubsystems:
 
         with (
             patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)),
-            patch("gobby.agents.tmux.session_manager.TmuxSessionManager") as mock_tmux_manager,
+            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
         ):
             mock_tmux_manager.return_value.health_check = AsyncMock()
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
@@ -702,6 +745,9 @@ class TestInitSubsystems:
         tracker = RecordingTracker()
         runner = SimpleNamespace(
             config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
+            config_runtime=SimpleNamespace(
+                capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
+            ),
             http_server=SimpleNamespace(services=services),
             message_processor=SimpleNamespace(start=AsyncMock(side_effect=message_start)),
             communications_manager=SimpleNamespace(
@@ -843,6 +889,7 @@ class TestShutdownDaemonServices:
             message_processor=None,
             communications_manager=None,
             config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
+            startup_config=SimpleNamespace(ui=SimpleNamespace(enabled=False, mode="production")),
             memory_manager=None,
             vector_store=None,
             mcp_proxy=SimpleNamespace(disconnect_all=AsyncMock()),
@@ -854,6 +901,9 @@ class TestShutdownDaemonServices:
         services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
         runner = SimpleNamespace(
             config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
+            config_runtime=SimpleNamespace(
+                capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
+            ),
             http_server=SimpleNamespace(services=services),
         )
 
@@ -1457,10 +1507,25 @@ class TestShutdownDaemonServices:
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.0,
+            0.05,
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
+        deadline_expired = asyncio.Event()
+        block_cleanup = asyncio.Event()
+
+        async def wait_for_overall_deadline(*_args: object, **_kwargs: object) -> None:
+            try:
+                await block_cleanup.wait()
+            except asyncio.CancelledError:
+                deadline_expired.set()
+                raise
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_run_async_shutdown_cleanup",
+            wait_for_overall_deadline,
+        )
 
         def blocked_delete(boundary: DestructiveBoundary) -> None:
             assert boundary.begin_mutation()
@@ -1493,6 +1558,7 @@ class TestShutdownDaemonServices:
                 )
             )
             await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
+            await asyncio.wait_for(deadline_expired.wait(), timeout=1.0)
             runner.database.close.assert_not_called()
 
             release_worker.set()
@@ -2093,7 +2159,7 @@ class TestRunGobbyFunction:
         ):
             mock_runner = AsyncMock()
             mock_runner.run = AsyncMock()
-            mock_runner_cls.return_value = mock_runner
+            mock_runner_cls.create = AsyncMock(return_value=mock_runner)
 
             ownership = FailOpenPidOwnership("test")
             await run_gobby(
@@ -2102,7 +2168,7 @@ class TestRunGobbyFunction:
                 ownership_resolution=ownership,
             )
 
-            mock_runner_cls.assert_called_once_with(
+            mock_runner_cls.create.assert_awaited_once_with(
                 config_path=Path("/tmp/config.yaml"), verbose=True
             )
             mock_runner.run.assert_called_once_with(ownership_resolution=ownership)
@@ -2121,19 +2187,21 @@ class TestRunGobbyFunction:
         database = MagicMock()
         db_executor = MagicMock()
 
-        def init_storage(runner: object, *_args: object) -> None:
-            runner.database = database  # type: ignore[attr-defined]
-            runner.db_executor = db_executor  # type: ignore[attr-defined]
+        def init_storage(runner: GobbyRunner, *_args: object) -> None:
+            runner.startup_config = DaemonConfig()
+            runner.database = database
+            runner.db_executor = db_executor
 
         with (
             patch("gobby.runner_init.init_storage_and_config", side_effect=init_storage),
+            patch("gobby.runner_init.init_runtime_capacity"),
             patch("gobby.runner_init.init_services", side_effect=RuntimeError("init failed")),
             patch("gobby.runner_init.init_orchestration"),
             patch("gobby.runner_init.init_servers"),
             patch("gobby.agents.pty_reader.PTYReaderManager") as pty_reader_manager,
             pytest.raises(RuntimeError, match="init failed"),
         ):
-            GobbyRunner()
+            _runner_with_static_runtime()
 
         db_executor.shutdown.assert_called_once_with()
         db_executor.join.assert_called_once_with()
@@ -2219,7 +2287,7 @@ class TestAgentEventBroadcasting:
             with ExitStack() as stack:
                 [stack.enter_context(p) for p in patches]
 
-                GobbyRunner()
+                _runner_with_static_runtime()
 
                 assert rb._agent_event_callback is not None
         finally:
@@ -2237,7 +2305,7 @@ class TestAgentEventBroadcasting:
             with ExitStack() as stack:
                 [stack.enter_context(p) for p in patches]
 
-                GobbyRunner()
+                _runner_with_static_runtime()
 
                 assert rb._agent_event_callback is None
         finally:
@@ -2499,7 +2567,7 @@ class TestMetricsCleanupLoop:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner.metrics_manager.cleanup_old_metrics = MagicMock(return_value=5)
 
             shutdown_requested = False
@@ -2538,7 +2606,7 @@ class TestMetricsCleanupLoop:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner.metrics_manager.cleanup_old_metrics = MagicMock(
                 side_effect=[Exception("Cleanup error"), 0]
             )
@@ -2580,7 +2648,7 @@ class TestMetricsCleanupLoop:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner.metrics_manager.cleanup_old_metrics = MagicMock()
 
             async def cancelled_sleep(_seconds: float) -> None:
@@ -2620,14 +2688,19 @@ class TestMetricsCleanupLoop:
         async def sleep(delay: float) -> None:
             sleep_delays.append(delay)
 
-        await tool_result_cleanup_loop(
-            SimpleNamespace(cleanup_expired=cleanup_expired),
-            lambda: shutdown_requested,
-            run_db=run_db,
-            interval_seconds=1,
-            startup_delay_seconds=0,
-            sleep=sleep,
-        )
+        with patch(
+            "gobby.storage.tool_results.ToolResultStore",
+            return_value=SimpleNamespace(cleanup_expired=cleanup_expired),
+        ):
+            await tool_result_cleanup_loop(
+                object(),
+                lambda: shutdown_requested,
+                capture_bundle=static_runtime_capture(DaemonConfig()),
+                run_db=run_db,
+                interval_seconds=1,
+                startup_delay_seconds=0,
+                sleep=sleep,
+            )
 
         assert cleanup_calls == 1
         assert shutdown_requested is True
@@ -3037,6 +3110,91 @@ class TestAgentEventBroadcastingCallback:
             rb._agent_event_callback = old_callback
 
 
+class TestRuntimeServiceIdentityAfterRebuild:
+    """Resolver-converted consumers observe rebuilt runtime services."""
+
+    def test_session_lifecycle_manager_observes_rebuilt_services(self) -> None:
+        from gobby.sessions.lifecycle import SessionLifecycleManager
+
+        services: dict[str, object] = {}
+        capture = static_runtime_capture(DaemonConfig(), services=services)
+        with patch("gobby.sessions.lifecycle.SessionManager"):
+            manager = SessionLifecycleManager(db=MagicMock(), capture_bundle=capture)
+
+        assert manager.memory_manager is None
+        assert manager.llm_service is None
+
+        first_memory = SimpleNamespace(memory_manager=object())
+        first_ai = SimpleNamespace(llm_service=object())
+        services["memory_services"] = first_memory
+        services["ai_services"] = first_ai
+        assert manager.memory_manager is first_memory.memory_manager
+        assert manager.llm_service is first_ai.llm_service
+
+        rebuilt_memory = SimpleNamespace(memory_manager=object())
+        rebuilt_ai = SimpleNamespace(llm_service=object())
+        services["memory_services"] = rebuilt_memory
+        services["ai_services"] = rebuilt_ai
+        assert manager.memory_manager is rebuilt_memory.memory_manager
+        assert manager.llm_service is rebuilt_ai.llm_service
+
+
+class TestMessageProcessorPreparedService:
+    """Lifecycle contract for the rebuilt message-processor subscriber."""
+
+    @pytest.mark.asyncio
+    async def test_activate_rewires_refs_and_schedules_start(self) -> None:
+        from gobby.runner_init.services import _build_message_processor
+
+        config = MagicMock()
+        config.message_tracking.enabled = True
+        config.message_tracking.poll_interval = 5.0
+        hook_manager = MagicMock()
+        processor = MagicMock()
+        processor.start = AsyncMock()
+        processor.stop = AsyncMock()
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            session_manager=MagicMock(),
+            db_executor=SimpleNamespace(run=AsyncMock()),
+            websocket_server=MagicMock(),
+            http_server=SimpleNamespace(_hook_manager=hook_manager),
+            message_processor=None,
+        )
+        loop = asyncio.get_running_loop()
+
+        with patch(
+            "gobby.runner_init.services.SessionMessageProcessor",
+            return_value=processor,
+        ):
+            prepared = _build_message_processor(runner, config, loop)
+
+        assert prepared is not None
+        assert prepared.value is processor
+        processor.start.assert_not_called()
+
+        prepared.activate()
+        await asyncio.sleep(0)
+
+        assert runner.message_processor is processor
+        assert processor.session_manager is runner.session_manager
+        assert processor.websocket_server is runner.websocket_server
+        processor.set_hook_manager.assert_called_once_with(hook_manager)
+        processor.start.assert_awaited_once()
+
+        await asyncio.to_thread(prepared.dispose)
+        processor.stop.assert_awaited_once()
+
+    def test_disabled_tracking_builds_no_service(self) -> None:
+        from gobby.runner_init.services import _build_message_processor
+
+        config = MagicMock()
+        config.message_tracking.enabled = False
+        runner = SimpleNamespace()
+
+        assert _build_message_processor(runner, config, MagicMock()) is None
+
+
 class TestMessageProcessorWebSocketIntegration:
     """Tests for message processor and WebSocket server integration."""
 
@@ -3045,6 +3203,10 @@ class TestMessageProcessorWebSocketIntegration:
         mock_config_with_websocket.message_tracking = MagicMock()
         mock_config_with_websocket.message_tracking.enabled = True
         mock_config_with_websocket.message_tracking.poll_interval = 5.0
+        # Preset before create_base_patches: the safe defaults disable
+        # communications, and this test asserts the enabled wiring path.
+        mock_config_with_websocket.communications = MagicMock()
+        mock_config_with_websocket.communications.enabled = True
 
         mock_ws_server = AsyncMock()
         mock_ws_server.start = AsyncMock()
@@ -3073,7 +3235,7 @@ class TestMessageProcessorWebSocketIntegration:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
 
             assert runner.message_processor is not None
             assert runner.message_processor.websocket_server == mock_ws_server
@@ -3095,6 +3257,7 @@ class TestShutdownLoop:
             request_shutdown=MagicMock(),
             _shutdown_requested=False,
             config=mock_config,
+            bootstrap_config=mock_config,
             http_server=SimpleNamespace(
                 app=MagicMock(),
                 port=8765,
@@ -3168,7 +3331,7 @@ class TestShutdownLoop:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
@@ -3331,7 +3494,7 @@ class TestMetricsCleanupLoopDetailed:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             cleanup_call_count = 0
 
             def mock_cleanup(retention_days: int = 30):
@@ -3380,7 +3543,7 @@ class TestMetricsCleanupLoopDetailed:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             runner.metrics_manager.cleanup_old_metrics = MagicMock(return_value=10)
 
             shutdown_requested = False
@@ -3419,7 +3582,7 @@ class TestMetricsCleanupLoopDetailed:
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
 
-            runner = GobbyRunner()
+            runner = _runner_with_static_runtime()
             call_count = 0
 
             def mock_cleanup(retention_days: int = 30):
@@ -4087,6 +4250,9 @@ class TestAgentRestartRecoveryHelpers:
             db_executor=None,
             session_manager=MagicMock(),
             config=MagicMock(),
+            config_runtime=SimpleNamespace(
+                capture=static_runtime_capture(DaemonConfig()),
+            ),
             completion_registry=MagicMock(),
         )
         resume = AsyncMock(
@@ -4105,7 +4271,7 @@ class TestAgentRestartRecoveryHelpers:
             ),
         ):
             resumed = await runner_lifecycle_agents._retry_parked_non_task_resumes(
-                cast(GobbyRunner, runner)
+                cast(Any, runner)
             )
 
         assert resumed == 1

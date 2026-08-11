@@ -11,6 +11,7 @@ from typing import cast
 
 import pytest
 
+from gobby.config.ai import ModelMetadataAlias
 from gobby.providers.capabilities.collectors import CapabilityCollector, SourceSpec
 from gobby.providers.capabilities.collectors.claude import (
     EFFORT_DOCS_URL,
@@ -167,14 +168,6 @@ class _MetadataStore:
         return self.contexts.get(model)
 
 
-class _ConfigStore:
-    def __init__(self, aliases: list[dict[str, str]] | None = None) -> None:
-        self.aliases = aliases or []
-
-    def get(self, key: str) -> object:
-        return self.aliases
-
-
 class _CoverageAuditorSpy:
     def __init__(self) -> None:
         self.sync_calls = 0
@@ -308,7 +301,7 @@ def test_coverage_audit_bounds_deduplicates_and_logs_recovery(
     model_ids = tuple(f"model-{index:02d}" for index in range(12))
     store = _MemoryStore(_snapshot("synthetic", *model_ids, context_length=None))
     metadata = _MetadataStore()
-    auditor = ModelMetadataCoverageAuditor(store, metadata, _ConfigStore())
+    auditor = ModelMetadataCoverageAuditor(store, metadata, [])
 
     with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
@@ -341,16 +334,14 @@ def test_coverage_audit_warns_for_missing_alias_target_and_logs_recovery(
 ) -> None:
     store = _MemoryStore(_snapshot("synthetic", "provider-model", context_length=None))
     metadata = _MetadataStore()
-    config = _ConfigStore(
-        [
-            {
-                "provider": "synthetic",
-                "provider_model_id": "provider-model",
-                "openrouter_model_id": "vendor/registry-model",
-            }
-        ]
-    )
-    auditor = ModelMetadataCoverageAuditor(store, metadata, config)
+    aliases = [
+        ModelMetadataAlias(
+            provider="synthetic",
+            provider_model_id="provider-model",
+            openrouter_model_id="vendor/registry-model",
+        )
+    ]
+    auditor = ModelMetadataCoverageAuditor(store, metadata, aliases)
 
     with caplog.at_level(logging.INFO, logger="gobby.providers.capabilities.coverage"):
         auditor.audit()
@@ -374,7 +365,7 @@ def test_coverage_audit_skips_configured_local_models(
     auditor = ModelMetadataCoverageAuditor(
         store,
         _MetadataStore(),
-        _ConfigStore(),
+        [],
         excluded_models=lambda: frozenset({("qwen", local_model)}),
     )
 
@@ -394,7 +385,7 @@ def test_coverage_audit_skips_provider_using_local_endpoint(
     auditor = ModelMetadataCoverageAuditor(
         store,
         _MetadataStore(),
-        _ConfigStore(),
+        [],
         excluded_providers=lambda: frozenset({"synthetic"}),
     )
 
@@ -499,7 +490,9 @@ async def test_authentication_required_refresh_is_informational(
         await coordinator.refresh_all()
 
     refresh_records = [
-        record for record in caplog.records if "Provider capability refresh failed" in record.message
+        record
+        for record in caplog.records
+        if "Provider capability refresh failed" in record.message
     ]
     assert len(refresh_records) == 1
     assert refresh_records[0].levelno == logging.INFO

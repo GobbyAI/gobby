@@ -30,7 +30,7 @@ def mock_runtime_hub_database():
 # All lazy imports in sync() need to be patched at the source module:
 #   from gobby.utils.dev import is_dev_mode          -> gobby.utils.dev.is_dev_mode
 #   from gobby.sync.integrity import ...             -> gobby.sync.integrity.*
-#   from gobby.config.app import load_config         -> gobby.config.app.load_config
+#   from gobby.cli.runtime import require_cli_database -> gobby.cli.runtime.require_cli_database
 #   from gobby.cli.runtime import require_cli_database -> gobby.cli.runtime.require_cli_database
 #   from gobby.cli.installers.shared import sync_bundled_content_to_db -> gobby.cli.installers.shared.sync_bundled_content_to_db
 
@@ -41,7 +41,7 @@ def mock_runtime_hub_database():
 class TestSyncDevMode:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     def test_repo_subdirectory_skips_integrity_check(
         self,
@@ -73,7 +73,7 @@ class TestSyncDevMode:
         assert mock_sync.call_args.kwargs["skip_types"] is None
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_dev_mode_sync_items(
@@ -96,7 +96,7 @@ class TestSyncDevMode:
         assert "Synced 5" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_dev_mode_no_changes(
@@ -119,7 +119,7 @@ class TestSyncDevMode:
         assert "No changes" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_dev_mode_verbose(
@@ -146,7 +146,7 @@ class TestSyncDevMode:
         assert "skills: 2 items" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_dev_mode_with_errors(
@@ -197,7 +197,7 @@ class TestSyncVerifyOnly:
 # ---------------------------------------------------------------------------
 class TestSyncProductionMode:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.sync.integrity.get_dirty_content_types", return_value=set())
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -333,7 +333,7 @@ class TestSyncProductionMode:
         assert "All bundled content is clean" in result.output
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=False)
@@ -366,7 +366,7 @@ class TestSyncProductionMode:
         assert mock_sync.call_args.kwargs["skip_types"] == {"pipelines"}
 
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.sync.integrity.verify_bundled_integrity")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=False)
@@ -406,7 +406,7 @@ class TestSyncProductionMode:
 # ---------------------------------------------------------------------------
 class TestSyncTypeFilter:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_type_filter(
@@ -436,21 +436,17 @@ class TestSyncTypeFilter:
 # DB not found
 # ---------------------------------------------------------------------------
 class TestSyncDbNotFound:
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=True)
     def test_db_not_found(
         self,
         _dev: MagicMock,
         _install: MagicMock,
-        mock_load: MagicMock,
-        mock_runtime_hub_database: MagicMock,
+        mock_require_database: MagicMock,
         runner: CliRunner,
     ) -> None:
-        mock_config = MagicMock()
-        mock_config.database_url = "/nonexistent/path/db.postgres"
-        mock_load.return_value = mock_config
-        mock_runtime_hub_database.side_effect = RuntimeError("not found")
+        mock_require_database.side_effect = RuntimeError("not found")
 
         result = runner.invoke(sync, [], catch_exceptions=False)
         assert result.exit_code == 1
@@ -462,7 +458,7 @@ class TestSyncDbNotFound:
 # ---------------------------------------------------------------------------
 class TestSyncForce:
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.utils.dev.is_dev_mode", return_value=False)
     def test_force_skips_integrity(

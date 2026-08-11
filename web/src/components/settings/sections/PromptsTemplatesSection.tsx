@@ -36,12 +36,6 @@ import type {
 const SECTION_ID: SettingsSectionId = 'prompts-templates'
 const OWNED_PATHS: readonly string[] = []
 
-type ImportBundle = {
-  config_store?: Record<string, unknown>
-  config?: Record<string, unknown>
-  prompts?: Record<string, string>
-}
-
 type SurfaceStatus = { ok: boolean; message: string }
 
 /**
@@ -457,9 +451,7 @@ function TemplateGroup({ content, onSave }: TemplateGroupProps) {
 
 interface BackupRestoreGroupProps {
   onExport?: () => Promise<ConfigExportBundle | null>
-  onImport?: (
-    bundle: ImportBundle,
-  ) => Promise<{ success: boolean; summary: string }>
+  onImport?: (content: string) => Promise<{ success: boolean; summary: string }>
 }
 
 function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
@@ -489,13 +481,13 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
         setStatus({ ok: false, message: 'Export failed.' })
         return
       }
-      const blob = new Blob([JSON.stringify(bundle, null, 2)], {
-        type: 'application/json',
+      const blob = new Blob([bundle.content], {
+        type: 'application/yaml',
       })
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
-      link.download = `gobby-config-${bundle.exported_at.slice(0, 10)}.json`
+      link.download = `gobby-config-revision-${bundle.revision}.yaml`
       link.click()
       URL.revokeObjectURL(url)
       setStatus({ ok: true, message: 'Configuration exported.' })
@@ -516,12 +508,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
     setBusy(true)
     setStatus(null)
     try {
-      const parsed = JSON.parse(await file.text()) as Partial<ImportBundle>
-      const result = await onImport({
-        config_store: parsed.config_store,
-        config: parsed.config,
-        prompts: parsed.prompts,
-      })
+      const result = await onImport(await file.text())
       setStatus({
         ok: result.success,
         message: result.success
@@ -541,7 +528,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
   return (
     <Subsection
       title="Backup & restore"
-      hint="Export the config store, secret metadata, and prompt overrides as a JSON bundle, or import a bundle to restore them. Importing overwrites matching keys."
+      hint="Export or replace the desired daemon configuration as a validated YAML document."
     >
       <div className="flex flex-wrap gap-2">
         <DetailActionButton
@@ -562,7 +549,7 @@ function BackupRestoreGroup({ onExport, onImport }: BackupRestoreGroupProps) {
       <Input
         ref={fileInputRef}
         type="file"
-        accept=".json,application/json"
+        accept=".yaml,.yml,application/yaml,text/yaml"
         aria-label="Import configuration file"
         wrapperClassName="sr-only"
         className="sr-only"

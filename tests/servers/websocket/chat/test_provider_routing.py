@@ -38,6 +38,7 @@ def _make_mixin(**overrides: Any) -> ChatSessionMixin:
     mixin.broadcast_session_event = AsyncMock(return_value=None)
     mixin.hook_broadcaster = None
     mixin.web_chat_runtime_manager = None
+    mixin.config_runtime = None
     mixin.session_manager = MagicMock()
     mixin.session_manager.db = MagicMock()
     mixin.session_manager.register = MagicMock(

@@ -60,9 +60,7 @@ def test_status_no_variables(runner, mock_session_var_manager, mock_resolve_sess
 
 
 def test_reload_workflows_success(runner) -> None:
-    with patch("gobby.config.app.load_config") as mock_conf:
-        mock_conf.return_value.daemon_port = 60887
-
+    with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with patch("psutil.process_iter") as mock_iter:
             proc = Mock()
             proc.cmdline.return_value = ["python", "-m", "gobby", "start"]
@@ -79,9 +77,7 @@ def test_reload_workflows_success(runner) -> None:
 
 
 def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:
-    with patch("gobby.config.app.load_config") as mock_conf:
-        mock_conf.return_value.daemon_port = 60887
-
+    with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with patch("psutil.process_iter") as mock_iter:
             proc = Mock()
             proc.cmdline.return_value = ["python", "-m", "gobby", "start"]
@@ -104,9 +100,7 @@ def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:
 
 
 def test_reload_workflows_fallback(runner) -> None:
-    with patch("gobby.config.app.load_config") as mock_conf:
-        mock_conf.return_value.daemon_port = 60887
-
+    with patch("gobby.utils.daemon_url.daemon_url", return_value="http://127.0.0.1:60887"):
         with (
             patch("psutil.process_iter", return_value=[]),
             patch("gobby.cli.workflows.common.get_workflow_loader") as m_loader,

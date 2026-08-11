@@ -23,6 +23,53 @@ fn temp_home() -> TempDir {
     tempfile::tempdir().expect("temp gobby home")
 }
 
+/// Env override guard on the crate-wide `TEST_ENV_LOCK`, keeping this test
+/// process on exactly one env lock so overrides can never interleave with
+/// the other guarded env-mutating tests in this binary.
+struct EnvVarsGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvVarsGuard {
+    fn set(vars: &[(&'static str, Option<&str>)]) -> Self {
+        let lock = crate::config::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let saved = vars
+            .iter()
+            .map(|(name, _)| (*name, std::env::var_os(name)))
+            .collect();
+        // SAFETY: TEST_ENV_LOCK serializes every env mutation in this test
+        // process, and the guard restores the saved values before releasing
+        // the lock.
+        unsafe {
+            for (name, value) in vars {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+        Self { _lock: lock, saved }
+    }
+}
+
+impl Drop for EnvVarsGuard {
+    fn drop(&mut self) {
+        // SAFETY: the guard still holds TEST_ENV_LOCK while restoring the
+        // original values.
+        unsafe {
+            for (name, value) in &self.saved {
+                match value {
+                    Some(value) => std::env::set_var(name, value),
+                    None => std::env::remove_var(name),
+                }
+            }
+        }
+    }
+}
+
 fn has_header(request: &str, name: &str, value: &str) -> bool {
     request.lines().any(|line| {
         let Some((header_name, header_value)) = line.split_once(':') else {
@@ -180,20 +227,20 @@ fn managed_tool_fetch_uses_typed_bundle_and_bound_identity_headers() {
     }"#;
     let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
 
-    let (mut daemon, routing) = temp_env::with_vars(
-        [
-            (
-                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
-                Some("/tmp/managed-bootstrap.yaml"),
-            ),
-            ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
-            ("GOBBY_MANAGED_EXECUTION_ID", Some("tool-123")),
-            ("GOBBY_PROJECT_ID", Some("project-123")),
-            ("GOBBY_SESSION_ID", Some("session-123")),
-        ],
-        || daemon_mode_layers_at(&base_url, home.path()),
-    )
-    .expect("fetch service capability bundle");
+    let env_guard = EnvVarsGuard::set(&[
+        (
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+            Some("/tmp/managed-bootstrap.yaml"),
+        ),
+        ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
+        ("GOBBY_MANAGED_EXECUTION_ID", Some("tool-123")),
+        ("GOBBY_AGENT_RUN_ID", None),
+        ("GOBBY_PROJECT_ID", Some("project-123")),
+        ("GOBBY_SESSION_ID", Some("session-123")),
+    ]);
+    let (mut daemon, routing) =
+        daemon_mode_layers_at(&base_url, home.path()).expect("fetch service capability bundle");
+    drop(env_guard);
 
     assert!(routing.is_none());
     assert_eq!(
@@ -233,7 +280,7 @@ fn managed_bundle_rejects_unapproved_config_keys() {
             "session_id": "session-123",
             "expires_at": 4102444800
         },
-        "config": {"ai.embeddings.api_key": "shared-secret"},
+        "config": {"agent_sandbox.enabled": "unapproved-value"},
         "services": {
             "embeddings": {"mode": "brokered", "operations": []},
             "falkordb": {"mode": "brokered", "operations": []},
@@ -242,25 +289,92 @@ fn managed_bundle_rejects_unapproved_config_keys() {
     }"#;
     let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
 
-    let error = temp_env::with_vars(
-        [
-            (
-                "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
-                Some("/tmp/managed-bootstrap.yaml"),
-            ),
-            ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
-            ("GOBBY_AGENT_RUN_ID", Some("run-123")),
-            ("GOBBY_PROJECT_ID", Some("project-123")),
-            ("GOBBY_SESSION_ID", Some("session-123")),
-        ],
-        || daemon_mode_layers_at(&base_url, home.path()),
-    )
-    .expect_err("unapproved key must fail closed");
+    let env_guard = EnvVarsGuard::set(&[
+        (
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+            Some("/tmp/managed-bootstrap.yaml"),
+        ),
+        ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
+        ("GOBBY_AGENT_RUN_ID", Some("run-123")),
+        ("GOBBY_MANAGED_EXECUTION_ID", None),
+        ("GOBBY_PROJECT_ID", Some("project-123")),
+        ("GOBBY_SESSION_ID", Some("session-123")),
+    ]);
+    let error =
+        daemon_mode_layers_at(&base_url, home.path()).expect_err("unapproved key must fail closed");
+    drop(env_guard);
 
     assert!(matches!(error, EffectiveConfigError::Contract { .. }));
-    assert!(error.to_string().contains("ai.embeddings.api_key"));
-    assert!(!error.to_string().contains("shared-secret"));
+    assert!(error.to_string().contains("agent_sandbox.enabled"));
+    assert!(!error.to_string().contains("unapproved-value"));
     join_request(request);
+}
+
+#[test]
+#[serial_test::serial]
+fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
+    // `ai.embeddings.api_key` is deliberately machine-exportable (its stored
+    // form is a `$secret:` reference), so the guard for managed bundles is
+    // the value-level unresolved-reference rejection, not the key gate.
+    let home = temp_home();
+    let body = r#"{
+        "version": 1,
+        "execution": {
+            "owner_kind": "agent_run",
+            "execution_id": "run-123",
+            "project_id": "project-123",
+            "session_id": "session-123",
+            "expires_at": 4102444800
+        },
+        "config": {"ai.embeddings.api_key": "$secret:embeddings_api_key"},
+        "services": {
+            "embeddings": {"mode": "brokered", "operations": []},
+            "falkordb": {"mode": "brokered", "operations": []},
+            "qdrant": {"mode": "brokered", "operations": []}
+        }
+    }"#;
+    let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
+
+    let env_guard = EnvVarsGuard::set(&[
+        (
+            "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
+            Some("/tmp/managed-bootstrap.yaml"),
+        ),
+        ("GOBBY_AGENT_API_TOKEN", Some("agent-token")),
+        ("GOBBY_AGENT_RUN_ID", Some("run-123")),
+        ("GOBBY_MANAGED_EXECUTION_ID", None),
+        ("GOBBY_PROJECT_ID", Some("project-123")),
+        ("GOBBY_SESSION_ID", Some("session-123")),
+    ]);
+    let error = daemon_mode_layers_at(&base_url, home.path())
+        .expect_err("unresolved secret reference must fail closed");
+    drop(env_guard);
+
+    assert!(matches!(error, EffectiveConfigError::Contract { .. }));
+    let display = error.to_string();
+    assert!(display.contains("ai.embeddings.api_key"));
+    assert!(display.contains("unresolved secret reference"));
+    join_request(request);
+}
+
+#[test]
+#[serial_test::serial]
+fn daemon_config_disable_short_circuits_cached_reads() {
+    let _env = EnvVarsGuard::set(&[
+        (DAEMON_CONFIG_DISABLE_ENV, Some("1")),
+        ("GOBBY_DAEMON_URL", Some("http://127.0.0.1:1")),
+    ]);
+
+    assert!(
+        daemon_mode_layers()
+            .expect("disabled reads report no daemon config")
+            .is_none()
+    );
+    assert!(
+        daemon_dsn()
+            .expect("disabled dsn reads report no daemon config")
+            .is_none()
+    );
 }
 
 #[test]

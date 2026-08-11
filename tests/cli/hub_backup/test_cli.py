@@ -16,7 +16,8 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NamedTuple
+from types import SimpleNamespace
+from typing import Any, NamedTuple, cast
 from unittest.mock import MagicMock
 
 import click
@@ -61,9 +62,11 @@ STARTING_HEAD = 187
 
 ROW_PROBES = {"tasks": 1204, "sessions": 88}
 SCHEMA_OBJECTS = {"table": 22, "index": 37}
-# postgres-dump, postgres-globals, one qdrant snapshot, falkordb-rdb, machine
-# identity, and the rule_allow_audit log archive (d41adc20c, #19418).
-NON_VOLUME_ARTIFACTS = 6
+# postgres-dump, postgres-globals, one qdrant snapshot, and falkordb-rdb. The
+# harness home has no machine identity and the runtime fixture points the
+# logging dir at an empty tmp path, so identity and rule_allow_audit archives
+# (d41adc20c, #19418) contribute nothing here.
+NON_VOLUME_ARTIFACTS = 4
 QDRANT_COLLECTION = "gobby_memories"
 QDRANT_SNAPSHOT_RELPATH = f"qdrant/{QDRANT_COLLECTION}.snapshot"
 QDRANT_POINTS = 4211
@@ -421,10 +424,13 @@ def harness(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _Harness:
 
 
 @pytest.fixture
-def runtime() -> CliRuntime:
+def runtime(tmp_path: Path) -> CliRuntime:
     config = DaemonConfig()
     config.databases.qdrant.url = QDRANT_URL
     config.databases.qdrant.api_key = QDRANT_API_KEY
+    # Isolate from the real ~/.gobby/logs so machine-local rule_allow_audit
+    # rotations cannot leak artifacts into backup manifests.
+    config.logging.dir = str(tmp_path / "isolated-logs")
     return CliRuntime(config_file=None, config=config)
 
 
@@ -783,12 +789,22 @@ class TestEpoch:
                 raise RuntimeError("pending destructive migration rejected")
             yield database
 
-        def load_runtime_config(_config_file: str | None, _database: object) -> DaemonConfig:
-            return config
+        class _Repository:
+            def __init__(self, _db: object) -> None:
+                pass
+
+            def read(self, *, resolve_secrets: bool = True) -> Any:
+                return SimpleNamespace(values={})
+
+            def runtime_candidate(self, _overrides: dict[str, object]) -> DaemonConfig:
+                return config
 
         monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
         monkeypatch.setenv(MAINTENANCE_EPOCH_ENV, "e1")
-        runtime = CliRuntime(config_file=None, config_loader=load_runtime_config)
+        runtime = CliRuntime(
+            config_file=None,
+            config_repository_factory=cast(Any, _Repository),
+        )
 
         result = _invoke(runtime, "--output", str(tmp_path / "backup"), "--epoch", "e1")
         runtime.close()

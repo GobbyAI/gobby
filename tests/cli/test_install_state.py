@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -22,11 +23,8 @@ class _ConfigStore:
     def __init__(self, values: dict[str, Any]) -> None:
         self.values = values
 
-    def list_keys(self) -> list[str]:
-        return list(self.values)
-
-    def get(self, key: str) -> Any:
-        return self.values.get(key)
+    def read_snapshot(self) -> SimpleNamespace:
+        return SimpleNamespace(overrides=self.values)
 
 
 class _SecretStore:

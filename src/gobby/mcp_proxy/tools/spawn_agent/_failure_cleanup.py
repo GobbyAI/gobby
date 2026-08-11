@@ -29,6 +29,7 @@ async def cleanup_failed_spawn(
     *,
     completion_registry: Any | None,
     cleanup_isolation: bool,
+    task_manager: Any | None,
     child_session_id: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
@@ -46,7 +47,7 @@ async def cleanup_failed_spawn(
             terminal_reason="spawn_rollback",
             lifecycle_monitor=getattr(runner, "agent_lifecycle_monitor", None),
             completion_registry=completion_registry,
-            task_manager=getattr(runner, "task_manager", None),
+            task_manager=task_manager,
             message=error,
         )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
@@ -61,6 +62,7 @@ async def start_run_or_cleanup(
     *,
     completion_registry: Any | None,
     cleanup_isolation: bool,
+    task_manager: Any | None,
     child_session_id: str | None,
 ) -> dict[str, Any] | None:
     try:
@@ -76,6 +78,7 @@ async def start_run_or_cleanup(
             spawn_config,
             completion_registry=completion_registry,
             cleanup_isolation=cleanup_isolation,
+            task_manager=task_manager,
             child_session_id=child_session_id,
         )
         return {
@@ -100,6 +103,7 @@ async def start_run_or_cleanup(
             spawn_config,
             completion_registry=completion_registry,
             cleanup_isolation=cleanup_isolation,
+            task_manager=task_manager,
             child_session_id=child_session_id,
         )
         return {
@@ -120,6 +124,7 @@ async def start_run_or_cleanup(
         spawn_config,
         completion_registry=completion_registry,
         cleanup_isolation=cleanup_isolation,
+        task_manager=task_manager,
         child_session_id=child_session_id,
     )
     return {

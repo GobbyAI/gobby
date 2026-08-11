@@ -9,7 +9,6 @@ from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.servers.routes.agent_spawn import (
     AgentSpawnRequest,
     AgentSpawnResponse,
-    LaunchDefaultsRequest,
 )
 
 pytestmark = pytest.mark.unit
@@ -47,4 +46,3 @@ def test_spawn_speed_mode_contract() -> None:
         "type": "string",
         "default": "standard",
     }
-    assert "speed_mode" not in LaunchDefaultsRequest.model_fields

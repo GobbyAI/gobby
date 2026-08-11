@@ -284,6 +284,10 @@ class TelemetryMetrics:
             "Lossy adapter response translations by provider and hook",
         )
         self._register_counter(
+            "agent_spawns_total",
+            "Total agent spawn requests",
+        )
+        self._register_counter(
             "agent_lifecycle_dispatch_mutex_refreshed_runs_total",
             "Agent runs whose dispatch mutex leases were refreshed or restored",
         )

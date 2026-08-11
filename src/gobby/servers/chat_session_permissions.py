@@ -33,7 +33,6 @@ from gobby.servers.tool_approvals import (
     load_project_approval_rules,
     normalize_approved_tool_keys,
 )
-from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -385,11 +384,10 @@ class ChatSessionPermissionsMixin:
         return normalized
 
     def _global_approval_rules(self) -> list[str]:
-        session_manager = getattr(self, "_session_manager_ref", None)
-        db = getattr(session_manager, "db", None) if session_manager else None
-        if db is None:
+        config_runtime = getattr(self, "_config_runtime_ref", None)
+        if config_runtime is None:
             return list(DEFAULT_GLOBAL_APPROVAL_RULES)
-        return get_global_approval_rules(ConfigStore(db))
+        return get_global_approval_rules(config_runtime.snapshot)
 
     def _needs_tool_approval(self, tool_name: str, input_data: dict[str, Any]) -> bool:
         """Check if a tool requires user approval based on chat mode and config.

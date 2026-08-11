@@ -54,7 +54,7 @@ def runner() -> Iterator[CliRunner]:
             return_value=MagicMock(),
         ),
         patch(
-            "gobby.cli.load_full_config_from_db",
+            "gobby.cli.runtime.CliRuntime.require_config",
             return_value=DaemonConfig(),
         ),
     ):
@@ -2890,8 +2890,10 @@ class TestTaskUtilsFunctions:
 
         mock_config = MagicMock()
         mock_config.gobby_tasks.enabled = False
+        runtime = MagicMock()
+        runtime.require_config.return_value = mock_config
 
-        with patch("gobby.cli.tasks._utils.config.load_config", return_value=mock_config):
+        with patch("gobby.cli.tasks._utils.config.get_cli_runtime", return_value=runtime):
             with pytest.raises(SystemExit) as exc_info:
                 check_tasks_enabled()
             assert exc_info.value.code == 1
@@ -2900,12 +2902,12 @@ class TestTaskUtilsFunctions:
         """Test check_tasks_enabled handles config errors gracefully."""
         from gobby.cli.tasks._utils import check_tasks_enabled
 
-        with patch(
-            "gobby.cli.tasks._utils.config.load_config", side_effect=FileNotFoundError
-        ) as mock_load_config:
+        runtime = MagicMock()
+        runtime.require_config.side_effect = FileNotFoundError
+        with patch("gobby.cli.tasks._utils.config.get_cli_runtime", return_value=runtime):
             check_tasks_enabled()
             check_tasks_enabled()
-        assert mock_load_config.call_count == 2
+        assert runtime.require_config.call_count == 2
 
     def test_stage_state_choices(self) -> None:
         """Test stage-state CLI choices."""

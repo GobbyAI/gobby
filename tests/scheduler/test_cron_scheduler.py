@@ -18,6 +18,7 @@ from gobby.scheduler.scheduler import CronRunRejected, CronScheduler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
+from tests.config_runtime_helpers import static_cron_capture
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -61,7 +62,9 @@ def config() -> CronConfig:
 def scheduler(
     cron_storage: CronJobStorage, mock_executor: CronExecutor, config: CronConfig
 ) -> CronScheduler:
-    return CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    return CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
 
 @pytest.mark.asyncio
@@ -81,7 +84,9 @@ async def test_scheduler_advances_dispatcher_next_run_at(
         cron_storage.db.execute(
             "ALTER TABLE cron_jobs ADD COLUMN is_system BOOLEAN NOT NULL DEFAULT FALSE"
         )
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="gobby:test-dispatcher",
@@ -96,7 +101,7 @@ async def test_scheduler_advances_dispatcher_next_run_at(
         next_run_at=(datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
     )
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: (
             (updated := cron_storage.get_job(job.id)) is not None
@@ -129,7 +134,9 @@ async def test_start_fails_orphan_running_runs_before_first_tick(
 ) -> None:
     """Rows left running by a previous daemon must not suppress the first tick."""
     config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="gobby:test-dispatcher",
@@ -170,7 +177,9 @@ async def test_start_fails_orphan_pending_runs(
     scheduler = CronScheduler(
         storage=cron_storage,
         executor=mock_executor,
-        config=CronConfig(check_interval_seconds=60, max_concurrent_jobs=1),
+        capture_bundle=static_cron_capture(
+            CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+        ),
     )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -228,13 +237,18 @@ async def test_double_start_is_noop(scheduler: CronScheduler) -> None:
 
 
 @pytest.mark.asyncio
-async def test_disabled_scheduler_does_not_start() -> None:
-    """Scheduler doesn't start when config.enabled is False."""
+async def test_disabled_scheduler_starts_runtime_watch_loops() -> None:
+    """A disabled scheduler stays alive so a live config swap can enable it."""
     config = CronConfig(enabled=False)
-    scheduler = CronScheduler(storage=MagicMock(), executor=MagicMock(), config=config)
+    executor = MagicMock()
+    executor.shutdown = AsyncMock()
+    scheduler = CronScheduler(
+        storage=MagicMock(), executor=executor, capture_bundle=static_cron_capture(config)
+    )
     await scheduler.start()
-    assert scheduler._running is False
-    assert scheduler._check_task is None
+    assert scheduler._running is True
+    assert scheduler._check_task is not None
+    await scheduler.stop()
 
 
 @pytest.mark.asyncio
@@ -244,7 +258,9 @@ async def test_check_due_jobs_dispatches(
     config: CronConfig,
 ) -> None:
     """_check_due_jobs dispatches due jobs to executor."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     # Create a job with next_run in the past
     job = cron_storage.create_job(
@@ -258,7 +274,7 @@ async def test_check_due_jobs_dispatches(
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_job(job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="cron execution dispatch",
@@ -276,7 +292,9 @@ async def test_check_due_jobs_dispatch_log_is_debug(
     config: CronConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Due Job",
@@ -289,7 +307,7 @@ async def test_check_due_jobs_dispatch_log_is_debug(
     cron_storage.update_job(job.id, next_run_at=past)
 
     with caplog.at_level("DEBUG", logger="gobby.scheduler.scheduler"):
-        await scheduler._check_due_jobs()
+        await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="cron execution dispatch",
@@ -313,8 +331,12 @@ async def test_concurrent_schedulers_claim_due_job_once(
 ) -> None:
     """Two schedulers selecting the same due row dispatch one running run."""
     second_storage = CronJobStorage(cron_storage.db)
-    first_scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
-    second_scheduler = CronScheduler(storage=second_storage, executor=mock_executor, config=config)
+    first_scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
+    second_scheduler = CronScheduler(
+        storage=second_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Concurrent claim",
@@ -357,8 +379,8 @@ async def test_concurrent_schedulers_claim_due_job_once(
 
     try:
         await asyncio.gather(
-            first_scheduler._check_due_jobs(),
-            second_scheduler._check_due_jobs(),
+            first_scheduler._check_due_jobs(first_scheduler._capture_config()),
+            second_scheduler._check_due_jobs(second_scheduler._capture_config()),
         )
         await wait_for_async_condition(
             lambda: mock_executor.execute.await_count == 1,
@@ -385,7 +407,9 @@ async def test_check_due_jobs_keeps_loop_responsive_during_db_latency(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A blocked heartbeat query runs on a worker while the loop keeps ticking."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     loop = asyncio.get_running_loop()
     started: asyncio.Future[None] = loop.create_future()
     release = threading.Event()
@@ -403,7 +427,7 @@ async def test_check_due_jobs_keeps_loop_responsive_during_db_latency(
         return 0
 
     monkeypatch.setattr(cron_storage, "delete_removed_automation_jobs", slow_cleanup)
-    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs(scheduler._capture_config()))
     try:
         await asyncio.wait_for(started, timeout=1)
         assert time.monotonic() - blocked_at[0] < 0.2
@@ -421,7 +445,9 @@ async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failed schedule advance never leaves or accumulates pending rows."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Bookkeeping failure",
@@ -435,8 +461,8 @@ async def test_bookkeeping_failure_rolls_back_pending_run_on_repeated_heartbeats
     claim_due_job = MagicMock(side_effect=RuntimeError("bookkeeping unavailable"))
     monkeypatch.setattr(cron_storage, "claim_due_job", claim_due_job)
 
-    await scheduler._check_due_jobs()
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
+    await scheduler._check_due_jobs(scheduler._capture_config())
 
     persisted_job = cron_storage.get_job(job.id)
     assert claim_due_job.call_count == 2
@@ -454,7 +480,9 @@ async def test_due_one_shot_dispatches_once_and_is_disabled(
     config: CronConfig,
 ) -> None:
     """A consumed one-shot clears its schedule without violating job invariants."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     future = datetime.now(UTC) + timedelta(hours=1)
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -470,12 +498,12 @@ async def test_due_one_shot_dispatches_once_and_is_disabled(
         (due_at, due_at, job.id),
     )
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count == 1,
         description="one-shot cron dispatch",
     )
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
 
     persisted_job = cron_storage.get_job(job.id)
     runs = cron_storage.list_runs(job.id, limit=10)
@@ -494,7 +522,9 @@ async def test_respects_max_concurrent(
 ) -> None:
     """Scheduler respects max_concurrent_jobs limit."""
     config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     # Create a running run to fill the slot
     job1 = cron_storage.create_job(
@@ -522,7 +552,7 @@ async def test_respects_max_concurrent(
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     cron_storage.update_job(job2.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await drain_asyncio_tasks()
 
     # Should not have dispatched because max concurrent reached
@@ -538,7 +568,9 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
 ) -> None:
     """A long-running job cannot overlap itself, but other jobs can use free slots."""
     config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=2)
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     active_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -563,7 +595,7 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
     )
     cron_storage.update_job(waiting_job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="dispatch non-overlapping cron job",
@@ -581,7 +613,9 @@ async def test_due_jobs_skip_legacy_automation_rows_before_dispatch(
     config: CronConfig,
 ) -> None:
     """Removed dispatcher cron rows are skipped instead of dispatched."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     names = ["other-job", "gobby:dispatcher", "gobby:pipeline-heartbeat"]
     for name in names:
@@ -595,7 +629,7 @@ async def test_due_jobs_skip_legacy_automation_rows_before_dispatch(
         )
         cron_storage.update_job(job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="non-legacy cron dispatch",
@@ -630,9 +664,11 @@ async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
     storage.delete_job.return_value = True
     executor = MagicMock()
     executor.execute = AsyncMock()
-    scheduler = CronScheduler(storage=storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
 
     storage.delete_job.assert_not_called()
     storage.create_run.assert_not_called()
@@ -653,7 +689,9 @@ async def test_stale_tracked_run_is_excluded_from_age_sweep(
         running_timeout_seconds=60,
         stale_run_grace_seconds=0,
     )
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     stale_job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="stale",
@@ -677,7 +715,7 @@ async def test_stale_tracked_run_is_excluded_from_age_sweep(
     )
     cron_storage.update_job(due_job.id, next_run_at=old)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
 
     refreshed_stale_run = cron_storage.get_run(stale_run.id)
     assert refreshed_stale_run is not None
@@ -696,7 +734,9 @@ async def test_orphaned_active_run_is_swept_and_job_redispatched(
     orphan_status: str,
 ) -> None:
     """An active row with no live task is failed at dispatch time and unblocks its job."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -712,7 +752,7 @@ async def test_orphaned_active_run_is_swept_and_job_redispatched(
         cron_storage.update_run(orphan_run.id, status="running", started_at=past)
     cron_storage.update_job(job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="re-dispatch after orphan sweep",
@@ -735,7 +775,9 @@ async def test_orphaned_active_run_owned_by_other_scheduler_is_not_swept(
     config: CronConfig,
 ) -> None:
     """A scheduler only sweeps active rows that it owns."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -750,7 +792,7 @@ async def test_orphaned_active_run_owned_by_other_scheduler_is_not_swept(
     cron_storage.update_run(orphan_run.id, status="running", started_at=past)
     cron_storage.update_job(job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await drain_asyncio_tasks()
 
     mock_executor.execute.assert_not_awaited()
@@ -767,7 +809,9 @@ async def test_due_job_with_live_run_redispatches_after_completion(
     config: CronConfig,
 ) -> None:
     """A due job skips while its run is in flight and dispatches once it completes."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -783,7 +827,7 @@ async def test_due_job_with_live_run_redispatches_after_completion(
     scheduler._active_run_ids.add(in_flight.id)
     cron_storage.update_job(job.id, next_run_at=past)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await drain_asyncio_tasks()
 
     mock_executor.execute.assert_not_awaited()
@@ -794,7 +838,7 @@ async def test_due_job_with_live_run_redispatches_after_completion(
     cron_storage.update_run(in_flight.id, status="completed", completed_at=now)
     scheduler._active_run_ids.discard(in_flight.id)
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await wait_for_async_condition(
         lambda: mock_executor.execute.await_count >= 1,
         description="re-dispatch after run completion",
@@ -812,7 +856,9 @@ async def test_run_now_sweeps_orphaned_run_and_proceeds(
     config: CronConfig,
 ) -> None:
     """A manual trigger is not blocked by an orphaned active row."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="manual-wedged",
@@ -843,7 +889,9 @@ async def test_execute_and_update_fails_run_when_executor_raises(
     config: CronConfig,
 ) -> None:
     """An executor crash terminalizes the run row instead of wedging the job."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="crashing",
@@ -856,7 +904,7 @@ async def test_execute_and_update_fails_run_when_executor_raises(
     assert run is not None
     mock_executor.execute = AsyncMock(side_effect=RuntimeError("executor exploded"))
 
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     failed_run = cron_storage.get_run(run.id)
     assert failed_run is not None
@@ -872,7 +920,9 @@ async def test_backoff_on_consecutive_failures(
     config: CronConfig,
 ) -> None:
     """Jobs with consecutive failures are skipped during backoff period."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -892,7 +942,7 @@ async def test_backoff_on_consecutive_failures(
         consecutive_failures=2,  # 2nd failure -> 60s backoff
     )
 
-    await scheduler._check_due_jobs()
+    await scheduler._check_due_jobs(scheduler._capture_config())
     await drain_asyncio_tasks()
 
     # Should be skipped due to backoff
@@ -904,11 +954,13 @@ async def test_backoff_on_consecutive_failures(
 def test_get_backoff_seconds(scheduler: CronScheduler) -> None:
     """Backoff delays follow config pattern."""
     # Default delays: [30, 60, 300, 900, 3600]
-    assert scheduler._get_backoff_seconds(1) == 30
-    assert scheduler._get_backoff_seconds(2) == 60
-    assert scheduler._get_backoff_seconds(3) == 300
-    assert scheduler._get_backoff_seconds(5) == 3600
-    assert scheduler._get_backoff_seconds(10) == 3600  # Capped at last value
+    assert scheduler._get_backoff_seconds(1, scheduler._capture_config()) == 30
+    assert scheduler._get_backoff_seconds(2, scheduler._capture_config()) == 60
+    assert scheduler._get_backoff_seconds(3, scheduler._capture_config()) == 300
+    assert scheduler._get_backoff_seconds(5, scheduler._capture_config()) == 3600
+    assert (
+        scheduler._get_backoff_seconds(10, scheduler._capture_config()) == 3600
+    )  # Capped at last value
 
 
 @pytest.mark.asyncio
@@ -918,7 +970,9 @@ async def test_run_now(
     config: CronConfig,
 ) -> None:
     """run_now triggers immediate execution."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -947,7 +1001,9 @@ async def test_run_now_reaches_terminal_state(
 ) -> None:
     """Manual runs move from pending to running to a terminal state."""
     executor = CronExecutor(storage=cron_storage)
-    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
     seen_statuses: list[str] = []
 
     async def handler(job: Any) -> str:
@@ -986,7 +1042,9 @@ async def test_run_now_returns_none_when_job_already_running(
 ) -> None:
     """Manual runs do not create a row when the same job is already running."""
     config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Manual Active",
@@ -1016,7 +1074,9 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The manual and scheduled paths share one atomic per-job admission guard."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Manual heartbeat race",
@@ -1042,9 +1102,9 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
         )
         return updated or run
 
-    def racing_scheduled_create(job: CronJob) -> CronRun | None:
+    def racing_scheduled_create(job: CronJob, current_config: CronConfig) -> CronRun | None:
         admission_barrier.wait(timeout=2)
-        return create_scheduled_run(job)
+        return create_scheduled_run(job, current_config)
 
     def racing_manual_create(
         cron_job_id: str,
@@ -1067,7 +1127,7 @@ async def test_run_now_racing_heartbeat_admits_exactly_one_run(
 
     try:
         _, manual_run = await asyncio.gather(
-            scheduler._check_due_jobs(),
+            scheduler._check_due_jobs(scheduler._capture_config()),
             scheduler.run_now(job.id),
         )
         await wait_for_async_condition(
@@ -1095,7 +1155,9 @@ async def test_run_now_racing_heartbeat_respects_machine_capacity(
     scheduler = CronScheduler(
         storage=cron_storage,
         executor=mock_executor,
-        config=CronConfig(check_interval_seconds=60, max_concurrent_jobs=1),
+        capture_bundle=static_cron_capture(
+            CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+        ),
     )
     scheduled_job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -1123,11 +1185,11 @@ async def test_run_now_racing_heartbeat_respects_machine_capacity(
     release_execution = asyncio.Event()
     create_scheduled_run = scheduler._create_scheduled_run
 
-    def delayed_scheduled_create(job: CronJob) -> CronRun | None:
+    def delayed_scheduled_create(job: CronJob, current_config: CronConfig) -> CronRun | None:
         scheduled_admission_ready.set()
         if not release_scheduled_admission.wait(timeout=2):
             raise TimeoutError("manual admission did not complete")
-        return create_scheduled_run(job)
+        return create_scheduled_run(job, current_config)
 
     async def hold_admitted_run(_job: CronJob, run: CronRun) -> CronRun:
         await release_execution.wait()
@@ -1141,7 +1203,7 @@ async def test_run_now_racing_heartbeat_respects_machine_capacity(
     monkeypatch.setattr(scheduler, "_create_scheduled_run", delayed_scheduled_create)
     mock_executor.execute.side_effect = hold_admitted_run
 
-    heartbeat = asyncio.create_task(scheduler._check_due_jobs())
+    heartbeat = asyncio.create_task(scheduler._check_due_jobs(scheduler._capture_config()))
     try:
         ready = await asyncio.to_thread(scheduled_admission_ready.wait, 2)
         assert ready, "heartbeat did not reach scheduled admission"
@@ -1177,7 +1239,9 @@ async def test_run_now_rejects_when_max_concurrency_full(
 ) -> None:
     """Manual runs do not create a row when global concurrency is full."""
     config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     active_job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Active Other",
@@ -1222,7 +1286,9 @@ async def test_run_now_executes_in_empty_session_context(
     from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
     executor = CronExecutor(storage=cron_storage)
-    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
     seen: dict[str, object] = {}
 
     async def dispatch_tick_handler(job) -> str:
@@ -1285,7 +1351,9 @@ async def test_execute_and_update_success(
     config: CronConfig,
 ) -> None:
     """_execute_and_update resets failure counter on success."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
@@ -1298,7 +1366,7 @@ async def test_execute_and_update_success(
     cron_storage.update_job(job.id, consecutive_failures=3)
 
     run = cron_storage.create_run(job.id)
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     updated_job = cron_storage.get_job(job.id)
     assert updated_job is not None
@@ -1312,7 +1380,9 @@ async def test_execute_and_update_failure_logs_selected_backoff(
     config: CronConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Failing",
@@ -1329,7 +1399,7 @@ async def test_execute_and_update_failure_logs_selected_backoff(
     mock_executor.execute = AsyncMock(return_value=failed_run)
     caplog.set_level("WARNING", logger="gobby.scheduler.scheduler")
 
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     assert (
         f"Cron job {job.id} ({job.name}) failed; applying 30s backoff after 1 consecutive failure"
@@ -1344,7 +1414,9 @@ async def test_execute_and_update_dispatched_resets_failure_counter(
 ) -> None:
     """Dispatched cron runs are terminal non-failures for job bookkeeping."""
     executor = CronExecutor(storage=cron_storage)
-    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Dispatched",
@@ -1359,7 +1431,7 @@ async def test_execute_and_update_dispatched_resets_failure_counter(
     cron_storage.update_run(run.id, status="dispatched")
     executor.execute = AsyncMock(return_value=cron_storage.get_run(run.id))
 
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     updated_job = cron_storage.get_job(job.id)
     assert updated_job is not None
@@ -1374,7 +1446,9 @@ async def test_execute_and_update_skipped_resets_failure_counter(
 ) -> None:
     """Skipped cron runs do not increment backoff."""
     executor = CronExecutor(storage=cron_storage)
-    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
     job = cron_storage.create_job(
         project_id=PROJECT_ID,
         name="Skipped",
@@ -1389,7 +1463,7 @@ async def test_execute_and_update_skipped_resets_failure_counter(
     cron_storage.update_run(run.id, status="skipped")
     executor.execute = AsyncMock(return_value=cron_storage.get_run(run.id))
 
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     updated_job = cron_storage.get_job(job.id)
     assert updated_job is not None
@@ -1404,7 +1478,9 @@ async def test_on_run_complete_callback_fires(
     config: CronConfig,
 ) -> None:
     """on_run_complete callback fires after job execution with correct args."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     callback = AsyncMock()
     scheduler.on_run_complete = callback
@@ -1419,7 +1495,7 @@ async def test_on_run_complete_callback_fires(
     )
 
     run = cron_storage.create_run(job.id)
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     callback.assert_called_once()
     call_args = callback.call_args[0]
@@ -1434,7 +1510,9 @@ async def test_on_run_complete_callback_error_does_not_propagate(
     config: CronConfig,
 ) -> None:
     """on_run_complete callback errors are swallowed (best-effort)."""
-    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=mock_executor, capture_bundle=static_cron_capture(config)
+    )
 
     callback = AsyncMock(side_effect=RuntimeError("callback exploded"))
     scheduler.on_run_complete = callback
@@ -1450,7 +1528,7 @@ async def test_on_run_complete_callback_error_does_not_propagate(
 
     run = cron_storage.create_run(job.id)
     # Should not raise despite callback error
-    await scheduler._execute_and_update(job, run)
+    await scheduler._execute_and_update(job, run, scheduler._capture_config())
 
     callback.assert_called_once()
     # Job should still be updated correctly
@@ -1466,7 +1544,9 @@ async def test_on_run_complete_not_called_without_result(
 ) -> None:
     """on_run_complete not called when _execute_and_update gets no run."""
     executor = CronExecutor(storage=cron_storage)
-    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    scheduler = CronScheduler(
+        storage=cron_storage, executor=executor, capture_bundle=static_cron_capture(config)
+    )
 
     callback = AsyncMock()
     scheduler.on_run_complete = callback
@@ -1481,7 +1561,7 @@ async def test_on_run_complete_not_called_without_result(
     )
 
     # Pass None run — should bail early without calling callback
-    await scheduler._execute_and_update(job, None)
+    await scheduler._execute_and_update(job, None, scheduler._capture_config())
     callback.assert_not_called()
     assert callback.call_count == 0
     assert not callback.called
@@ -1490,17 +1570,15 @@ async def test_on_run_complete_not_called_without_result(
 def test_stale_sweep_excludes_runs_tracked_by_local_scheduler() -> None:
     storage = MagicMock()
     storage.fail_stale_running_runs.return_value = 0
-    config = MagicMock()
-    config.running_timeout_seconds = 60
-    config.stale_run_timeout_seconds = 60
+    config = CronConfig(running_timeout_seconds=60, stale_run_grace_seconds=0)
     scheduler = CronScheduler(
         storage=storage,
         executor=MagicMock(),
-        config=config,
+        capture_bundle=static_cron_capture(config),
     )
     scheduler._active_run_ids.update({"run-a", "run-b"})
 
-    swept = scheduler._sweep_stale_running_runs()
+    swept = scheduler._sweep_stale_running_runs(scheduler._capture_config())
 
     assert swept == 0
     storage.fail_stale_running_runs.assert_called_once_with(

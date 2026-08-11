@@ -153,24 +153,35 @@ def _update_config(
     gobby_home: Path,
 ) -> None:
     """Update daemon config with Qdrant settings via ConfigStore."""
+    from gobby.cli.config_writes import apply_cas_config_patch
+    from gobby.storage.config_mutations import ConfigPatch
+    from gobby.storage.config_repository import ConfigReadSnapshot
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.runtime import runtime_hub_database
+
+    def build_patch(snapshot: ConfigReadSnapshot) -> ConfigPatch:
+        if not qdrant_port:
+            return ConfigPatch(unset=frozenset({"databases.qdrant.url", "databases.qdrant.port"}))
+        configured_host = snapshot.values.get("databases.published_host")
+        host = (
+            configured_host.strip()
+            if isinstance(configured_host, str) and configured_host.strip()
+            else "localhost"
+        )
+        return ConfigPatch(
+            values={
+                "databases.qdrant.url": f"http://{host}:{qdrant_port}",
+                "databases.qdrant.port": qdrant_port,
+            }
+        )
 
     with runtime_hub_database(
         str(gobby_home / "bootstrap.yaml"),
         apply_migrations=False,
     ) as db:
         store = ConfigStore(db)
-        if qdrant_port:
-            configured_host = store.get("databases.published_host")
-            host = (
-                configured_host.strip()
-                if isinstance(configured_host, str) and configured_host.strip()
-                else "localhost"
-            )
-            qdrant_url = f"http://{host}:{qdrant_port}"
-            store.set("databases.qdrant.url", qdrant_url, source="install")
-            store.set("databases.qdrant.port", qdrant_port, source="install")
-        else:
-            store.delete("databases.qdrant.url")
-            store.delete("databases.qdrant.port")
+        apply_cas_config_patch(
+            read_snapshot=store.read_snapshot,
+            build_patch=build_patch,
+            patch=store.patch,
+        )

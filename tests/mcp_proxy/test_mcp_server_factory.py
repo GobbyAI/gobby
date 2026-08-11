@@ -47,12 +47,14 @@ class TestCreateStdioMcpServer:
 
         with (
             patch("gobby.mcp_proxy.stdio.FastMCP") as mock_fastmcp,
-            patch("gobby.mcp_proxy.stdio.load_config") as mock_config,
+            patch("gobby.mcp_proxy.stdio.CliRuntime") as mock_runtime,
             patch("gobby.mcp_proxy.stdio.DaemonProxy"),
             patch("gobby.mcp_proxy.stdio.setup_internal_registries"),
         ):
             mock_fastmcp.return_value = MagicMock()
-            mock_config.return_value = MagicMock(daemon_port=8787)
+            runtime = MagicMock()
+            runtime.require_config.return_value = MagicMock(daemon_port=8787)
+            mock_runtime.return_value = runtime
 
             # Import and call after patching
             from gobby.mcp_proxy.stdio import create_stdio_mcp_server

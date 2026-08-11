@@ -45,7 +45,7 @@ def _runtime_database() -> Iterator[None]:
             "gobby.cli.runtime.runtime_hub_database",
             return_value=nullcontext(database),
         ),
-        patch("gobby.cli.load_full_config_from_db", return_value=config),
+        patch("gobby.cli.runtime.CliRuntime.require_config", return_value=config),
     ):
         yield
 

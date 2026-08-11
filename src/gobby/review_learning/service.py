@@ -7,6 +7,7 @@ import copy
 import json
 import logging
 import re
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from gobby.review_learning.class_recall import ReviewLessonClassRecall, ReviewLessonRetirement
@@ -110,9 +111,20 @@ class ReviewLearningService:
         self,
         memory_manager: ReviewLearningMemoryManager,
         task_manager: PromotionTaskManager,
+        memory_manager_resolver: Callable[[], ReviewLearningMemoryManager | None] | None = None,
     ):
-        self.memory_manager = memory_manager
+        self._seed_memory_manager = memory_manager
         self.task_manager = task_manager
+        self._memory_manager_resolver = memory_manager_resolver
+
+    @property
+    def memory_manager(self) -> ReviewLearningMemoryManager:
+        """Resolve the current-epoch memory manager, falling back to the seed."""
+        if self._memory_manager_resolver is not None:
+            resolved = self._memory_manager_resolver()
+            if resolved is not None:
+                return resolved
+        return self._seed_memory_manager
 
     async def recall_context(
         self,

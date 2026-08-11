@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -14,7 +15,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from gobby.config.app import load_config as _load_config
+from gobby.cli.runtime import CliRuntime
 from gobby.mcp_proxy.daemon_control import check_daemon_http_health as _check_daemon_http_health
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
@@ -54,7 +55,7 @@ class CheckDaemonHealth(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DaemonProxyDependencies:
-    load_config: Callable[[], Any]
+    runtime_factory: Callable[[], CliRuntime]
     check_daemon_http_health: CheckDaemonHealth
     read_project_id: Callable[[], str | None]
     http_client_factory: Callable[[], httpx.AsyncClient]
@@ -85,7 +86,7 @@ def read_project_id() -> str | None:
 
 def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
-        load_config=_load_config,
+        runtime_factory=lambda: CliRuntime(None),
         check_daemon_http_health=_check_daemon_http_health,
         read_project_id=read_project_id,
         http_client_factory=httpx.AsyncClient,
@@ -110,6 +111,36 @@ class DaemonProxy:
         self._last_health_ok_at = 0.0
         self._auth_headers = daemon_auth_headers()
         self._client: httpx.AsyncClient | None = None
+        self._tool_timeouts: dict[str, float] | None = None
+        self._tool_timeouts_lock = asyncio.Lock()
+
+    async def _get_tool_timeouts(self) -> dict[str, float]:
+        """Read the configured tool-timeout map once per proxy lifetime."""
+        if self._tool_timeouts is not None:
+            return self._tool_timeouts
+        async with self._tool_timeouts_lock:
+            if self._tool_timeouts is not None:
+                return self._tool_timeouts
+
+            def read() -> dict[str, float]:
+                deps = self._deps_factory()
+                runtime = deps.runtime_factory()
+                try:
+                    config = runtime.require_config(apply_migrations=False)
+                    return dict(config.mcp_client_proxy.tool_timeouts)
+                finally:
+                    runtime.close()
+
+            try:
+                self._tool_timeouts = await asyncio.to_thread(read)
+            except Exception as exc:
+                # Cache the failure too: retrying every call is exactly the
+                # per-call pool churn this cache removes.
+                self._deps_factory().logger.warning(
+                    "Failed to capture MCP tool timeout configuration: %s", exc
+                )
+                self._tool_timeouts = {}
+        return self._tool_timeouts
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -279,14 +310,7 @@ class DaemonProxy:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
             return _removed_wait_for_completion_result()
 
-        try:
-            config = self._deps_factory().load_config()
-            tool_timeouts = config.mcp_client_proxy.tool_timeouts
-        except Exception as exc:
-            self._deps_factory().logger.warning(
-                f"Failed to load config for MCP tool timeout overrides: {exc}"
-            )
-            tool_timeouts = {}
+        tool_timeouts = await self._get_tool_timeouts()
 
         timeout = 30.0
         if tool_timeouts and tool_name in tool_timeouts:

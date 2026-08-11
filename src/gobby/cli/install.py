@@ -9,7 +9,6 @@ import subprocess  # nosec B404 # fixed install startup command
 import sys
 import webbrowser
 from collections.abc import Callable
-from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -93,7 +92,8 @@ from .installers import (
     uninstall_qwen,
 )
 from .installers.container_restart import apply_managed_service_restart_policy
-from .utils import get_install_dir, load_full_config_from_db
+from .runtime import get_cli_runtime
+from .utils import get_install_dir
 
 logger = logging.getLogger(__name__)
 
@@ -620,18 +620,14 @@ def install(
     secret_store: SecretStore | None = None
     config_store: ConfigStore | None = None
     provider_hook_timeout_seconds = 120
-    database_stack = ExitStack()
+    runtime = get_cli_runtime()
 
     try:
         try:
-            from gobby.storage.hub.runtime import runtime_hub_database
-
-            db = database_stack.enter_context(runtime_hub_database())
+            db = runtime.require_database()
             secret_store = SecretStore(db)
             config_store = ConfigStore(db)
-            provider_hook_timeout_seconds = load_full_config_from_db(
-                database=db
-            ).hooks.provider_timeout
+            provider_hook_timeout_seconds = runtime.require_config().hooks.provider_timeout
         except (
             BootstrapConfigError,
             FileNotFoundError,
@@ -740,7 +736,7 @@ def install(
         if is_full_install:
             _maybe_start_daemon_after_install(no_interactive=no_interactive_flag)
     finally:
-        database_stack.close()
+        runtime.close()
 
 
 @click.command("uninstall")

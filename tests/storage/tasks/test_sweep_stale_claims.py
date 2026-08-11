@@ -43,7 +43,7 @@ def _make_session(
         (
             session_id,
             f"ext-{session_id[:8]}",
-            "21000000-0000-4000-8000-00000000000f",
+            "21000000-0000-4000-8000-000000000001",
             "claude",
             sample_project["id"],
             status,

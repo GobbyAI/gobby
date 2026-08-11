@@ -14,6 +14,7 @@ Tools included:
 - Build (1): build_task
 """
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.build import create_build_registry
@@ -56,18 +57,18 @@ class _TaskOpsToolRegistry(InternalToolRegistry):
 
 def create_task_ops_registry(
     task_manager: LocalTaskManager,
-    task_validator: TaskValidator | None = None,
+    task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None,
     config: "DaemonConfig | None" = None,
-    llm_service: "LLMService | None" = None,
+    llm_service_resolver: "Callable[[], LLMService | None] | None" = None,
     completion_registry: "CompletionEventRegistry | None" = None,
-    mcp_manager: "MCPClientManager | None" = None,
+    mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None,
     review_learning_service: "ReviewLearningService | None" = None,
 ) -> InternalToolRegistry:
     """Create a task ops tool registry with cold-path task tools.
 
     Args:
         task_manager: LocalTaskManager instance
-        task_validator: TaskValidator instance (optional)
+        task_validator_resolver: per-call resolver for the current TaskValidator (optional)
         config: DaemonConfig instance (optional)
 
     Returns:
@@ -76,11 +77,11 @@ def create_task_ops_registry(
     # Create own RegistryContext (lightweight, shares the same manager objects)
     ctx = RegistryContext(
         task_manager=task_manager,
-        task_validator=task_validator,
+        task_validator_resolver=task_validator_resolver,
         config=config,
-        llm_service=llm_service,
+        llm_service_resolver=llm_service_resolver,
         completion_registry=completion_registry,
-        mcp_manager=mcp_manager,
+        mcp_manager_resolver=mcp_manager_resolver,
         review_learning_service=review_learning_service,
     )
 

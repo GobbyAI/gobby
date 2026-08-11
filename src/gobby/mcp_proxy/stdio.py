@@ -14,7 +14,8 @@ import time
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from gobby.config.app import load_config
+from gobby.cli.runtime import CliRuntime
+from gobby.config.bootstrap import load_bootstrap
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
     canonicalize_call_tool_wrapper,
@@ -99,7 +100,6 @@ __all__ = [
     "get_daemon_pid",
     "httpx",
     "is_daemon_running",
-    "load_config",
     "main",
     "mcp_wrapper_source_stale_result",
     "prepare_client_guard",
@@ -114,7 +114,7 @@ __all__ = [
 
 def _proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
-        load_config=load_config,
+        runtime_factory=lambda: CliRuntime(None),
         check_daemon_http_health=check_daemon_http_health,
         read_project_id=_read_project_id,
         http_client_factory=httpx.AsyncClient,
@@ -146,7 +146,8 @@ def register_proxy_tools(mcp: FastMCP, proxy: _DaemonProxy) -> None:
 
 def _server_dependencies() -> StdioServerDependencies:
     return StdioServerDependencies(
-        load_config=load_config,
+        runtime_factory=lambda: CliRuntime(None),
+        load_bootstrap=lambda: load_bootstrap(resolve_database_url=False),
         setup_internal_registries=setup_internal_registries,
         build_gobby_instructions=build_gobby_instructions,
         fast_mcp_factory=FastMCP,
@@ -162,7 +163,7 @@ def create_stdio_mcp_server() -> FastMCP:
 
 def _daemon_dependencies() -> DaemonStartupDependencies:
     return DaemonStartupDependencies(
-        load_config=load_config,
+        bootstrap=load_bootstrap(resolve_database_url=False),
         is_daemon_running=is_daemon_running,
         check_daemon_http_health=check_daemon_http_health,
         start_daemon_process=start_daemon_process,

@@ -12,8 +12,7 @@ from urllib.parse import urlsplit
 
 from mcp.server.fastmcp import FastMCP
 
-from gobby.config.app import load_config as _load_config
-from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT
+from gobby.config.bootstrap import BootstrapConfig, load_bootstrap
 from gobby.mcp_proxy.daemon_control import (
     check_daemon_http_health as _check_daemon_http_health,
 )
@@ -47,7 +46,7 @@ class CreateStdioMcpServer(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class DaemonStartupDependencies:
-    load_config: Callable[[], Any]
+    bootstrap: BootstrapConfig
     is_daemon_running: Callable[[], bool]
     check_daemon_http_health: CheckDaemonHealth
     start_daemon_process: StartDaemonProcess
@@ -57,7 +56,7 @@ class DaemonStartupDependencies:
 
 def default_daemon_startup_dependencies() -> DaemonStartupDependencies:
     return DaemonStartupDependencies(
-        load_config=_load_config,
+        bootstrap=load_bootstrap(resolve_database_url=False),
         is_daemon_running=_is_daemon_running,
         check_daemon_http_health=_check_daemon_http_health,
         start_daemon_process=_start_daemon_process,
@@ -67,12 +66,6 @@ def default_daemon_startup_dependencies() -> DaemonStartupDependencies:
 
 
 _LOCAL_DAEMON_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-def _coerce_port(value: Any, default: int) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    return default
 
 
 def _resolved_dial_target(
@@ -91,17 +84,12 @@ async def ensure_daemon_running(
 ) -> None:
     """Ensure the Gobby daemon is running and healthy."""
     effective_deps = deps or default_daemon_startup_dependencies()
-    config = effective_deps.load_config()
-    daemon_port = _coerce_port(getattr(config, "daemon_port", None), DEFAULT_DAEMON_PORT)
-    configured_daemon_url = getattr(config, "daemon_url", None)
+    bootstrap = effective_deps.bootstrap
     dial_url, port, is_local_dial_target = _resolved_dial_target(
-        daemon_port,
-        configured_daemon_url if isinstance(configured_daemon_url, str) else None,
+        bootstrap.daemon_port,
+        bootstrap.daemon_url,
     )
-    ws_port = _coerce_port(
-        getattr(getattr(config, "websocket", None), "port", None),
-        DEFAULT_WEBSOCKET_PORT,
-    )
+    ws_port = bootstrap.websocket_port
 
     if not is_local_dial_target:
         if await effective_deps.check_daemon_http_health(

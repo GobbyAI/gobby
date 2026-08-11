@@ -97,6 +97,10 @@ async def test_active_constructs_runner_only_after_verify_and_acquire(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             events.append("construct")
 
+        @classmethod
+        async def create(cls, *_args: object, **_kwargs: object) -> FakeRunner:
+            return cls()
+
         async def run(self, *, ownership_resolution: object) -> None:
             events.append("run")
 

@@ -7,6 +7,7 @@ import subprocess
 import threading
 from contextlib import nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -20,6 +21,7 @@ from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.installers.managed_services_lock import managed_services_lock
 from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
+from gobby.storage.config_mutations import ConfigPatch
 
 pytestmark = pytest.mark.unit
 
@@ -53,13 +55,14 @@ def test_expose_sets_keys_and_endpoints(
         def __init__(self, _database: object) -> None:
             pass
 
-        def get(self, key: str) -> Any:
-            return values.get(key)
+        def read_snapshot(self) -> SimpleNamespace:
+            return SimpleNamespace(revision=0, values=values, overrides=values)
 
-        def set_many(self, entries: dict[str, Any], *, source: str) -> int:
-            assert source == "datastores-expose"
-            values.update(entries)
-            return len(entries)
+        def patch(self, *, expected_revision: int, patch: ConfigPatch) -> None:
+            assert expected_revision == 0
+            values.update(patch.values)
+            for key in patch.unset:
+                values.pop(key, None)
 
     monkeypatch.setattr(
         "gobby.storage.hub.runtime.runtime_hub_database",

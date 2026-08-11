@@ -35,6 +35,7 @@ async def test_terminal_compact_self_schedules_codex_marker_watcher(
     session.session_type = "terminal"
     session.source = "codex"
     session.machine_id = _LOCAL_MACHINE_ID
+    session.transcript_path = None
     session.summary_markdown = """## Current State
 
 The compact handoff summary is ready, and the terminal session can proceed with compaction.
@@ -64,8 +65,14 @@ Send the compact command and watch for the provider's completion marker.
 
     compact_self = registry.get_tool("compact_self")
     assert compact_self is not None
+    cursor = MagicMock()
+    cursor.saw_fresh_turn_aborted.return_value = True
 
     with (
+        patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.CodexRolloutCursor.at_eof",
+            return_value=cursor,
+        ),
         patch(
             "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
             return_value=tmux,

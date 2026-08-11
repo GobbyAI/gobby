@@ -720,6 +720,7 @@ async def spawn_agent_impl(
                 spawn_config,
                 completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
             )
             return {
                 "success": False,
@@ -740,6 +741,7 @@ async def spawn_agent_impl(
                     spawn_config,
                     completion_registry=completion_registry,
                     cleanup_isolation=cleanup_isolation_on_failure,
+                    task_manager=task_manager,
                     child_session_id=spawn_result.child_session_id,
                 )
                 return {
@@ -786,6 +788,7 @@ async def spawn_agent_impl(
                 spawn_config,
                 completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
                 child_session_id=spawn_result.child_session_id,
             )
             if start_error is not None:
@@ -811,6 +814,7 @@ async def spawn_agent_impl(
                 spawn_config,
                 completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
                 child_session_id=spawn_result.child_session_id,
             )
             if start_error is not None:
@@ -936,6 +940,7 @@ async def spawn_agent_impl(
             spawn_config,
             completion_registry=completion_registry,
             cleanup_isolation=cleanup_isolation_on_failure,
+            task_manager=task_manager,
             child_session_id=spawn_result.child_session_id,
         )
 

@@ -9,6 +9,7 @@ import {
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { configurationClient } from '../../../api/config'
 import { SettingsOverlay } from '../SettingsOverlay'
 import { useSettingsOverlay } from '../useSettingsOverlay'
 import {
@@ -61,8 +62,15 @@ function Harness({ confirmDiscard, dirtySections = NO_DIRTY }: HarnessProps) {
 async function openOverlay(): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
   const dialog = screen.getByRole('dialog')
+  // Wait on rendered state: the default section's content pane is up once the
+  // provider's initial config load has settled.
+  const defaultSection = SETTINGS_SECTIONS.find(
+    (section) => section.id === DEFAULT_SETTINGS_SECTION,
+  )
   await waitFor(() =>
-    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThanOrEqual(7),
+    expect(
+      within(dialog).getByRole('heading', { name: defaultSection?.label }),
+    ).toBeInTheDocument(),
   )
   return dialog
 }
@@ -78,18 +86,46 @@ function selectSection(dialog: HTMLElement, label: string): void {
   fireEvent.click(within(dialog).getByRole('option', { name: label }))
 }
 
-// The overlay now mounts the config provider, which fetches on open. Stub the
-// network so these UI tests stay hermetic; the stub sections render regardless.
+// The overlay mounts the config provider, which fetches on open. Stub each
+// endpoint with its real envelope so these UI tests stay hermetic against the
+// reactive configuration API.
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+const STUB_RESPONSES: Record<string, () => unknown> = {
+  '/api/config/values': () => ({
+    revision: 1,
+    desired: {},
+    active: {},
+    secret_set: {},
+    pending_restart_keys: [],
+    failed_live_keys: {},
+  }),
+  '/api/config/schema': () => ({ type: 'object', properties: {} }),
+  '/api/config/tool-approvals/global': () => ({
+    rules: [],
+    default_rules: [],
+    built_in_exemptions: [],
+  }),
+  '/api/config/secrets': () => ({ secrets: [], categories: [] }),
+  '/api/config/prompts': () => ({ prompts: [], categories: {} }),
+  '/api/config/template': () => ({ revision: 1, content: '' }),
+}
+
 beforeEach(() => {
+  configurationClient.reset()
   vi.stubGlobal(
     'fetch',
-    vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify({ values: {}, schema: {}, secret_keys: [] }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
-        ),
-    ),
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      const body = STUB_RESPONSES[url]
+      if (!body) throw new Error(`Unexpected request: ${url}`)
+      return jsonResponse(body())
+    }),
   )
 })
 

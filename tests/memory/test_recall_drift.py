@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.recall_constants import RecallConstants
 from gobby.memory.recall_drift import (
@@ -25,6 +26,7 @@ from gobby.memory.recall_drift import (
 )
 from gobby.memory.recall_fit import ReplayRow, evaluation_protocol_identity
 from gobby.runner_maintenance import recall_drift_monitor_loop
+from tests.config_runtime_helpers import static_runtime_capture
 
 FITTED_PARAMS: dict[str, Any] = {
     "half_life_days": 21.0,
@@ -470,8 +472,8 @@ async def test_monitor_loop_runs_check_until_shutdown(
 
     await recall_drift_monitor_loop(
         object(),
-        config,
         lambda: bool(calls),
+        capture_bundle=static_runtime_capture(DaemonConfig(memory=config)),
         interval_seconds=0.01,
     )
 

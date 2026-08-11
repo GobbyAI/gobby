@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, BinaryIO, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -389,7 +389,7 @@ def test_personal_scope_routes_resolve_uninitialized_workspace(
     server = SimpleNamespace(
         services=SimpleNamespace(config=SimpleNamespace(), database=temp_db, project_id=None)
     )
-    app.include_router(create_wiki_router(server))
+    app.include_router(create_wiki_router(cast(Any, server)))
     client = TestClient(app)
 
     personal_root = (tmp_path / "personal").resolve()
@@ -952,7 +952,7 @@ async def test_stage_upload_checks_disk_and_accepts_exact_limit(
     def check_disk(directory: Path, incoming_bytes: int, *, label: str) -> None:
         checked.append((directory, incoming_bytes, label))
 
-    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload = UploadFile(filename="note.md", file=cast(BinaryIO, tempfile.SpooledTemporaryFile()))
     upload.file.write(b"1234")
     upload.file.seek(0)
     upload.size = 4
@@ -981,7 +981,7 @@ async def test_stage_upload_rejects_oversize_and_unlinks_temp_file(
         created_paths.append(Path(staged.name))
         return staged
 
-    upload = UploadFile(filename="note.md", file=tempfile.SpooledTemporaryFile())
+    upload = UploadFile(filename="note.md", file=cast(BinaryIO, tempfile.SpooledTemporaryFile()))
     upload.file.write(b"12345")
     upload.file.seek(0)
     upload.size = 5

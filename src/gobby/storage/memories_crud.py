@@ -420,6 +420,14 @@ class MemoryCrudMixin(MemoryStoreBase):
                 or existing_tags != merged_tags
                 or bool(pending_soft_hides)
             )
+            if changed:
+                self.embedding_generation_state.append_change(
+                    "memory", final_memory_id, transaction=conn
+                )
+                for superseded_id in pending_soft_hides:
+                    self.embedding_generation_state.append_change(
+                        "memory", superseded_id, is_tombstone=True, transaction=conn
+                    )
 
         if row is None:
             raise RuntimeError(f"Memory {final_memory_id} not found after creation")
@@ -678,6 +686,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             row = cursor.fetchone()
             if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
+            self.embedding_generation_state.append_change("memory", memory_id, transaction=conn)
 
         self.notify_changed()
         return Memory.from_row(row)
@@ -820,6 +829,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             row = cursor.fetchone()
             if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
+            self.embedding_generation_state.append_change("memory", memory_id, transaction=conn)
 
         self.notify_changed()
         return Memory.from_row(row)
@@ -839,6 +849,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             row = cursor.fetchone()
             if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
+            self.embedding_generation_state.append_change("memory", memory_id, transaction=conn)
 
         self.notify_changed()
         return Memory.from_row(row)
@@ -848,6 +859,9 @@ class MemoryCrudMixin(MemoryStoreBase):
             cursor = conn.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
             if cursor.rowcount == 0:
                 return False
+            self.embedding_generation_state.append_change(
+                "memory", memory_id, is_tombstone=True, transaction=conn
+            )
         self._notify_listeners()
         return True
 
@@ -860,5 +874,8 @@ class MemoryCrudMixin(MemoryStoreBase):
             )
             if cursor.rowcount == 0:
                 return False
+            self.embedding_generation_state.append_change(
+                "memory", memory_id, is_tombstone=True, transaction=conn
+            )
         self._notify_listeners()
         return True

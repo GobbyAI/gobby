@@ -10,11 +10,19 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
+from typing import TYPE_CHECKING, Any
+
+from starlette.requests import Request
+from starlette.responses import Response
 
 from gobby.ai import build_daemon_tool_chat_service
-from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.runtime import ConfigSnapshot, RuntimeActiveBundle
+from gobby.config.runtime_models import UnavailableService
+from gobby.config.ui import is_loopback_bind_host
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import (
@@ -23,12 +31,11 @@ from gobby.mcp_proxy.semantic_search import (
     SemanticToolSearch,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
-from gobby.servers.auth_service import AuthMode, AuthService
+from gobby.servers.auth_service import AuthService
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
     from gobby.app_context import ServiceContainer
-    from gobby.config.app import DaemonConfig
     from gobby.hooks.hook_manager import HookManager
     from gobby.llm import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -55,51 +62,62 @@ class HTTPServer:
     def __init__(
         self,
         services: ServiceContainer,
+        startup_config: DaemonConfig | None = None,
         port: int = 8000,
         test_mode: bool = False,
         codex_client: Any | None = None,
-        auth_mode: str | None = None,
+        bootstrap_config: BootstrapConfig | None = None,
     ) -> None:
         """
         Initialize HTTP server.
 
         Args:
             services: ServiceContainer holding all dependencies
+            startup_config: Immutable startup configuration projection
             port: Server port
             test_mode: Run in test mode (disable features that conflict with testing)
             codex_client: CodexAppServerClient instance for Codex integration
-            auth_mode: Explicit authentication mode override
+            bootstrap_config: Process topology and authentication configuration
         """
         self.services = services
+        self._runtime_bundle_context: ContextVar[RuntimeActiveBundle | None] = ContextVar(
+            "gobby_http_runtime_bundle",
+            default=None,
+        )
+        self._active_config_cache: tuple[ConfigSnapshot, DaemonConfig] | None = None
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
-        configured_auth_mode = getattr(services.config, "auth_mode", None)
-        effective_auth_mode = (
-            auth_mode
-            if auth_mode is not None
-            else configured_auth_mode
-            if isinstance(configured_auth_mode, str)
-            else "required"
-        )
+        self.bootstrap_config = bootstrap_config or BootstrapConfig()
+        effective_auth_mode = self.bootstrap_config.auth_mode
         if effective_auth_mode not in ("required", "disabled"):
             raise ValueError(f"Unsupported authentication mode: {effective_auth_mode}")
+        self.startup_config = startup_config.model_copy(deep=True) if startup_config else None
+        if (
+            self.startup_config
+            and self.startup_config.ui.enabled
+            and effective_auth_mode != "required"
+            and not is_loopback_bind_host(self.bootstrap_config.bind_host)
+        ):
+            raise ValueError(
+                "ui.enabled requires bootstrap auth_mode='required' for a non-loopback bind_host"
+            )
         self.auth_service = AuthService(
             lambda: self.services.database,
-            mode=cast(AuthMode, effective_auth_mode),
+            mode=effective_auth_mode,
         )
 
         # WebSocket server reference (set by GobbyRunner after construction)
         self.websocket_server: WebSocketServer | None = None
 
-        self.broadcaster = HookEventBroadcaster(services.websocket_server, services.config)
+        self.broadcaster = HookEventBroadcaster(services.websocket_server, self.startup_config)
 
         self._start_time: float = time.time()
 
-        if services.config and services.tool_chat_service is None:
+        if self.startup_config and services.tool_chat_service is None:
             try:
                 services.tool_chat_service = build_daemon_tool_chat_service(
-                    services.config,
+                    self.startup_config,
                     credential_manager=getattr(
                         services.database,
                         "managed_credential_manager",
@@ -115,12 +133,13 @@ class HTTPServer:
         self._tools_handler: GobbyDaemonTools | None = None
         self._hook_manager: HookManager | None = None
 
-        if services.mcp_manager:
+        if self.mcp_manager:
             self._init_mcp_subsystems(services, port)
 
         from gobby.servers.app_factory import create_app
 
         self.app = create_app(self)
+        self.app.middleware("http")(self._capture_runtime_epoch)
         self._running = False
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._daemon: Any = None  # Set externally by daemon
@@ -131,6 +150,34 @@ class HTTPServer:
     def set_runner_getter(self, runner_getter: Callable[[], GobbyRunner | None]) -> None:
         """Set a weak runner accessor for admin lifecycle requests."""
         self._runner_getter = runner_getter
+
+    def capture_runtime_bundle(self) -> RuntimeActiveBundle | None:
+        """Capture one immutable configuration/service epoch for an operation."""
+        request_bundle = self._runtime_bundle_context.get()
+        if request_bundle is not None:
+            return request_bundle
+        runtime = self.services.config_runtime
+        if runtime is None or not runtime.ready:
+            return None
+        return runtime.capture()
+
+    async def _capture_runtime_epoch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        token = self._runtime_bundle_context.set(self.capture_runtime_bundle())
+        try:
+            return await call_next(request)
+        finally:
+            self._runtime_bundle_context.reset(token)
+
+    def _runtime_service(self, name: str) -> object | None:
+        bundle = self.capture_runtime_bundle()
+        if bundle is None:
+            return None
+        service = bundle.services.get(name)
+        return None if isinstance(service, UnavailableService) else service
 
     def get_runner(self) -> GobbyRunner | None:
         """Return the owning runner without requiring a strong server-to-runner reference."""
@@ -145,14 +192,59 @@ class HTTPServer:
 
     def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
+        from gobby.mcp_proxy.manager import MCPClientManager
+        from gobby.runner_init.services import AIServiceBundle, MemoryServiceBundle
+        from gobby.tasks.validation import TaskValidator
 
-        if services.mcp_manager is None:
+        runtime_bundle = self.capture_runtime_bundle()
+        config = runtime_bundle.snapshot.active if runtime_bundle else self.startup_config
+
+        def captured_service(name: str) -> object | None:
+            if runtime_bundle is None:
+                return None
+            service = runtime_bundle.services.get(name)
+            return None if isinstance(service, UnavailableService) else service
+
+        # Per-call resolvers observe the current runtime epoch (request-pinned
+        # via the capture middleware) and fall back to startup container values.
+        def resolve_mcp_manager() -> MCPClientManager | None:
+            service = self._runtime_service("mcp_manager")
+            return service if isinstance(service, MCPClientManager) else services.mcp_manager
+
+        def resolve_llm_service() -> Any | None:
+            service = self._runtime_service("ai_services")
+            if isinstance(service, AIServiceBundle):
+                return service.llm_service
+            return services.llm_service
+
+        def resolve_memory_manager() -> Any | None:
+            service = self._runtime_service("memory_services")
+            if isinstance(service, MemoryServiceBundle):
+                return service.memory_manager
+            return services.memory_manager
+
+        def resolve_memory_backup_manager() -> Any | None:
+            service = self._runtime_service("memory_services")
+            if isinstance(service, MemoryServiceBundle):
+                return service.memory_backup_manager
+            return services.memory_backup_manager
+
+        def resolve_task_validator() -> TaskValidator | None:
+            service = self._runtime_service("task_validator")
+            return service if isinstance(service, TaskValidator) else services.task_validator
+
+        memory_services = captured_service("memory_services")
+        mcp_manager = resolve_mcp_manager()
+        llm_service = resolve_llm_service()
+        memory_manager = resolve_memory_manager()
+        vector_store = (
+            memory_services.vector_store
+            if isinstance(memory_services, MemoryServiceBundle)
+            else services.vector_store
+        )
+        if mcp_manager is None:
             raise RuntimeError("caller must check services.mcp_manager")
-        # Determine WebSocket port
-        ws_port = DEFAULT_WEBSOCKET_PORT
-        cfg = services.config
-        if cfg and hasattr(cfg, "websocket") and cfg.websocket:
-            ws_port = cfg.websocket.port
+        ws_port = self.bootstrap_config.websocket_port
 
         # Create a lazy getter for tool_proxy that will be available after
         # GobbyDaemonTools is created. This allows in-process agents to route
@@ -173,8 +265,8 @@ class HTTPServer:
 
             merge_storage = MergeResolutionManager(self.services.mcp_db_manager.db)
             merge_resolver = MergeResolver()
-            merge_resolver.llm_service = services.llm_service
-            merge_resolver.config = services.config.merge_resolution if services.config else None
+            merge_resolver.llm_service = llm_service
+            merge_resolver.config = config.merge_resolution if config else None
             inter_session_message_manager = InterSessionMessageManager(
                 self.services.mcp_db_manager.db
             )
@@ -187,8 +279,8 @@ class HTTPServer:
             from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
             archive_dir = None
-            if services.config and hasattr(services.config, "sessions"):
-                archive_dir = getattr(services.config.sessions, "transcript_archive_dir", None)
+            if config and hasattr(config, "sessions"):
+                archive_dir = getattr(config.sessions, "transcript_archive_dir", None)
             transcript_reader = TranscriptReader(
                 session_manager=services.session_manager,
                 archive_dir=archive_dir,
@@ -197,16 +289,19 @@ class HTTPServer:
             services.transcript_reader = transcript_reader
 
         # Setup internal registries (gobby-tasks, gobby-memory, gobby-workflows, etc.)
+        from gobby.servers.routes.configuration_context import ConfigurationRouteContext
+
+        config_route_context = ConfigurationRouteContext(self)
         self._internal_manager = setup_internal_registries(
-            _config=services.config,
+            _config=config,
             _session_manager=None,  # Not needed for internal registries
-            memory_manager=services.memory_manager,
+            memory_manager_resolver=resolve_memory_manager,
             task_manager=services.task_manager,
             db=services.mcp_db_manager.db if services.mcp_db_manager else None,
-            task_validator=services.task_validator,
+            task_validator_resolver=resolve_task_validator,
             session_manager=services.session_manager,
             metrics_manager=services.metrics_manager,
-            llm_service=services.llm_service,
+            llm_service_resolver=resolve_llm_service,
             agent_runner=services.agent_runner,
             worktree_storage=services.worktree_storage,
             worktree_delete_executor=services.worktree_delete_executor,
@@ -221,14 +316,13 @@ class HTTPServer:
             workflow_loader=services.workflow_loader,
             pipeline_execution_manager=services.pipeline_execution_manager,
             hook_manager_resolver=lambda: self._hook_manager,
-            config_store=services.config_store,
-            config_setter=lambda c: setattr(services, "config", c),
-            memory_backup_manager=services.memory_backup_manager,
+            config_service_getter=config_route_context.get_config_service,
+            memory_backup_manager_resolver=resolve_memory_backup_manager,
             completion_registry=services.completion_registry,
             wake_dispatcher=services.wake_dispatcher,
             agent_lifecycle_monitor=services.agent_lifecycle_monitor,
             cron_scheduler=services.cron_scheduler,
-            mcp_manager=services.mcp_manager,
+            mcp_manager_resolver=resolve_mcp_manager,
             transcript_reader=services.transcript_reader,
             communications_manager=services.communications_manager,
             web_chat_session_registry=services.web_chat_session_registry,
@@ -242,27 +336,31 @@ class HTTPServer:
         logger.debug("Internal registries initialized: %s registries", registry_count)
 
         # Initialize tool summarizer config
-        if services.config:
+        if config:
             from gobby.utils.tool_summarizer import init_summarizer_config
 
             init_summarizer_config(
-                services.config.tool_summarizer,
+                config.tool_summarizer,
                 db=services.database,
-                llm_service=services.llm_service,
+                llm_service=llm_service,
             )
             logger.debug("Tool summarizer config initialized")
 
         # Create semantic search instance if db available
-        semantic_search = None
-        if services.mcp_db_manager:
-            _emb_cfg = services.config.embeddings if services.config else None
+        semantic_search = (
+            memory_services.semantic_search
+            if isinstance(memory_services, MemoryServiceBundle)
+            else None
+        )
+        if semantic_search is None and services.mcp_db_manager:
+            _emb_cfg = config.embeddings if config else None
             semantic_search = SemanticToolSearch(
                 db=services.mcp_db_manager.db,
                 embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
                 embedding_model=_emb_cfg.model if _emb_cfg else DEFAULT_EMBEDDING_MODEL,
                 embedding_dim=_emb_cfg.dim if _emb_cfg else DEFAULT_EMBEDDING_DIM,
                 api_base=_emb_cfg.api_base if _emb_cfg else None,
-                vector_store=getattr(services, "vector_store", None),
+                vector_store=vector_store,
             )
             logger.debug(
                 "Semantic tool search initialized (dim=%s)",
@@ -282,16 +380,16 @@ class HTTPServer:
 
         # Create tools handler
         self._tools_handler = GobbyDaemonTools(
-            mcp_manager=services.mcp_manager,
+            mcp_manager=mcp_manager,
             daemon_port=port,
             websocket_port=ws_port,
             start_time=self._start_time,
             internal_manager=self._internal_manager,
             db=services.database,
-            config=services.config,
-            llm_service=services.llm_service,
+            config=config,
+            llm_service=llm_service,
             session_manager=services.session_manager,
-            memory_manager=services.memory_manager,
+            memory_manager=memory_manager,
             config_manager=services.mcp_db_manager,
             semantic_search=semantic_search,
             fallback_resolver=fallback_resolver,
@@ -303,7 +401,17 @@ class HTTPServer:
     # Property accessors for services (delegate to container)
     @property
     def config(self) -> DaemonConfig | None:
-        return self.services.config
+        bundle = self.capture_runtime_bundle()
+        if bundle is None:
+            return self.startup_config
+        snapshot = bundle.snapshot
+        cached = self._active_config_cache
+        if cached is not None and cached[0] is snapshot:
+            return cached[1]
+        # One typed projection per epoch; callers must treat it as read-only.
+        active = snapshot.active
+        self._active_config_cache = (snapshot, active)
+        return active
 
     @property
     def session_manager(self) -> Any:
@@ -323,7 +431,10 @@ class HTTPServer:
 
     @property
     def mcp_manager(self) -> MCPClientManager | None:
-        return self.services.mcp_manager
+        from gobby.mcp_proxy.manager import MCPClientManager
+
+        service = self._runtime_service("mcp_manager")
+        return service if isinstance(service, MCPClientManager) else self.services.mcp_manager
 
     @mcp_manager.setter
     def mcp_manager(self, value: MCPClientManager | None) -> None:
@@ -331,7 +442,14 @@ class HTTPServer:
 
     @property
     def llm_service(self) -> LLMService | None:
-        return self.services.llm_service
+        from gobby.runner_init.services import AIServiceBundle
+
+        service = self._runtime_service("ai_services")
+        return (
+            service.llm_service
+            if isinstance(service, AIServiceBundle)
+            else self.services.llm_service
+        )
 
     @llm_service.setter
     def llm_service(self, value: LLMService | None) -> None:
@@ -339,15 +457,44 @@ class HTTPServer:
 
     @property
     def memory_manager(self) -> Any:
-        return self.services.memory_manager
+        from gobby.runner_init.services import MemoryServiceBundle
+
+        service = self._runtime_service("memory_services")
+        return (
+            service.memory_manager
+            if isinstance(service, MemoryServiceBundle)
+            else self.services.memory_manager
+        )
 
     @memory_manager.setter
     def memory_manager(self, value: Any) -> None:
         self.services.memory_manager = value
 
     @property
+    def tool_chat_service(self) -> Any:
+        from gobby.runner_init.services import AIServiceBundle
+
+        service = self._runtime_service("ai_services")
+        return (
+            service.tool_chat_service
+            if isinstance(service, AIServiceBundle)
+            else self.services.tool_chat_service
+        )
+
+    @property
+    def text_generation_service(self) -> Any:
+        from gobby.runner_init.services import AIServiceBundle
+
+        service = self._runtime_service("ai_services")
+        return (
+            service.text_generation_service
+            if isinstance(service, AIServiceBundle)
+            else self.services.text_generation_service
+        )
+
+    @property
     def message_processor(self) -> Any:
-        return self.services.message_processor
+        return self._runtime_service("message_processor") or self.services.message_processor
 
     @message_processor.setter
     def message_processor(self, value: Any) -> None:
@@ -626,6 +773,7 @@ async def create_server(
     services: ServiceContainer,
     port: int = 60887,
     test_mode: bool = False,
+    bootstrap_config: BootstrapConfig | None = None,
 ) -> HTTPServer:
     """
     Create HTTP server instance.
@@ -642,4 +790,5 @@ async def create_server(
         services=services,
         port=port,
         test_mode=test_mode,
+        bootstrap_config=bootstrap_config,
     )

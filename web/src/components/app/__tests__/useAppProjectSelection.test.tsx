@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { configurationClient } from "../../../api/config";
 import type { ProjectWithStats } from "../../../hooks/useProjects";
 import { useAppProjectSelection } from "../useAppProjectSelection";
 
@@ -20,25 +21,33 @@ function deferred<T>() {
 
 describe("useAppProjectSelection", () => {
   afterEach(() => {
+    configurationClient.reset();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
-  it("preserves and persists selections made while UI settings are loading", async () => {
-    const settingsResponse = deferred<{
-      selectedProjectId: string;
-      selectedProvider: string;
-    }>();
+  it("persists project selection through the universal config patch", async () => {
+    const settingsResponse = deferred<Record<string, unknown>>();
     const fetchMock = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
       if (!init) {
         return Promise.resolve({
           ok: true,
           json: () => settingsResponse.promise,
-        });
+        } as Response);
       }
-      return Promise.resolve({ ok: true });
-    }) as unknown as typeof fetch;
-    vi.stubGlobal("fetch", fetchMock);
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          committed: true,
+          revision: 6,
+          changed_keys: ["ui_settings.selectedProjectId"],
+          apply_status: "applied",
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
+      } as Response);
+    });
+    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
 
     const { result } = renderHook(() => {
       const [selectedProvider, setSelectedProvider] = useState<string | null>(
@@ -63,8 +72,22 @@ describe("useAppProjectSelection", () => {
 
     await act(async () => {
       settingsResponse.resolve({
-        selectedProjectId: "persisted-project",
-        selectedProvider: "codex",
+        revision: 5,
+        desired: {
+          ui_settings: {
+            selectedProjectId: "persisted-project",
+            selectedProvider: "codex",
+          },
+        },
+        active: {
+          ui_settings: {
+            selectedProjectId: "persisted-project",
+            selectedProvider: "codex",
+          },
+        },
+        secret_set: {},
+        pending_restart_keys: [],
+        failed_live_keys: {},
       });
       await settingsResponse.promise;
     });
@@ -73,19 +96,22 @@ describe("useAppProjectSelection", () => {
     expect(result.current.selectedProvider).toBe("qwen");
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
-        "/api/config/ui-settings",
+        "/api/config/values",
         expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({ selectedProjectId: "user-project" }),
+          method: "PATCH",
         }),
       );
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/config/ui-settings",
-        expect.objectContaining({
-          method: "PUT",
-          body: JSON.stringify({ selectedProvider: "qwen" }),
-        }),
-      );
+      const patchBodies = fetchMock.mock.calls
+        .filter(([, init]) => init?.method === "PATCH")
+        .map(([, init]) => JSON.parse(String(init?.body)));
+      expect(patchBodies).toContainEqual(expect.objectContaining({
+        expected_revision: expect.any(Number),
+        values: { ui_settings: { selectedProjectId: "user-project" } },
+      }));
+      expect(patchBodies).toContainEqual(expect.objectContaining({
+        expected_revision: expect.any(Number),
+        values: { ui_settings: { selectedProvider: "qwen" } },
+      }));
     });
   });
 });

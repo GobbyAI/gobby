@@ -12,7 +12,13 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import gobby.servers.routes.voice as voice_module
-from gobby.ai.audio import AudioCapabilityOutput, AudioProviderUnavailableError, AudioSegment
+from gobby.ai.audio import (
+    AudioCapabilityOutput,
+    AudioCapabilityResult,
+    AudioProviderUnavailableError,
+    AudioSegment,
+)
+from gobby.ai.registry import AICapability
 from gobby.config.app import DaemonConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.servers.routes.voice import create_voice_router
@@ -512,6 +518,53 @@ class TestVoiceRoutes:
         assert response.status_code == 413
         assert response.json() == {"detail": "Audio exceeds 4 byte limit"}
         build_service.assert_not_called()
+
+    def test_transcribe_resolves_secret_reference_api_keys(
+        self, client: TestClient, server_with_voice: MagicMock
+    ) -> None:
+        """$secret: audio API-key references resolve for adapter construction."""
+        server_with_voice.config.voice = VoiceConfig(
+            enabled=False,
+            stt_enabled=False,
+            openai_compatible_audio=[
+                OpenAICompatibleAudioBindingConfig(
+                    provider="remote-stt",
+                    url="http://localhost:8080/v1",
+                    model="whisper-large-v3",
+                    api_key="$secret:REMOTE_STT_KEY",
+                )
+            ],
+        )
+        service = MagicMock()
+        service.execute = AsyncMock(
+            return_value=AudioCapabilityResult(
+                text="ok",
+                capability=AICapability.AUDIO_TRANSCRIBE,
+                provider="remote-stt",
+                model="whisper-large-v3",
+                task="transcribe",
+            )
+        )
+
+        with (
+            patch("gobby.storage.secrets.SecretStore") as store_cls,
+            patch.object(
+                voice_module, "build_daemon_audio_service", return_value=service
+            ) as build_service,
+        ):
+            store_cls.return_value.get.return_value = "resolved-plaintext"
+            response = client.post(
+                "/api/voice/transcribe",
+                data={"provider": "remote-stt"},
+                files={"file": ("test.webm", b"audio data here", "audio/webm")},
+            )
+
+        assert response.status_code == 200
+        store_cls.return_value.get.assert_called_once_with("REMOTE_STT_KEY")
+        resolved_config = build_service.call_args.args[0]
+        assert resolved_config.voice.openai_compatible_audio[0].api_key == "resolved-plaintext"
+        original_binding = server_with_voice.config.voice.openai_compatible_audio[0]
+        assert original_binding.api_key == "$secret:REMOTE_STT_KEY"
 
     def test_transcribe_selects_openai_compatible_provider(
         self, client: TestClient, server_with_voice: MagicMock

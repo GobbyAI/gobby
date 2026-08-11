@@ -27,13 +27,14 @@ from gobby.llm.context_windows import (
     resolve_context_window_with_source,
 )
 from gobby.llm.model_registry import ModelInfo
-from gobby.providers.capabilities.metadata_aliases import MODEL_METADATA_ALIASES_KEY
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.model_metadata import ModelMetadataStore
 
 pytestmark = pytest.mark.unit
+
+MODEL_METADATA_ALIASES_KEY = "ai.model_metadata_aliases"
 
 
 @pytest.mark.parametrize(
@@ -483,16 +484,21 @@ def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDataba
             )
         ]
     )
-    config_store = ConfigStore(postgres_db)
-    config_store.set(
-        MODEL_METADATA_ALIASES_KEY,
-        [
-            {
-                "provider": "synthetic-provider",
-                "provider_model_id": "provider-model",
-                "openrouter_model_id": "openai/registry-model",
+    mutations = ConfigMutations(postgres_db)
+    snapshot = mutations.repository.read(resolve_secrets=False)
+    write = mutations.patch(
+        expected_revision=snapshot.revision,
+        patch=ConfigPatch(
+            values={
+                MODEL_METADATA_ALIASES_KEY: [
+                    {
+                        "provider": "synthetic-provider",
+                        "provider_model_id": "provider-model",
+                        "openrouter_model_id": "openai/registry-model",
+                    }
+                ]
             }
-        ],
+        ),
     )
 
     resolved = resolve_context_window_with_source(
@@ -500,7 +506,10 @@ def test_db_backed_provider_metadata_alias_edits_are_live(postgres_db: HubDataba
         provider="synthetic-provider",
         db=postgres_db,
     )
-    config_store.set(MODEL_METADATA_ALIASES_KEY, [])
+    mutations.patch(
+        expected_revision=write.revision,
+        patch=ConfigPatch(values={MODEL_METADATA_ALIASES_KEY: []}),
+    )
     removed = resolve_context_window_with_source(
         "provider-model",
         provider="synthetic-provider",

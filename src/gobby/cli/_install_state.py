@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,8 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
 )
-from gobby.storage.config_store import ConfigStore, config_key_to_secret_name
+from gobby.storage.config_mutations import config_key_to_secret_name
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.secrets import SecretStore
 
 
@@ -59,7 +61,8 @@ class InstallState:
 
 def snapshot_install_state(config_store: ConfigStore, secret_store: SecretStore) -> InstallState:
     """Read only explicit installer-owned keys and secret presence."""
-    keys = set(config_store.list_keys())
+    values = config_store.read_snapshot().overrides
+    keys = set(values)
     managed_keys = {
         AI_EMBEDDING_MODEL_KEY,
         AI_EMBEDDING_API_BASE_KEY,
@@ -73,10 +76,10 @@ def snapshot_install_state(config_store: ConfigStore, secret_store: SecretStore)
         "databases.falkordb.password",
     }
     return InstallState(
-        embedding=_embedding_state(config_store, secret_store, keys),
-        voice=_voice_state(config_store, keys),
-        qdrant=_qdrant_state(config_store, keys),
-        falkordb=_falkordb_state(config_store, secret_store, keys),
+        embedding=_embedding_state(values, secret_store, keys),
+        voice=_voice_state(values, keys),
+        qdrant=_qdrant_state(values, keys),
+        falkordb=_falkordb_state(values, secret_store, keys),
         has_existing_values=bool(keys & managed_keys),
     )
 
@@ -136,7 +139,7 @@ def should_configure_section(
 
 
 def _embedding_state(
-    store: ConfigStore,
+    values: Mapping[str, object],
     secrets: SecretStore,
     keys: set[str],
 ) -> EmbeddingInstallState:
@@ -150,13 +153,13 @@ def _embedding_state(
     if not present:
         return EmbeddingInstallState(configured=False, summary="not configured")
 
-    model = store.get(AI_EMBEDDING_MODEL_KEY)
-    api_base = store.get(AI_EMBEDDING_API_BASE_KEY)
-    dim = store.get(AI_EMBEDDING_DIM_KEY)
+    model = values.get(AI_EMBEDDING_MODEL_KEY)
+    api_base = values.get(AI_EMBEDDING_API_BASE_KEY)
+    dim = values.get(AI_EMBEDDING_DIM_KEY)
     model_value = model.strip() if isinstance(model, str) and model.strip() else None
     api_base_value = api_base.strip() if isinstance(api_base, str) and api_base.strip() else None
     dim_value = _optional_int(dim)
-    has_api_key = _secret_present(store, secrets, AI_EMBEDDING_API_KEY_KEY, keys)
+    has_api_key = _secret_present(values, secrets, AI_EMBEDDING_API_KEY_KEY, keys)
 
     disabled = (
         AI_EMBEDDING_MODEL_KEY in keys
@@ -204,10 +207,10 @@ def _embedding_state(
     )
 
 
-def _voice_state(store: ConfigStore, keys: set[str]) -> VoiceInstallState:
+def _voice_state(values: Mapping[str, object], keys: set[str]) -> VoiceInstallState:
     if "voice.enabled" not in keys:
         return VoiceInstallState(configured=False, summary="not configured")
-    value = store.get("voice.enabled")
+    value = values.get("voice.enabled")
     if not isinstance(value, bool):
         return VoiceInstallState(
             configured=False,
@@ -221,13 +224,13 @@ def _voice_state(store: ConfigStore, keys: set[str]) -> VoiceInstallState:
     )
 
 
-def _qdrant_state(store: ConfigStore, keys: set[str]) -> InstallSectionState:
+def _qdrant_state(values: Mapping[str, object], keys: set[str]) -> InstallSectionState:
     required = {"databases.qdrant.url", "databases.qdrant.port"}
     present = keys & required
     if not present:
         return InstallSectionState(configured=False, summary="not configured")
-    url = store.get("databases.qdrant.url")
-    port = _optional_int(store.get("databases.qdrant.port"))
+    url = values.get("databases.qdrant.url")
+    port = _optional_int(values.get("databases.qdrant.port"))
     if present != required or not isinstance(url, str) or not url.strip() or not _valid_port(port):
         return InstallSectionState(
             configured=False,
@@ -238,7 +241,7 @@ def _qdrant_state(store: ConfigStore, keys: set[str]) -> InstallSectionState:
 
 
 def _falkordb_state(
-    store: ConfigStore,
+    values: Mapping[str, object],
     secrets: SecretStore,
     keys: set[str],
 ) -> InstallSectionState:
@@ -250,9 +253,9 @@ def _falkordb_state(
     present = keys & required
     if not present:
         return InstallSectionState(configured=False, summary="not configured")
-    host = store.get("databases.falkordb.host")
-    port = _optional_int(store.get("databases.falkordb.port"))
-    has_password = _secret_present(store, secrets, "databases.falkordb.password", keys)
+    host = values.get("databases.falkordb.host")
+    port = _optional_int(values.get("databases.falkordb.port"))
+    has_password = _secret_present(values, secrets, "databases.falkordb.password", keys)
     if (
         present != required
         or not isinstance(host, str)
@@ -271,14 +274,14 @@ def _falkordb_state(
 
 
 def _secret_present(
-    store: ConfigStore,
+    values: Mapping[str, object],
     secrets: SecretStore,
     key: str,
     keys: set[str],
 ) -> bool:
     if key not in keys:
         return False
-    configured = store.get(key)
+    configured = values.get(key)
     if not isinstance(configured, str) or not configured.startswith("$secret:"):
         return False
     secret_name = configured.removeprefix("$secret:") or config_key_to_secret_name(key)

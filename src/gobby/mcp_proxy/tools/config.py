@@ -1,617 +1,104 @@
-"""
-Internal MCP tools for daemon configuration.
-
-Exposes functionality for:
-- get_config(key): Get a config value by dotted key
-- get_config_section(prefix): Get an entire section as nested dict
-- set_config(key, value): Set a config value by dotted key
-- set_config_batch(entries): Set multiple keys atomically (validates once)
-- delete_config(key): Delete a config override by dotted key
-- list_config_keys(prefix?): List all config keys
-- ensure_defaults(section): Populate missing keys from Pydantic defaults
-"""
+"""MCP tools for the universal configuration service."""
 
 from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
 
-import psycopg
-from pydantic import ValidationError
-
-from gobby.config.embedding_keys import (
-    external_embedding_config_key_to_runtime_key,
-    runtime_embedding_config_entries_to_storage,
-    runtime_embedding_config_key_to_storage_key,
-    storage_embedding_config_key_to_runtime_key,
-)
+from gobby.config.values import ConfigValuesError, ConfigValuesService
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.config_store import (
-    config_key_to_secret_name,
-    embedding_mutation_context,
-    flatten_config,
-    is_secret_key_name,
-    unflatten_config,
-)
-
-if TYPE_CHECKING:
-    from gobby.config.app import DaemonConfig
-    from gobby.storage.config_store import ConfigStore
-    from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.config_repository import MAX_CONFIG_REVISION
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["create_config_registry"]
 
-_MASKED_SECRET = "********"
-_FALKOR_PASSWORD_KEY = "databases.falkordb.password"
-_FALKOR_RESTART_HINT = (
-    "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
-)
-_MEMORY_GRAPH_EXPANSION_RESTART_HINT = (
-    "Run `gobby restart` for the new memory graph related-expansion timeout to take effect."
-)
-_HOOK_TIMEOUT_RESTART_HINT = (
-    "Run `gobby restart` for the new hook timeout policy to take effect in the daemon."
-)
-_HOOK_PROVIDER_REINSTALL_HINT = (
-    "Re-run `gobby install` for the provider hook timeout to take effect in CLI settings."
-)
-_UNEXPECTED_CONFIG_ERROR = "Internal config error"
-
-
-def _mask_secret_value(key: str, value: Any, secret_keys: set[str] | None = None) -> Any:
-    is_secret = is_secret_key_name(key) or (secret_keys is not None and key in secret_keys)
-    if is_secret and value not in (None, ""):
-        return _MASKED_SECRET
+def _validate_revision(value: object) -> int:
+    if type(value) is not int or not 0 <= value <= MAX_CONFIG_REVISION:
+        raise ConfigValuesError(
+            "validation_error",
+            f"Configuration revision must be an integer from 0 to {MAX_CONFIG_REVISION}",
+            ("expected_revision",),
+        )
     return value
 
 
-def _validate_falkordb_secret(key: str, value: Any) -> None:
-    if key != _FALKOR_PASSWORD_KEY:
-        return
-    from gobby.config.persistence import validate_falkordb_password
-
-    validate_falkordb_password(str(value))
-
-
-def _reject_unsupported_structured_value(key: str, value: Any) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        return None
-    return {
-        "success": False,
-        "error": f"Cannot set '{key}' to a {type(value).__name__}. "
-        "Use dotted keys to set nested values (e.g. 'section.key').",
-    }
-
-
-def _falkor_password_value(config: DaemonConfig) -> str | None:
-    value = config.databases.falkordb.password
-    return str(value) if value is not None else None
-
-
-def _add_restart_metadata(
-    result: dict[str, Any],
-    before_config: DaemonConfig,
-    after_config: DaemonConfig,
-) -> None:
-    restart_hints: list[str] = []
-    if _falkor_password_value(before_config) != _falkor_password_value(after_config):
-        restart_hints.append(_FALKOR_RESTART_HINT)
-    if (
-        before_config.memory.graph_related_expansion_timeout_seconds
-        != after_config.memory.graph_related_expansion_timeout_seconds
-    ):
-        restart_hints.append(_MEMORY_GRAPH_EXPANSION_RESTART_HINT)
-    before_hook_timeouts = (
-        before_config.memory_recall.timeout,
-        before_config.workflow.timeout,
-        before_config.hooks.adapter_timeout,
-        before_config.hooks.provider_timeout,
-    )
-    after_hook_timeouts = (
-        after_config.memory_recall.timeout,
-        after_config.workflow.timeout,
-        after_config.hooks.adapter_timeout,
-        after_config.hooks.provider_timeout,
-    )
-    if before_hook_timeouts != after_hook_timeouts:
-        restart_hints.append(_HOOK_TIMEOUT_RESTART_HINT)
-    if before_config.hooks.provider_timeout != after_config.hooks.provider_timeout:
-        result["requires_provider_reinstall"] = True
-        result["provider_reinstall_hint"] = _HOOK_PROVIDER_REINSTALL_HINT
-    if restart_hints:
-        result["requires_restart"] = True
-        result["restart_hint"] = " ".join(restart_hints)
-
-
-def _remove_scalar_parent_keys(flat: dict[str, Any], key: str) -> None:
-    parts = key.split(".")
-    for index in range(1, len(parts)):
-        flat.pop(".".join(parts[:index]), None)
-
-
-def _dependent_default_keys_to_remove(
-    remaining_key: str,
-    remaining_override_keys: set[str],
-) -> tuple[str, ...]:
-    if not remaining_key.endswith(".profile"):
-        return ()
-    candidates_key = f"{remaining_key.rsplit('.', 1)[0]}.candidates"
-    if candidates_key in remaining_override_keys:
-        return ()
-    return (candidates_key,)
-
-
-def _unprobed_responses_endpoint_error(
-    keys: set[str],
-    config: DaemonConfig,
-) -> str | None:
-    prefix = "ai.generation.endpoints."
-    endpoint_names = {
-        key.removeprefix(prefix).partition(".")[0] for key in keys if key.startswith(prefix)
-    }
-    for endpoint_name in endpoint_names:
-        endpoint = config.ai.generation.endpoints.get(endpoint_name)
-        if endpoint is not None and endpoint.wire_api == "responses":
-            return (
-                f"Responses endpoint {endpoint_name!r} must be activated through "
-                f"PUT /api/config/generation-endpoints/{endpoint_name}/activate"
-            )
-    return None
-
-
 def create_config_registry(
-    config: DaemonConfig,
-    config_store: ConfigStore,
-    config_setter: Callable[[DaemonConfig], None],
-    db: HubDatabase | None = None,
+    service_getter: Callable[[], ConfigValuesService],
 ) -> InternalToolRegistry:
-    """
-    Create a config tool registry for reading/writing daemon configuration.
-
-    Args:
-        config: Current in-memory DaemonConfig
-        config_store: DB-backed config key-value store
-        config_setter: Callback to update in-memory config on ServiceContainer
-        db: Database for SecretStore access (optional, enables is_secret support)
-
-    Returns:
-        InternalToolRegistry with config tools registered
-    """
+    """Create the public configuration MCP registry."""
     registry = InternalToolRegistry(
         name="gobby-config",
-        description=(
-            "Daemon configuration - get_config, get_config_section, set_config, "
-            "set_config_batch, delete_config, list_config_keys, ensure_defaults"
-        ),
+        description="Public daemon configuration schema, values, and revisioned patching",
     )
-
-    # Mutable reference so tools always read the latest config
-    _state = {"config": config}
-
-    def _current_config() -> DaemonConfig:
-        return _state["config"]
-
-    def _flat_config() -> dict[str, Any]:
-        """Flatten current in-memory config to dotted keys."""
-        return flatten_config(_current_config().model_dump(mode="json", by_alias=True))
-
-    def _secret_keys() -> set[str]:
-        """Return persisted secret keys using their runtime config names."""
-        return {
-            storage_embedding_config_key_to_runtime_key(key)
-            for key in config_store.get_secret_keys()
-        }
 
     @registry.tool(
-        name="get_config",
-        description="Get a config value by dotted key (e.g. 'skills.hubs.clawdhub.type'). Reads from in-memory config.",
+        name="get_config_schema",
+        description="Get the public daemon configuration schema.",
     )
-    def get_config(key: str) -> dict[str, Any]:
-        """Get a single config value by dotted key."""
-        try:
-            lookup_key = external_embedding_config_key_to_runtime_key(key)
-        except (TypeError, ValueError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
-        flat = _flat_config()
-        secret_keys = _secret_keys()
-        if lookup_key in flat:
-            return {
-                "success": True,
-                "key": key,
-                "value": _mask_secret_value(lookup_key, flat[lookup_key], secret_keys),
-            }
-        return {"success": False, "error": f"Key '{key}' not found in config"}
+    async def get_config_schema() -> dict[str, object]:
+        return await service_getter().schema()
 
     @registry.tool(
-        name="get_config_section",
-        description="Get an entire config section as nested dict (e.g. 'skills.hubs'). Filters by prefix from in-memory config.",
+        name="get_config_values",
+        description="Get desired and active public daemon configuration values.",
     )
-    def get_config_section(prefix: str) -> dict[str, Any]:
-        """Get a config section filtered by dotted-path prefix."""
+    async def get_config_values() -> dict[str, object]:
+        return await service_getter().values()
+
+    async def patch_config_values(
+        expected_revision: object,
+        values: dict[str, object] | None = None,
+        unset: list[str] | None = None,
+    ) -> dict[str, object]:
         try:
-            lookup_prefix = external_embedding_config_key_to_runtime_key(prefix)
-        except (TypeError, ValueError, ValidationError) as e:
-            return {"success": False, "error": str(e)}
-        flat = _flat_config()
-        secret_keys = _secret_keys()
-        # Filter keys matching the prefix (exact prefix + '.' boundary)
-        section_prefix = lookup_prefix + "."
-        filtered = {
-            k[len(section_prefix) :]: _mask_secret_value(k, v, secret_keys)
-            for k, v in flat.items()
-            if k.startswith(section_prefix)
-        }
-        # Also include exact match
-        if lookup_prefix in flat:
-            return {
-                "success": True,
-                "prefix": prefix,
-                "value": _mask_secret_value(lookup_prefix, flat[lookup_prefix], secret_keys),
-            }
-        if not filtered:
-            return {"success": False, "error": f"No keys found under prefix '{prefix}'"}
-        nested = unflatten_config(filtered)
-        return {"success": True, "prefix": prefix, "section": nested}
-
-    @registry.tool(
-        name="set_config",
-        description="Set a config value by dotted key. Validates via DaemonConfig, persists to DB, and updates in-memory config. Pass is_secret=True to encrypt the value.",
-    )
-    def set_config(key: str, value: Any, is_secret: bool = False) -> dict[str, Any]:
-        """Set a config value. Validates, persists to DB, updates in-memory.
-
-        If ``is_secret`` is True, the value is encrypted via SecretStore and
-        a ``$secret:`` reference is stored in config_store.
-        """
-        unsupported_value = _reject_unsupported_structured_value(key, value)
-        if unsupported_value is not None:
-            return unsupported_value
-
-        from gobby.config.app import DaemonConfig as DaemonConfigCls
-        from gobby.config.app import deep_merge
-
-        try:
-            before_config = _current_config()
-            runtime_key = external_embedding_config_key_to_runtime_key(key)
-            storage_key = runtime_embedding_config_key_to_storage_key(runtime_key)
-            effective_is_secret = is_secret or is_secret_key_name(storage_key)
-            if effective_is_secret and db is None:
-                return {
-                    "success": False,
-                    "error": f"Cannot store '{key}' as secret — database not available. "
-                    "Secrets require database for encryption.",
-                }
-            if effective_is_secret:
-                _validate_falkordb_secret(key, value)
-
-            # For secret values, validate with the $secret: ref placeholder.
-            if effective_is_secret:
-                ref = f"$secret:{config_key_to_secret_name(storage_key)}"
-                validation_value = ref
-            else:
-                validation_value = value
-
-            # Build a nested dict from the dotted key
-            update_nested = unflatten_config({runtime_key: validation_value})
-
-            # Deep-merge into current config dict
-            current_dict = before_config.model_dump(mode="json", by_alias=True)
-            deep_merge(current_dict, update_nested)
-
-            # Validate by constructing a new DaemonConfig
-            new_config = DaemonConfigCls(**current_dict)
-            if activation_error := _unprobed_responses_endpoint_error(
-                {runtime_key},
-                new_config,
-            ):
-                return {"success": False, "error": activation_error}
-
-            if effective_is_secret:
-                actual_nested = unflatten_config({runtime_key: value})
-                actual_dict = before_config.model_dump(mode="json", by_alias=True)
-                deep_merge(actual_dict, actual_nested)
-                new_config = DaemonConfigCls(**actual_dict)
-
-            # Persist to DB
-            if effective_is_secret and db is not None:
-                from gobby.storage.secrets import SecretStore as SecretStoreCls
-
-                secret_store = SecretStoreCls(db)
-                config_store.set_secret(storage_key, str(value), secret_store, source="mcp")
-            else:
-                config_store.set(storage_key, value, source="mcp")
-
-            _state["config"] = new_config
-            config_setter(new_config)
-
-            result: dict[str, Any] = {"success": True, "key": key}
-            if effective_is_secret:
-                result["stored_as"] = "encrypted_secret"
-            else:
-                result["value"] = value
-            _add_restart_metadata(result, before_config, new_config)
-            return result
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
+            return await service_getter().patch(
+                expected_revision=_validate_revision(expected_revision),
+                values=values or {},
+                unset=unset or (),
+            )
+        except ConfigValuesError as exc:
+            return exc.public_body()
         except Exception:
-            logger.exception("Failed to set config key '%s'", key)
-            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
-
-    @registry.tool(
-        name="set_config_batch",
-        description=(
-            "Set multiple config keys atomically. Validates all keys together "
-            "before persisting — required when a config section has multiple "
-            "required fields (e.g. 'local' needs both url and model). "
-            "Pass a list of {key, value} entries."
-        ),
-    )
-    def set_config_batch(entries: list[dict[str, Any]]) -> dict[str, Any]:
-        """Set multiple config values in one validated, atomic operation.
-
-        Each entry is ``{"key": "dotted.key", "value": <native JSON value>}``.
-        All entries are merged, validated via DaemonConfig once, then
-        persisted together via ``config_store.set_many()``.
-        """
-        if not entries:
-            return {"success": False, "error": "entries list is empty"}
-
-        from gobby.config.app import DaemonConfig as DaemonConfigCls
-        from gobby.config.app import deep_merge
-
-        try:
-            before_config = _current_config()
-            # Collect and validate entry shapes
-            flat_updates: dict[str, Any] = {}
-            explicit_secret_keys: set[str] = set()
-            original_keys: set[str] = set()
-            for entry in entries:
-                key = entry.get("key")
-                value = entry.get("value")
-                if not key or not isinstance(key, str):
-                    return {"success": False, "error": f"Invalid entry — 'key' required: {entry}"}
-                unsupported_value = _reject_unsupported_structured_value(key, value)
-                if unsupported_value is not None:
-                    return unsupported_value
-                original_keys.add(key)
-                runtime_key = external_embedding_config_key_to_runtime_key(key)
-                flat_updates[runtime_key] = value
-                if bool(entry.get("is_secret", False)):
-                    explicit_secret_keys.add(runtime_key)
-
-            secret_keys = {
-                key
-                for key in flat_updates
-                if key in explicit_secret_keys
-                or is_secret_key_name(runtime_embedding_config_key_to_storage_key(key))
-            }
-            plain_updates = {
-                key: value for key, value in flat_updates.items() if key not in secret_keys
-            }
-            secret_updates = {key: flat_updates[key] for key in secret_keys}
-            if secret_updates and db is None:
-                return {
-                    "success": False,
-                    "error": "Cannot store secret config keys — database not available. "
-                    "Secrets require database for encryption.",
-                }
-            for key, value in secret_updates.items():
-                _validate_falkordb_secret(key, value)
-
-            # Unflatten all keys → nested dict, merge into current config
-            validation_updates = dict(flat_updates)
-            for key in secret_keys:
-                storage_key = runtime_embedding_config_key_to_storage_key(key)
-                validation_updates[key] = f"$secret:{config_key_to_secret_name(storage_key)}"
-            update_nested = unflatten_config(validation_updates)
-            current_dict = before_config.model_dump(mode="json", by_alias=True)
-            deep_merge(current_dict, update_nested)
-
-            # Validate by constructing a new DaemonConfig
-            DaemonConfigCls(**current_dict)
-
-            actual_dict = before_config.model_dump(mode="json", by_alias=True)
-            deep_merge(actual_dict, unflatten_config(flat_updates))
-            new_config = DaemonConfigCls(**actual_dict)
-            if activation_error := _unprobed_responses_endpoint_error(
-                set(flat_updates),
-                new_config,
-            ):
-                return {"success": False, "error": activation_error}
-
-            # Persist all keys atomically
-            storage_plain_updates = runtime_embedding_config_entries_to_storage(plain_updates)
-            if secret_updates and db is not None:
-                from gobby.storage.secrets import SecretStore as SecretStoreCls
-
-                secret_store = SecretStoreCls(db)
-                with embedding_mutation_context(db):
-                    for key, value in secret_updates.items():
-                        storage_key = runtime_embedding_config_key_to_storage_key(key)
-                        config_store.set_secret(storage_key, str(value), secret_store, source="mcp")
-                    if storage_plain_updates:
-                        config_store.set_many(storage_plain_updates, source="mcp")
-            else:
-                config_store.set_many(storage_plain_updates, source="mcp")
-
-            # Update in-memory config
-            _state["config"] = new_config
-            config_setter(new_config)
-
-            result: dict[str, Any] = {
-                "success": True,
-                "keys_set": sorted(original_keys),
-                "count": len(flat_updates),
-            }
-            _add_restart_metadata(result, before_config, new_config)
-            return result
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
-        except Exception:
-            logger.exception("Failed to set config batch")
-            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
-
-    @registry.tool(
-        name="delete_config",
-        description=(
-            "Delete a config override by dotted key. Removes the row from "
-            "config_store and, if the key was stored as a secret, also clears "
-            "the encrypted blob from the secrets table (atomic). Validates "
-            "that the resulting DaemonConfig is still valid (Pydantic defaults "
-            "fill in for the removed key)."
-        ),
-    )
-    def delete_config(key: str) -> dict[str, Any]:
-        """Delete a config override, clearing secret storage when needed."""
-        from gobby.config.app import DaemonConfig as DaemonConfigCls
-
-        try:
-            before_config = _current_config()
-            runtime_key = external_embedding_config_key_to_runtime_key(key)
-            storage_key = runtime_embedding_config_key_to_storage_key(runtime_key)
-            override_keys = set(config_store.list_keys())
-            if storage_key not in override_keys:
-                return {
-                    "success": False,
-                    "error": f"Key '{key}' not found in config_store (no override to delete)",
-                }
-
-            secret_keys = set(config_store.get_secret_keys())
-            had_secret = storage_key in secret_keys
-
-            # Validate the post-delete state before mutating DB or memory.
-            remaining_override_keys = {
-                storage_embedding_config_key_to_runtime_key(k)
-                for k in override_keys - {storage_key}
-            }
-            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json", by_alias=True))
-            current_flat = _flat_config()
-            flat = dict(defaults_flat)
-            for remaining_key in remaining_override_keys:
-                if remaining_key in current_flat:
-                    for dependent_key in _dependent_default_keys_to_remove(
-                        remaining_key,
-                        remaining_override_keys,
-                    ):
-                        flat.pop(dependent_key, None)
-                    _remove_scalar_parent_keys(flat, remaining_key)
-                    flat[remaining_key] = current_flat[remaining_key]
-            new_config = DaemonConfigCls(**unflatten_config(flat))
-
-            if had_secret:
-                if db is None:
-                    return {
-                        "success": False,
-                        "error": (
-                            f"Cannot clear secret for '{key}' — database not "
-                            "available. Secret deletion requires database access."
-                        ),
-                    }
-                from gobby.storage.secrets import SecretStore as SecretStoreCls
-
-                secret_store = SecretStoreCls(db)
-                config_store.clear_secret(storage_key, secret_store)
-            else:
-                config_store.delete(storage_key)
-
-            _state["config"] = new_config
-            config_setter(new_config)
-
-            result = {
-                "success": True,
-                "key": key,
-                "deleted": True,
-                "had_secret": had_secret,
-            }
-            _add_restart_metadata(result, before_config, new_config)
-            return result
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
-        except Exception:
-            logger.exception("Failed to delete config key '%s'", key)
-            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
-
-    @registry.tool(
-        name="list_config_keys",
-        description="List all config keys stored in the database, optionally filtered by prefix.",
-    )
-    def list_config_keys(prefix: str | None = None) -> dict[str, Any]:
-        """List config keys from the DB, optionally filtered by prefix."""
-        try:
-            storage_prefix = None
-            if prefix is not None:
-                runtime_prefix = external_embedding_config_key_to_runtime_key(prefix)
-                storage_prefix = runtime_embedding_config_key_to_storage_key(runtime_prefix)
-            keys = sorted(config_store.list_keys(prefix=storage_prefix))
-            return {"success": True, "count": len(keys), "keys": keys}
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
-        except psycopg.Error as exc:
-            logger.exception("Failed to list config keys")
-            message = str(exc).strip() or exc.__class__.__name__
+            logger.exception("Configuration persistence outcome is indeterminate")
             return {
-                "success": False,
-                "error": "config store unavailable",
-                "error_type": exc.__class__.__name__,
-                "message": message,
+                "error": {
+                    "code": "persistence_indeterminate",
+                    "message": "Configuration persistence outcome is indeterminate",
+                    "path": [],
+                    "retryable": False,
+                }
             }
 
-    @registry.tool(
-        name="ensure_defaults",
-        description="Populate missing config keys from Pydantic defaults for a given section prefix. Useful for bootstrapping config on existing installs.",
+    registry.register(
+        name="patch_config_values",
+        description="Patch public daemon configuration values at an expected revision.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "expected_revision": {
+                    "anyOf": [
+                        {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": MAX_CONFIG_REVISION,
+                        }
+                    ]
+                },
+                "values": {"type": "object", "default": {}},
+                "unset": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "default": [],
+                },
+            },
+            "required": ["expected_revision"],
+            "additionalProperties": False,
+        },
+        func=patch_config_values,
+        brief="Patch public daemon configuration values. Requires: expected_revision",
     )
-    def ensure_defaults(section: str) -> dict[str, Any]:
-        """For a section prefix, insert Pydantic default values for any keys not already in DB."""
-        from gobby.config.app import DaemonConfig as DaemonConfigCls
-
-        try:
-            # Get all defaults from a fresh DaemonConfig
-            defaults_flat = flatten_config(DaemonConfigCls().model_dump(mode="json", by_alias=True))
-            runtime_section = external_embedding_config_key_to_runtime_key(section)
-
-            # Filter to the requested section
-            section_prefix = runtime_section + "."
-            section_defaults = {
-                k: v
-                for k, v in defaults_flat.items()
-                if k.startswith(section_prefix) or k == runtime_section
-            }
-
-            if not section_defaults:
-                return {
-                    "success": False,
-                    "error": f"No default keys found for section '{section}'",
-                }
-
-            # Find which keys are already in DB
-            storage_section = runtime_embedding_config_key_to_storage_key(runtime_section)
-            existing_keys = set(config_store.list_keys(prefix=storage_section))
-
-            # Only insert missing ones
-            storage_defaults = runtime_embedding_config_entries_to_storage(section_defaults)
-            missing = {k: v for k, v in storage_defaults.items() if k not in existing_keys}
-
-            if not missing:
-                return {
-                    "success": True,
-                    "message": f"All {len(section_defaults)} keys already present for '{section}'",
-                    "inserted": 0,
-                }
-
-            count = config_store.set_many(missing, source="defaults")
-            return {
-                "success": True,
-                "inserted": count,
-                "total_section_keys": len(section_defaults),
-                "keys_inserted": sorted(missing),
-            }
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
-        except Exception:
-            logger.exception("Failed to ensure config defaults for section '%s'", section)
-            return {"success": False, "error": _UNEXPECTED_CONFIG_ERROR}
 
     return registry
+
+
+__all__ = ["create_config_registry"]

@@ -11,6 +11,7 @@ from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from tests.config_runtime_helpers import static_session_capture
 
 pytestmark = pytest.mark.unit
 
@@ -62,7 +63,7 @@ def session_manager(db: HubDatabase) -> SessionManager:
 @pytest.fixture
 def lifecycle_manager(db: HubDatabase) -> SessionLifecycleManager:
     config = SessionLifecycleConfig()
-    return SessionLifecycleManager(db, config)
+    return SessionLifecycleManager(db, static_session_capture(config))
 
 
 @pytest.mark.integration

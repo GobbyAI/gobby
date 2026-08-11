@@ -14,10 +14,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
-from gobby.config.logging import (
-    RUNTIME_LOG_FILENAME,
-    resolved_log_path,
-)
+from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.paths import get_gobby_home
 
 # Template directory
@@ -106,21 +103,28 @@ def _find_project_from_cwd() -> Path | None:
     return None
 
 
+def _runtime_log_file(gobby_home_path: Path) -> str:
+    """Honor the configured logs directory; fall back when the hub is unreachable."""
+    from gobby.cli.runtime import get_cli_runtime
+
+    try:
+        logging_settings = get_cli_runtime().require_config().logging
+    except Exception:
+        return str(gobby_home_path / "logs" / RUNTIME_LOG_FILENAME)
+    return str(resolved_log_path(logging_settings, RUNTIME_LOG_FILENAME))
+
+
 def _resolve_install_context(*, verbose: bool = False) -> dict[str, str | bool]:
     """Resolve the execution context for service file generation.
 
     Returns dict with: python_executable, working_directory, mode,
     home_dir, path_env, runtime_log_file, gobby_home, verbose.
     """
-    from gobby.config.app import load_config
-
-    config = load_config()
-
     exe = Path(sys.executable).resolve()
     home_dir = str(Path.home())
-    runtime_log_file = str(resolved_log_path(config.logging, RUNTIME_LOG_FILENAME))
-
-    gobby_home = str(get_gobby_home())
+    gobby_home_path = get_gobby_home()
+    runtime_log_file = _runtime_log_file(gobby_home_path)
+    gobby_home = str(gobby_home_path)
 
     if _is_dev_mode():
         # Dev mode: use the project .venv python, not the global one.

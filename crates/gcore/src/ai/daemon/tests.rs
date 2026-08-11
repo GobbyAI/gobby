@@ -102,10 +102,13 @@ struct EnvGuard {
     gobby_home: Option<OsString>,
     daemon_url: Option<OsString>,
     port: Option<OsString>,
+    daemon_config_disable: Option<OsString>,
 }
 
 impl EnvGuard {
     fn set_home(home: &Path) -> Self {
+        use crate::ai::effective_config::DAEMON_CONFIG_DISABLE_ENV;
+
         let guard = Self {
             _lock: TEST_ENV_LOCK
                 .lock()
@@ -114,16 +117,21 @@ impl EnvGuard {
             gobby_home: std::env::var_os("GOBBY_HOME"),
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             port: std::env::var_os("GOBBY_PORT"),
+            daemon_config_disable: std::env::var_os(DAEMON_CONFIG_DISABLE_ENV),
         };
         // SAFETY: these tests serialize env mutation through TEST_ENV_LOCK,
         // and EnvGuard restores the original values while still holding
         // that lock. GOBBY_DAEMON_URL/GOBBY_PORT are cleared so ambient
-        // overrides cannot leak into bootstrap-derived URL assertions.
+        // overrides cannot leak into bootstrap-derived URL assertions, and
+        // the daemon-config kill-switch keeps guarded tests standalone by
+        // construction — no read can consult the process-global effective
+        // config cache or probe a live daemon.
         unsafe {
             std::env::set_var("HOME", home);
             std::env::set_var("GOBBY_HOME", home.join(".gobby"));
             std::env::remove_var("GOBBY_DAEMON_URL");
             std::env::remove_var("GOBBY_PORT");
+            std::env::set_var(DAEMON_CONFIG_DISABLE_ENV, "1");
         }
         guard
     }
@@ -131,6 +139,8 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
+        use crate::ai::effective_config::DAEMON_CONFIG_DISABLE_ENV;
+
         // SAFETY: EnvGuard owns the TEST_ENV_LOCK guard for the lifetime of
         // the temporary env override, so restoration cannot race with
         // another test using this helper.
@@ -140,6 +150,7 @@ impl Drop for EnvGuard {
                 ("GOBBY_HOME", &self.gobby_home),
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
+                (DAEMON_CONFIG_DISABLE_ENV, &self.daemon_config_disable),
             ] {
                 match value {
                     Some(value) => std::env::set_var(name, value),

@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -303,7 +304,6 @@ class TestSessionEndpoints:
     ) -> None:
         """Test listing sessions when session manager is None returns 503."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=None,
             task_manager=MagicMock(),
@@ -312,7 +312,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         client = TestClient(server.app)
         response = client.get("/api/sessions")
@@ -322,7 +322,6 @@ class TestSessionEndpoints:
     def test_register_without_manager(self, session_storage: SessionManager) -> None:
         """Test registering when session manager is None returns 503."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=None,
             task_manager=MagicMock(),
@@ -331,7 +330,7 @@ class TestSessionEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         client = TestClient(server.app)
         response = client.post(
@@ -700,7 +699,6 @@ class TestStopSignalEndpoints:
     ) -> HTTPServer:
         """Create HTTP server with mock stop registry."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -710,7 +708,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         # Mock the hook_manager in app state
         server.app.state.hook_manager = FakeHookManager()
@@ -812,7 +810,6 @@ class TestStopSignalEndpoints:
     def test_stop_signal_without_stop_registry(self, session_storage: SessionManager) -> None:
         """Test stop signal endpoints when stop registry not available."""
         services = ServiceContainer(
-            config=None,
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -821,7 +818,7 @@ class TestStopSignalEndpoints:
             services=services,
             port=60887,
             test_mode=True,
-            auth_mode="disabled",
+            bootstrap_config=BootstrapConfig(auth_mode="disabled"),
         )
         # Set hook_manager without stop_registry
         with TestClient(server.app) as client:

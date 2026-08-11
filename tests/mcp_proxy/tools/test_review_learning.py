@@ -118,7 +118,7 @@ def test_shared_service_identity(
 
     manager = setup_internal_registries(
         _config=DaemonConfig(),
-        memory_manager=cast(MemoryManager, memory_manager),
+        memory_manager_resolver=lambda: cast(MemoryManager, memory_manager),
         task_manager=LocalTaskManager(temp_db),
     )
 
@@ -287,7 +287,7 @@ async def test_recall_review_lessons_for_files_matches_recorded_finding_path() -
 
 
 @pytest.mark.asyncio
-async def test_recall_review_lessons_uses_tag_fast_path_across_checkouts(
+async def test_recall_review_lessons_matches_path_tags_across_checkouts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -318,17 +318,18 @@ async def test_recall_review_lessons_uses_tag_fast_path_across_checkouts(
         },
     )
 
+    # Recording from an absolute worktree path must produce the same
+    # repo-relative path tag that a main-checkout path normalizes to.
+    assert path_tag(relative_path.as_posix()) in (memory_manager.memories[0].tags or [])
+
     list_calls: list[list[str]] = []
     original_alist_memories = memory_manager.alist_memories
 
-    async def tagged_only(**kwargs: Any) -> list[FakeMemory]:
-        tags_all = list(kwargs.get("tags_all") or [])
-        list_calls.append(tags_all)
-        if len(tags_all) == 2:
-            return []
+    async def recording(**kwargs: Any) -> list[FakeMemory]:
+        list_calls.append(list(kwargs.get("tags_all") or []))
         return await original_alist_memories(**kwargs)
 
-    monkeypatch.setattr(memory_manager, "alist_memories", tagged_only)
+    monkeypatch.setattr(memory_manager, "alist_memories", recording)
 
     result = await registry.call(
         "recall_review_lessons_for_files",
@@ -340,11 +341,7 @@ async def test_recall_review_lessons_uses_tag_fast_path_across_checkouts(
 
     assert result["success"] is True
     assert result["count"] == 1
-    assert list_calls[0] == [
-        "review-lesson",
-        "confirmed",
-        path_tag(relative_path.as_posix()),
-    ]
+    assert list_calls == [["review-lesson", "confirmed"]]
 
 
 @pytest.mark.asyncio

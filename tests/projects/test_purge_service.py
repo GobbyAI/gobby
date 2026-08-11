@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -15,6 +15,7 @@ from gobby.projects.purge import (
     PROJECT_PURGE_HANDLER_NAME,
     PROJECT_PURGE_JOB_NAME,
     ProjectPurgeService,
+    ProjectPurgeVectorStoreUnavailable,
     PurgeOutcome,
     create_project_purge_handler,
     register_project_purge_cron,
@@ -49,20 +50,31 @@ class FakeProjects:
 
 
 class FakeTransaction:
-    def __init__(self, events: list[str], projects: FakeProjects) -> None:
-        self.events = events
-        self.projects = projects
+    def __init__(self, db: FakeDB) -> None:
+        self.db = db
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> SimpleNamespace:
-        del params
+        stripped = sql.strip()
+        if "pg_advisory_xact_lock" in stripped:
+            return SimpleNamespace(rowcount=1)
+        if stripped.startswith("INSERT INTO embedding_projection_changes"):
+            self.db.tombstones.append((str(params[0]), str(params[1]), bool(params[2])))
+            self.db.sequence += 1
+            sequence = self.db.sequence
+            return SimpleNamespace(fetchone=lambda: {"sequence": sequence})
         _head, separator, tail = sql.partition("FROM ")
         if not separator:
-            statement = sql.strip().split(maxsplit=1)[0]
+            statement = stripped.split(maxsplit=1)[0]
             raise AssertionError(f"Unsupported SQL statement in fake transaction: {statement}")
         table = tail.split()[0]
-        self.events.append(f"sql:{table}")
+        if stripped.upper().startswith("SELECT"):
+            rows: list[dict[str, Any]] = []
+            if table == "memories":
+                rows = [{"id": "memory-1"}, {"id": "memory-2"}]
+            return SimpleNamespace(fetchall=lambda: rows)
+        self.db.events.append(f"sql:{table}")
         if table == "projects":
-            self.projects.hard_deleted = True
+            self.db.projects.hard_deleted = True
         return SimpleNamespace(rowcount=1)
 
 
@@ -70,6 +82,8 @@ class FakeDB:
     def __init__(self, events: list[str], projects: FakeProjects) -> None:
         self.events = events
         self.projects = projects
+        self.tombstones: list[tuple[str, str, bool]] = []
+        self.sequence = 0
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, str]]:
         del params
@@ -80,7 +94,7 @@ class FakeDB:
     @contextmanager
     def transaction(self) -> Iterator[FakeTransaction]:
         self.events.append("hub:begin")
-        yield FakeTransaction(self.events, self.projects)
+        yield FakeTransaction(self)
         self.events.append("hub:commit")
 
 
@@ -194,7 +208,7 @@ def make_service(
         gwiki_barrier=FakeGwikiBarrier(events),
         wiki_gateway=FakeWikiGateway(events, success=wiki_success),
         code_gateway=FakeCodeGateway(events, success=code_success),
-        vector_cleaner=vectors,
+        vector_cleaner=lambda: vectors,
         graph_cleaner=FakeGraphCleaner(events),
         drain_timeout=0.01,
     )
@@ -222,6 +236,11 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
     assert result.success
     assert projects.get("p1") is None
     assert vectors.memory_ids == ["memory-1", "memory-2"]
+    fake_db = cast(FakeDB, service.db)
+    assert fake_db.tombstones == [
+        ("memory", "memory-1", True),
+        ("memory", "memory-2", True),
+    ]
     assert events == [
         "cron:disable",
         "cron:drain",
@@ -242,6 +261,26 @@ async def test_purge_orders_quiescence_projections_cleanup_and_hub_transaction()
         "hub:commit",
         "fence:exit",
     ]
+
+
+@pytest.mark.asyncio
+async def test_unavailable_vector_store_fails_purge_before_destructive_cleanup() -> None:
+    service, projects, _vectors, events = make_service(FakeProject("p1", "app"))
+
+    def unavailable_cleaner() -> FakeVectorCleaner:
+        raise ProjectPurgeVectorStoreUnavailable(
+            "Qdrant is configured but the runtime vector store is unavailable"
+        )
+
+    service.vector_cleaner = unavailable_cleaner
+
+    result = await service.purge_project("p1")
+
+    assert not result.success
+    assert projects.get("p1") is not None
+    assert projects.project.deleted_at is not None
+    assert "fence:enter" not in events
+    assert "hub:begin" not in events
 
 
 @pytest.mark.asyncio

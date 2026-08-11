@@ -1071,3 +1071,34 @@ class TestResultDictStructure:
         result = uninstall_service()
         assert result["success"] is False
         assert "error" in result
+
+
+class TestRuntimeLogFile:
+    """Service templates honor the configured logs directory."""
+
+    def test_honors_configured_logs_directory(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from gobby.cli.installers.service_common import _runtime_log_file
+        from gobby.config.logging import RUNTIME_LOG_FILENAME, LoggingSettings
+
+        runtime = MagicMock()
+        runtime.require_config.return_value = SimpleNamespace(
+            logging=LoggingSettings(dir=str(tmp_path / "custom-logs"))
+        )
+        with patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime):
+            result = _runtime_log_file(tmp_path / "gobby-home")
+
+        assert result == str(tmp_path / "custom-logs" / RUNTIME_LOG_FILENAME)
+
+    def test_falls_back_when_config_is_unreachable(self, tmp_path: Path) -> None:
+        from gobby.cli.installers.service_common import _runtime_log_file
+        from gobby.config.logging import RUNTIME_LOG_FILENAME
+
+        with patch(
+            "gobby.cli.runtime.get_cli_runtime",
+            side_effect=RuntimeError("CLI runtime is unavailable outside a Click invocation"),
+        ):
+            result = _runtime_log_file(tmp_path)
+
+        assert result == str(tmp_path / "logs" / RUNTIME_LOG_FILENAME)

@@ -15,6 +15,7 @@ from gobby.config.cron import CronConfig
 from gobby.scheduler.scheduler import CronScheduler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronRun
+from tests.config_runtime_helpers import static_cron_capture
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -79,7 +80,7 @@ def test_restart_does_not_fail_remote_runs(
     scheduler = CronScheduler(
         storage=storage,
         executor=MagicMock(),
-        config=CronConfig(),
+        capture_bundle=static_cron_capture(CronConfig()),
     )
 
     scheduler._reconcile_interrupted_runs_on_startup()

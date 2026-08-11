@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from click.testing import CliRunner
@@ -171,7 +172,9 @@ def test_refresh_verification_auto_falls_back_when_ai_unavailable(
     write_project(tmp_path)
     add_python_project(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("gobby.config.app.load_config", lambda: DaemonConfig())
+    runtime = MagicMock()
+    runtime.require_config.return_value = DaemonConfig()
+    monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda: runtime)
     monkeypatch.setattr("gobby.ai.build_daemon_text_generation_service", lambda _config: None)
 
     result = CliRunner().invoke(projects, ["refresh-verification", "--ai", "auto"])
@@ -188,7 +191,9 @@ def test_refresh_verification_ai_on_requires_service(
     write_project(tmp_path)
     add_python_project(tmp_path)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("gobby.config.app.load_config", lambda: DaemonConfig())
+    runtime = MagicMock()
+    runtime.require_config.return_value = DaemonConfig()
+    monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda: runtime)
     monkeypatch.setattr("gobby.ai.build_daemon_text_generation_service", lambda _config: None)
 
     result = CliRunner().invoke(projects, ["refresh-verification", "--ai", "on"])

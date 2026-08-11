@@ -1,6 +1,7 @@
 import inspect
 import uuid
 from datetime import timedelta
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -180,7 +181,8 @@ def test_cancel_is_idempotent_after_first_transition(run_manager, parent_task) -
 @pytest.mark.parametrize(
     ("transition", "allowed_statuses", "result_status"),
     [
-        ("start", ("pending",), "running"),
+        # A failed run without a compiled spec (precompile failure) may restart.
+        ("start", ("pending", "failed"), "running"),
         ("save_compiled_spec", ("running",), "compiled"),
         ("mark_applying", ("compiled",), "applying"),
         ("save_apply_result", ("applying",), "completed"),
@@ -217,6 +219,27 @@ def test_state_transitions_require_allowed_status(
         else:
             assert result is None
             assert persisted.status == source_status
+
+
+def test_start_does_not_restart_failed_run_with_compiled_spec(
+    run_manager: LocalExpansionRunManager,
+    parent_task: Any,
+) -> None:
+    """Only a precompile failure may restart; a compiled-then-failed run stays failed."""
+    run = run_manager.create(
+        parent_task_id=parent_task.id,
+        project_id=parent_task.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    assert run_manager.start(run.id) is not None
+    assert run_manager.save_compiled_spec(run.id, {"phases": [], "tasks": []}) is not None
+    assert run_manager.fail(run.id, "apply failed") is not None
+
+    assert run_manager.start(run.id) is None
+    persisted = run_manager.get(run.id)
+    assert persisted is not None
+    assert persisted.status == "failed"
 
 
 @pytest.mark.parametrize("status", ["running", "applying"])

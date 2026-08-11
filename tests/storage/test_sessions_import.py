@@ -31,10 +31,21 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "backfill_terminal_context": "(self, session_id: 'str', terminal_context: "
     "'dict[str, Any] | None') -> 'tuple[Session | None, bool]'",
     "cache_session_mapping": "(self, external_id: 'str', source: 'str', "
-    "session_id: 'str', machine_id: 'str | None' = None, "
-    "project_id: 'str | None' = None) -> 'None'",
+    "session_id: 'str', project_id: 'str | None' = None, "
+    "session_type: 'str' = 'terminal') -> 'None'",
     "clear_had_edits": "(self, session_id: 'str') -> 'None'",
     "cleanup_expired_session_state": "(self) -> 'SessionStateCleanupResult'",
+    "continue_terminal_session_as_web_chat": "(self, session_id: 'str', *, "
+    "source: 'str', model: 'str | None', project_id: 'str', "
+    "sandbox_policy_hash: 'str | None') -> 'Session | None'",
+    "expire_tmux_pane_sessions": "(self, machine_id: 'str', socket_identity: 'str', "
+    "pane: 'str') -> 'list[str]'",
+    "expire_tmux_socket_sessions": "(self, machine_id: 'str', "
+    "socket_identity: 'str') -> 'list[str]'",
+    "rebind_resumed_terminal_session": "(self, session_id: 'str', *, machine_id: 'str', "
+    "project_id: 'str', source: 'str', transcript_path: 'str | None', "
+    "terminal_context: 'dict[str, Any] | None', workflow_name: 'str | None', "
+    "agent_depth: 'int', sandbox_enabled: 'bool | None') -> 'Session | None'",
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None, machine_id: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
@@ -50,19 +61,19 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "prune_stale_compact_workflow_instances": "(self, retention_hours: 'int' = 24) -> 'int'",
     "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
     "'dict[str, _TaskRefsByRole]'",
-    "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",
+    "find_active_by_external_id": "(self, external_id: 'str', source: 'str', "
+    "session_type: 'str' = 'terminal') -> 'Session | None'",
     "find_active_by_terminal_context": "(self, project_id: 'str | None', parent_pid: 'Any', "
     "terminal_context: 'dict[str, Any] | str | None' = None) -> 'Session | None'",
     "find_by_terminal_identity": "(self, identity: 'TerminalIdentity') -> 'list[Session]'",
     "resolve_current_terminal_session": "(self, project_id: 'str | None', parent_pid: 'Any', "
     "terminal_context: 'dict[str, Any] | str | None') -> 'Session | None'",
-    "find_by_external_id": "(self, external_id: 'str', machine_id: 'str | None', "
-    "project_id: 'str | None', source: 'str', session_type: 'str | None' = None) "
-    "-> 'Session | None'",
-    "find_by_external_id_all_sources": "(self, external_id: 'str', machine_id: 'str | None', "
-    "project_id: 'str | None', session_type: 'str | None' = None) -> 'list[Session]'",
-    "find_by_external_id_any_project": "(self, external_id: 'str', machine_id: 'str | None', "
-    "source: 'str', session_type: 'str | None' = None) -> 'Session | None'",
+    "find_by_external_id": "(self, external_id: 'str', project_id: 'str | None', "
+    "source: 'str', session_type: 'str | None' = 'terminal') -> 'Session | None'",
+    "find_by_external_id_all_sources": "(self, external_id: 'str', "
+    "project_id: 'str | None', session_type: 'str | None' = 'terminal') -> 'list[Session]'",
+    "find_by_external_id_any_project": "(self, external_id: 'str', source: 'str', "
+    "session_type: 'str | None' = 'terminal') -> 'Session | None'",
     "find_children": "(self, parent_session_id: 'str') -> 'list[Session]'",
     "find_parent": "(self, machine_id: 'str', project_id: 'str', "
     "source: 'str | None' = None, status: 'str' = 'handoff_ready', "
@@ -72,7 +83,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str', "
-    "machine_id: 'str | None' = None, project_id: 'str | None' = None) -> 'str | None'",
+    "project_id: 'str | None' = None, session_type: 'str' = 'terminal') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
     "-> 'list[Session]'",
     "is_ancestor": "(self, ancestor_id: 'str', descendant_id: 'str') -> 'bool'",
@@ -87,8 +98,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
     "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
     "'list[Session]'",
-    "lookup_session_id": "(self, external_id: 'str', source: 'str', machine_id: 'str | None', "
-    "project_id: 'str | None') -> 'str | None'",
+    "lookup_session_id": "(self, external_id: 'str', source: 'str', "
+    "project_id: 'str | None', session_type: 'str' = 'terminal') -> 'str | None'",
     "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
     "'list[dict[str, Any]]'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
@@ -134,8 +145,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "renumber_project_sessions": "(self, project_id: 'str', *, dry_run: 'bool' = True) -> "
     "'list[SessionRenumberMapping]'",
     "reset_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
-    "recover_session": "(self, external_id: 'str', source: 'str', machine_id: 'str | None', "
-    "project_id: 'str | None', session_type: 'str | None' = None) -> 'Session | None'",
+    "recover_session": "(self, external_id: 'str', source: 'str', "
+    "project_id: 'str | None', session_type: 'str | None' = 'terminal') -> 'Session | None'",
     "activate_web_chat_session": "(self, session_id: 'str') -> 'Session | None'",
     "revive_expired_terminal_session": "(self, session_id: 'str') -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",

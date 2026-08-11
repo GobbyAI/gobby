@@ -9,8 +9,8 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from gobby.config.runtime import RuntimeActiveBundle
     from gobby.mcp_proxy.metrics import ToolMetricsManager
-    from gobby.storage.tool_results import ToolResultStore
 
 # Preserve the public maintenance logger used before these loops were extracted.
 logger = logging.getLogger("gobby.runner_maintenance")
@@ -102,15 +102,18 @@ async def metrics_cleanup_loop(
 
 
 async def tool_result_cleanup_loop(
-    store: ToolResultStore,
+    db: Any,
     is_shutdown_requested: Callable[[], bool],
     *,
+    capture_bundle: Callable[[], RuntimeActiveBundle],
     run_db: Callable[..., Awaitable[Any]] | None = None,
     interval_seconds: int = 24 * 60 * 60,
     startup_delay_seconds: float | None = None,
     sleep: Callable[[float], Awaitable[None]] | None = None,
 ) -> None:
     """Clean expired offloaded tool results once per day."""
+    from gobby.storage.tool_results import ToolResultStore
+
     sleep_fn = sleep or asyncio.sleep
     if not await _wait_for_first_maintenance_cycle(
         "tool-result-cleanup",
@@ -121,6 +124,8 @@ async def tool_result_cleanup_loop(
         return
 
     while True:
+        config = capture_bundle().snapshot.active
+        store = ToolResultStore(db, config.get_tool_result_offload_config())
         try:
             deleted = await _run_sync_maintenance(run_db, store.cleanup_expired)
             if deleted > 0:

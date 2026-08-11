@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from typing import Any
 
 import click
@@ -27,8 +26,8 @@ def test_daemon_build_timeout_does_not_fallback(monkeypatch: pytest.MonkeyPatch)
             raise httpx.TimeoutException("timed out")
 
     monkeypatch.setattr(
-        "gobby.config.app.load_config",
-        lambda: SimpleNamespace(daemon_port=60887),
+        "gobby.utils.daemon_url.daemon_url",
+        lambda: "http://127.0.0.1:60887",
     )
     monkeypatch.setattr("gobby.utils.daemon_client.DaemonClient", TimeoutDaemonClient)
 
@@ -58,8 +57,8 @@ def test_unhealthy_daemon_still_allows_local_fallback(monkeypatch: pytest.Monkey
             raise AssertionError("unhealthy daemon should not receive build call")
 
     monkeypatch.setattr(
-        "gobby.config.app.load_config",
-        lambda: SimpleNamespace(daemon_port=60887),
+        "gobby.utils.daemon_url.daemon_url",
+        lambda: "http://127.0.0.1:60887",
     )
     monkeypatch.setattr("gobby.utils.daemon_client.DaemonClient", UnhealthyDaemonClient)
 
@@ -99,8 +98,8 @@ def test_daemon_build_payload_carries_project_context(
             return FakeResponse()
 
     monkeypatch.setattr(
-        "gobby.config.app.load_config",
-        lambda: SimpleNamespace(daemon_port=60887),
+        "gobby.utils.daemon_url.daemon_url",
+        lambda: "http://127.0.0.1:60887",
     )
     monkeypatch.setattr("gobby.utils.daemon_client.DaemonClient", HealthyDaemonClient)
 

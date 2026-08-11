@@ -14,6 +14,7 @@ from gobby.memory.dream.storage_journal import (
     insert_snapshot,
     restore_crossrefs,
 )
+from gobby.storage.embedding_generation_state import EmbeddingGenerationState
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories_crud import DuplicateMemoryContentError
 from gobby.utils.datetime import utc_now
@@ -160,6 +161,15 @@ class _DreamActionMixin:
             else:
                 raise ValueError(f"Unsupported dream action: {action}")
 
+            if action in {"review", "delete"}:
+                EmbeddingGenerationState(self.db).append_change(
+                    "memory", memory_id, is_tombstone=True, transaction=conn
+                )
+            elif action in {"refresh", "promote"}:
+                EmbeddingGenerationState(self.db).append_change(
+                    "memory", memory_id, transaction=conn
+                )
+
             after_row = conn.execute(
                 "SELECT * FROM memories WHERE id = %s", (memory_id,)
             ).fetchone()
@@ -252,6 +262,12 @@ class _DreamActionMixin:
                 raise RuntimeError(f"Memory {memory_id} vanished during dream revert")
             restored = dict(restored_row)
             restored["tags"] = _decode(restored.get("tags")) or []
+            EmbeddingGenerationState(self.db).append_change(
+                "memory",
+                memory_id,
+                is_tombstone=restored.get("deleted_at") is not None,
+                transaction=conn,
+            )
 
         if on_committed is not None:
             on_committed()

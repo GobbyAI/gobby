@@ -3,7 +3,6 @@ use gobby_core::config::embedding_keys;
 use gobby_core::config::{AiCapability, AiRouting, CapabilityBinding, ConfigSource};
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use postgres::Client;
-use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -16,11 +15,7 @@ use crate::config::context::{
     IndexingSettings,
 };
 use crate::config::layers::{ConfigLayers, ServiceSource};
-use crate::{db, secrets};
-
-struct PostgresConfigSource<'a> {
-    conn: &'a mut Client,
-}
+use crate::db;
 
 pub(super) trait ServiceConfigSource {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>>;
@@ -38,77 +33,10 @@ pub(super) fn service_env_value(key: &str) -> Option<String> {
         FALKORDB_PASSWORD_CONFIG_KEY => GOBBY_FALKORDB_PASSWORD_ENV,
         "databases.qdrant.url" => "GOBBY_QDRANT_URL",
         "databases.qdrant.api_key" => "GOBBY_QDRANT_API_KEY",
+        gobby_core::config::INDEXING_RESPECT_GITIGNORE_KEY => "GOBBY_INDEXING_RESPECT_GITIGNORE",
         _ => return None,
     };
     std::env::var(env_key).ok()
-}
-
-fn config_store_missing(error: &anyhow::Error) -> bool {
-    error.chain().any(|source| {
-        source
-            .downcast_ref::<postgres::Error>()
-            .and_then(postgres::Error::as_db_error)
-            .is_some_and(|db_error| *db_error.code() == postgres::error::SqlState::UNDEFINED_TABLE)
-    })
-}
-
-impl ServiceConfigSource for PostgresConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
-        match gobby_core::postgres::read_config_value(self.conn, key) {
-            Ok(raw) => Ok(raw.and_then(|raw| gobby_core::config::decode_config_value(&raw))),
-            Err(error) if config_store_missing(&error) => Ok(None),
-            Err(error) => Err(error),
-        }
-    }
-
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        secrets::resolve_config_value(value, self.conn)
-    }
-}
-
-pub(super) struct FallbackConfigSource<'a> {
-    postgres: PostgresConfigSource<'a>,
-    standalone: Option<StandaloneConfig>,
-    hits: HashMap<String, &'static str>,
-}
-
-impl<'a> FallbackConfigSource<'a> {
-    pub(super) fn new(conn: &'a mut Client, standalone: Option<StandaloneConfig>) -> Self {
-        Self {
-            postgres: PostgresConfigSource { conn },
-            standalone,
-            hits: HashMap::new(),
-        }
-    }
-}
-
-impl ServiceConfigSource for FallbackConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
-        if let Some(value) = service_env_value(key) {
-            self.hits.insert(key.to_string(), "env");
-            return Ok(Some(value));
-        }
-        if let Some(value) = ServiceConfigSource::config_value(&mut self.postgres, key)? {
-            self.hits.insert(key.to_string(), "config_store");
-            return Ok(Some(value));
-        }
-        let value = self
-            .standalone
-            .as_mut()
-            .and_then(|standalone| standalone.config_value(key));
-        if value.is_some() {
-            self.hits.insert(key.to_string(), "gcore.yaml");
-        }
-        Ok(value)
-    }
-
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        ServiceConfigSource::resolve_value(&mut self.postgres, value)
-    }
-
-    fn hit_source(&self, key: &str) -> Option<&'static str> {
-        self.hits.get(key).copied()
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -375,15 +303,7 @@ where
 /// Resolve FalkorDB configuration from config_store + env vars.
 ///
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
-pub(super) fn resolve_falkordb_config(
-    conn: &mut Client,
-    layers: &ConfigLayers,
-) -> anyhow::Result<Option<FalkorConfig>> {
-    let mut source = ServiceSource::new(conn, layers);
-    resolve_falkordb_config_from_source(&mut source)
-}
-
-fn resolve_falkordb_config_from_source(
+pub(super) fn resolve_falkordb_config_from_source(
     source: &mut impl ServiceConfigSource,
 ) -> anyhow::Result<Option<FalkorConfig>> {
     let Some(host) = resolve_service_setting(source, FALKORDB_HOST_CONFIG_KEY)? else {
@@ -403,15 +323,7 @@ fn resolve_falkordb_config_from_source(
 /// Resolve Qdrant configuration from config_store + env vars.
 ///
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
-pub(super) fn resolve_qdrant_config(
-    conn: &mut Client,
-    layers: &ConfigLayers,
-) -> anyhow::Result<Option<QdrantConfig>> {
-    let mut source = ServiceSource::new(conn, layers);
-    resolve_qdrant_config_from_source(&mut source)
-}
-
-fn resolve_qdrant_config_from_source(
+pub(super) fn resolve_qdrant_config_from_source(
     source: &mut impl ServiceConfigSource,
 ) -> anyhow::Result<Option<QdrantConfig>> {
     let url = resolve_service_setting(source, "databases.qdrant.url")?;
@@ -479,19 +391,11 @@ fn resolve_service_port(
 /// Returns None if no api_base is found (BM25 only).
 ///
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
-pub(super) fn resolve_embedding_config(
-    conn: &mut Client,
-    layers: &ConfigLayers,
-) -> anyhow::Result<Option<super::EmbeddingConfig>> {
-    let mut source = ServiceSource::new(conn, layers);
-    resolve_embedding_config_from_service_source(None, &mut source)
-}
-
 pub(crate) fn resolve_embedding_config_details(
     conn: &mut Client,
     layers: &ConfigLayers,
 ) -> anyhow::Result<Option<EmbeddingConfigDetails>> {
-    let mut source = ServiceSource::new(conn, layers);
+    let (mut source, _revision) = ServiceSource::new(conn, layers)?;
     resolve_embedding_config_details_from_service_source(&mut source)
 }
 
@@ -511,7 +415,7 @@ pub(super) fn resolve_embedding_config_details_from_service_source(
     }))
 }
 
-fn resolve_embedding_config_from_service_source(
+pub(super) fn resolve_embedding_config_from_service_source(
     project_id: Option<String>,
     source: &mut impl ServiceConfigSource,
 ) -> anyhow::Result<Option<super::EmbeddingConfig>> {
@@ -554,28 +458,18 @@ fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {
         .is_none_or(|transport| transport.is_empty() || transport == "openai_compatible_http")
 }
 
-pub(super) fn resolve_code_vector_settings(
-    conn: &mut Client,
-    layers: &ConfigLayers,
-) -> Result<CodeVectorSettings, CodeVectorConfigError> {
-    let mut source = ServiceSource::new(conn, layers);
-    resolve_code_vector_settings_from_source(&mut source)
-}
-
-pub(super) fn resolve_indexing_settings(
-    conn: &mut Client,
-    layers: &ConfigLayers,
+pub(super) fn resolve_indexing_settings_from_source(
+    source: &mut impl ServiceConfigSource,
 ) -> anyhow::Result<IndexingSettings> {
-    let mut source = ServiceSource::new(conn, layers);
     let mut source = ErrorCapturingConfigSource {
-        source: &mut source,
+        source,
         first_error: None,
     };
-    let settings = gobby_core::config::resolve_indexing_config(&mut source)?;
+    let settings = gobby_core::config::resolve_indexing_config_from_source(&mut source)?;
     source.finish(settings)
 }
 
-fn resolve_code_vector_settings_from_source(
+pub(super) fn resolve_code_vector_settings_from_source(
     source: &mut impl ServiceConfigSource,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
     let vector_dim = resolve_vector_dim(source, embedding_keys::AI_DIM)?;

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from typing import Any, cast
 
 import pytest
 
@@ -11,13 +13,19 @@ from gobby.ai.embedding_switch import (
     PHASE_ACTIVE,
     PHASE_BUILDING,
     PHASE_FLIPPING,
+    PHASE_GC,
     PHASE_STAGING,
     SwitchJournal,
     get_switch_status,
 )
 from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
 from gobby.ai.embedding_switch_service import EmbeddingSwitchControl
-from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
+)
+from gobby.storage.embedding_generation_state import ProjectionChange
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 
 pytestmark = pytest.mark.unit
@@ -30,6 +38,9 @@ class FakeConfigStore:
 
     def get(self, key: str) -> Any:
         return self.values.get(key)
+
+    def get_all(self) -> dict[str, Any]:
+        return {}
 
     def get_internal_lifecycle(self, key: str) -> Any:
         return self.values.get(key)
@@ -52,6 +63,20 @@ class FakeConfigStore:
         self.operations.append(("owner_set", run_id, dict(entries)))
         return len(entries)
 
+    def complete_embedding_switch(
+        self,
+        run_id: str,
+        entries: dict[str, Any],
+        completed_key: str,
+        completed_record: dict[str, Any],
+    ) -> int:
+        revision = 42
+        self.values.update(entries)
+        self.values[completed_key] = {**completed_record, "committed_revision": revision}
+        self.values.pop(EMBEDDING_SWITCH_JOURNAL_KEY, None)
+        self.operations.append(("complete", run_id, dict(entries), completed_key))
+        return revision
+
     def delete(self, key: str) -> None:
         self.values.pop(key, None)
         self.operations.append(("delete", key))
@@ -60,6 +85,38 @@ class FakeConfigStore:
         existed = self.values.pop(key, None) is not None
         self.operations.append(("lifecycle_delete", key, run_id))
         return existed
+
+
+class _FakeCursor:
+    def __init__(self, row: dict[str, object] | None) -> None:
+        self._row = row
+
+    def fetchone(self) -> dict[str, object] | None:
+        return self._row
+
+    def fetchall(self) -> list[dict[str, object]]:
+        return [] if self._row is None else [self._row]
+
+
+class _FakeTransaction:
+    def execute(self, query: str, params: tuple[object, ...] = ()) -> _FakeCursor:
+        if "MAX(sequence)" in query:
+            return _FakeCursor({"watermark": 0})
+        return _FakeCursor(None)
+
+
+class FakeDatabase:
+    @contextmanager
+    def transaction(self) -> Iterator[_FakeTransaction]:
+        yield _FakeTransaction()
+
+    def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, int]:
+        if "MAX(sequence)" in query:
+            return {"watermark": 0}
+        return {"incompatible": 0}
+
+    def fetchall(self, query: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
+        return []
 
 
 class FakeVectorStore:
@@ -88,6 +145,9 @@ class FakeVectorStore:
 
     async def delete_collection(self, collection_name: str) -> None:
         self.operations.append(("delete", collection_name, None))
+
+    async def delete(self, point_id: str, *, collection_name: str) -> None:
+        self.operations.append(("delete", point_id, collection_name))
 
 
 class FakeEmbeddingService:
@@ -138,7 +198,7 @@ def _issue_record(*, source_text: str | None) -> GitHubIssueTriageRecord:
 async def test_run_staging_failure_keeps_staging_phase(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=object())
+    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=FakeDatabase())
 
     async def fail_stage(_journal: SwitchJournal) -> object:
         raise RuntimeError("stage failed")
@@ -165,17 +225,20 @@ async def test_flip_records_old_targets_before_config_write(
             "gobby_github_issues": "gobby_github_issues@old",
         }
     )
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
 
     assert journal.phase == PHASE_ACTIVE
     assert store.operations[0][0] == "lifecycle_set"
-    assert store.operations[1][0] == "owner_set"
+    assert store.operations[1][0] == "complete"
     run_id = store.operations[1][1]
     assert run_id == journal.run_id
     assert store.operations[1][2][AI_EMBEDDING_API_BASE_KEY] is None
+    completed = store.values[EMBEDDING_SWITCH_COMPLETED_KEY]
+    assert completed["committed_revision"] == 42
+    assert completed["old_physical_names"]["memories"] == "memories@old"
     assert journal.old_physical_names["memories"] == "memories@old"
     assert ("alias", "memories@4096-run", "memories") in vector_store.operations
     assert not any(operation[0] == "delete" for operation in vector_store.operations)
@@ -187,7 +250,7 @@ async def test_legacy_bare_collection_flip_deletes_old_bare_collection(
 ) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
 
     _result, journal = await runner.flip(_journal(PHASE_FLIPPING))
@@ -199,10 +262,10 @@ async def test_legacy_bare_collection_flip_deletes_old_bare_collection(
 
 
 @pytest.mark.asyncio
-async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_gc_failure_keeps_gc_phase_with_error(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore({"memories": "memories@old"})
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     journal = _journal(PHASE_ACTIVE)
     journal.old_physical_names = {"memories": "memories@old"}
@@ -211,7 +274,7 @@ async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.Monk
 
     assert report.failed is True
     assert report.journal is not None
-    assert report.journal.phase == PHASE_ACTIVE
+    assert report.journal.phase == PHASE_GC
     assert "still targeted by an alias" in (report.journal.error or "")
 
 
@@ -219,7 +282,7 @@ async def test_gc_failure_keeps_active_phase_with_error(monkeypatch: pytest.Monk
 async def test_build_uses_target_physical_collections(monkeypatch: pytest.MonkeyPatch) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
 
@@ -241,12 +304,81 @@ async def test_build_uses_target_physical_collections(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
+async def test_build_replays_changes_after_enumeration_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
+    builds: list[str] = []
+
+    async def build_memory(*args: Any, **kwargs: Any) -> int:
+        builds.append("memory")
+        return 0
+
+    async def build_tool(*args: Any, **kwargs: Any) -> int:
+        builds.append("tool")
+        return 0
+
+    async def build_issue(*args: Any, **kwargs: Any) -> int:
+        builds.append("github_issue")
+        return 0
+
+    class GenerationState:
+        def __init__(self) -> None:
+            self.watermark_calls = 0
+
+        def watermark(self) -> int:
+            self.watermark_calls += 1
+            return 7 if self.watermark_calls == 1 else 9
+
+        def changes_after(
+            self, sequence: int, *, up_to: int | None = None
+        ) -> list[ProjectionChange]:
+            changes = [
+                ProjectionChange(8, "tool", "tool-1", False),
+                ProjectionChange(9, "memory", "memory-1", True),
+            ]
+            return [
+                change
+                for change in changes
+                if change.sequence > sequence and (up_to is None or change.sequence <= up_to)
+            ]
+
+    cast(Any, runner).generation_state = GenerationState()
+    monkeypatch.setattr(runner, "_build_memory_collection", build_memory)
+    monkeypatch.setattr(runner, "_build_tool_collection", build_tool)
+    monkeypatch.setattr(runner, "_build_github_issue_collection", build_issue)
+
+    projected: list[tuple[str, str]] = []
+
+    async def project_change(
+        journal: Any, service: Any, vector_store_arg: Any, change: ProjectionChange
+    ) -> int:
+        projected.append((change.source_kind, change.source_id))
+        return 1
+
+    monkeypatch.setattr(runner, "_project_change", project_change)
+
+    _result, journal = await runner.build(_journal(PHASE_BUILDING))
+
+    assert journal.physical_names["memories"] == "memories@4096-run"
+    assert journal.caught_up_watermark == 9
+    # Full corpus builders run only for the initial fill; replay is per-change.
+    assert builds == ["memory", "tool", "github_issue"]
+    assert projected == [("tool", "tool-1")]
+    assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
+
+
+@pytest.mark.asyncio
 async def test_legacy_github_issue_without_source_text_leaves_building_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = FakeConfigStore()
     vector_store = FakeVectorStore()
-    runner = EmbeddingSwitchRunner(store, db=object())
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
     monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
     monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
 
@@ -282,7 +414,7 @@ async def test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry(
     vector_store = FakeVectorStore()
     control = EmbeddingSwitchControl()
     control.abort_requested.set()
-    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control)
     monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
     cleanup_attempts = 0
 
@@ -323,7 +455,7 @@ async def test_abort_cleanup_refuses_to_delete_alias_target(
     vector_store = FakeVectorStore({"memories": "memories@4096-run"})
     control = EmbeddingSwitchControl()
     control.abort_requested.set()
-    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control)
     monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
 
     result = await runner.run(_journal(PHASE_BUILDING))
@@ -337,3 +469,174 @@ async def test_abort_cleanup_refuses_to_delete_alias_target(
     persisted = get_switch_status(store)
     assert persisted is not None
     assert persisted.phase == PHASE_ABORTED
+
+
+@pytest.mark.asyncio
+async def test_build_persists_physical_names_before_watermark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
+
+    async def no_items(*args: Any, **kwargs: Any) -> int:
+        return 0
+
+    monkeypatch.setattr(runner, "_build_memory_collection", no_items)
+    monkeypatch.setattr(runner, "_build_tool_collection", no_items)
+    monkeypatch.setattr(runner, "_build_github_issue_collection", no_items)
+
+    journal_writes: list[dict[str, Any]] = []
+    original_set = store.set_internal_lifecycle
+
+    def record_lifecycle(key: str, value: Any) -> None:
+        if key == EMBEDDING_SWITCH_JOURNAL_KEY:
+            journal_writes.append(dict(value))
+        original_set(key, value)
+
+    monkeypatch.setattr(store, "set_internal_lifecycle", record_lifecycle)
+
+    watermark_seen: list[bool] = []
+
+    class GenerationState:
+        def watermark(self) -> int:
+            # Journal-first: physical_names must be persisted before this read.
+            watermark_seen.append(any(write.get("physical_names") for write in journal_writes))
+            return 3
+
+        def changes_after(
+            self, sequence: int, *, up_to: int | None = None
+        ) -> list[ProjectionChange]:
+            return []
+
+    cast(Any, runner).generation_state = GenerationState()
+
+    _result, journal = await runner.build(_journal(PHASE_BUILDING))
+
+    assert watermark_seen and watermark_seen[0] is True
+    assert journal.caught_up_watermark == 3
+    assert any(write.get("caught_up_watermark") == 3 for write in journal_writes)
+
+
+@pytest.mark.asyncio
+async def test_replay_is_bounded_and_raises_after_max_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embedding_switch_runner import (
+        _REPLAY_MAX_PASSES,
+        EmbeddingSwitchRunError,
+    )
+
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase())
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+    monkeypatch.setattr(runner, "_embedding_service", lambda journal: FakeEmbeddingService())
+
+    class EndlessGenerationState:
+        def __init__(self) -> None:
+            self.sequence = 0
+
+        def watermark(self) -> int:
+            self.sequence += 1
+            return self.sequence
+
+        def changes_after(
+            self, sequence: int, *, up_to: int | None = None
+        ) -> list[ProjectionChange]:
+            return [ProjectionChange(self.sequence, "memory", "memory-1", True)]
+
+    cast(Any, runner).generation_state = EndlessGenerationState()
+
+    journal = _journal(PHASE_FLIPPING)
+    journal.physical_names = {
+        "memories": "memories@4096-run",
+        "tool_embeddings": "tool_embeddings@4096-run",
+        "gobby_github_issues": "gobby_github_issues@4096-run",
+    }
+
+    with pytest.raises(EmbeddingSwitchRunError, match="did not converge"):
+        await runner._replay_projection_changes(
+            journal, cast(Any, FakeEmbeddingService()), cast(Any, vector_store)
+        )
+    assert cast(Any, runner.generation_state).sequence == _REPLAY_MAX_PASSES
+
+
+@pytest.mark.asyncio
+async def test_gc_timeout_surfaces_incompatible_acks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embedding_switch import CompletedSwitchRecord
+    from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunError
+
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), gc_wait_seconds=0.05)
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+
+    class BlockedGenerationState:
+        def can_collect(self, generation: str, revision: int) -> bool:
+            return False
+
+        def incompatible_serving_acks(self, generation: str, revision: int) -> list[str]:
+            return ["daemon-a (generation=old, revision=1, acknowledged=True)"]
+
+    cast(Any, runner).generation_state = BlockedGenerationState()
+    runner._completed_record = CompletedSwitchRecord(
+        run_id="4096-run",
+        committed_revision=5,
+        physical_names={"memories": "memories@4096-run"},
+        old_physical_names={"memories": "memories@old"},
+        caught_up_watermark=3,
+        catalog_key="qwen3-8b-q8",
+        target_dim=4096,
+        target_model="qwen3-embedding:8b-q8_0",
+        target_query_prefix="query:",
+        target_api_base=None,
+    )
+
+    journal = _journal(PHASE_GC)
+    with pytest.raises(EmbeddingSwitchRunError, match="daemon-a"):
+        await runner.gc(journal)
+    assert journal.phase == PHASE_GC
+
+
+@pytest.mark.asyncio
+async def test_gc_abort_request_raises_resumable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.ai.embedding_switch import CompletedSwitchRecord
+    from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunError
+
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    control = EmbeddingSwitchControl()
+    runner = EmbeddingSwitchRunner(store, db=FakeDatabase(), control=control, gc_wait_seconds=30.0)
+    monkeypatch.setattr(runner, "_vector_store", lambda journal: vector_store)
+
+    class BlockedGenerationState:
+        def can_collect(self, generation: str, revision: int) -> bool:
+            return False
+
+        def incompatible_serving_acks(self, generation: str, revision: int) -> list[str]:
+            return []
+
+    cast(Any, runner).generation_state = BlockedGenerationState()
+    runner._completed_record = CompletedSwitchRecord(
+        run_id="4096-run",
+        committed_revision=5,
+        physical_names={"memories": "memories@4096-run"},
+        old_physical_names={"memories": "memories@old"},
+        caught_up_watermark=3,
+        catalog_key="qwen3-8b-q8",
+        target_dim=4096,
+        target_model="qwen3-embedding:8b-q8_0",
+        target_query_prefix="query:",
+        target_api_base=None,
+    )
+    control.abort_requested.set()
+
+    with pytest.raises(EmbeddingSwitchRunError, match="aborted"):
+        await runner.gc(_journal(PHASE_GC))

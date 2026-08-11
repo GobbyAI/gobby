@@ -40,6 +40,7 @@ from starlette.requests import ClientDisconnect
 from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.agent_run_ingress import validate_managed_agent_hook
 from gobby.hooks.envelope_dedupe import is_envelope_processed
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -139,7 +140,6 @@ def basic_http_server(session_storage: SessionManager) -> HTTPServer:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     services = ServiceContainer(
-        config=mock_config,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -148,7 +148,7 @@ def basic_http_server(session_storage: SessionManager) -> HTTPServer:
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
 
@@ -3518,7 +3518,12 @@ class TestHooksEndpoints:
                     all_started.set()
             release.wait(timeout=1)
 
-        async def evaluate(_event: HookEvent) -> HookResponse:
+        async def evaluate(
+            _event: HookEvent,
+            *,
+            blocking_deadline: float | None = None,
+        ) -> HookResponse:
+            del blocking_deadline
             await asyncio.to_thread(stalled_dependency)
             return HookResponse(decision="allow")
 

@@ -12,7 +12,8 @@ from gobby.config.persistence import validate_falkordb_password
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
-from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
+from gobby.storage.config_mutations import config_key_to_secret_name
+from gobby.storage.config_store import ConfigStore, is_secret_key_name
 from gobby.storage.secrets import VALID_CATEGORIES, SecretStore
 
 MASKED_SECRET = "********"
@@ -109,10 +110,9 @@ def validation_flat_for_secret_entries(
 
 
 def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
-    """Register secret management routes."""
+    """Register metadata-only named credential routes."""
 
     async def require_mutation_auth(request: Request) -> None:
-        """Protect secret mutations independently of the global auth mode."""
         if context.server.auth_service.is_request_authenticated(request):
             return
         raise HTTPException(
@@ -125,53 +125,53 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
 
     @router.get("/secrets")
     async def list_secrets() -> JSONResponse:
-        """List all secrets (metadata only, never values)."""
         try:
-            store = context.get_secret_store()
-            secrets = store.list()
+            secrets = context.get_secret_store().list()
             return JSONResponse(
                 content={
-                    "secrets": [s.to_dict() for s in secrets],
+                    "secrets": [secret.to_dict() for secret in secrets],
                     "categories": sorted(VALID_CATEGORIES),
                 }
             )
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception("Failed to list secrets: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+        except Exception as exc:
+            logger.exception("Failed to list secrets")
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     @router.post("/secrets", dependencies=[Depends(require_mutation_auth)])
     async def save_secret(request: SaveSecretRequest) -> JSONResponse:
-        """Create or update a secret."""
         try:
-            store = context.get_secret_store()
-            info = context.get_config_store().set_named_secret(
-                store,
+            secret_store = context.get_secret_store()
+            info = ConfigStore(secret_store.db).set_named_secret(
+                secret_store,
                 name=request.name,
                 plaintext_value=request.value,
                 category=request.category,
                 description=request.description,
             )
             return JSONResponse(content={"ok": True, "secret": info.to_dict()})
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception("Failed to save secret: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+        except Exception as exc:
+            logger.exception("Failed to save secret")
+            raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     @router.delete("/secrets/{name}", dependencies=[Depends(require_mutation_auth)])
     async def delete_secret(name: str) -> JSONResponse:
-        """Delete a secret by name."""
         try:
-            store = context.get_secret_store()
-            if not context.get_config_store().delete_named_secret(store, name):
+            secret_store = context.get_secret_store()
+            deleted = ConfigStore(secret_store.db).delete_named_secret(
+                secret_store,
+                name,
+            )
+            if not deleted:
                 raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
             return JSONResponse(content={"ok": True})
         except HTTPException:
             raise
-        except Exception as e:
-            logger.exception("Failed to delete secret: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
+        except Exception as exc:
+            logger.exception("Failed to delete secret")
+            raise HTTPException(status_code=500, detail="Internal server error") from exc

@@ -93,7 +93,8 @@ async def _repair_code_index_bm25(
     tracker: StartupTracker | None,
 ) -> bool:
     """Verify and repair required BM25 indexes before code-index workers start."""
-    if not runner.config.code_index.enabled:
+    config = runner.config_runtime.capture().snapshot.active
+    if not config.code_index.enabled:
         return True
 
     from gobby.code_index.bm25_health import (
@@ -102,13 +103,13 @@ async def _repair_code_index_bm25(
     )
     from gobby.runner_init.services import mark_service_degraded
 
-    database_url = runner.config.database_url
+    database_url = config.database_url
     if database_url:
         try:
             status = await asyncio.to_thread(
                 repair_bm25_indexes,
                 database_url,
-                timeout_seconds=runner.config.code_index.maintenance_index_timeout_seconds,
+                timeout_seconds=config.code_index.maintenance_index_timeout_seconds,
             )
         except Exception as exc:
             logger.exception("Unexpected code-index BM25 recovery failure")
@@ -144,7 +145,8 @@ async def _repair_code_index_bm25(
 
 
 async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    emb_cfg = runner.config.embeddings
+    config = runner.config_runtime.capture().snapshot.active
+    emb_cfg = config.embeddings
     if not emb_cfg.api_base:
         return
 
@@ -216,6 +218,7 @@ async def _initialize_vector_store(
     rebuild_vector_store: Any,
     tracker: StartupTracker | None,
 ) -> None:
+    config = runner.config_runtime.capture().snapshot.active
     if not runner.vector_store:
         return
 
@@ -227,7 +230,7 @@ async def _initialize_vector_store(
         # mismatch; search/discovery and explicit embedding routes repopulate it lazily.
         await runner.vector_store.ensure_collection(
             SemanticToolSearch.TOOL_COLLECTION,
-            runner.config.embeddings.dim,
+            config.embeddings.dim,
             recreate_on_mismatch=True,
         )
         qdrant_count = await runner.vector_store.count()
@@ -446,12 +449,13 @@ async def _start_system_automation_loop(
 
 
 def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
+    config = runner.config_runtime.capture().snapshot.active
     runner._code_index_task = None
     if runner.code_indexer:
         from gobby.code_index.maintenance import code_index_maintenance_loop
 
         summarizer = None
-        if runner.config.code_index.symbol_summary.enabled:
+        if config.code_index.symbol_summary.enabled:
             from gobby.code_index.summarizer import SymbolSummarizer
 
             try:
@@ -460,7 +464,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 else:
                     summarizer = SymbolSummarizer(
                         runner.text_generation_service,
-                        runner.config.code_index,
+                        config.code_index,
                     )
             except Exception as e:
                 logger.warning("Failed to create SymbolSummarizer: %s", e)
@@ -471,9 +475,9 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
             code_index_maintenance_loop(
                 context=runner.code_indexer,
                 shutdown_flag=shutdown_event,
-                interval=runner.config.code_index.maintenance_interval_seconds,
+                interval=config.code_index.maintenance_interval_seconds,
                 summarizer=summarizer,
-                symbol_summary_batch_size=runner.config.code_index.symbol_summary.batch_size,
+                symbol_summary_batch_size=config.code_index.symbol_summary.batch_size,
             ),
             name="code-index-maintenance",
         )
@@ -490,7 +494,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
             sync_worker_loop(
                 storage=runner.code_indexer.storage,
                 context=runner.code_indexer,
-                config=runner.config.code_index,
+                config=config.code_index,
                 shutdown_flag=sync_shutdown,
                 run_db=runner.code_indexer.run_db,
             ),
@@ -713,38 +717,37 @@ def _start_websocket_server(runner: GobbyRunner, tracker: StartupTracker | None)
 
 
 def _maybe_start_ui_dev_server(runner: GobbyRunner) -> None:
-    if not runner.config.ui.enabled:
+    config = runner.startup_config
+    if not config.ui.enabled:
         return
 
     from gobby.cli.ui_mode import resolve_ui_mode
     from gobby.cli.utils import spawn_ui_server
 
-    ui_resolution = resolve_ui_mode(runner.config)
+    ui_resolution = resolve_ui_mode(config)
     if ui_resolution.effective != "dev":
         return
 
     web_dir = ui_resolution.source_web_dir
     if web_dir:
-        ui_log = resolved_log_path(runner.config.logging, UI_LOG_FILENAME)
-        ui_host = runner.config.ui.host
-        if runner.config.bind_host != "localhost" and ui_host == "localhost":
-            ui_host = runner.config.bind_host
+        ui_log = resolved_log_path(config.logging, UI_LOG_FILENAME)
+        ui_host = config.ui.host
+        if config.bind_host != "localhost" and ui_host == "localhost":
+            ui_host = config.bind_host
         ui_pid = spawn_ui_server(
             ui_host,
-            runner.config.ui.port,
+            config.ui.port,
             web_dir,
             ui_log,
-            daemon_port=runner.config.daemon_port,
-            ws_port=runner.config.websocket.port
-            if runner.config.websocket
-            else DEFAULT_WEBSOCKET_PORT,
+            daemon_port=config.daemon_port,
+            ws_port=config.websocket.port if config.websocket else DEFAULT_WEBSOCKET_PORT,
         )
         if ui_pid:
             logger.info(
                 "UI dev server started (PID: %s) at http://%s:%s for daemon UI mode %s",
                 ui_pid,
                 ui_host,
-                runner.config.ui.port,
+                config.ui.port,
                 ui_resolution.display,
             )
         else:

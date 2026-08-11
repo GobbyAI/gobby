@@ -66,6 +66,7 @@ fn public_surface_is_pinned() {
         "fn run_cli",
         "mod codewiki_facts",
         "mod contract",
+        "mod index",
         "mod test_env",
         "use CodeFactWriteRequest",
         "use CodeFactWriteSummary",

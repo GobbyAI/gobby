@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from concurrent.futures import Future
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 from gobby.ai import (
     build_daemon_text_generation_service,
     build_daemon_tool_chat_service,
 )
+from gobby.ai.embedding_switch import CompletedSwitchRecord
 from gobby.ai.embeddings import EmbeddingService
-from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
+from gobby.config.embedding_keys import (
+    EMBEDDING_API_KEY_SECRET_NAME,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+)
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
@@ -21,15 +29,37 @@ from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationLeaseRenewTransient,
+    EmbeddingGenerationState,
+    EmbeddingServingLease,
+    managed_projection_targets,
+)
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
 from gobby.tasks.validation import TaskValidator
 
+from .config_subscribers import PreparedService, ServiceSubscriber, live_subscriber_keys
+
 if TYPE_CHECKING:
+    from gobby.ai import TextGenerationService, ToolChatService
+    from gobby.code_index.context import CodeIndexContext
+    from gobby.config.app import DaemonConfig
+    from gobby.llm.service import LLMService
+    from gobby.mcp_proxy.semantic_search import SemanticToolSearch
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger(__name__)
+
+_EMBEDDING_LEASE_SECONDS = 30.0
+_EMBEDDING_LEASE_RENEW_SECONDS = 10.0
+_EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS = 1.0
+_EMBEDDING_RENEW_BACKOFF_CAP_SECONDS = 5.0
+_EMBEDDING_REACQUIRE_POLL_SECONDS = 5.0
+_UNMANAGED_GENERATION_PREFIX = "config-revision:"
 
 
 def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
@@ -41,8 +71,16 @@ def mark_service_degraded(runner: GobbyRunner, service_name: str) -> None:
     degraded_services.add(service_name)
 
 
-def init_services(runner: GobbyRunner) -> None:
+async def init_stateful_services(runner: GobbyRunner) -> None:
     """Initialize LLM, memory, code indexer, MCP proxy, sync, and messaging."""
+    _init_stateful_dependencies(runner)
+    await _register_stateful_services(runner)
+    _apply_stateful_services(runner)
+    _init_project_context(runner)
+
+
+def init_services(runner: GobbyRunner) -> None:
+    """Initialize services for the synchronous construction path."""
     _init_llm_service(runner)
     _init_memory_stack(runner)
     _init_code_indexer(runner)
@@ -53,6 +91,539 @@ def init_services(runner: GobbyRunner) -> None:
     _init_project_context(runner)
 
 
+@dataclass(frozen=True)
+class AIServiceBundle:
+    text_generation_service: TextGenerationService
+    llm_service: LLMService
+    tool_chat_service: ToolChatService
+
+
+@dataclass
+class MemoryServiceBundle:
+    vector_store: VectorStore
+    _memory_manager: MemoryManager
+    memory_backup_manager: MemoryBackupManager | None
+    semantic_search: SemanticToolSearch
+    _repair_started: bool = False
+
+    @property
+    def memory_manager(self) -> MemoryManager:
+        if not self._repair_started:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return self._memory_manager
+            self._memory_manager.start_projection_scope_repair()
+            self._repair_started = True
+        return self._memory_manager
+
+
+class _ManagedEmbeddingLease:
+    """Activate, renew, re-acquire, and fence one runtime bundle's serving lease."""
+
+    def __init__(
+        self,
+        lease: EmbeddingServingLease,
+        loop: asyncio.AbstractEventLoop,
+        *,
+        read_completed_record: Callable[[], CompletedSwitchRecord | None],
+        request_rebuild: Callable[[CompletedSwitchRecord | None], None],
+    ) -> None:
+        self.lease = lease
+        self.loop = loop
+        self.read_completed_record = read_completed_record
+        self.request_rebuild = request_rebuild
+        self.renewal: Future[None] | None = None
+
+    def assert_serving(self) -> None:
+        self.lease.assert_serving()
+
+    def activate(self) -> None:
+        self.lease.activate()
+        self.renewal = asyncio.run_coroutine_threadsafe(
+            _renew_embedding_lease(self),
+            self.loop,
+        )
+
+    def dispose(self) -> None:
+        self.lease.fence()
+        if self.renewal is not None:
+            self.renewal.cancel()
+
+
+async def _renew_embedding_lease(handle: _ManagedEmbeddingLease) -> None:
+    while True:
+        await asyncio.sleep(_EMBEDDING_LEASE_RENEW_SECONDS)
+        try:
+            renewed = await _renew_with_backoff(handle.lease)
+        except EmbeddingGenerationLeaseLost:
+            logger.error("Managed embedding generation lease was lost; serving fenced")
+            return
+        if renewed:
+            continue
+        if not await _reacquire_lease(handle):
+            return
+
+
+async def _renew_with_backoff(lease: EmbeddingServingLease) -> bool:
+    """Renew once, retrying transient failures until the local deadline nears.
+
+    Returns False after fencing because transient failures exhausted the
+    deadline budget. An authoritative ``EmbeddingGenerationLeaseLost``
+    propagates with the lease already fenced.
+    """
+    backoff = _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS
+    while True:
+        try:
+            await asyncio.to_thread(lease.renew)
+            return True
+        except EmbeddingGenerationLeaseRenewTransient:
+            if lease.remaining_seconds() <= backoff:
+                lease.fence()
+                logger.warning(
+                    "Embedding generation lease renewal kept failing transiently; serving fenced"
+                )
+                return False
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2.0, _EMBEDDING_RENEW_BACKOFF_CAP_SECONDS)
+
+
+async def _reacquire_lease(handle: _ManagedEmbeddingLease) -> bool:
+    """After connectivity returns, re-acknowledge a matching lease or rebuild.
+
+    Re-acknowledgement is safe only while the current completed-switch record
+    still matches the fenced lease's generation and revision; the fresh lease
+    reuses the same watermark proof. On mismatch a newer switch completed, so
+    serving stays fenced and a full memory_services rebuild is requested via
+    reconcile."""
+    while True:
+        await asyncio.sleep(_EMBEDDING_REACQUIRE_POLL_SECONDS)
+        try:
+            record = await asyncio.to_thread(handle.read_completed_record)
+        except Exception:
+            logger.debug(
+                "Embedding lease re-acquisition probe failed; storage still unreachable",
+                exc_info=True,
+            )
+            continue
+        if not _lease_matches_record(handle.lease, record):
+            logger.warning(
+                "Embedding generation changed while serving was fenced; "
+                "requesting memory services rebuild"
+            )
+            handle.request_rebuild(record)
+            return False
+        successor = handle.lease.successor()
+        try:
+            await asyncio.to_thread(successor.activate)
+        except Exception:
+            logger.debug("Embedding lease re-acknowledgement failed", exc_info=True)
+            continue
+        handle.lease = successor
+        logger.info("Embedding generation serving lease re-acknowledged")
+        return True
+
+
+def _lease_matches_record(
+    lease: EmbeddingServingLease,
+    record: CompletedSwitchRecord | None,
+) -> bool:
+    if record is not None:
+        return record.run_id == lease.generation and record.committed_revision == lease.revision
+    return lease.generation.startswith(_UNMANAGED_GENERATION_PREFIX)
+
+
+def _init_stateful_dependencies(runner: GobbyRunner) -> None:
+    from gobby.mcp_proxy.metrics import ToolMetricsManager
+    from gobby.mcp_proxy.metrics_events import MetricsEventStore
+    from gobby.projects.write_fence import ProjectWriteFence
+    from gobby.storage.projects import LocalProjectManager
+
+    runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
+    runner.mcp_db_manager = LocalMCPManager(runner.database)
+    try:
+        bundled = runner.mcp_db_manager.normalize_bundled_servers()
+    except Exception:
+        logger.exception("error normalizing bundled MCP servers")
+        bundled = {"normalized": 0, "duplicates_removed": 0, "tools_migrated": 0}
+    if bundled["normalized"] or bundled["duplicates_removed"]:
+        logger.info(
+            "Normalized bundled MCP servers: %s normalized, %s duplicates removed",
+            bundled["normalized"],
+            bundled["duplicates_removed"],
+        )
+    runner.metrics_event_store = MetricsEventStore(runner.database)
+    runner.metrics_manager = ToolMetricsManager(
+        runner.database,
+        event_store=runner.metrics_event_store,
+    )
+
+
+async def _register_stateful_services(runner: GobbyRunner) -> None:
+    loop = asyncio.get_running_loop()
+    subscribers = (
+        ServiceSubscriber(
+            name="ai_services",
+            keys=live_subscriber_keys("ai_services"),
+            builder=lambda change: _build_ai_services(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="memory_services",
+            keys=live_subscriber_keys("memory_services"),
+            builder=lambda change: _build_memory_services(
+                runner,
+                change.desired,
+                loop,
+                change.managed,
+                change.revision,
+            ),
+        ),
+        ServiceSubscriber(
+            name="code_index",
+            keys=live_subscriber_keys("code_index"),
+            builder=lambda change: _build_code_index(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="mcp_manager",
+            keys=live_subscriber_keys("mcp_manager"),
+            builder=lambda change: _build_mcp_manager(runner, change.desired, loop),
+            required=True,
+        ),
+        ServiceSubscriber(
+            name="message_processor",
+            keys=live_subscriber_keys("message_processor"),
+            builder=lambda change: _build_message_processor(runner, change.desired, loop),
+        ),
+        ServiceSubscriber(
+            name="task_validator",
+            keys=live_subscriber_keys("task_validator"),
+            builder=lambda change: _build_task_validator(runner, change.desired),
+        ),
+        ServiceSubscriber(
+            name="mcp_proxy_config",
+            keys=live_subscriber_keys("mcp_proxy_config"),
+            builder=lambda change: change.desired.mcp_client_proxy,
+            required=True,
+        ),
+        ServiceSubscriber(
+            name="chat_config",
+            keys=live_subscriber_keys("chat_config"),
+            builder=lambda change: change.desired.chat,
+            required=True,
+        ),
+    )
+    for subscriber in subscribers:
+        await runner.config_runtime.register_subscriber(subscriber)
+
+
+def _build_ai_services(runner: GobbyRunner, config: DaemonConfig) -> AIServiceBundle:
+    text_generation = build_daemon_text_generation_service(config)
+    return AIServiceBundle(
+        text_generation_service=text_generation,
+        llm_service=create_llm_service(config, text_generation=text_generation),
+        tool_chat_service=build_daemon_tool_chat_service(
+            config,
+            credential_manager=runner.managed_credential_manager,
+        ),
+    )
+
+
+def _build_memory_services(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+    loop: asyncio.AbstractEventLoop,
+    managed: Mapping[str, object],
+    revision: int,
+) -> PreparedService:
+    from gobby.mcp_proxy.semantic_search import SemanticToolSearch
+    from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+
+    db_cfg = config.databases
+    emb_cfg = config.embeddings
+    api_key = _resolve_embedding_api_key(runner, emb_cfg)
+    generation_state = EmbeddingGenerationState(runner.database)
+    generation, serving_revision, caught_up_watermark = _serving_lease_identity(
+        managed,
+        revision,
+        generation_state,
+    )
+    lease = generation_state.prepare_serving_lease(
+        UUID(runner.machine_id),
+        generation,
+        serving_revision,
+        lease_seconds=_EMBEDDING_LEASE_SECONDS,
+        caught_up_watermark=caught_up_watermark,
+        required_watermark=caught_up_watermark,
+    )
+    lease_handle = _ManagedEmbeddingLease(
+        lease,
+        loop,
+        read_completed_record=lambda: _read_completed_switch_record(runner),
+        request_rebuild=lambda record: _request_memory_services_rebuild(runner, loop, record),
+    )
+    raw_vector_store = VectorStore(
+        url=db_cfg.qdrant.url,
+        api_key=db_cfg.qdrant.api_key,
+        collection_name=_managed_embedding_collection(managed, "memories"),
+        embedding_dim=emb_cfg.dim,
+        generation_state=generation_state,
+        serving_guard=lease_handle.assert_serving,
+        projection_targets_provider=lambda source_kind, primary: managed_projection_targets(
+            runner.config_runtime.capture().managed, source_kind, primary
+        ),
+    )
+    vector_store = cast(
+        VectorStore,
+        ProjectFencedVectorStore(raw_vector_store, runner.project_write_fence),
+    )
+    embed_fn: Callable[..., Any] | None = None
+    try:
+        _validate_memory_embedding_config(emb_cfg, api_key=api_key)
+    except ValueError as exc:
+        logger.warning("Memory embeddings disabled: %s", exc)
+    else:
+        embedding_service = EmbeddingService(
+            model=emb_cfg.model,
+            api_base=emb_cfg.api_base,
+            api_key=api_key,
+            dim=emb_cfg.dim,
+            query_prefix=_embedding_query_prefix(emb_cfg),
+        )
+        embed_fn = embedding_service.generate_embedding
+    text_generation = build_daemon_text_generation_service(config)
+    llm_service = create_llm_service(config, text_generation=text_generation)
+    falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
+    memory_manager = MemoryManager(
+        runner.database,
+        config.memory,
+        llm_service=llm_service,
+        vector_store=vector_store,
+        embed_fn=embed_fn,
+        falkordb_host=falkor_cfg.host if falkor_cfg else None,
+        falkordb_port=falkor_cfg.port if falkor_cfg else 16379,
+        falkordb_password=falkor_cfg.password if falkor_cfg else None,
+        falkordb_graph_name=falkor_cfg.graph_name if falkor_cfg else "gobby_kg",
+        falkordb_graph_search=falkor_cfg.graph_search if falkor_cfg else True,
+        falkordb_graph_min_score=falkor_cfg.graph_min_score if falkor_cfg else 0.5,
+        falkordb_rrf_k=falkor_cfg.rrf_k if falkor_cfg else 60,
+        embedding_dim=emb_cfg.dim,
+        collection_prefix=db_cfg.qdrant.collection_prefix,
+        run_db=runner.db_executor.run,
+        max_graph_deterministic_attempts=config.knowledge_graph_queue.max_deterministic_attempts,
+        project_write_fence=runner.project_write_fence,
+    )
+    backup = (
+        MemoryBackupManager(
+            db=runner.database,
+            memory_manager=memory_manager,
+            config=config.memory_backup,
+        )
+        if config.memory_backup.enabled
+        else None
+    )
+    semantic_search = SemanticToolSearch(
+        db=runner.database,
+        embedding_api_key=api_key,
+        embedding_model=emb_cfg.model,
+        embedding_dim=emb_cfg.dim,
+        api_base=emb_cfg.api_base,
+        vector_store=vector_store,
+        collection_name=_managed_embedding_collection(managed, "tool_embeddings"),
+    )
+    bundle = MemoryServiceBundle(vector_store, memory_manager, backup, semantic_search)
+
+    def dispose() -> None:
+        lease_handle.dispose()
+        _dispose_async(loop, memory_manager.close)
+
+    return PreparedService(
+        bundle,
+        dispose,
+        lease_handle.activate,
+    )
+
+
+def _serving_lease_identity(
+    managed: Mapping[str, object],
+    revision: int,
+    generation_state: EmbeddingGenerationState,
+) -> tuple[str, int, int]:
+    """Resolve (generation, revision, watermark proof) for one serving lease.
+
+    A managed completed switch carries its own catch-up proof; the unmanaged
+    path proves catch-up against the ledger watermark captured here, in the
+    builder thread, before the bundle starts serving."""
+    record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if isinstance(record, CompletedSwitchRecord):
+        return record.run_id, record.committed_revision, record.caught_up_watermark
+    return (
+        f"{_UNMANAGED_GENERATION_PREFIX}{revision}",
+        revision,
+        generation_state.watermark(),
+    )
+
+
+def _read_completed_switch_record(runner: GobbyRunner) -> CompletedSwitchRecord | None:
+    """Read the current completed-switch record; None when absent or malformed."""
+    raw = ConfigStore(runner.database).get_internal_lifecycle(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return CompletedSwitchRecord.from_dict(raw)
+    except TypeError:
+        return None
+
+
+_background_runtime_tasks: set[asyncio.Task[None]] = set()
+
+
+def _request_memory_services_rebuild(
+    runner: GobbyRunner,
+    loop: asyncio.AbstractEventLoop,
+    record: CompletedSwitchRecord | None,
+) -> None:
+    """Schedule a reconcile that rebuilds memory services past a stale lease."""
+    runtime = runner.config_runtime
+    target_revision = (
+        record.committed_revision if record is not None else runtime.snapshot.revision + 1
+    )
+
+    async def _reconcile() -> None:
+        try:
+            await runtime.reconcile_revision(target_revision)
+        except Exception:
+            logger.exception("Embedding lease rebuild reconcile failed")
+
+    task = loop.create_task(_reconcile())
+    _background_runtime_tasks.add(task)
+    task.add_done_callback(_background_runtime_tasks.discard)
+
+
+def _managed_embedding_collection(managed: Mapping[str, object], kind: str) -> str:
+    record = managed.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if not isinstance(record, CompletedSwitchRecord):
+        return kind
+    try:
+        return record.physical_names[kind]
+    except KeyError as exc:
+        raise RuntimeError(f"Managed embedding generation lacks collection {kind}") from exc
+
+
+def _build_code_index(runner: GobbyRunner, config: DaemonConfig) -> CodeIndexContext | None:
+    if not config.code_index.enabled:
+        return None
+    from gobby.code_index.context import CodeIndexContext
+    from gobby.code_index.gcode_gateway import GcodeGateway
+    from gobby.code_index.storage import CodeIndexStorage
+
+    return CodeIndexContext(
+        storage=CodeIndexStorage(runner.database),
+        gcode_gateway=GcodeGateway(),
+        config=config.code_index,
+        run_db=runner.db_executor.run,
+    )
+
+
+def _build_mcp_manager(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> PreparedService:
+    manager = MCPClientManager(
+        mcp_db_manager=runner.mcp_db_manager,
+        metrics_manager=runner.metrics_manager,
+        stdio_errlog_path=str(resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)),
+    )
+    return PreparedService(manager, lambda: _dispose_async(loop, manager.disconnect_all))
+
+
+def _build_message_processor(
+    runner: GobbyRunner,
+    config: DaemonConfig,
+    loop: asyncio.AbstractEventLoop,
+) -> PreparedService | None:
+    if not config.message_tracking.enabled:
+        return None
+    processor = SessionMessageProcessor(
+        db=runner.database,
+        poll_interval=config.message_tracking.poll_interval,
+        session_manager=runner.session_manager,
+        run_db=runner.db_executor.run,
+    )
+
+    def activate() -> None:
+        # Rewire live-server references so a rebuilt processor keeps streaming
+        # (startup activation runs before the servers exist; those refs are
+        # attached later by server init and the app lifespan instead).
+        processor.session_manager = runner.session_manager
+        processor.websocket_server = getattr(runner, "websocket_server", None)
+        http_server = getattr(runner, "http_server", None)
+        hook_manager = getattr(http_server, "_hook_manager", None)
+        if hook_manager is not None:
+            processor.set_hook_manager(hook_manager)
+        runner.message_processor = processor
+        task = loop.create_task(processor.start())
+        _background_runtime_tasks.add(task)
+        task.add_done_callback(_background_runtime_tasks.discard)
+
+    def dispose() -> None:
+        _dispose_async(loop, processor.stop)
+
+    return PreparedService(processor, dispose, activate)
+
+
+def _build_task_validator(runner: GobbyRunner, config: DaemonConfig) -> TaskValidator | None:
+    if not config.gobby_tasks.validation.enabled:
+        return None
+    text_generation = build_daemon_text_generation_service(config)
+    return TaskValidator(
+        llm_service=create_llm_service(config, text_generation=text_generation),
+        config=config.gobby_tasks.validation,
+        db=runner.database,
+    )
+
+
+def _dispose_async(
+    loop: asyncio.AbstractEventLoop,
+    operation: Callable[[], Any],
+) -> None:
+    future = asyncio.run_coroutine_threadsafe(operation(), loop)
+    try:
+        future.result(timeout=4.5)
+    except BaseException:
+        future.cancel()
+        raise
+
+
+def _apply_stateful_services(runner: GobbyRunner) -> None:
+    bundle = runner.config_runtime.capture()
+    ai = bundle.services.get("ai_services")
+    runner.text_generation_service = (
+        ai.text_generation_service if isinstance(ai, AIServiceBundle) else None
+    )
+    runner.llm_service = ai.llm_service if isinstance(ai, AIServiceBundle) else None
+    runner.tool_chat_service = ai.tool_chat_service if isinstance(ai, AIServiceBundle) else None
+    memory = bundle.services.get("memory_services")
+    runner.vector_store = memory.vector_store if isinstance(memory, MemoryServiceBundle) else None
+    runner.memory_manager = (
+        memory.memory_manager if isinstance(memory, MemoryServiceBundle) else None
+    )
+    runner.memory_backup_manager = (
+        memory.memory_backup_manager if isinstance(memory, MemoryServiceBundle) else None
+    )
+    runner.code_indexer = bundle.services.get("code_index")
+    mcp_manager = bundle.services.get("mcp_manager")
+    if not isinstance(mcp_manager, MCPClientManager):
+        raise RuntimeError("required MCP configuration subscriber is unavailable")
+    runner.mcp_proxy = mcp_manager
+    message_processor = bundle.services.get("message_processor")
+    runner.message_processor = (
+        message_processor if isinstance(message_processor, SessionMessageProcessor) else None
+    )
+    task_validator = bundle.services.get("task_validator")
+    runner.task_validator = task_validator if isinstance(task_validator, TaskValidator) else None
+
+
 def _init_llm_service(runner: GobbyRunner) -> None:
     runner.codex_client = None
     runner.text_generation_service = None
@@ -60,17 +631,18 @@ def _init_llm_service(runner: GobbyRunner) -> None:
     runner.llm_service = None
     try:
         runner.text_generation_service = build_daemon_text_generation_service(
-            runner.config,
+            runner.startup_config,
         )
         runner.llm_service = create_llm_service(
-            runner.config,
+            runner.startup_config,
             text_generation=runner.text_generation_service,
         )
         runner.tool_chat_service = build_daemon_tool_chat_service(
-            runner.config,
+            runner.startup_config,
             credential_manager=runner.managed_credential_manager,
         )
-        logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
+        if runner.llm_service is not None:
+            logger.debug("LLM service initialized: %s", runner.llm_service.enabled_providers)
     except Exception:
         mark_service_degraded(runner, "llm_service")
         logger.exception("Failed to initialize LLM service")
@@ -124,10 +696,10 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
     runner.vector_store = None
     runner.memory_manager = None
-    if hasattr(runner.config, "memory"):
+    if hasattr(runner.startup_config, "memory"):
         try:
-            db_cfg = runner.config.databases
-            emb_cfg = runner.config.embeddings
+            db_cfg = runner.startup_config.databases
+            emb_cfg = runner.startup_config.embeddings
             embedding_api_key = _resolve_embedding_api_key(runner, emb_cfg)
             embeddings_enabled = False
             if runner.llm_service:
@@ -142,11 +714,16 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
                 embedding_dim=emb_cfg.dim,
+                generation_state=EmbeddingGenerationState(runner.database),
             )
             runner.vector_store = cast(
                 VectorStore,
                 ProjectFencedVectorStore(raw_vector_store, runner.project_write_fence),
             )
+            # The synchronous path serves without a generation lease or ack:
+            # projection dual-writes still flow via generation_state, but GC
+            # cannot see this daemon, so surface the gap explicitly.
+            mark_service_degraded(runner, "embedding_serving_lease")
             embed_fn: Callable[..., Any] | None = None
             if embeddings_enabled:
                 embedding_service = EmbeddingService(
@@ -161,7 +738,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
             runner.memory_manager = MemoryManager(
                 runner.database,
-                runner.config.memory,
+                runner.startup_config.memory,
                 llm_service=runner.llm_service,
                 vector_store=runner.vector_store,
                 embed_fn=embed_fn,
@@ -176,7 +753,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 collection_prefix=db_cfg.qdrant.collection_prefix,
                 run_db=runner.db_executor.run,
                 max_graph_deterministic_attempts=(
-                    runner.config.knowledge_graph_queue.max_deterministic_attempts
+                    runner.startup_config.knowledge_graph_queue.max_deterministic_attempts
                 ),
                 project_write_fence=runner.project_write_fence,
             )
@@ -193,13 +770,13 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
 
 def _init_code_indexer(runner: GobbyRunner) -> None:
     runner.code_indexer = None
-    if hasattr(runner.config, "code_index") and runner.config.code_index.enabled:
+    if runner.startup_config.code_index.enabled:
         try:
             from gobby.code_index.context import CodeIndexContext
             from gobby.code_index.gcode_gateway import GcodeGateway
             from gobby.code_index.storage import CodeIndexStorage
 
-            ci_config = runner.config.code_index
+            ci_config = runner.startup_config.code_index
             ci_storage = CodeIndexStorage(runner.database)
             ci_gcode_gateway = GcodeGateway()
 
@@ -241,19 +818,21 @@ def _init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_proxy = MCPClientManager(
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
-        stdio_errlog_path=str(resolved_log_path(runner.config.logging, RUNTIME_LOG_FILENAME)),
+        stdio_errlog_path=str(
+            resolved_log_path(runner.startup_config.logging, RUNTIME_LOG_FILENAME)
+        ),
     )
 
 
 def _init_memory_backup(runner: GobbyRunner) -> None:
     runner.memory_backup_manager = None
-    if hasattr(runner.config, "memory_backup") and runner.config.memory_backup.enabled:
+    if runner.startup_config.memory_backup.enabled:
         if runner.memory_manager:
             try:
                 runner.memory_backup_manager = MemoryBackupManager(
                     db=runner.database,
                     memory_manager=runner.memory_manager,
-                    config=runner.config.memory_backup,
+                    config=runner.startup_config.memory_backup,
                 )
                 logger.debug("MemoryBackupManager initialized")
 
@@ -269,10 +848,10 @@ def _init_memory_backup(runner: GobbyRunner) -> None:
 
 def _init_message_processor(runner: GobbyRunner) -> None:
     runner.message_processor = None
-    if getattr(runner.config, "message_tracking", None) and runner.config.message_tracking.enabled:
+    if runner.startup_config.message_tracking.enabled:
         runner.message_processor = SessionMessageProcessor(
             db=runner.database,
-            poll_interval=runner.config.message_tracking.poll_interval,
+            poll_interval=runner.startup_config.message_tracking.poll_interval,
             session_manager=runner.session_manager,
             run_db=runner.db_executor.run,
         )
@@ -281,7 +860,7 @@ def _init_message_processor(runner: GobbyRunner) -> None:
 def _init_task_validator(runner: GobbyRunner) -> None:
     runner.task_validator = None
 
-    gobby_tasks_config = runner.config.gobby_tasks
+    gobby_tasks_config = runner.startup_config.gobby_tasks
     if not gobby_tasks_config.validation.enabled:
         return
     if runner.llm_service is None:

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -16,12 +18,15 @@ from gobby.ai.embedding_switch import (
     PHASE_FLIPPING,
     PHASE_GC,
     PHASE_STAGING,
+    CompletedSwitchRecord,
     SwitchJournal,
+    SwitchJournalStateError,
     active_alias_names,
     advance_phase,
     build_physical_names,
     complete_aborted_switch,
     complete_switch,
+    load_completed_switch,
     persist_journal,
     record_switch_error,
 )
@@ -33,27 +38,28 @@ from gobby.cli.installers.embedding import (
     _setup_lmstudio,
     _setup_ollama,
 )
-from gobby.config.app import load_config
-from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_BASE_KEY,
-    AI_EMBEDDING_CATALOG_KEY,
-    AI_EMBEDDING_DIM_KEY,
-    AI_EMBEDDING_MODEL_KEY,
-    AI_EMBEDDING_QUERY_PREFIX_KEY,
-)
+from gobby.config.app import DaemonConfig
 from gobby.github_triage.issue_index import issue_point_id
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.memory.vectorstore import VectorStore
 from gobby.projects.write_fence import ProjectWriteRejected
+from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationState,
+    ProjectionChange,
+)
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories_models import Memory
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 100
+_GC_POLL_SECONDS = 0.1
+_GC_WAIT_SECONDS = 120.0
+_REPLAY_MAX_PASSES = 20
 
 
 class EmbeddingSwitchRunError(RuntimeError):
@@ -111,10 +117,10 @@ class SwitchRunReport:
         return self.error is not None
 
 
-def detect_provider_from_config(config_store: Any) -> str:
+def detect_provider_from_config(config: DaemonConfig) -> str:
     """Infer the provider from the active API base, matching the previous CLI behavior."""
-    current_api_base = config_store.get(AI_EMBEDDING_API_BASE_KEY)
-    if isinstance(current_api_base, str):
+    current_api_base = config.embeddings.api_base
+    if current_api_base:
         if "11434" in current_api_base:
             return "ollama"
         if "1234" in current_api_base:
@@ -132,13 +138,31 @@ class EmbeddingSwitchRunner:
         *,
         control: SwitchControlProtocol | None = None,
         fence: ProjectFenceProtocol | None = None,
+        config_runtime: Any | None = None,
+        gc_wait_seconds: float = _GC_WAIT_SECONDS,
     ) -> None:
         self.config_store = config_store
         self.db = db
         self.control = control or _NoopSwitchControl()
         self.fence = fence
+        self.config_runtime = config_runtime
+        self.gc_wait_seconds = gc_wait_seconds
+        self._run_config: Any | None = None
+        self.generation_state = EmbeddingGenerationState(db)
+        self._completed_record: CompletedSwitchRecord | None = None
+
+    def _runtime_config(self) -> Any:
+        """Capture one configuration epoch for the entire switch run."""
+        if self._run_config is None:
+            if self.config_runtime is None:
+                self._run_config = DaemonConfig()
+            else:
+                snapshot = self.config_runtime.snapshot
+                self._run_config = (snapshot() if callable(snapshot) else snapshot).active
+        return self._run_config
 
     async def run(self, journal: SwitchJournal) -> SwitchRunReport:
+        self._runtime_config()
         report = SwitchRunReport(journal=journal)
         while True:
             try:
@@ -167,9 +191,11 @@ class EmbeddingSwitchRunner:
                     report.journal = None
                     return report
                 if journal.phase == PHASE_GC:
-                    journal = advance_phase(self.config_store, journal, PHASE_ACTIVE)
-                    report.journal = journal
-                    continue
+                    result = await self.gc(journal)
+                    report.phase_results.append(result)
+                    report.completed = True
+                    report.journal = None
+                    return report
                 if journal.phase == PHASE_ABORTED:
                     return await self._finish_aborted_cleanup(journal, report)
                 report.error = f"Unsupported embedding switch phase: {journal.phase}"
@@ -190,7 +216,7 @@ class EmbeddingSwitchRunner:
 
     async def stage(self, journal: SwitchJournal) -> tuple[PhaseResult, SwitchJournal]:
         """Prepare and validate the target provider/model before any index mutation."""
-        config = load_config(config_store=self.config_store)
+        config = self._runtime_config()
         api_key = config.embeddings.api_key
 
         if journal.provider == "ollama":
@@ -252,18 +278,30 @@ class EmbeddingSwitchRunner:
                 recreate_on_mismatch=True,
             )
 
+        # Journal-first ordering: persist physical_names before reading the
+        # watermark so producer dual-writes are armed for every change the
+        # watermark does not cover; only then persist the caught-up bound.
+        journal.physical_names = dict(physical_names)
+        persist_journal(self.config_store, journal)
+        journal.caught_up_watermark = self.generation_state.watermark()
+        persist_journal(self.config_store, journal)
+
         count = 0
         count += await self._build_memory_collection(journal, service, vector_store)
         count += await self._build_tool_collection(journal, vector_store)
         count += await self._build_github_issue_collection(journal, service, vector_store)
+        count += await self._replay_projection_changes(journal, service, vector_store)
 
         self._check_abort()
         journal = advance_phase(self.config_store, journal, PHASE_FLIPPING)
         return PhaseResult(PHASE_BUILDING, "target physical collections built", count), journal
 
     async def flip(self, journal: SwitchJournal) -> tuple[PhaseResult, SwitchJournal]:
-        """Flip aliases to the target physical collections, then write embedding config."""
+        """Catch up staged targets, flip aliases, and atomically commit the generation."""
         vector_store = self._vector_store(journal)
+        if journal.physical_names:
+            service = self._embedding_service(journal)
+            await self._replay_projection_changes(journal, service, vector_store)
         aliases = await vector_store.get_aliases()
         active_aliases = active_alias_names()
         physical_names = build_physical_names(journal)
@@ -282,26 +320,48 @@ class EmbeddingSwitchRunner:
             if old_name == alias_name:
                 await _delete_collection_if_present(vector_store, old_name)
 
-        embedding_values = {
-            AI_EMBEDDING_MODEL_KEY: journal.target_model,
-            AI_EMBEDDING_DIM_KEY: journal.target_dim,
-            AI_EMBEDDING_CATALOG_KEY: journal.catalog_key,
-            AI_EMBEDDING_QUERY_PREFIX_KEY: journal.target_query_prefix,
-            AI_EMBEDDING_API_BASE_KEY: journal.target_api_base,
-        }
-        self.config_store.set_embedding_switch_values(journal.run_id, embedding_values)
-
-        journal = advance_phase(self.config_store, journal, PHASE_ACTIVE)
+        self._completed_record = complete_switch(self.config_store, journal)
+        if self.config_runtime is not None and self._completed_record.committed_revision:
+            await self.config_runtime.reconcile_local_commit(
+                self._completed_record.committed_revision
+            )
+        journal.phase = PHASE_ACTIVE
         return PhaseResult(PHASE_FLIPPING, "aliases flipped and embedding config written"), journal
 
     async def gc(self, journal: SwitchJournal) -> PhaseResult:
         """Delete old physical collections recorded before the flip."""
+        try:
+            record = self._completed_record or load_completed_switch(self.config_store)
+        except SwitchJournalStateError:
+            record = complete_switch(self.config_store, journal)
+            self._completed_record = record
+        # A failed wait must journal as gc so --resume re-enters this phase.
+        journal.phase = PHASE_GC
+        deadline = time.monotonic() + self.gc_wait_seconds
+        while not self.generation_state.can_collect(record.run_id, record.committed_revision):
+            if self.control.abort_requested.is_set():
+                raise EmbeddingSwitchRunError(
+                    "Embedding switch GC wait aborted; run --resume once serving "
+                    "daemons acknowledge the new generation"
+                )
+            if time.monotonic() >= deadline:
+                blockers = self.generation_state.incompatible_serving_acks(
+                    record.run_id, record.committed_revision
+                )
+                rendered = "; ".join(blockers) or "none visible"
+                raise EmbeddingSwitchRunError(
+                    f"Embedding switch GC timed out after {self.gc_wait_seconds:g}s "
+                    f"waiting for serving acknowledgements (incompatible acks: "
+                    f"{rendered}); run --resume to retry collection"
+                )
+            await asyncio.sleep(_GC_POLL_SECONDS)
+
         vector_store = self._vector_store(journal)
         aliases = await vector_store.get_aliases()
         current_targets = set(aliases.values())
         deleted = 0
 
-        for collection_name in set(journal.old_physical_names.values()):
+        for collection_name in set(record.old_physical_names.values()):
             if not collection_name:
                 continue
             if collection_name in current_targets:
@@ -311,8 +371,202 @@ class EmbeddingSwitchRunner:
             await _delete_collection_if_present(vector_store, collection_name)
             deleted += 1
 
-        complete_switch(self.config_store, journal)
         return PhaseResult(PHASE_GC, "old physical collections garbage-collected", deleted)
+
+    async def _replay_projection_changes(
+        self,
+        journal: SwitchJournal,
+        service: EmbeddingService,
+        vector_store: VectorStore,
+    ) -> int:
+        """Replay the durable source ledger until the staged generation is current.
+
+        Each pass projects per change (last event wins per source), reading the
+        source row authoritatively so misclassified events still converge; a
+        full corpus rebuild happens only in the initial build() fill.
+        """
+        projected = 0
+        for _ in range(_REPLAY_MAX_PASSES):
+            up_to = self.generation_state.watermark()
+            changes = self.generation_state.changes_after(journal.caught_up_watermark, up_to=up_to)
+            if not changes:
+                return projected
+            latest = {(change.source_kind, change.source_id): change for change in changes}
+            for change in latest.values():
+                self._check_abort()
+                if change.is_tombstone:
+                    await self._delete_projection_tombstone(journal, vector_store, change)
+                else:
+                    projected += await self._project_change(journal, service, vector_store, change)
+            journal.caught_up_watermark = changes[-1].sequence
+            persist_journal(self.config_store, journal)
+        raise EmbeddingSwitchRunError(
+            f"Embedding switch replay did not converge after {_REPLAY_MAX_PASSES} passes"
+        )
+
+    async def _project_change(
+        self,
+        journal: SwitchJournal,
+        service: EmbeddingService,
+        vector_store: VectorStore,
+        change: ProjectionChange,
+    ) -> int:
+        if change.source_kind == "memory":
+            return await self._project_memory_change(
+                journal, service, vector_store, change.source_id
+            )
+        if change.source_kind == "tool":
+            return await self._project_tool_change(journal, vector_store, change.source_id)
+        return await self._project_github_issue_change(journal, service, vector_store, change)
+
+    async def _project_memory_change(
+        self,
+        journal: SwitchJournal,
+        service: EmbeddingService,
+        vector_store: VectorStore,
+        memory_id: str,
+    ) -> int:
+        collection_name = build_physical_names(journal)["memories"]
+        row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
+        if row is None or row["deleted_at"] is not None:
+            await vector_store.delete(memory_id, collection_name=collection_name)
+            return 0
+        memory = Memory.from_row(row)
+        embedding = await service.generate_embedding(memory.content)
+        payload = {
+            "project_id": memory.project_id,
+            "memory_type": memory.memory_type,
+            "source_type": memory.source_type,
+            "tags": list(memory.tags or []),
+        }
+        try:
+            async with self._writer(memory.project_id):
+                await vector_store.upsert(
+                    memory.id, embedding, payload, collection_name=collection_name
+                )
+        except ProjectWriteRejected:
+            logger.info(
+                "Skipping embedding-switch memory replay for unavailable project %s",
+                memory.project_id,
+            )
+            return 0
+        return 1
+
+    async def _project_tool_change(
+        self,
+        journal: SwitchJournal,
+        vector_store: VectorStore,
+        tool_id: str,
+    ) -> int:
+        collection_name = build_physical_names(journal)["tool_embeddings"]
+        row = self.db.fetchone(
+            """
+            SELECT tools.id AS id, tools.name AS name, tools.description AS description,
+                   tools.input_schema AS input_schema,
+                   mcp_servers.name AS server_name, mcp_servers.project_id AS project_id
+              FROM tools
+              JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id
+             WHERE tools.id = %s
+            """,
+            (tool_id,),
+        )
+        if row is None:
+            await vector_store.delete(tool_id, collection_name=collection_name)
+            return 0
+        config = self._runtime_config()
+        search = SemanticToolSearch(
+            self.db,
+            embedding_model=journal.target_model,
+            embedding_dim=journal.target_dim,
+            embedding_api_key=config.embeddings.api_key,
+            api_base=journal.target_api_base,
+            vector_store=vector_store,
+            collection_name=collection_name,
+        )
+        input_schema = row["input_schema"]
+        if isinstance(input_schema, str):
+            try:
+                input_schema = json.loads(input_schema)
+            except json.JSONDecodeError:
+                input_schema = None
+        project_id = str(row["project_id"])
+        try:
+            async with self._writer(project_id):
+                embedded = await search.embed_tool(
+                    tool_id=str(row["id"]),
+                    name=str(row["name"]),
+                    description=row["description"],
+                    input_schema=input_schema if isinstance(input_schema, dict) else None,
+                    server_name=str(row["server_name"]),
+                    project_id=project_id,
+                )
+        except ProjectWriteRejected:
+            logger.info(
+                "Skipping embedding-switch tool replay for unavailable project %s",
+                project_id,
+            )
+            return 0
+        return 1 if embedded else 0
+
+    async def _project_github_issue_change(
+        self,
+        journal: SwitchJournal,
+        service: EmbeddingService,
+        vector_store: VectorStore,
+        change: ProjectionChange,
+    ) -> int:
+        collection_name = build_physical_names(journal)["gobby_github_issues"]
+        try:
+            project_id, repo, issue_number_raw = change.source_id.rsplit(":", 2)
+            issue_number = int(issue_number_raw)
+        except (TypeError, ValueError) as exc:
+            raise EmbeddingSwitchRunError(
+                f"Invalid GitHub issue projection source ID: {change.source_id}"
+            ) from exc
+        record = GitHubTriageStore(self.db).get_issue_record(project_id, repo, issue_number)
+        if record is None:
+            await vector_store.delete(
+                issue_point_id(project_id, repo, issue_number),
+                collection_name=collection_name,
+            )
+            return 0
+        try:
+            async with self._writer(record.project_id):
+                await self._upsert_github_issue_record(
+                    record, service, vector_store, collection_name
+                )
+        except ProjectWriteRejected:
+            logger.info(
+                "Skipping embedding-switch issue replay for unavailable project %s",
+                record.project_id,
+            )
+            return 0
+        return 1
+
+    @staticmethod
+    async def _delete_projection_tombstone(
+        journal: SwitchJournal,
+        vector_store: VectorStore,
+        change: ProjectionChange,
+    ) -> None:
+        collection_kinds = {
+            "memory": "memories",
+            "tool": "tool_embeddings",
+            "github_issue": "gobby_github_issues",
+        }
+        point_id = change.source_id
+        if change.source_kind == "github_issue":
+            try:
+                project_id, repo, issue_number = change.source_id.rsplit(":", 2)
+                point_id = issue_point_id(project_id, repo, int(issue_number))
+            except (TypeError, ValueError) as exc:
+                raise EmbeddingSwitchRunError(
+                    f"Invalid GitHub issue projection source ID: {change.source_id}"
+                ) from exc
+        await vector_store.delete(
+            point_id,
+            collection_name=build_physical_names(journal)[collection_kinds[change.source_kind]],
+        )
 
     async def _build_memory_collection(
         self,
@@ -366,7 +620,7 @@ class EmbeddingSwitchRunner:
         self, journal: SwitchJournal, vector_store: VectorStore
     ) -> int:
         collection_name = build_physical_names(journal)["tool_embeddings"]
-        config = load_config(config_store=self.config_store)
+        config = self._runtime_config()
         mcp_manager = LocalMCPManager(self.db)
         search = SemanticToolSearch(
             self.db,
@@ -385,7 +639,7 @@ class EmbeddingSwitchRunner:
                 config,
                 db=self.db,
                 project_id=project.id,
-                mcp_manager=mcp_manager,
+                mcp_manager_resolver=lambda: mcp_manager,
             )
             try:
                 async with self._writer(project.id):
@@ -472,7 +726,7 @@ class EmbeddingSwitchRunner:
         )
 
     def _vector_store(self, journal: SwitchJournal) -> VectorStore:
-        config = load_config(config_store=self.config_store)
+        config = self._runtime_config()
         return VectorStore(
             url=config.databases.qdrant.url,
             api_key=config.databases.qdrant.api_key,
@@ -480,7 +734,7 @@ class EmbeddingSwitchRunner:
         )
 
     def _embedding_service(self, journal: SwitchJournal) -> EmbeddingService:
-        config = load_config(config_store=self.config_store)
+        config = self._runtime_config()
         return EmbeddingService(
             model=journal.target_model,
             api_base=journal.target_api_base,

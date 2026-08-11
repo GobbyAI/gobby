@@ -58,6 +58,26 @@ describe("useDetailDraft (#17014)", () => {
     expect(result.current.serverChanged).toBe(true);
   });
 
+  it("ignores a re-fetched source with identical values while dirty", () => {
+    const onSave = vi.fn(async () => true);
+    const { result, rerender } = renderHook(
+      ({ nextSource }: { nextSource: RuleDraft }) =>
+        useDetailDraft({ source: nextSource, onSave }),
+      { initialProps: { nextSource: source } },
+    );
+
+    act(() => {
+      result.current.setField("name", "Draft");
+    });
+
+    // Same values, new object identity — e.g. a post-save refetch or an
+    // unrelated key changing elsewhere in a shared config snapshot.
+    rerender({ nextSource: { ...source } });
+
+    expect(result.current.serverChanged).toBe(false);
+    expect(result.current.draft?.name).toBe("Draft");
+  });
+
   it("saves edited keys over the latest source", async () => {
     const onSave = vi.fn(async () => true);
     const { result, rerender } = renderHook(

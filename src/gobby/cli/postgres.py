@@ -18,10 +18,10 @@ from gobby.cli.installers.postgres import (
 )
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
+from gobby.cli.runtime import get_cli_runtime
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
 from gobby.cli.utils_config import init_local_storage
 from gobby.code_index.bm25_health import render_bm25_status, repair_bm25_indexes
-from gobby.config.app import load_config
 from gobby.storage.managed_credentials import ManagedCredentialManager
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.machine_id import get_machine_id
@@ -70,7 +70,7 @@ def repair_code_index_cmd(as_json: bool) -> None:
         raise click.ClickException(
             "PostgreSQL credentials are unavailable; run `gobby postgres install` first."
         )
-    timeout = load_config(resolve_database_url=False).code_index.maintenance_index_timeout_seconds
+    timeout = get_cli_runtime().require_config().code_index.maintenance_index_timeout_seconds
     payload = repair_bm25_indexes(database_url, timeout_seconds=timeout)
     if as_json:
         click.echo(json_dumps(payload, indent=2, sort_keys=True))

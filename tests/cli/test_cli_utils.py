@@ -601,9 +601,9 @@ class TestKillAllGobbyDaemons:
         """Test when no gobby daemons are running."""
         with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
             with patch("psutil.process_iter", return_value=[]):
-                with patch("gobby.cli.utils.load_config") as mock_config:
+                with patch("gobby.cli.utils_process.load_bootstrap") as mock_config:
                     mock_config.return_value = MagicMock(daemon_port=60887)
-                    mock_config.return_value.websocket.port = 60888
+                    mock_config.return_value.websocket_port = 60888
                     with patch("psutil.Process") as mock_proc_cls:
                         parent_proc = MagicMock()
                         parent_proc.parent.return_value = None
@@ -622,9 +622,9 @@ class TestKillAllGobbyDaemons:
 
         with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
             with patch("psutil.process_iter", return_value=[mock_proc]):
-                with patch("gobby.cli.utils.load_config") as mock_config:
+                with patch("gobby.cli.utils_process.load_bootstrap") as mock_config:
                     mock_config.return_value = MagicMock(daemon_port=60887)
-                    mock_config.return_value.websocket.port = 60888
+                    mock_config.return_value.websocket_port = 60888
                     with patch("os.getpid", return_value=99999):
                         with patch("os.getppid", return_value=99998):
                             result = kill_all_gobby_daemons()
@@ -642,9 +642,9 @@ class TestKillAllGobbyDaemons:
 
         with patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}):
             with patch("psutil.process_iter", return_value=[mock_proc]):
-                with patch("gobby.cli.utils.load_config") as mock_config:
+                with patch("gobby.cli.utils_process.load_bootstrap") as mock_config:
                     mock_config.return_value = MagicMock(daemon_port=60887)
-                    mock_config.return_value.websocket.port = 60888
+                    mock_config.return_value.websocket_port = 60888
                     with patch("os.getpid", return_value=99999):
                         with patch("os.getppid", return_value=99998):
                             result = kill_all_gobby_daemons()
@@ -839,13 +839,10 @@ class TestInitLocalStorage:
         """Test that database is created and migrations run."""
         mock_db = MagicMock()
         config = MagicMock()
-        config.hub_backend = "postgres"
         config.database_url = "postgresql://localhost/gobby"
-        deps = MagicMock()
-        deps.load_config.return_value = config
 
         with (
-            patch("gobby.cli.utils_config.facade", return_value=deps),
+            patch("gobby.config.bootstrap.load_bootstrap", return_value=config),
             patch(
                 "gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db
             ) as mock_open,
@@ -863,13 +860,10 @@ class TestInitLocalStorage:
         mock_db = MagicMock()
         mock_db.apply_migrations.side_effect = KeyboardInterrupt
         config = MagicMock()
-        config.hub_backend = "postgres"
         config.database_url = "postgresql://localhost/gobby"
-        deps = MagicMock()
-        deps.load_config.return_value = config
 
         with (
-            patch("gobby.cli.utils_config.facade", return_value=deps),
+            patch("gobby.config.bootstrap.load_bootstrap", return_value=config),
             patch(
                 "gobby.storage.hub.postgres.PostgresHubDatabase",
                 return_value=mock_db,

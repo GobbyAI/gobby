@@ -1,0 +1,5847 @@
+{
+  "codec": {
+    "invalid": [
+      "",
+      "%",
+      "%2",
+      "%GG",
+      "%2e",
+      "%41",
+      "%7E",
+      "raw.dot",
+      "raw space",
+      "bad+plus",
+      "bad=equals",
+      "%C0%AF",
+      "%E0%80%AF",
+      "%ED%A0%80",
+      "é",
+      "%FF"
+    ],
+    "safe": "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_~",
+    "vectors": [
+      {
+        "decoded": "plain",
+        "encoded": "plain"
+      },
+      {
+        "decoded": "AZaz09-_~",
+        "encoded": "AZaz09-_~"
+      },
+      {
+        "decoded": "dot.segment",
+        "encoded": "dot%2Esegment"
+      },
+      {
+        "decoded": "percent%sign",
+        "encoded": "percent%25sign"
+      },
+      {
+        "decoded": "already%2Eencoded",
+        "encoded": "already%252Eencoded"
+      },
+      {
+        "decoded": "slash/value",
+        "encoded": "slash%2Fvalue"
+      },
+      {
+        "decoded": "space value",
+        "encoded": "space%20value"
+      },
+      {
+        "decoded": "child.looking",
+        "encoded": "child%2Elooking"
+      },
+      {
+        "decoded": "café",
+        "encoded": "caf%C3%A9"
+      },
+      {
+        "decoded": "配置",
+        "encoded": "%E9%85%8D%E7%BD%AE"
+      },
+      {
+        "decoded": "🙂",
+        "encoded": "%F0%9F%99%82"
+      },
+      {
+        "decoded": "é",
+        "encoded": "%C3%A9"
+      },
+      {
+        "decoded": "é",
+        "encoded": "e%CC%81"
+      }
+    ]
+  },
+  "exactKeys": [
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Allow Git forge network endpoints for push, pull, and fetch.",
+      "key": "agent_sandbox.allow_git_network",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Allow daemon-owned runtimes to access the network.",
+      "key": "agent_sandbox.allow_network",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Allow package-registry endpoints and their local caches.",
+      "key": "agent_sandbox.allow_package_registries",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Exact Unix socket paths allowed by the SRT backend.",
+      "key": "agent_sandbox.allow_unix_sockets",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional outbound domains allowed by the SRT backend.",
+      "key": "agent_sandbox.allowed_domains",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "srt",
+      "description": "Host sandbox backend. Managed agents default this field to SRT.",
+      "key": "agent_sandbox.backend",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Outbound domains denied by the SRT backend.",
+      "key": "agent_sandbox.denied_domains",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable sandboxing for daemon-owned runtimes in this category.",
+      "key": "agent_sandbox.enabled",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths hidden from sandboxed processes.",
+      "key": "agent_sandbox.extra_deny_read_paths",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional write-deny paths inside otherwise writable roots.",
+      "key": "agent_sandbox.extra_deny_write_paths",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths to allow read access inside the sandbox.",
+      "key": "agent_sandbox.extra_read_paths",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths to allow write access inside the sandbox.",
+      "key": "agent_sandbox.extra_write_paths",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "permissive",
+      "description": "Sandbox strictness level for daemon-owned runtimes.",
+      "key": "agent_sandbox.mode",
+      "machineExport": false,
+      "namespace": "agent_sandbox",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "managed",
+      "default": null,
+      "description": "API base URL for the embedding endpoint. Use for local models (e.g., 'http://localhost:11434/v1' for Ollama). When None, uses the provider's default endpoint.",
+      "key": "ai.embeddings.api_base",
+      "machineExport": false,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Explicit API key for the embedding endpoint. Installers store this as an encrypted $secret: reference in config_store.",
+      "key": "ai.embeddings.api_key",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "managed",
+      "default": null,
+      "description": "Quant-qualified stable identity from the embedding catalog (e.g. 'qwen3-8b-q8'). Decoupled from the provider model ID. When set, gcode and diagnostics resolve model properties from this key.",
+      "key": "ai.embeddings.catalog_key",
+      "machineExport": false,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "managed",
+      "default": 768,
+      "description": "Dimensionality of embedding vectors. Must match the model's output: 768 for nomic-embed-text (default), 1536 for text-embedding-3-small, 1024 for BGE-M3.",
+      "key": "ai.embeddings.dim",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "managed",
+      "default": "nomic-embed-text",
+      "description": "Embedding model for semantic search",
+      "key": "ai.embeddings.model",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "managed",
+      "default": null,
+      "description": "Optional text prefix prepended to semantic-search queries before embedding.",
+      "key": "ai.embeddings.query_prefix",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "daemon",
+      "key": "ai.embeddings.routing",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "machine"
+    },
+    {
+      "activation": "live",
+      "key": "ai.embeddings.timeout_seconds",
+      "machineExport": true,
+      "namespace": "ai.embeddings",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "machine"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Maximum seconds for a single text-generation candidate attempt on a fast (local/OpenAI-compatible API) lane before falling back to the next candidate.",
+      "key": "ai.generation.candidate_timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 600.0,
+      "description": "Maximum seconds for a single candidate attempt on a spawn-cold lane (CLI subprocess, daemon, ACP, or the Claude SDK that spawns a CLI). These lanes pay cold-start cost, so they get more headroom than the fast-lane candidate_timeout_seconds. Must stay at or below timeout_seconds.",
+      "key": "ai.generation.cli_candidate_timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Host-wide maximum concurrent text-generation attempts on spawn-cold lanes.",
+      "key": "ai.generation.spawn_cold_max_concurrency",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1200.0,
+      "description": "Maximum seconds to wait for a daemon-owned text generation attempt.",
+      "key": "ai.generation.timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1200,
+      "key": "ai.generation.tool_loop.loop_timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 16384,
+      "key": "ai.generation.tool_loop.max_bytes_per_tool_result",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "key": "ai.generation.tool_loop.max_tool_calls",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ai.generation.tool_loop.max_turns",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300,
+      "key": "ai.generation.tool_loop.tool_timeout_seconds",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "openrouter_model_id": "anthropic/claude-haiku-4.5",
+          "provider": "droid",
+          "provider_model_id": "claude-haiku-4-5-20251001"
+        },
+        {
+          "openrouter_model_id": "deepseek/deepseek-v4-pro",
+          "provider": "droid",
+          "provider_model_id": "deepseek-v4-pro"
+        },
+        {
+          "openrouter_model_id": "x-ai/grok-4.5",
+          "provider": "droid",
+          "provider_model_id": "grok-4.5"
+        },
+        {
+          "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b",
+          "provider": "droid",
+          "provider_model_id": "nemotron-3-ultra"
+        }
+      ],
+      "description": "Provider-scoped aliases into the OpenRouter model metadata registry.",
+      "key": "ai.model_metadata_aliases",
+      "machineExport": false,
+      "namespace": "ai.model_metadata_aliases",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "",
+      "description": "Username for web UI login.",
+      "key": "auth.username",
+      "machineExport": false,
+      "namespace": "auth",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable GitHub-backed freshness checks for managed native binaries.",
+      "key": "bin_freshness.enabled",
+      "machineExport": false,
+      "namespace": "bin_freshness",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Timeout for GitHub release metadata and artifact downloads.",
+      "key": "bin_freshness.github_timeout_seconds",
+      "machineExport": false,
+      "namespace": "bin_freshness",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Delay before the first bin freshness check after daemon startup.",
+      "key": "bin_freshness.initial_delay_seconds",
+      "machineExport": false,
+      "namespace": "bin_freshness",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3600.0,
+      "description": "Base interval between bin freshness checks.",
+      "key": "bin_freshness.interval_seconds",
+      "machineExport": false,
+      "namespace": "bin_freshness",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300.0,
+      "description": "Maximum random jitter added to each interval.",
+      "key": "bin_freshness.jitter_seconds",
+      "machineExport": false,
+      "namespace": "bin_freshness",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "How often to remove stale unbound uploaded chat attachments.",
+      "key": "chat.attachment_gc_interval_minutes",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 100000000,
+      "description": "Maximum size for one uploaded chat attachment in bytes.",
+      "key": "chat.attachment_max_file_bytes",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 20,
+      "description": "Maximum number of chat attachments accepted on one message.",
+      "key": "chat.attachment_max_files_per_message",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000000000,
+      "description": "Maximum total size for chat attachments on one message in bytes.",
+      "key": "chat.attachment_max_total_bytes_per_message",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 24,
+      "description": "How long unbound uploaded chat attachments are retained before cleanup.",
+      "key": "chat.attachment_unbound_retention_hours",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-sol",
+          "reasoning_effort": "xhigh"
+        },
+        {
+          "candidate": "claude/opus",
+          "reasoning_effort": "high"
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "chat.candidates",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "plan",
+      "description": "Default chat mode for new sessions. One of: normal, accept_edits, bypass, plan.",
+      "key": "chat.default_mode",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_high",
+      "description": "Capability profile for chat sessions.",
+      "key": "chat.profile",
+      "machineExport": false,
+      "namespace": "chat",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000,
+      "description": "Maximum characters per individual history message before truncation.",
+      "key": "chat_history.max_message_chars",
+      "machineExport": false,
+      "namespace": "chat_history",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30000,
+      "description": "Maximum total characters of combined history context to inject.",
+      "key": "chat_history.max_total_chars",
+      "machineExport": false,
+      "namespace": "chat_history",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/clones",
+      "description": "Base directory for git clones (survives reboots, unlike /tmp).",
+      "key": "clones_dir",
+      "machineExport": false,
+      "namespace": "clones_dir",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Days to retain unreferenced indexed content and recent Git history",
+      "key": "code_index.content_retention_days",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable Qdrant vector embeddings for semantic search",
+      "key": "code_index.embedding_enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable code indexing via tree-sitter AST parsing",
+      "key": "code_index.enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable FalkorDB call/import graph",
+      "key": "code_index.graph_enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 900,
+      "description": "Timeout for each lightweight maintenance gcode index command",
+      "key": "code_index.maintenance_index_timeout_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3600,
+      "description": "Lightweight background reindex interval in seconds",
+      "key": "code_index.maintenance_interval_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/logs/code-index-maintenance.log",
+      "description": "Dedicated rotating log file for code-index prune and nightly maintenance",
+      "key": "code_index.maintenance_log_file",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Consecutive maintenance passes that must observe a missing project root before purging its index",
+      "key": "code_index.missing_root_purge_observations",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1,
+      "description": "Maximum concurrent nightly full reindex commands",
+      "key": "code_index.nightly_full_reindex_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "0 2 * * *",
+      "description": "Cron expression for nightly full code-index reindex",
+      "key": "code_index.nightly_full_reindex_cron",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable nightly full code-index reindex with projection sync",
+      "key": "code_index.nightly_full_reindex_enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 28800,
+      "description": "Timeout for each nightly full gcode reindex command",
+      "key": "code_index.nightly_full_reindex_timeout_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Timezone for nightly full code-index reindex; UTC when unset",
+      "key": "code_index.nightly_full_reindex_timezone",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 20,
+      "description": "Max symbols to summarize per maintenance pass",
+      "key": "code_index.symbol_summary.batch_size",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "code_index.symbol_summary.candidates",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable LLM-generated symbol summaries",
+      "key": "code_index.symbol_summary.enabled",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "Maximum concurrent symbol summary LLM calls",
+      "key": "code_index.symbol_summary.max_concurrency",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 100,
+      "description": "Maximum tokens for each symbol summary generation",
+      "key": "code_index.symbol_summary.max_tokens",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "code_index.symbol_summary.profile",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 50,
+      "description": "Max files to sync per poll iteration",
+      "key": "code_index.sync_worker_batch_size",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Initial vector-sync pause when the breaker opens (doubles per failed probe)",
+      "key": "code_index.sync_worker_breaker_backoff_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Consecutive vector-sync transport failures before the breaker opens",
+      "key": "code_index.sync_worker_breaker_failure_threshold",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 900.0,
+      "description": "Maximum vector-sync breaker backoff",
+      "key": "code_index.sync_worker_breaker_max_backoff_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "Sync worker poll interval in seconds",
+      "key": "code_index.sync_worker_interval_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300.0,
+      "description": "Timeout for each per-file graph/vector projection sync command",
+      "key": "code_index.sync_worker_projection_timeout_seconds",
+      "machineExport": false,
+      "namespace": "code_index",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "communications.auto_create_sessions",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "key": "communications.channel_defaults.burst",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "key": "communications.channel_defaults.poll_interval_seconds",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "key": "communications.channel_defaults.rate_limit_per_minute",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 90,
+      "key": "communications.channel_defaults.retention_days",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "key": "communications.channel_defaults.retry_count",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "key": "communications.enabled",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "",
+      "key": "communications.webhook_base_url",
+      "machineExport": false,
+      "namespace": "communications",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable compact handoff context extraction and injection",
+      "key": "compact_handoff.enabled",
+      "machineExport": false,
+      "namespace": "compact_handoff",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300.0,
+      "description": "Maximum seconds compact_self waits for pre-compact handoff summary refresh before falling back to the latest digest.",
+      "key": "compact_handoff.refresh_timeout_seconds",
+      "machineExport": false,
+      "namespace": "compact_handoff",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": [
+        "http://localhost:*",
+        "https://localhost:*"
+      ],
+      "description": "Allowed CORS origins. Defaults to localhost only. Add your Tailscale hostname (e.g., 'https://myhost.tail*.ts.net') for remote access.",
+      "key": "cors_origins",
+      "machineExport": false,
+      "namespace": "cors_origins",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        30,
+        60,
+        300,
+        900,
+        3600
+      ],
+      "description": "Exponential backoff delays in seconds for consecutive failures",
+      "key": "cron.backoff_delays",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "How often to check for due jobs (seconds)",
+      "key": "cron.check_interval_seconds",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Delete cron run history older than this many days",
+      "key": "cron.cleanup_after_days",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable the cron scheduler",
+      "key": "cron.enabled",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Maximum number of concurrently running cron jobs",
+      "key": "cron.max_concurrent_jobs",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1440,
+      "description": "Maximum duration for bounded cron actions",
+      "key": "cron.running_timeout_seconds",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120,
+      "description": "Additional grace before running cron records are considered stale",
+      "key": "cron.stale_run_grace_seconds",
+      "machineExport": false,
+      "namespace": "cron",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10.0,
+      "description": "Daemon health check interval in seconds",
+      "key": "daemon_health_check_interval",
+      "machineExport": false,
+      "namespace": "daemon_health_check_interval",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "auto",
+      "description": "Concurrent plan coverage evaluations, or 'auto' for CPU sizing.",
+      "key": "database_concurrency.coverage_max_concurrency",
+      "machineExport": false,
+      "namespace": "database_concurrency",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "integer"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "auto",
+      "description": "Blocking database worker count, or 'auto' for CPU sizing.",
+      "key": "database_concurrency.executor_max_workers",
+      "machineExport": false,
+      "namespace": "database_concurrency",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "integer"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "auto",
+      "description": "Runtime PostgreSQL pool maximum, or 'auto' for capacity sizing.",
+      "key": "database_concurrency.pool_max_size",
+      "machineExport": false,
+      "namespace": "database_concurrency",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "integer"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 0.5,
+      "description": "Minimum entity vector similarity score for graph search (0.0-1.0)",
+      "key": "databases.falkordb.graph_min_score",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "gobby_kg",
+      "description": "FalkorDB graph key. Memory KG uses 'gobby_kg', code graph uses 'gobby_code'. Set per consumer; this is the default for the memory KG client.",
+      "key": "databases.falkordb.graph_name",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Enable graph-augmented search (entity vector search merged via RRF)",
+      "key": "databases.falkordb.graph_search",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "127.0.0.1",
+      "description": "FalkorDB host. Docker default: 127.0.0.1 (port-mapped).",
+      "key": "databases.falkordb.host",
+      "machineExport": true,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "FalkorDB password (Redis AUTH). `databases.falkordb.password` resolves to secret-store name `falkordb_password` for stable disambiguation. Must be provided when FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time.",
+      "key": "databases.falkordb.password",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 16379,
+      "description": "FalkorDB port. Docker host-side: 16379 (remapped from container 6379 to avoid system Redis conflicts). 0.4.0 supports Docker only — see 3.1's mode decision.",
+      "key": "databases.falkordb.port",
+      "machineExport": true,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 60,
+      "description": "RRF constant for merging Qdrant and graph results (higher = more uniform weighting)",
+      "key": "databases.falkordb.rrf_k",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "DNS host clients use to reach shared datastores",
+      "key": "databases.published_host",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "API key for Qdrant server (optional for local access). Supports ${ENV_VAR} pattern for env var expansion at load time.",
+      "key": "databases.qdrant.api_key",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "reference",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "code_symbols_",
+      "description": "Qdrant collection name prefix for code symbol embeddings",
+      "key": "databases.qdrant.collection_prefix",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 6333,
+      "description": "HTTP port for Qdrant server",
+      "key": "databases.qdrant.port",
+      "machineExport": false,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "URL for Qdrant server (Docker-managed).",
+      "key": "databases.qdrant.url",
+      "machineExport": true,
+      "namespace": "databases",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "digest.candidates",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable background digest and title generation",
+      "key": "digest.enabled",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 50,
+      "description": "Maximum transcript pairs consumed in one digest pass (default 50).",
+      "key": "digest.num_pairs",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "digest.profile",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Timeout in seconds for digest/title LLM calls (default 30s).",
+      "key": "digest.timeout",
+      "machineExport": false,
+      "namespace": "digest",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable gobby-tasks internal MCP server",
+      "key": "gobby_tasks.enabled",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-sol",
+          "reasoning_effort": "xhigh"
+        },
+        {
+          "candidate": "claude/opus",
+          "reasoning_effort": "high"
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "gobby_tasks.expansion.candidates",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "auto",
+      "description": "Default expansion strategy: auto (LLM decides), phased, sequential, or parallel",
+      "key": "gobby_tasks.expansion.default_strategy",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable automated task expansion",
+      "key": "gobby_tasks.expansion.enabled",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_high",
+      "description": "Capability profile for task expansion.",
+      "key": "gobby_tasks.expansion.profile",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom user prompt template (e.g., 'expansion/user')",
+      "key": "gobby_tasks.expansion.prompt_path",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom system prompt template (e.g., 'expansion/system')",
+      "key": "gobby_tasks.expansion.system_prompt_path",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300.0,
+      "description": "Maximum time in seconds for entire task expansion (default: 5 minutes)",
+      "key": "gobby_tasks.expansion.timeout",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        ".py",
+        ".pyi",
+        ".pyx",
+        ".pxd",
+        ".js",
+        ".jsx",
+        ".ts",
+        ".tsx",
+        ".mjs",
+        ".cjs",
+        ".html",
+        ".htm",
+        ".css",
+        ".scss",
+        ".sass",
+        ".less",
+        ".vue",
+        ".svelte",
+        ".astro",
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".env",
+        ".xml",
+        ".csv",
+        ".tsv",
+        ".md",
+        ".markdown",
+        ".rst",
+        ".txt",
+        ".adoc",
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".fish",
+        ".ps1",
+        ".bat",
+        ".cmd",
+        ".go",
+        ".mod",
+        ".sum",
+        ".rs",
+        ".toml",
+        ".java",
+        ".kt",
+        ".kts",
+        ".scala",
+        ".groovy",
+        ".gradle",
+        ".c",
+        ".h",
+        ".cpp",
+        ".hpp",
+        ".cc",
+        ".hh",
+        ".cxx",
+        ".hxx",
+        ".cs",
+        ".csproj",
+        ".sln",
+        ".fs",
+        ".fsx",
+        ".swift",
+        ".m",
+        ".mm",
+        ".rb",
+        ".rake",
+        ".gemspec",
+        ".php",
+        ".phtml",
+        ".pl",
+        ".pm",
+        ".lua",
+        ".r",
+        ".R",
+        ".rmd",
+        ".Rmd",
+        ".jl",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hrl",
+        ".hs",
+        ".lhs",
+        ".ml",
+        ".mli",
+        ".sql",
+        ".psql",
+        ".mysql",
+        ".graphql",
+        ".gql",
+        ".proto",
+        ".thrift",
+        ".dockerfile",
+        ".tf",
+        ".tfvars",
+        ".hcl",
+        ".k8s",
+        ".nix",
+        ".prisma",
+        ".lock",
+        ".log",
+        ".diff",
+        ".patch"
+      ],
+      "description": "File extensions to recognize when extracting paths from task descriptions",
+      "key": "gobby_tasks.file_extraction.file_extensions",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile",
+        "Dockerfile",
+        "dockerfile",
+        "Containerfile",
+        "Jenkinsfile",
+        "Vagrantfile",
+        "Rakefile",
+        "rakefile",
+        "Gemfile",
+        "Podfile",
+        "Brewfile",
+        "Procfile",
+        "Taskfile",
+        "Justfile",
+        "justfile",
+        "Earthfile",
+        "Tiltfile",
+        "BUILD",
+        "WORKSPACE",
+        "CMakeLists",
+        "meson.build",
+        "SConstruct",
+        "SConscript",
+        "CHANGELOG",
+        "CHANGES",
+        "HISTORY",
+        "README",
+        "INSTALL",
+        "LICENSE",
+        "COPYING",
+        "AUTHORS",
+        "CONTRIBUTORS",
+        "MAINTAINERS",
+        "CODEOWNERS",
+        ".gitignore",
+        ".gitattributes",
+        ".gitmodules",
+        ".dockerignore",
+        ".editorconfig",
+        ".eslintrc",
+        ".prettierrc",
+        ".stylelintrc",
+        ".babelrc",
+        ".nvmrc",
+        ".node-version",
+        ".python-version",
+        ".ruby-version",
+        "requirements.txt",
+        "constraints.txt",
+        "package.json",
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Cargo.toml",
+        "Cargo.lock",
+        "go.mod",
+        "go.sum",
+        "composer.json",
+        "composer.lock",
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "poetry.lock",
+        "Pipfile",
+        "Pipfile.lock",
+        "tsconfig.json",
+        "jsconfig.json",
+        "webpack.config.js",
+        "vite.config.js",
+        "rollup.config.js",
+        "jest.config.js",
+        "vitest.config.js",
+        "playwright.config.js",
+        ".env.local",
+        ".env.development",
+        ".env.production",
+        ".env.test"
+      ],
+      "description": "Known filenames without extensions to recognize",
+      "key": "gobby_tasks.file_extraction.known_files",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "src/",
+        "lib/",
+        "pkg/",
+        "packages/",
+        "test/",
+        "tests/",
+        "spec/",
+        "specs/",
+        "__tests__/",
+        "app/",
+        "apps/",
+        "internal/",
+        "cmd/",
+        "bin/",
+        "scripts/",
+        "tools/",
+        "utils/",
+        "config/",
+        "configs/",
+        "conf/",
+        "settings/",
+        "docs/",
+        "doc/",
+        "documentation/",
+        "assets/",
+        "static/",
+        "public/",
+        "resources/",
+        "components/",
+        "pages/",
+        "views/",
+        "templates/",
+        "models/",
+        "controllers/",
+        "services/",
+        "handlers/",
+        "api/",
+        "routes/",
+        "middleware/",
+        "fixtures/",
+        "mocks/",
+        "stubs/",
+        "fakes/",
+        "migrations/",
+        "seeds/",
+        "schemas/",
+        ".github/",
+        ".circleci/",
+        ".gitlab/",
+        ".gobby/",
+        ".vscode/",
+        ".idea/"
+      ],
+      "description": "Common path prefixes that indicate a file path",
+      "key": "gobby_tasks.file_extraction.path_prefixes",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Show full task result on create_task (False = minimal output with just id)",
+      "key": "gobby_tasks.show_result_on_create",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Auto-generate validation criteria when creating tasks via create_task",
+      "key": "gobby_tasks.validation.auto_generate_on_create",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Auto-generate validation criteria when expanding tasks via expand_task",
+      "key": "gobby_tasks.validation.auto_generate_on_expand",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "gobby_tasks.validation.candidates",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 32000,
+      "description": "Maximum rendered character count for the task-close criteria-review prompt.",
+      "key": "gobby_tasks.validation.close_review_prompt_max_chars",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Invalid or pending close verdicts before atomic task escalation.",
+      "key": "gobby_tasks.validation.close_validation_escalation_threshold",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom criteria generation prompt template (e.g., 'validation/criteria')",
+      "key": "gobby_tasks.validation.criteria_prompt_path",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "You are a QA engineer writing acceptance criteria. CRITICAL: Only include requirements explicitly stated in the task. Do NOT invent specific values, thresholds, timeouts, or edge cases that aren't mentioned. Vague tasks get vague criteria. Use markdown checkboxes.",
+      "description": "System prompt for generating validation criteria",
+      "key": "gobby_tasks.validation.criteria_system_prompt",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable automated task validation",
+      "key": "gobby_tasks.validation.enabled",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable task escalation on repeated validation failures",
+      "key": "gobby_tasks.validation.escalation_enabled",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "none",
+      "description": "Notification method when task is escalated",
+      "key": "gobby_tasks.validation.escalation_notify",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Webhook URL for escalation notifications",
+      "key": "gobby_tasks.validation.escalation_webhook_url",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum validation attempts before escalation",
+      "key": "gobby_tasks.validation.max_iterations",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Capability profile for task validation.",
+      "key": "gobby_tasks.validation.profile",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom validation prompt template (e.g., 'validation/validate')",
+      "key": "gobby_tasks.validation.prompt_path",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
+      "description": "System prompt for task validation",
+      "key": "gobby_tasks.validation.system_prompt",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Dispatch webhooks asynchronously (non-blocking except for can_block)",
+      "key": "hook_extensions.webhooks.async_dispatch",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10.0,
+      "description": "Default timeout for webhook requests",
+      "key": "hook_extensions.webhooks.default_timeout",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable webhook dispatching",
+      "key": "hook_extensions.webhooks.enabled",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "List of webhook endpoint configurations",
+      "key": "hook_extensions.webhooks.endpoints",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "session-start",
+        "session-end",
+        "pre-tool-use",
+        "post-tool-use"
+      ],
+      "description": "List of hook event types to broadcast",
+      "key": "hook_extensions.websocket.broadcast_events",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable broadcasting hook events to WebSocket clients",
+      "key": "hook_extensions.websocket.enabled",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Include event payload data in broadcast messages",
+      "key": "hook_extensions.websocket.include_payload",
+      "machineExport": false,
+      "namespace": "hook_extensions",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 105.0,
+      "description": "Daemon endpoint timeout in seconds for synchronous hook execution.",
+      "key": "hooks.adapter_timeout",
+      "machineExport": false,
+      "namespace": "hooks",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120,
+      "description": "Provider hook timeout in seconds emitted by supported installers.",
+      "key": "hooks.provider_timeout",
+      "machineExport": false,
+      "namespace": "hooks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "import_mcp_server.candidates",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable MCP server import tool",
+      "key": "import_mcp_server.enabled",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom GitHub fetch prompt (e.g., 'features/import_mcp_github')",
+      "key": "import_mcp_server.github_fetch_prompt_path",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "import_mcp_server.profile",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom import MCP system prompt (e.g., 'features/import_mcp')",
+      "key": "import_mcp_server.prompt_path",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom search fetch prompt (e.g., 'features/import_mcp_search')",
+      "key": "import_mcp_server.search_fetch_prompt_path",
+      "machineExport": false,
+      "namespace": "import_mcp_server",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional component-name glob patterns to exclude alongside built-in patterns.",
+      "key": "indexing.extra_excludes",
+      "machineExport": false,
+      "namespace": "indexing",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Respect .gitignore, .git/info/exclude, and global git excludes while indexing.",
+      "key": "indexing.respect_gitignore",
+      "machineExport": true,
+      "namespace": "indexing",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 20,
+      "description": "Max memories to process per KG queue cycle",
+      "key": "knowledge_graph_queue.batch_size",
+      "machineExport": false,
+      "namespace": "knowledge_graph_queue",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "How often to process the KG queue (minutes)",
+      "key": "knowledge_graph_queue.interval_minutes",
+      "machineExport": false,
+      "namespace": "knowledge_graph_queue",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Deterministic KG failures allowed before a memory leaves the queue",
+      "key": "knowledge_graph_queue.max_deterministic_attempts",
+      "machineExport": false,
+      "namespace": "knowledge_graph_queue",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 256,
+      "description": "Maximum size of each rule allow audit rotation",
+      "key": "logging.allow_audit_max_size_mb",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Maximum queued rule allow audit lines; overflow drops newest",
+      "key": "logging.allow_audit_queue_capacity",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 14,
+      "description": "Target retention in days for durable rule allow audit lines",
+      "key": "logging.allow_audit_retention_days",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2.0,
+      "description": "Hard deadline for draining queued rule allow audit lines",
+      "key": "logging.allow_audit_shutdown_timeout_seconds",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Number of rotated log files to keep",
+      "key": "logging.backup_count",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/logs",
+      "description": "Directory containing Gobby log files",
+      "key": "logging.dir",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "text",
+      "description": "Log format",
+      "key": "logging.format",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 100,
+      "description": "Logs directory growth threshold per resource-monitor interval",
+      "key": "logging.growth_warn_mb_per_interval",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "info",
+      "description": "Log level",
+      "key": "logging.level",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum rotating log file size in MB",
+      "key": "logging.max_size_mb",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 50,
+      "description": "Maximum runtime output file size in MB",
+      "key": "logging.runtime_max_size_mb",
+      "machineExport": false,
+      "namespace": "logging",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Timeout in seconds for establishing connections to MCP servers",
+      "key": "mcp_client_proxy.connect_timeout",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable MCP client proxy for downstream MCP servers",
+      "key": "mcp_client_proxy.enabled",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.3,
+      "description": "Minimum similarity threshold for semantic search results (0.0-1.0)",
+      "key": "mcp_client_proxy.min_similarity",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Timeout in seconds for proxy calls to downstream MCP servers",
+      "key": "mcp_client_proxy.proxy_timeout",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Automatically refresh tool embeddings when adding a new MCP server",
+      "key": "mcp_client_proxy.refresh_on_server_add",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300.0,
+      "description": "Timeout in seconds for tool refresh operations (embedding generation)",
+      "key": "mcp_client_proxy.refresh_timeout",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "llm",
+      "description": "Default search mode for tool recommendations: 'llm' (LLM-based), 'semantic' (embedding similarity), 'hybrid' (both)",
+      "key": "mcp_client_proxy.search_mode",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Timeout in seconds for tool schema operations",
+      "key": "mcp_client_proxy.tool_timeout",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Default number of results to return for semantic search",
+      "key": "mcp_client_proxy.top_k",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Minimum seconds between access stat updates for the same memory",
+      "key": "memory.access_debounce_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Automatically create cross-references between similar memories",
+      "key": "memory.auto_crossref",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "local",
+      "description": "Storage backend for memories. Options: 'local' (default, PostgreSQL hub via LocalMemoryManager), 'null' (no persistence, for testing)",
+      "key": "memory.backend",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Maximum co-clustered non-seed entities to add per seed or traversed entity when cluster_recall_expansion is enabled.",
+      "key": "memory.cluster_expansion_per_entity",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "HDBSCAN min_cluster_size for offline entity embedding reclustering. Daemon-global static default; per-project tuning is intentionally separate.",
+      "key": "memory.cluster_min_cluster_size",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "HDBSCAN min_samples for offline entity embedding reclustering. None delegates to HDBSCAN's min_cluster_size behavior.",
+      "key": "memory.cluster_min_samples",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Enable read-path recall expansion through stored _Entity.cluster_id labels. Default off; labels are written only by the offline reclustering tool.",
+      "key": "memory.cluster_recall_expansion",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.82,
+      "description": "Minimum cosine similarity for RELATES_TO_CODE edges between memory entities and code symbols",
+      "key": "memory.code_link_min_score",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Maximum number of cross-references to create per memory",
+      "key": "memory.crossref_max_links",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.3,
+      "description": "Minimum similarity score to create a cross-reference (0.0-1.0)",
+      "key": "memory.crossref_threshold",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Judge the complete returned recall candidate set during the digest pass and persist label_source='digest_shadow' evidence. Requires recall_signal_hub so every judged request and candidate is durable.",
+      "key": "memory.digest_shadow_usefulness",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "memory.dream.candidates",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1000,
+      "description": "Maximum candidates evaluated by one dry-run preview",
+      "key": "memory.dream.dry_run_max_candidates",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable scheduled memory dream maintenance",
+      "key": "memory.dream.enabled",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Total budget in seconds for one required-evidence channel attempt, including connection-pool admission",
+      "key": "memory.dream.evidence_channel_timeout_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 210.0,
+      "description": "Ceiling in seconds for one work unit's whole evidence phase across channels and retries",
+      "key": "memory.dream.evidence_phase_timeout_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Attempts per required evidence channel before the work unit stops as a dependency failure",
+      "key": "memory.dream.evidence_retry_attempts",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Include global memories when a project-scoped dream runs",
+      "key": "memory.dream.include_global_memories",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 14400,
+      "description": "Seconds from coordinator start during which new dream work units may be admitted; the final admitted unit may still finish under its own work-unit timeout",
+      "key": "memory.dream.max_runtime_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8192,
+      "description": "Maximum tokens for memory dream planner responses",
+      "key": "memory.dream.max_tokens",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.72,
+      "description": "Minimum confidence required for mutating dream actions",
+      "key": "memory.dream.min_action_confidence",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.85,
+      "description": "Minimum confidence required for delete actions",
+      "key": "memory.dream.min_delete_confidence",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.85,
+      "description": "Minimum confidence required for scope-changing dream actions",
+      "key": "memory.dream.min_rescope_confidence",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 100000,
+      "description": "Soft maximum rendered candidate characters per planner LLM call",
+      "key": "memory.dream.planner_batch_max_chars",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 25,
+      "description": "Maximum stale candidates sent to the planner in one LLM call",
+      "key": "memory.dream.planner_batch_size",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Provider-agnostic capability profile for memory dream planning",
+      "key": "memory.dream.profile",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "memory/dream",
+      "description": "Prompt template path for memory dream planning",
+      "key": "memory.dream.prompt_path",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Grace days before soft-hidden delete-action memories are hard-purged",
+      "key": "memory.dream.purge_delete_after_days",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 90,
+      "description": "Grace days before soft-hidden review-action memories are hard-purged",
+      "key": "memory.dream.purge_review_after_days",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Reconcile secondary memory stores after applying mutations",
+      "key": "memory.dream.reconcile_after_apply",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Reconcile secondary memory stores after reverting mutations",
+      "key": "memory.dream.reconcile_after_revert",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 20,
+      "description": "Cooldown in hours before a dreamed memory is eligible again; makes the nightly sweep idempotent across same-day re-runs",
+      "key": "memory.dream.redream_after_hours",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Attach related memories as evidence during dream planning",
+      "key": "memory.dream.related_evidence_enabled",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum retrieval hits fetched before related-evidence ranking",
+      "key": "memory.dream.related_evidence_fetch_limit",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Maximum related memories attached to each dream candidate",
+      "key": "memory.dream.related_evidence_top_k",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Days to retain memory_dream_runs/_snapshots history before pruning",
+      "key": "memory.dream.run_retention_days",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "0 2 * * *",
+      "description": "Cron expression for the system memory dream job",
+      "key": "memory.dream.schedule_cron",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1500.0,
+      "description": "Maximum seconds for one dream work unit, selection through apply",
+      "key": "memory.dream.work_unit_timeout_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Mark older related memories due after superseding writes",
+      "key": "memory.dream.write_supersession_mark_due_enabled",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Half-life in days for knowledge-graph edge-recency decay (graph_edge_decay). Set to 0 to disable edge decay.",
+      "key": "memory.edge_half_life_days",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable persistent memory system",
+      "key": "memory.enabled",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Override path for the recall refit gate decision record JSON. None resolves to ~/.gobby/recall_refit_decision.json. '~' is expanded.",
+      "key": "memory.fitted_recall_decision_path",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Apply edge-recency decay during knowledge-graph traversal candidate selection (reshapes which neighbors survive the traversal cap). Default off.",
+      "key": "memory.graph_edge_decay",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Enable weighted entity->entity edges in the memory knowledge graph. When on, typed relations carry a cosine-similarity weight (and a reinforcement count as metadata). Default off; adopt per recall benchmark.",
+      "key": "memory.graph_edge_weighting",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10.0,
+      "description": "End-to-end deadline in seconds for related-memory graph expansion during search. Changes take effect after daemon restart.",
+      "key": "memory.graph_related_expansion_timeout_seconds",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "memory.kg.candidates",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "Maximum concurrent add_to_graph calls during KG rebuild jobs.",
+      "key": "memory.kg.max_rebuild_concurrency",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "memory.kg.profile",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Materialize derived CO_OCCURS support edges between entities that share a memory, densifying the traversable entity layer. Default off.",
+      "key": "memory.materialize_cooccurrence",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.6,
+      "description": "Minimum similarity score for memory recall (0.0-1.0). Memories below this threshold are excluded from search results. Applies to cosine similarity after source boost and temporal decay.",
+      "key": "memory.min_recall_score",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.05,
+      "description": "Alarm threshold: live pairwise accuracy this far below the recorded holdout baseline accuracy raises the drift alarm.",
+      "key": "memory.recall_drift_accuracy_drop",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 24.0,
+      "description": "Hours between recall-drift monitor checks in the daemon.",
+      "key": "memory.recall_drift_interval_hours",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Run the periodic recall-quality drift monitor (#17201). It replays recent labeled recall signals under the effective constants and alarms when live pairwise accuracy regresses beyond recall_drift_accuracy_drop below the recorded holdout baseline.",
+      "key": "memory.recall_drift_monitor_enabled",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Mirror recall-signal events into the Postgres hub tables (recall_signal_requests/recall_signal_hits) and record durable injection outcomes (recall_injection_outcomes) at delivery time. Purely observational; independent of recall_signal_logging (#17196).",
+      "key": "memory.recall_signal_hub",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 50,
+      "description": "Rotate the recall-signal JSONL when the live file reaches this many megabytes: '.1' shifts to '.2' and the live file becomes '.1', bounding retained size to roughly three times the cap (#18196).",
+      "key": "memory.recall_signal_log_max_mb",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Override path for the recall-signal JSONL log. None resolves to ~/.gobby/logs/recall_signal.jsonl. '~' is expanded.",
+      "key": "memory.recall_signal_log_path",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Append observational recall/search ranking signal events to a dedicated JSONL file (default ~/.gobby/logs/recall_signal.jsonl). Purely observational; search, recall, and injection behavior are unchanged.",
+      "key": "memory.recall_signal_logging",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Half-life in days for temporal decay scoring in memory search. Memories lose half their score boost after this many days since last update. Set to 0 to disable temporal decay.",
+      "key": "memory.temporal_decay_half_life_days",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Apply the pooled fitted recall ranking constants from a shipped #17198 gate decision record as the daemon-global defaults. The static constants remain the one-flag rollback floor: a missing, malformed, or non-shipping (reject) record keeps static behavior even when enabled (#17200).",
+      "key": "memory.use_fitted_recall_constants",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": ".gobby/memories.jsonl",
+      "description": "Path to the memories backup file (relative to project root or absolute)",
+      "key": "memory_backup.backup_path",
+      "machineExport": false,
+      "namespace": "memory_backup",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable memory JSONL backup and restore tools",
+      "key": "memory_backup.enabled",
+      "machineExport": false,
+      "namespace": "memory_backup",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8,
+      "description": "Maximum ranked candidates returned by the single hybrid search.",
+      "key": "memory_recall.candidate_limit",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "memory_recall.candidates",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable inline substantive-prompt memory recall.",
+      "key": "memory_recall.enabled",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.0,
+      "description": "Minimum decayed semantic similarity for recall candidates. Applies only to hits carrying a numeric similarity; keyword/RRF-ranked hits pass through in direct hybrid-search order. Default 0.0 keeps the full score distribution flowing for adaptive tuning (#17099).",
+      "key": "memory_recall.min_score",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "memory_recall.profile",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Timeout in seconds for the FEATURE_LOW substantive classifier.",
+      "key": "memory_recall.timeout",
+      "machineExport": false,
+      "namespace": "memory_recall",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "memory_usefulness.candidates",
+      "machineExport": false,
+      "namespace": "memory_usefulness",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "memory_usefulness.profile",
+      "machineExport": false,
+      "namespace": "memory_usefulness",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Timeout in seconds for usefulness-judge LLM calls (default 30s).",
+      "key": "memory_usefulness.timeout",
+      "machineExport": false,
+      "namespace": "memory_usefulness",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "merge_resolution.candidates",
+      "machineExport": false,
+      "namespace": "merge_resolution",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Capability profile for merge resolution.",
+      "key": "merge_resolution.profile",
+      "machineExport": false,
+      "namespace": "merge_resolution",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable broadcasting message events",
+      "key": "message_tracking.broadcast_enabled",
+      "machineExport": false,
+      "namespace": "message_tracking",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1.0,
+      "description": "Debounce delay in seconds for message processing",
+      "key": "message_tracking.debounce_delay",
+      "machineExport": false,
+      "namespace": "message_tracking",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable session message tracking",
+      "key": "message_tracking.enabled",
+      "machineExport": false,
+      "namespace": "message_tracking",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10000,
+      "description": "Maximum length of a single message content",
+      "key": "message_tracking.max_message_length",
+      "machineExport": false,
+      "namespace": "message_tracking",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "Polling interval in seconds for transcript updates",
+      "key": "message_tracking.poll_interval",
+      "machineExport": false,
+      "namespace": "message_tracking",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10000,
+      "description": "Maximum items to fetch when counting sessions/tasks for metrics. Set higher for large installs to avoid underreporting. Use 0 for unbounded (uses COUNT queries instead of list).",
+      "key": "metrics.list_limit",
+      "machineExport": false,
+      "namespace": "metrics",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum nesting depth for invoke_pipeline steps. Prevents stack overflow from recursive/circular pipelines.",
+      "key": "pipelines.nesting_depth_limit",
+      "machineExport": false,
+      "namespace": "pipelines",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "pipelines.prompt_step.candidates",
+      "machineExport": false,
+      "namespace": "pipelines",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "pipelines.prompt_step.profile",
+      "machineExport": false,
+      "namespace": "pipelines",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": {
+        "acquire_timeout_seconds": 5.0,
+        "max_lifetime_seconds": 300.0,
+        "max_size": 2,
+        "min_size": 2,
+        "open_timeout_seconds": 30.0
+      },
+      "description": "PostgreSQL client pool settings selected by bootstrap.yaml.",
+      "key": "postgres_pool",
+      "machineExport": false,
+      "namespace": "postgres_pool",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "project_verification_synthesis.candidates",
+      "machineExport": false,
+      "namespace": "project_verification_synthesis",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.75,
+      "description": "Minimum AI confidence required to accept a synthesized command.",
+      "key": "project_verification_synthesis.confidence_threshold",
+      "machineExport": false,
+      "namespace": "project_verification_synthesis",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Provider-agnostic capability profile for verification synthesis.",
+      "key": "project_verification_synthesis.profile",
+      "machineExport": false,
+      "namespace": "project_verification_synthesis",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "codex/gpt-5.6-terra",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "claude/sonnet",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "recommend_tools.candidates",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable tool recommendation MCP tool",
+      "key": "recommend_tools.enabled",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom hybrid re-rank prompt (e.g., 'features/recommend_tools_hybrid')",
+      "key": "recommend_tools.hybrid_rerank_prompt_path",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom LLM recommendation prompt (e.g., 'features/recommend_tools_llm')",
+      "key": "recommend_tools.llm_prompt_path",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_mid",
+      "description": "Capability profile for tool recommendations.",
+      "key": "recommend_tools.profile",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom recommend tools system prompt (e.g., 'features/recommend_tools')",
+      "key": "recommend_tools.prompt_path",
+      "machineExport": false,
+      "namespace": "recommend_tools",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "rules.aggregate_blocks",
+      "machineExport": false,
+      "namespace": "rules",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "rules.enforcement_enabled",
+      "machineExport": false,
+      "namespace": "rules",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.6,
+      "description": "Weight for embedding rank contributions in hybrid mode",
+      "key": "search.embedding_weight",
+      "machineExport": false,
+      "namespace": "search",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.4,
+      "description": "Weight for keyword rank contributions in hybrid mode",
+      "key": "search.keyword_weight",
+      "machineExport": false,
+      "namespace": "search",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "auto",
+      "description": "Search mode: keyword, embedding, auto, hybrid",
+      "key": "search.mode",
+      "machineExport": false,
+      "namespace": "search",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Log warning when falling back to keyword search",
+      "key": "search.notify_on_fallback",
+      "machineExport": false,
+      "namespace": "search",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Minutes of inactivity before active sessions are marked paused",
+      "key": "session_lifecycle.active_session_pause_minutes",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "How often to check for stale sessions (minutes)",
+      "key": "session_lifecycle.expire_check_interval_minutes",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 24,
+      "description": "Hours after which inactive sessions are marked expired",
+      "key": "session_lifecycle.stale_session_timeout_hours",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/session_transcripts",
+      "description": "Directory for gzip-compressed transcript backups",
+      "key": "session_lifecycle.transcript_archive_dir",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Maximum sessions to process per batch",
+      "key": "session_lifecycle.transcript_processing_batch_size",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "How often to process pending transcripts (minutes)",
+      "key": "session_lifecycle.transcript_processing_interval_minutes",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 7,
+      "description": "Days to retain workflow audit rows before maintenance prunes them",
+      "key": "session_lifecycle.workflow_audit_retention_days",
+      "machineExport": false,
+      "namespace": "session_lifecycle",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "session_summary.candidates",
+      "machineExport": false,
+      "namespace": "session_summary",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable LLM-based session summary generation",
+      "key": "session_summary.enabled",
+      "machineExport": false,
+      "namespace": "session_summary",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "session_summary.profile",
+      "machineExport": false,
+      "namespace": "session_summary",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "Generate a concise session summary for handoff to another agent or future session.\n\n## Session Context\nTranscript Summary:\n{transcript_summary}\n\nGit Status:\n{git_status}\n\nFile Changes:\n{file_changes}\n\n{session_tasks}\n\n## Instructions\nAlways include these two mandatory sections using the exact headings:\n\n## Current State\nState what is working, broken, in progress, or complete. When the session's work is\ncomplete, say so explicitly.\n\n## Next Steps\nList clear continuation actions. When implementation is complete, state the remaining\nhandoff action, such as committing, linking the commit, validating, or closing the task.\n\nOptional sections may describe what was accomplished, files changed, technical decisions,\nor problems encountered. Omit optional sections that have no relevant information.\n\nBe concise. Focus on what the next agent needs to know to continue effectively.",
+      "description": "Prompt template for session summary (use placeholders: {transcript_summary}, {git_status}, {file_changes}, {session_tasks})",
+      "key": "session_summary.prompt",
+      "machineExport": false,
+      "namespace": "session_summary",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": ".gobby/session_summaries",
+      "description": "Directory path for session summary markdown files",
+      "key": "session_summary.summary_file_path",
+      "machineExport": false,
+      "namespace": "session_summary",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "skill_description.candidates",
+      "machineExport": false,
+      "namespace": "skill_description",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "skill_description.profile",
+      "machineExport": false,
+      "namespace": "skill_description",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Override path for core skills (default: install/shared/skills/)",
+      "key": "skills.core_skills_path",
+      "machineExport": false,
+      "namespace": "skills",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Whether to advertise core skills in session context",
+      "key": "skills.inject_core_skills",
+      "machineExport": false,
+      "namespace": "skills",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "summary",
+      "description": "Format selector for skill manifests: 'summary', 'full', or 'none'",
+      "key": "skills.injection_format",
+      "machineExport": false,
+      "namespace": "skills",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Days to retain soft-deleted skills before permanent removal",
+      "key": "skills.soft_delete_retention_days",
+      "machineExport": false,
+      "namespace": "skills",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable daemon-owned automation dispatch and maintenance.",
+      "key": "system_loops.automation.enabled",
+      "machineExport": false,
+      "namespace": "system_loops",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "How often the automation loop runs, in seconds.",
+      "key": "system_loops.automation.interval_seconds",
+      "machineExport": false,
+      "namespace": "system_loops",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "OTLP collector endpoint (e.g., http://localhost:4317)",
+      "key": "telemetry.exporter.otlp_endpoint",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "grpc",
+      "description": "OTLP transport protocol",
+      "key": "telemetry.exporter.otlp_protocol",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Enable Prometheus metrics scraping endpoint",
+      "key": "telemetry.exporter.prometheus_enabled",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": false,
+      "description": "Capture prompt/completion content in spans (privacy-first default: off)",
+      "key": "telemetry.llm_tracing.capture_content",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": false,
+      "description": "Enable LLM call tracing via OpenLLMetry instrumentors",
+      "key": "telemetry.llm_tracing.enabled",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": [
+        "openai"
+      ],
+      "description": "LLM providers to instrument",
+      "key": "telemetry.llm_tracing.providers",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Enable metrics collection",
+      "key": "telemetry.metrics_enabled",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "gobby-daemon",
+      "description": "Service name for OpenTelemetry resource",
+      "key": "telemetry.service_name",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 7,
+      "description": "Retention period for local trace spans (days)",
+      "key": "telemetry.trace_retention_days",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": 1.0,
+      "description": "Trace sampling rate (0.0 to 1.0)",
+      "key": "telemetry.trace_sample_rate",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Enable distributed tracing",
+      "key": "telemetry.traces_enabled",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": false,
+      "description": "Export spans to console (for debugging)",
+      "key": "telemetry.traces_to_console",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": false,
+      "description": "Run daemon in test mode (enables test endpoints)",
+      "key": "test_mode",
+      "machineExport": false,
+      "namespace": "test_mode",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 16.0,
+      "description": "Max resident memory (GB) for a single agent's pane process tree.",
+      "key": "tmux.agent_memory_limit_gb",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.0,
+      "description": "Aggregate resident-memory budget (GB) across all agent trees. 0 = auto (50% of physical RAM).",
+      "key": "tmux.agent_memory_total_limit_gb",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Minimum seconds between periodic Enter keypresses per agent terminal.",
+      "key": "tmux.auto_enter_agent_interval_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Periodically send Enter to active spawned-agent terminal panes.",
+      "key": "tmux.auto_enter_agent_terminals",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Automatically send Enter for spawned-agent approval prompts.",
+      "key": "tmux.auto_enter_approval_prompts",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "tmux",
+      "description": "Path or name of the tmux binary.",
+      "key": "tmux.command",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Optional tmux config file (passed as -f <path>).",
+      "key": "tmux.config_file",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable tmux as first-class agent spawning backend.",
+      "key": "tmux.enabled",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10000,
+      "description": "Scrollback buffer size for spawned sessions and maximum post-mortem full-capture history.",
+      "key": "tmux.history_limit",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable idle agent detection and auto-reprompting.",
+      "key": "tmux.idle_check_enabled",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 300,
+      "description": "Seconds an agent must be inactive before sending a semantic idle reprompt.",
+      "key": "tmux.idle_reprompt_delay_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 60,
+      "description": "Seconds before an idle health check considers the session stale.",
+      "key": "tmux.idle_timeout_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5.0,
+      "description": "Seconds of session activity allowed during initialization before the agent is considered initialized.",
+      "key": "tmux.init_activity_grace_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120,
+      "description": "Seconds before an uninitialized agent is killed as a provider failure.",
+      "key": "tmux.init_timeout_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 3,
+      "description": "Maximum reprompt attempts before failing an idle agent.",
+      "key": "tmux.max_reprompt_attempts",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "kill",
+      "description": "On confirmed breach: kill the agent session, or warn-only.",
+      "key": "tmux.memory_watchdog_action",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2,
+      "description": "Consecutive over-limit checks required before enforcement.",
+      "key": "tmux.memory_watchdog_consecutive_breaches",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable memory enforcement for agent tmux process trees.",
+      "key": "tmux.memory_watchdog_enabled",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120.0,
+      "description": "Age below which a run is never killed for memory (spawn spikes).",
+      "key": "tmux.memory_watchdog_grace_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Interrupt Codex reasoning turns that exceed the idle timeout without workflow progress.",
+      "key": "tmux.reasoning_watchdog_interrupt_enabled",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.2,
+      "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt.",
+      "key": "tmux.reasoning_watchdog_settle_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30.0,
+      "description": "Seconds to wait after tmux live-pane verification for the spawned runtime to register its child session.",
+      "key": "tmux.registration_timeout_seconds",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "gobby",
+      "description": "Prefix for auto-generated session names.",
+      "key": "tmux.session_prefix",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "gobby",
+      "description": "Isolated tmux socket name (passed as -L <socket_name>).",
+      "key": "tmux.socket_name",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Exact tmux socket path (passed as -S <socket_path>). When set, this takes precedence over socket_name.",
+      "key": "tmux.socket_path",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 4.0,
+      "description": "Kill the largest agent tree when available memory drops below this %. Must be at or below the warn threshold.",
+      "key": "tmux.system_memory_critical_available_percent",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8.0,
+      "description": "Warn with system-wide top consumers when available memory drops below this %.",
+      "key": "tmux.system_memory_warn_available_percent",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "WSL distribution for Windows (e.g., 'Ubuntu'). None uses default.",
+      "key": "tmux.wsl_distribution",
+      "machineExport": false,
+      "namespace": "tmux",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "auto",
+      "description": "Default policy: 'auto' (no prompts), 'approve_once', or 'always_ask'",
+      "key": "tool_approval.default_policy",
+      "machineExport": false,
+      "namespace": "tool_approval",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Enable tool approval prompts",
+      "key": "tool_approval.enabled",
+      "machineExport": false,
+      "namespace": "tool_approval",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Per-tool approval policies (server/tool glob patterns)",
+      "key": "tool_approval.policies",
+      "machineExport": false,
+      "namespace": "tool_approval",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "key": "tool_approvals.global_rules",
+      "machineExport": false,
+      "namespace": "tool_approvals",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000,
+      "key": "tool_result_offload.chunk_chars",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "tool_result_offload.enabled",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "key": "tool_result_offload.exempt_tools",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "key": "tool_result_offload.intent_match_limit",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 8000,
+      "key": "tool_result_offload.max_envelope_chars",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000000,
+      "key": "tool_result_offload.max_stored_chars",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000,
+      "key": "tool_result_offload.preview_chars",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 7,
+      "key": "tool_result_offload.retention_days",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 15000,
+      "key": "tool_result_offload.threshold_chars",
+      "machineExport": false,
+      "namespace": "tool_result_offload",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        {
+          "candidate": "claude/haiku",
+          "reasoning_effort": null
+        },
+        {
+          "candidate": "codex/gpt-5.6-luna",
+          "reasoning_effort": null
+        }
+      ],
+      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
+      "key": "tool_summarizer.candidates",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": [
+        "string"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable LLM-based tool description summarization",
+      "key": "tool_summarizer.enabled",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "feature_low",
+      "description": "Provider-agnostic capability profile requested by this feature.",
+      "key": "tool_summarizer.profile",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom tool summary prompt template (e.g., 'features/tool_summary')",
+      "key": "tool_summarizer.prompt_path",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom server description prompt (e.g., 'features/server_description')",
+      "key": "tool_summarizer.server_description_prompt_path",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom server description system prompt (e.g., 'features/server_description_system')",
+      "key": "tool_summarizer.server_description_system_prompt_path",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Path to custom tool summary system prompt (e.g., 'features/tool_summary_system')",
+      "key": "tool_summarizer.system_prompt_path",
+      "machineExport": false,
+      "namespace": "tool_summarizer",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": false,
+      "description": "Enable web UI serving",
+      "key": "ui.enabled",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "localhost",
+      "description": "Dev server host (dev mode only)",
+      "key": "ui.host",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 500,
+      "description": "Entity limit for the 3D knowledge graph, most recent first (0 = no limit)",
+      "key": "ui.knowledge_graph_limit",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 2000,
+      "description": "Relationship limit for the 3D knowledge graph, most recent first (0 = no limit)",
+      "key": "ui.knowledge_graph_relationship_limit",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": "auto",
+      "description": "'auto', 'production', or 'dev'",
+      "key": "ui.mode",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": null,
+      "description": "Path to web/ dir (auto-detected if None)",
+      "key": "ui.web_dir",
+      "machineExport": false,
+      "namespace": "ui",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.defaultChatMode",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.fontSize",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.model",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.planPendingVariant",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.selectedProjectId",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.selectedProvider",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.sttEnabled",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.theme",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.ttsEnabled",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "key": "ui_settings.voiceInputMode",
+      "machineExport": false,
+      "namespace": "ui_settings",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "validation_detection.builtin_matchers_enabled",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "key": "validation_detection.custom_matchers",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "key": "validation_detection.disabled_builtin_matcher_ids",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "key": "validation_detection.enabled",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "uv run",
+        "poetry run",
+        "pipenv run",
+        "pdm run",
+        "hatch run",
+        "rye run",
+        "bundle exec",
+        "npx",
+        "pnpm exec",
+        "yarn exec",
+        "bunx"
+      ],
+      "key": "validation_detection.recognized_wrappers",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "key": "validation_detection.wrapper_rules",
+      "machineExport": false,
+      "namespace": "validation_detection",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to verify project build succeeds",
+      "key": "verification_defaults.build",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run AI/automated code review (e.g., 'coderabbit review --ci')",
+      "key": "verification_defaults.code_review",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run documentation tests",
+      "key": "verification_defaults.doc_tests",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to check formatting (e.g., 'uv run ruff format --check src/')",
+      "key": "verification_defaults.format",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run integration tests",
+      "key": "verification_defaults.integration",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run linting (e.g., 'uv run ruff check src/')",
+      "key": "verification_defaults.lint",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run security scanning (e.g., 'bandit -r src/')",
+      "key": "verification_defaults.security",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run type checking (e.g., 'uv run mypy src/')",
+      "key": "verification_defaults.type_check",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Command to run unit tests (e.g., 'uv run pytest tests/ -v')",
+      "key": "verification_defaults.unit_tests",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Enable voice chat features (master switch).",
+      "key": "voice.enabled",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "OpenAI-compatible audio capability bindings for audio_transcribe and audio_translate.",
+      "key": "voice.openai_compatible_audio",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable speech-to-text (requires enabled=True).",
+      "key": "voice.stt_enabled",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 120.0,
+      "description": "Maximum seconds to wait for a single speech-to-text transcription.",
+      "key": "voice.transcription_timeout_seconds",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 1000,
+      "description": "Maximum Turbo speech tokens to generate per utterance. Gobby defaults to the upstream 1000-token cap and relies on clause-level chunking to bound individual synthesis calls.",
+      "key": "voice.tts_chatterbox_max_generation_tokens",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 180,
+      "description": "Maximum text characters per TTS synthesis chunk before splitting on clause boundaries or whitespace.",
+      "key": "voice.tts_clause_max_chars",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "auto",
+      "description": "Requested TTS compute device: 'auto', 'cuda', 'mps', 'cpu'. Providers may ignore explicit selection if the upstream runtime does not support it.",
+      "key": "voice.tts_device",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable text-to-speech output in voice mode (requires enabled=True).",
+      "key": "voice.tts_enabled",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 12.0,
+      "description": "Absolute torch-MPS memory cap (GB) for TTS, converted to an allocator fraction of Metal's recommended working set at model load.",
+      "key": "voice.tts_mps_memory_limit_gb",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "chatterbox",
+      "description": "TTS provider id. Currently supported: 'chatterbox' (voice cloning).",
+      "key": "voice.tts_provider",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/voice/reference.wav",
+      "description": "Path to voice clone reference audio (10-20s WAV for supported providers).",
+      "key": "voice.tts_reference_audio",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Optional transcript of the reference audio. Providers that support higher-fidelity cloning can use it; others ignore it.",
+      "key": "voice.tts_reference_text",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.55,
+      "description": "TTS sampling randomness (0.1–1.0, Chatterbox).",
+      "key": "voice.tts_temperature",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "int8",
+      "description": "Compute type for Whisper: int8, float16, float32.",
+      "key": "voice.whisper_compute_type",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "auto",
+      "description": "Device for Whisper inference: auto, cpu, cuda.",
+      "key": "voice.whisper_device",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "base",
+      "description": "Whisper model size: tiny, base, small, medium.",
+      "key": "voice.whisper_model_size",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "Gobby",
+      "description": "Initial prompt for Whisper STT to bias vocabulary (e.g. proper nouns).",
+      "key": "voice.whisper_prompt",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "Gobby",
+        "MCP",
+        "worktree",
+        "Kubernetes",
+        "PostgreSQL",
+        "FastAPI",
+        "Pydantic",
+        "TypeScript",
+        "GraphQL",
+        "WebSocket",
+        "Redis",
+        "MongoDB",
+        "OAuth",
+        "JWT",
+        "REST",
+        "gRPC",
+        "YAML",
+        "JSON",
+        "Docker",
+        "Terraform",
+        "GitHub",
+        "GitLab",
+        "Claude",
+        "Anthropic",
+        "Gemini",
+        "Codex",
+        "npm",
+        "pip",
+        "pytest",
+        "ESLint",
+        "webpack",
+        "Vite"
+      ],
+      "description": "Custom vocabulary terms to bias Whisper STT recognition (proper nouns, technical terms). Pre-loaded with common dev terms.",
+      "key": "voice.whisper_vocabulary",
+      "machineExport": false,
+      "namespace": "voice",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Allow Git forge network endpoints for push, pull, and fetch.",
+      "key": "web_chat_sandbox.allow_git_network",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Allow daemon-owned runtimes to access the network.",
+      "key": "web_chat_sandbox.allow_network",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Allow package-registry endpoints and their local caches.",
+      "key": "web_chat_sandbox.allow_package_registries",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Exact Unix socket paths allowed by the SRT backend.",
+      "key": "web_chat_sandbox.allow_unix_sockets",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional outbound domains allowed by the SRT backend.",
+      "key": "web_chat_sandbox.allowed_domains",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "provider-native",
+      "description": "Host sandbox backend. Managed agents default this field to SRT.",
+      "key": "web_chat_sandbox.backend",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Outbound domains denied by the SRT backend.",
+      "key": "web_chat_sandbox.denied_domains",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable sandboxing for daemon-owned runtimes in this category.",
+      "key": "web_chat_sandbox.enabled",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths hidden from sandboxed processes.",
+      "key": "web_chat_sandbox.extra_deny_read_paths",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional write-deny paths inside otherwise writable roots.",
+      "key": "web_chat_sandbox.extra_deny_write_paths",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths to allow read access inside the sandbox.",
+      "key": "web_chat_sandbox.extra_read_paths",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Additional filesystem paths to allow write access inside the sandbox.",
+      "key": "web_chat_sandbox.extra_write_paths",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "permissive",
+      "description": "Sandbox strictness level for daemon-owned runtimes.",
+      "key": "web_chat_sandbox.mode",
+      "machineExport": false,
+      "namespace": "web_chat_sandbox",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "restart_required",
+      "default": true,
+      "description": "Enable WebSocket server for real-time communication",
+      "key": "websocket.enabled",
+      "machineExport": false,
+      "namespace": "websocket",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 30,
+      "description": "Ping interval in seconds for keepalive",
+      "key": "websocket.ping_interval",
+      "machineExport": false,
+      "namespace": "websocket",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 10,
+      "description": "Pong timeout in seconds before considering connection dead",
+      "key": "websocket.ping_timeout",
+      "machineExport": false,
+      "namespace": "websocket",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Stored preference for nightly CodeWiki generation. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "key": "wiki.codewiki_nightly_enabled",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "0 3 * * *",
+      "description": "Stored cron expression for nightly CodeWiki generation. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "key": "wiki.codewiki_nightly_schedule_cron",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": null,
+      "description": "Stored IANA timezone for nightly CodeWiki generation. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "key": "wiki.codewiki_nightly_timezone",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": [
+        "string",
+        "null"
+      ],
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Stored preference for post-commit CodeWiki generation. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "key": "wiki.codewiki_on_commit",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Stored default repo-relative CodeWiki generation scopes. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "key": "wiki.codewiki_scopes",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.5,
+      "description": "Seconds to wait after a burst before handing changes to indexing.",
+      "key": "wiki.debounce_interval",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable daemon wiki file watching.",
+      "key": "wiki.enabled",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [
+        "outputs/**",
+        "meta/health/**",
+        "meta/librarian/**",
+        "meta/upkeep/**",
+        "_meta/**",
+        "raw/**",
+        "inbox/**",
+        "_gwiki/**"
+      ],
+      "description": "Root-relative file globs ignored by the watcher.",
+      "key": "wiki.ignore_globs",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 0.25,
+      "description": "Seconds between filesystem scans.",
+      "key": "wiki.poll_interval",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Project and topic wiki roots to watch.",
+      "key": "wiki.roots",
+      "machineExport": false,
+      "namespace": "wiki",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": false,
+      "description": "Debug: echo additionalContext to system_message for terminal visibility",
+      "key": "workflow.debug_echo_context",
+      "machineExport": false,
+      "namespace": "workflow",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": true,
+      "description": "Enable workflow engine",
+      "key": "workflow.enabled",
+      "machineExport": false,
+      "namespace": "workflow",
+      "secrecy": "none",
+      "type": "boolean",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 90.0,
+      "description": "Finite workflow timeout in seconds; zero selects the default",
+      "key": "workflow.timeout",
+      "machineExport": false,
+      "namespace": "workflow",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": "~/.gobby/worktrees",
+      "description": "Base directory for git worktrees (survives reboots, unlike /tmp).",
+      "key": "worktrees_dir",
+      "machineExport": false,
+      "namespace": "worktrees_dir",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    }
+  ],
+  "patterns": [
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Named generation endpoints keyed by lowercase slug.",
+      "fields": {
+        "api_base": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "api_key": {
+          "default": null,
+          "secrecy": "reference",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "protocol": {
+          "default": "openai-compatible",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "tool_chat": {
+          "default": false,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "vision_extract": {
+          "default": false,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "wire_api": {
+          "default": "chat-completions",
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "pattern": "ai.generation.endpoints.{endpoint}.{field}",
+      "secrecy": "none",
+      "type": "object",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Profile default candidate overrides keyed by feature profile.",
+      "machineExport": false,
+      "namespace": "ai.generation",
+      "pattern": "ai.generation.profile_defaults.{profile}",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Override context window sizes by model substring match (e.g., {'opus': 1000000})",
+      "machineExport": false,
+      "namespace": "context_window_overrides",
+      "pattern": "context_window_overrides.{model_match}",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": {
+        "refactoring": [
+          "refactor",
+          "refactoring",
+          "restructure",
+          "reorganize"
+        ],
+        "strangler-fig": [
+          "strangler fig",
+          "strangler-fig",
+          "strangler pattern",
+          "delegation pattern"
+        ],
+        "tdd": [
+          "tdd",
+          "test-driven",
+          "test driven",
+          "red-green",
+          "red green"
+        ]
+      },
+      "description": "Pattern name to list of keywords that trigger pattern detection in task descriptions.",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "pattern": "gobby_tasks.expansion.pattern_criteria.detection_keywords.{pattern}",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": {
+        "refactoring": [
+          "All existing tests pass: `{unit_tests}`",
+          "No new type errors: `{type_check}`",
+          "No lint violations: `{lint}`"
+        ],
+        "strangler-fig": [
+          "Original import still works: `from {original_module} import {function}`",
+          "New import works: `from {new_module} import {function}`",
+          "Delegation exists: `grep -c 'from .{new_module} import' {original_file}` >= 1",
+          "No circular imports: `python -c 'from {original_module} import *'`"
+        ],
+        "tdd": [
+          "Tests written before implementation (verify git log order)",
+          "Tests initially fail (red phase)",
+          "Implementation makes tests pass (green phase)"
+        ]
+      },
+      "description": "Pattern name to list of validation criteria templates. Templates can use placeholders like {unit_tests}, {type_check}, {lint}.",
+      "machineExport": false,
+      "namespace": "gobby_tasks",
+      "pattern": "gobby_tasks.expansion.pattern_criteria.patterns.{pattern}",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Per-project native launch defaults.",
+      "machineExport": false,
+      "namespace": "launch_defaults",
+      "pattern": "launch_defaults.{project_id}",
+      "secrecy": "none",
+      "type": "object",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Map of tool names to specific timeouts in seconds",
+      "machineExport": false,
+      "namespace": "mcp_client_proxy",
+      "pattern": "mcp_client_proxy.tool_timeouts.{tool}",
+      "secrecy": "none",
+      "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": {
+        "anthropic-skills": {
+          "auth_key_name": null,
+          "auth_token_env": "GITHUB_TOKEN",
+          "base_url": null,
+          "branch": "main",
+          "cache_ttl_seconds": 1800,
+          "path": "skills",
+          "repo": "anthropics/skills",
+          "topic": "gobby-skill",
+          "type": "github-collection"
+        },
+        "claude-plugins": {
+          "auth_key_name": null,
+          "auth_token_env": "GITHUB_TOKEN",
+          "base_url": "https://claude-plugins.dev",
+          "branch": null,
+          "cache_ttl_seconds": 1800,
+          "path": null,
+          "repo": null,
+          "topic": "gobby-skill",
+          "type": "claude-plugins"
+        },
+        "clawdhub": {
+          "auth_key_name": null,
+          "auth_token_env": "GITHUB_TOKEN",
+          "base_url": null,
+          "branch": null,
+          "cache_ttl_seconds": 1800,
+          "path": null,
+          "repo": null,
+          "topic": "gobby-skill",
+          "type": "clawdhub"
+        },
+        "gobby-topic": {
+          "auth_key_name": null,
+          "auth_token_env": "GITHUB_TOKEN",
+          "base_url": null,
+          "branch": null,
+          "cache_ttl_seconds": 1800,
+          "path": null,
+          "repo": null,
+          "topic": "gobby-skill",
+          "type": "github-topic"
+        },
+        "skillsmp": {
+          "auth_key_name": "SKILLSMP_API_KEY",
+          "auth_token_env": "GITHUB_TOKEN",
+          "base_url": "https://skillsmp.com/api/v1",
+          "branch": null,
+          "cache_ttl_seconds": 1800,
+          "path": null,
+          "repo": null,
+          "topic": "gobby-skill",
+          "type": "skillsmp"
+        }
+      },
+      "description": "Configured skill hubs keyed by hub name",
+      "fields": {
+        "auth_key_name": {
+          "default": null,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "auth_token_env": {
+          "default": "GITHUB_TOKEN",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "base_url": {
+          "default": null,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "branch": {
+          "default": null,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cache_ttl_seconds": {
+          "default": 1800,
+          "secrecy": "none",
+          "type": "integer"
+        },
+        "path": {
+          "default": null,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "repo": {
+          "default": null,
+          "secrecy": "none",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "topic": {
+          "default": "gobby-skill",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "type": {
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
+      "machineExport": false,
+      "namespace": "skills",
+      "pattern": "skills.hubs.{hub}.{field}",
+      "secrecy": "none",
+      "type": "object",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Headers for OTLP exporter (e.g., Authorization for LangWatch)",
+      "machineExport": false,
+      "namespace": "telemetry",
+      "pattern": "telemetry.exporter.otlp_headers.{header}",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Custom verification commands (name -> command)",
+      "machineExport": false,
+      "namespace": "verification_defaults",
+      "pattern": "verification_defaults.custom.{command}",
+      "secrecy": "none",
+      "type": "string",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": [],
+      "description": "Stored project-name keyed CodeWiki generation scope overrides. CodeWiki generation is paused pending the wiki redesign; this key has no effect until #19665 re-enables orchestration.",
+      "machineExport": false,
+      "namespace": "wiki",
+      "pattern": "wiki.codewiki_project_scopes_by_name.{project_name}",
+      "secrecy": "none",
+      "type": "array",
+      "visibility": "public"
+    }
+  ],
+  "version": 1
+}

@@ -19,6 +19,7 @@ from gobby.cli._install_prompts import (
 from gobby.cli._install_state import empty_install_state
 from gobby.cli.install import install as install_command
 from gobby.config.skills import HubConfig, SkillsConfig
+from gobby.storage.config_mutations import ConfigPatch
 
 pytestmark = pytest.mark.unit
 
@@ -71,9 +72,10 @@ def _config_with_hubs(hubs: dict[str, HubConfig]) -> MagicMock:
 
 @pytest.fixture
 def patched_deps() -> Any:
-    """Patch SecretStore, runtime hub open, and load_full_config_from_db."""
+    """Patch the CLI runtime, SecretStore, and runtime hub open."""
+    runtime = MagicMock()
     with (
-        patch("gobby.cli.utils.load_full_config_from_db") as mock_load,
+        patch("gobby.cli._install_prompts.get_cli_runtime", return_value=runtime),
         patch("gobby.storage.hub.runtime.runtime_hub_database") as mock_db_cls,
         patch("gobby.storage.secrets.SecretStore") as mock_store_cls,
     ):
@@ -82,7 +84,8 @@ def patched_deps() -> Any:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
         yield {
-            "load": mock_load,
+            "load": runtime.require_config,
+            "runtime": runtime,
             "db_cls": mock_db_cls,
             "store_cls": mock_store_cls,
             "db": mock_db,
@@ -342,17 +345,17 @@ class TestVoiceInstall:
 
         with (
             patch("subprocess.run") as mock_subprocess_run,
-            patch("gobby.storage.config_store.ConfigStore") as mock_config_store,
+            patch("gobby.storage.config_mutations.ConfigMutations") as mock_mutations,
         ):
+            mock_mutations.return_value.repository.read.return_value.revision = 41
             _run_voice_install(results, voice_flag=True, db=db)
 
         mock_subprocess_run.assert_not_called()
-        mock_config_store.assert_called_once_with(db)
-        assert mock_config_store.call_count == 1
-        assert mock_config_store.call_args is not None
-        mock_config_store.return_value.set.assert_called_once_with("voice.enabled", True)
-        assert mock_config_store.return_value.set.call_count == 1
-        assert mock_config_store.return_value.set.call_args is not None
+        mock_mutations.assert_called_once_with(db)
+        mock_mutations.return_value.patch.assert_called_once_with(
+            expected_revision=41,
+            patch=ConfigPatch(values={"voice.enabled": True}),
+        )
         assert results["voice"]["success"] is True
 
     def test_reconfigure_can_disable_voice(self) -> None:
@@ -361,8 +364,9 @@ class TestVoiceInstall:
 
         with (
             patch("click.confirm", return_value=False),
-            patch("gobby.storage.config_store.ConfigStore") as config_store,
+            patch("gobby.storage.config_mutations.ConfigMutations") as mock_mutations,
         ):
+            mock_mutations.return_value.repository.read.return_value.revision = 42
             _run_voice_install(
                 results,
                 voice_flag=False,
@@ -372,7 +376,10 @@ class TestVoiceInstall:
                 current_enabled=True,
             )
 
-        config_store.return_value.set.assert_called_once_with("voice.enabled", False)
+        mock_mutations.return_value.patch.assert_called_once_with(
+            expected_revision=42,
+            patch=ConfigPatch(values={"voice.enabled": False}),
+        )
         assert results["voice"] == {"success": True, "enabled": False}
 
 
@@ -451,8 +458,9 @@ class TestInstallCommandSharedStores:
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
         mock_provision_token = MagicMock()
-        db_context = MagicMock()
-        db_context.__enter__.return_value = db
+        runtime = MagicMock()
+        runtime.require_database.return_value = db
+        runtime.require_config.return_value = config
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -465,10 +473,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
-            patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch(
-                "gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context
-            ) as mock_db_cls,
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime) as get_runtime,
             patch.multiple(
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
@@ -482,6 +487,7 @@ class TestInstallCommandSharedStores:
             ),
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             patch("gobby.cli.install._run_standard_cli_install") as mock_standard_install,
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._run_voice_install") as mock_voice_install,
@@ -512,7 +518,9 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        mock_db_cls.assert_called_once_with()
+        get_runtime.assert_called_once_with()
+        runtime.require_database.assert_called_once_with()
+        runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
         mock_provision_token.assert_called_once_with(config_store)
@@ -521,18 +529,18 @@ class TestInstallCommandSharedStores:
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
-        db_context.__exit__.assert_called_once()
+        runtime.close.assert_called_once_with()
         db.close.assert_not_called()
 
     def test_closes_database_context_when_secret_setup_fails(self, tmp_path: Path) -> None:
         db = MagicMock()
-        db_context = MagicMock()
-        db_context.__enter__.return_value = db
         secret_store = MagicMock()
         config_store = MagicMock()
         secret_store_cls = MagicMock(return_value=secret_store)
         config_store_cls = MagicMock(return_value=config_store)
         configure_secret_kek = MagicMock(side_effect=RuntimeError("secret setup failed"))
+        runtime = MagicMock()
+        runtime.require_database.return_value = db
 
         with (
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
@@ -541,8 +549,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
-            patch("gobby.cli.install.load_full_config_from_db"),
-            patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context),
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime),
             patch("gobby.cli.install.SecretStore", secret_store_cls),
             patch("gobby.cli.install.ConfigStore", config_store_cls),
             patch("gobby.cli.install._configure_secret_kek_posture", configure_secret_kek),
@@ -552,6 +559,7 @@ class TestInstallCommandSharedStores:
             ),
             patch("gobby.cli.install.run_daemon_setup"),
             patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
             pytest.raises(RuntimeError, match="secret setup failed"),
         ):
             install_command.callback(
@@ -579,7 +587,7 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        assert db_context.__enter__.call_count == 1
+        runtime.require_database.assert_called_once_with()
         assert secret_store_cls.call_args == call(db)
         assert config_store_cls.call_args == call(db)
         assert configure_secret_kek.call_args == call(
@@ -587,7 +595,7 @@ class TestInstallCommandSharedStores:
             "key-file",
             no_interactive=True,
         )
-        assert db_context.__exit__.call_count == 1
+        runtime.close.assert_called_once_with()
 
     def test_forwards_embedding_provider_override_and_reuses_shared_stores(
         self, tmp_path: Path
@@ -601,8 +609,9 @@ class TestInstallCommandSharedStores:
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
         mock_provision_token = MagicMock()
-        db_context = MagicMock()
-        db_context.__enter__.return_value = db
+        runtime = MagicMock()
+        runtime.require_database.return_value = db
+        runtime.require_config.return_value = config
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -615,10 +624,7 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
-            patch("gobby.cli.install.load_full_config_from_db", return_value=config),
-            patch(
-                "gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context
-            ) as mock_db_cls,
+            patch("gobby.cli.install.get_cli_runtime", return_value=runtime) as get_runtime,
             patch.multiple(
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
@@ -681,7 +687,9 @@ class TestInstallCommandSharedStores:
                 working_dir=tmp_path,
             )
 
-        mock_db_cls.assert_called_once_with()
+        get_runtime.assert_called_once_with()
+        runtime.require_database.assert_called_once_with()
+        runtime.require_config.assert_called_once_with()
         mock_store_cls.assert_called_once_with(db)
         mock_config_cls.assert_called_once_with(db)
         mock_provision_token.assert_called_once_with(config_store)
@@ -692,5 +700,5 @@ class TestInstallCommandSharedStores:
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
-        db_context.__exit__.assert_called_once()
+        runtime.close.assert_called_once_with()
         db.close.assert_not_called()

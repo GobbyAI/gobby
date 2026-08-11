@@ -17,23 +17,35 @@ from gobby.cli.services import (
     is_qdrant_healthy,
     try_autoload_embedding_model,
 )
-from gobby.storage.config_store import ConfigStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch, SecretUpdate
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.secrets import SecretStore
 
 pytestmark = pytest.mark.unit
+
+
+def _install_falkordb_config(db: HubDatabase) -> None:
+    mutations = ConfigMutations(db)
+    snapshot = mutations.repository.read(resolve_secrets=False)
+    mutations.patch(
+        expected_revision=snapshot.revision,
+        patch=ConfigPatch(
+            values={
+                "databases.falkordb.host": "127.0.0.1",
+                "databases.falkordb.port": 16379,
+            },
+            secrets={"databases.falkordb.password": SecretUpdate("secret")},
+        ),
+    )
 
 
 class TestIsFalkorDBInstalled:
     """Tests for is_falkordb_installed()."""
 
-    def test_installed_when_config_store_host_and_port_exist(
+    def test_installed_when_password_binding_exists(
         self,
         hub_db: HubDatabase,
     ) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
+        _install_falkordb_config(hub_db)
 
         assert is_falkordb_installed(db=hub_db) is True
 
@@ -41,9 +53,7 @@ class TestIsFalkorDBInstalled:
         assert is_falkordb_installed(db=hub_db) is False
 
     def test_borrows_injected_database(self, hub_db: HubDatabase) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
+        _install_falkordb_config(hub_db)
 
         with patch.object(hub_db, "close") as close:
             assert is_falkordb_installed(db=hub_db) is True
@@ -180,9 +190,7 @@ class TestGetFalkorDBStatus:
 
     @pytest.mark.asyncio
     async def test_status_installed_and_healthy(self, hub_db: HubDatabase) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
+        _install_falkordb_config(hub_db)
 
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=True):
             status = await get_falkordb_status(
@@ -203,9 +211,7 @@ class TestGetFalkorDBStatus:
         self,
         hub_db: HubDatabase,
     ) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
+        _install_falkordb_config(hub_db)
 
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=False):
             status = await get_falkordb_status(db=hub_db)
@@ -221,15 +227,7 @@ class TestGetFalkorDBStatus:
         self,
         hub_db: HubDatabase,
     ) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
-        store.set_secret(
-            "databases.falkordb.password",
-            "secret",
-            SecretStore(hub_db),
-            source="test",
-        )
+        _install_falkordb_config(hub_db)
 
         with patch("gobby.cli.services.is_falkordb_healthy", return_value=True) as healthy:
             status = await get_falkordb_status(db=hub_db)

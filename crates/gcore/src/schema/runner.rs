@@ -11,6 +11,18 @@ use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
+/// Checksum of the immediate predecessor of the current embedded baseline.
+///
+/// Single-hop refresh policy: the runner upgrades a hub in place only from
+/// this one predecessor revision. When `baseline.sql` changes, move this
+/// constant to the outgoing baseline's checksum and rewrite
+/// [`baseline_refresh_statement`] to accept exactly the statements added
+/// since that predecessor — the set-difference tripwire in `runner_tests`
+/// fails until both stay in lockstep. Hubs more than one hop behind must
+/// recreate from a verified backup.
+pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
+    "0749c25617bdd825a561e0452fbf9cc2a80bb15e99e21bbd50f2a7ee01d44a6b";
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
     pub baseline_applied: bool,
@@ -140,7 +152,8 @@ impl<'a> SchemaRunner<'a> {
             BaselineState::Fresh
             | BaselineState::FreshWithInstallInfra
             | BaselineState::GcoreCodeIndex
-            | BaselineState::GwikiStandalone => {
+            | BaselineState::GwikiStandalone
+            | BaselineState::PredecessorBaseline => {
                 require_pg_search(self.client)?;
                 verify_adopted_columns(self.client, &self.schema, state)?;
                 apply_baseline(self.client, &self.schema, state)?;
@@ -168,15 +181,18 @@ enum BaselineState {
     FreshWithInstallInfra,
     GcoreCodeIndex,
     GwikiStandalone,
+    PredecessorBaseline,
     AlreadyBaselined,
     CorruptPartial,
 }
 
-const GCORE_CODE_INDEX_TABLES: [&str; 6] = [
+const GCORE_CODE_INDEX_TABLES: [&str; 8] = [
     "code_calls",
     "code_content_chunks",
     "code_imports",
+    "code_indexed_file_states",
     "code_indexed_files",
+    "code_indexed_project_states",
     "code_indexed_projects",
     "code_symbols",
 ];
@@ -242,8 +258,8 @@ fn classify_baseline_state(
 ) -> Result<BaselineState, SchemaError> {
     let tables = schema_tables(client, schema)?;
     let has_bookkeeping = tables.contains("schema_migrations");
-    if has_bookkeeping && has_exact_baseline_receipt(client, schema)? {
-        return Ok(BaselineState::AlreadyBaselined);
+    if has_bookkeeping && let Some(state) = recognized_baseline_receipt(client, schema)? {
+        return Ok(state);
     }
     let application_tables = tables
         .iter()
@@ -283,16 +299,27 @@ fn classify_baseline_state(
     Ok(BaselineState::CorruptPartial)
 }
 
-fn has_exact_baseline_receipt(client: &mut Client, schema: &str) -> Result<bool, SchemaError> {
+fn recognized_baseline_receipt(
+    client: &mut Client,
+    schema: &str,
+) -> Result<Option<BaselineState>, SchemaError> {
     let table = qualified_name(schema, "schema_migrations")?;
     let row = client.query_opt(
         &format!("SELECT filename, checksum FROM {table} WHERE version = $1"),
         &[&BASELINE_VERSION],
     )?;
-    Ok(row.is_some_and(|row| {
-        row.get::<_, Option<String>>(0).as_deref() == Some("baseline@375")
-            && row.get::<_, Option<String>>(1).as_deref() == Some(BASELINE_CHECKSUM)
-    }))
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    if row.get::<_, Option<String>>(0).as_deref() != Some("baseline@375") {
+        return Ok(None);
+    }
+    let checksum = row.get::<_, Option<String>>(1);
+    Ok(match checksum.as_deref() {
+        Some(BASELINE_CHECKSUM) => Some(BaselineState::AlreadyBaselined),
+        Some(PREDECESSOR_BASELINE_CHECKSUM) => Some(BaselineState::PredecessorBaseline),
+        _ => None,
+    })
 }
 
 fn read_schema_head(client: &mut Client, schema: &str) -> Result<i32, SchemaError> {
@@ -350,6 +377,12 @@ fn apply_baseline(
             transaction.batch_execute(&statement)?;
         }
     }
+    if state == BaselineState::PredecessorBaseline {
+        transaction.execute(
+            &format!("DELETE FROM {receipt_table} WHERE version = $1"),
+            &[&BASELINE_VERSION],
+        )?;
+    }
     transaction.execute(
         &format!(
             "INSERT INTO {receipt_table}(version, filename, checksum, applied_at) VALUES ($1, $2, $3, NOW())"
@@ -376,6 +409,9 @@ fn render_baseline_for_schema(schema: &str) -> Cow<'static, str> {
 }
 
 fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option<String> {
+    if state == BaselineState::PredecessorBaseline {
+        return baseline_refresh_statement(statement);
+    }
     if !matches!(
         state,
         BaselineState::GcoreCodeIndex | BaselineState::GwikiStandalone
@@ -407,6 +443,23 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         }
     }
     Some(statement.to_owned())
+}
+
+pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
+    let body = statement_body(statement);
+    let refreshes_schema = [
+        "CREATE TABLE IF NOT EXISTS config_state",
+        "INSERT INTO config_state",
+        "ALTER TABLE config_store",
+        "CREATE TABLE IF NOT EXISTS embedding_generation_acks",
+        "CREATE TABLE IF NOT EXISTS embedding_projection_changes",
+        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_state",
+        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_generation_acks",
+        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_projection_changes",
+    ]
+    .iter()
+    .any(|prefix| body.starts_with(prefix));
+    refreshes_schema.then(|| statement.to_owned())
 }
 
 fn statement_body(mut statement: &str) -> &str {
@@ -540,14 +593,29 @@ fn adopted_column_contracts() -> BTreeMap<&'static str, &'static [&'static str]>
     BTreeMap::from([
         (
             "code_indexed_projects",
+            &["id", "created_at", "updated_at"] as &[_],
+        ),
+        (
+            "code_indexed_project_states",
             &[
-                "id",
+                "machine_id",
+                "project_id",
                 "root_path",
                 "total_files",
                 "total_symbols",
                 "last_indexed_at",
                 "index_duration_ms",
                 "created_at",
+                "updated_at",
+            ] as &[_],
+        ),
+        (
+            "code_indexed_file_states",
+            &[
+                "machine_id",
+                "project_id",
+                "file_path",
+                "content_hash",
                 "updated_at",
             ] as &[_],
         ),

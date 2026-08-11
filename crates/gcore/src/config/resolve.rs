@@ -194,6 +194,16 @@ pub fn resolve_indexing_config(source: &mut impl ConfigSource) -> anyhow::Result
     })
 }
 
+/// Resolve indexing config solely through the supplied authoritative source.
+pub fn resolve_indexing_config_from_source(
+    source: &mut impl ConfigSource,
+) -> anyhow::Result<IndexingConfig> {
+    Ok(IndexingConfig {
+        respect_gitignore: resolve_config_bool(source, INDEXING_RESPECT_GITIGNORE_KEY, true),
+        extra_excludes: resolve_config_string_list(source, INDEXING_EXTRA_EXCLUDES_KEY)?,
+    })
+}
+
 fn resolve_config_string_list(
     source: &mut impl ConfigSource,
     key: &str,

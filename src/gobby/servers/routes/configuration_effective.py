@@ -12,24 +12,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict
 
 from gobby.config._loading import expand_env_vars
-from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
-    AI_EMBEDDING_API_BASE_KEY,
-    AI_EMBEDDING_API_KEY_KEY,
-    AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
     AI_EMBEDDING_QUERY_PREFIX_KEY,
-    EMBEDDING_SWITCH_JOURNAL_KEY,
 )
+from gobby.config.registry import (
+    CONFIG_REGISTRY,
+    ConfigSecrecy,
+    ConfigVisibility,
+    config_key_secrecy,
+)
+from gobby.config.runtime import ConfigSnapshot
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.utils.local_token import AgentApiTokenClaims
 
 logger = logging.getLogger(__name__)
 
-_SERVED_PREFIXES = ("ai.", "databases.", "indexing.", "gwiki.")
-_EXCLUDED_KEYS = {EMBEDDING_SWITCH_JOURNAL_KEY}
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^{}]*\}")
 _MANAGED_CONFIG_KEYS = frozenset(
     {
@@ -93,14 +93,6 @@ class ServiceCapabilityBundle(BaseModel):
     services: ServiceCapabilities
 
 
-def _is_served_key(key: str) -> bool:
-    return (
-        key.startswith(_SERVED_PREFIXES)
-        and key not in _EXCLUDED_KEYS
-        and not key.endswith(".routing")
-    )
-
-
 def _stringify_config_value(value: object) -> str:
     if isinstance(value, str):
         return value
@@ -130,18 +122,21 @@ def _warn_omitted(key: str, reason: str) -> None:
     logger.warning("Omitting effective config key %s: %s", key, reason)
 
 
-def _resolved_store_values(context: ConfigurationRouteContext) -> dict[str, str]:
-    secret_store = context.get_secret_store()
+def _machine_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
     values: dict[str, str] = {}
-
-    for key, raw_value in sorted(context.get_config_store().get_all().items()):
-        if not _is_served_key(key):
+    for key, raw_value in sorted(snapshot.active_values.items()):
+        spec = CONFIG_REGISTRY.resolve(key)
+        if spec.visibility is not ConfigVisibility.MACHINE and not spec.machine_export:
             continue
+        if raw_value is None:
+            continue
+        if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
+            raw_value = snapshot.active_secret(key)
+            if raw_value is None:
+                _warn_omitted(key, "active secret payload is unavailable")
+                continue
         try:
-            value = expand_env_vars(
-                _stringify_config_value(raw_value),
-                secret_resolver=secret_store.get,
-            )
+            value = expand_env_vars(_stringify_config_value(raw_value))
         except (TypeError, ValueError):
             _warn_omitted(key, "value could not be serialized or resolved")
             continue
@@ -149,50 +144,10 @@ def _resolved_store_values(context: ConfigurationRouteContext) -> dict[str, str]
             _warn_omitted(key, "value contains an unresolved configuration reference")
             continue
         values[key] = value
-
     return values
 
 
-def _runtime_overlays(config: DaemonConfig) -> dict[str, object | None]:
-    embeddings = config.embeddings
-    falkordb = config.databases.falkordb
-    qdrant = config.databases.qdrant
-    return {
-        AI_EMBEDDING_MODEL_KEY: embeddings.model,
-        AI_EMBEDDING_DIM_KEY: embeddings.dim,
-        AI_EMBEDDING_API_BASE_KEY: embeddings.api_base,
-        AI_EMBEDDING_API_KEY_KEY: embeddings.api_key,
-        AI_EMBEDDING_QUERY_PREFIX_KEY: embeddings.query_prefix,
-        AI_EMBEDDING_CATALOG_KEY: embeddings.catalog_key,
-        "databases.falkordb.host": falkordb.host,
-        "databases.falkordb.port": falkordb.port,
-        "databases.falkordb.password": falkordb.password,
-        "databases.qdrant.url": qdrant.url,
-        "databases.qdrant.api_key": qdrant.api_key,
-        "databases.postgres.dsn": config.database_url,
-    }
-
-
-def _apply_runtime_overlays(
-    values: dict[str, str],
-    config: DaemonConfig,
-) -> None:
-    for key, raw_value in _runtime_overlays(config).items():
-        if raw_value is None:
-            values.pop(key, None)
-            continue
-        value = _stringify_config_value(raw_value)
-        if _contains_unresolved_marker(value):
-            values.pop(key, None)
-            _warn_omitted(key, "runtime value contains an unresolved configuration reference")
-            continue
-        values[key] = value
-
-
-def _managed_config_values(
-    context: ConfigurationRouteContext,
-    config: DaemonConfig,
-) -> dict[str, str]:
+def _managed_config_values(snapshot: ConfigSnapshot) -> dict[str, str]:
     values: dict[str, str] = {}
 
     def include(key: str, raw_value: object) -> None:
@@ -206,11 +161,12 @@ def _managed_config_values(
             return
         values[key] = value
 
-    for key, raw_value in sorted(context.get_config_store().get_all().items()):
+    for key, raw_value in sorted(snapshot.active_values.items()):
         if key not in _MANAGED_CONFIG_KEYS:
             continue
         include(key, raw_value)
 
+    config = snapshot.active
     embeddings = config.embeddings
     values["ai.embeddings.routing"] = "daemon"
     include(AI_EMBEDDING_MODEL_KEY, embeddings.model)
@@ -258,7 +214,8 @@ _QDRANT_BROKERS = (
 )
 
 
-def _service_capabilities(config: DaemonConfig) -> ServiceCapabilities:
+def _service_capabilities(snapshot: ConfigSnapshot) -> ServiceCapabilities:
+    config = snapshot.active
     falkordb_requires_broker = bool(config.databases.falkordb.password) or (
         _contains_unresolved_marker(config.databases.falkordb.host)
     )
@@ -317,13 +274,8 @@ def register_effective_routes(
     @router.get("/effective", dependencies=[Depends(require_runtime_token)])
     def get_effective_config() -> JSONResponse:
         """Serve resolved client configuration."""
-        config = context.server.services.config
-        if config is None:
-            raise HTTPException(status_code=503, detail="Config not available")
-
         try:
-            values = _resolved_store_values(context)
-            _apply_runtime_overlays(values, config)
+            values = _machine_config_values(context.get_config_runtime().snapshot)
             return JSONResponse(
                 content={"config": values},
                 headers={"Cache-Control": "no-store"},
@@ -340,9 +292,7 @@ def register_effective_routes(
         response: Response,
     ) -> ServiceCapabilityBundle:
         claims = require_agent_claims(request)
-        config = context.server.services.config
-        if config is None:
-            raise HTTPException(status_code=503, detail="Config not available")
+        snapshot = context.get_config_runtime().snapshot
         if claims.agent_run_id is not None and claims.managed_execution_id is None:
             owner_kind: Literal["agent_run", "tool_chat"] = "agent_run"
             execution_id = claims.agent_run_id
@@ -360,6 +310,6 @@ def register_effective_routes(
                 session_id=claims.session_id,
                 expires_at=claims.exp,
             ),
-            config=_managed_config_values(context, config),
-            services=_service_capabilities(config),
+            config=_managed_config_values(snapshot),
+            services=_service_capabilities(snapshot),
         )

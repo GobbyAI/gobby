@@ -13,7 +13,7 @@ from typing import Any
 
 from gobby.agents.resume_executor import resume_agent_run
 from gobby.dispatch.actions import SpawnAgentAction
-from gobby.dispatch.context import _field
+from gobby.dispatch.context import _field, services_daemon_config
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.agent_resume import increment_daemon_resume_failure_count
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -78,7 +78,7 @@ async def try_resume_daemon_stop_run(
         resume_metadata=metadata,
         runner=runner,
         session_manager=session_manager,
-        daemon_config=getattr(services, "config", None),
+        daemon_config=services_daemon_config(services),
         completion_registry=getattr(services, "completion_registry", None),
     )
     if resume_result.success and resume_result.run_id:

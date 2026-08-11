@@ -24,6 +24,8 @@ from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
+_LOCAL_MACHINE_ID = "21000000-0000-4000-8000-00000000000b"
+
 
 def _window(groups: list[Any], *, parsed_message_count: int | None = None) -> WindowResult:
     """Build a head-order WindowResult for the windowed get_session_messages path."""
@@ -996,6 +998,7 @@ class TestGetSessionCommits:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = "2024-01-01T10:00:00+00:00"
         mock_session.updated_at = "2024-01-01T12:00:00+00:00"
@@ -1036,6 +1039,7 @@ class TestGetSessionCommits:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = "2024-01-01T10:00:00+00:00"
         mock_session.updated_at = "2024-01-01T12:00:00+00:00"
@@ -1059,6 +1063,7 @@ class TestGetSessionCommits:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = "2024-01-01T10:00:00+00:00"
         mock_session.updated_at = "2024-01-01T12:00:00+00:00"
@@ -1080,6 +1085,7 @@ class TestGetSessionCommits:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = "2024-01-01T10:00:00+00:00"
         mock_session.updated_at = "2024-01-01T12:00:00+00:00"
@@ -1102,6 +1108,7 @@ class TestGetSessionCommits:
 
         mock_session = MagicMock()
         mock_session.id = "sess-123-full"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = "2024-01-01T10:00:00+00:00"
         mock_session.updated_at = "2024-01-01T12:00:00+00:00"
@@ -1126,6 +1133,7 @@ class TestGetSessionCommits:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.machine_id = _LOCAL_MACHINE_ID
         mock_session.transcript_path = "/tmp/test/transcript.jsonl"
         mock_session.created_at = datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC)
         mock_session.updated_at = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)

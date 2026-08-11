@@ -76,9 +76,10 @@ def _queue(
 
 def _registry(db: HubDatabase) -> InternalToolRegistry:
     registry = InternalToolRegistry("test-memory-recall")
+    manager = cast(MemoryManager, FakeMemoryManager(db))
     register_memory_recall_tool(
         registry,
-        cast(MemoryManager, FakeMemoryManager(db)),
+        lambda: manager,
     )
     return registry
 
@@ -273,7 +274,8 @@ async def test_request_is_scoped_to_ambient_session(temp_db: HubDatabase) -> Non
 def test_main_memory_registry_includes_inline_and_overflow_tools(
     temp_db: HubDatabase,
 ) -> None:
-    registry = create_memory_registry(cast(MemoryManager, FakeMemoryManager(temp_db)))
+    manager = cast(MemoryManager, FakeMemoryManager(temp_db))
+    registry = create_memory_registry(lambda: manager)
 
     assert registry.get_tool("recall_memories_for_prompt") is not None
     assert registry.get_tool("get_recall_memories") is not None

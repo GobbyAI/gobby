@@ -2,16 +2,66 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
+import gobby.ai.embedding_switch_runner as embedding_switch_runner
 import gobby.ai.embedding_switch_service as embedding_switch_service
+from gobby.ai.embedding_switch import (
+    PHASE_FLIPPING,
+    CompletedSwitchRecord,
+    SwitchJournal,
+    complete_switch,
+    load_completed_switch,
+    managed_embedding_projection,
+    verify_completed_switch,
+)
+from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
 from gobby.ai.embedding_switch_service import (
     EmbeddingSwitchCoordinator,
     EmbeddingSwitchTaskActive,
 )
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_CATALOG_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
+)
+from gobby.config.runtime import ConfigRuntime
+from gobby.memory.vectorstore import VectorStore
+from gobby.runner_init.services import _managed_embedding_collection
+from gobby.storage.config_repository import ConfigRepository
+from gobby.storage.config_store import ConfigStore
+from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationLeaseLost,
+    EmbeddingGenerationLeaseRenewTransient,
+    EmbeddingGenerationNotCaughtUp,
+    EmbeddingGenerationState,
+    ProjectionChange,
+    managed_projection_targets,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _worktree_gdaemon() -> Iterator[None]:
+    patch = pytest.MonkeyPatch()
+    binary = Path.cwd() / "target" / "debug" / "gdaemon"
+    patch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: str(binary) if name == "gdaemon" else None,
+    )
+    yield
+    patch.undo()
 
 
 @dataclass
@@ -146,6 +196,330 @@ async def test_abort_retries_persisted_cleanup_pending_journal() -> None:
     assert coordinator.active_run_id is None
 
 
+def _managed_journal() -> SwitchJournal:
+    return SwitchJournal(
+        run_id="4096-run",
+        catalog_key="qwen3-8b-q8",
+        target_dim=4096,
+        target_model="qwen3-embedding:8b-q8_0",
+        target_query_prefix="query:",
+        target_api_base=None,
+        provider="ollama",
+        phase=PHASE_FLIPPING,
+        started_at="2026-06-29T00:00:00Z",
+        updated_at="2026-06-29T00:00:00Z",
+        physical_names={
+            "memories": "memories@4096-run",
+            "tool_embeddings": "tool_embeddings@4096-run",
+            "gobby_github_issues": "gobby_github_issues@4096-run",
+        },
+        caught_up_watermark=7,
+    )
+
+
+def _complete_managed_switch(store: ConfigStore) -> tuple[SwitchJournal, int]:
+    journal = _managed_journal()
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+    record = complete_switch(store, journal)
+    return journal, record.committed_revision
+
+
+def test_switch_commit_is_one_revision(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+    journal = _managed_journal()
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+    before = store.read_snapshot().revision
+
+    committed_revision = complete_switch(store, journal).committed_revision
+
+    snapshot = store.read_snapshot()
+    assert committed_revision == before + 1 == snapshot.revision
+    assert {
+        snapshot.row_revisions[AI_EMBEDDING_CATALOG_KEY],
+        snapshot.row_revisions[AI_EMBEDDING_DIM_KEY],
+        snapshot.row_revisions[AI_EMBEDDING_MODEL_KEY],
+    } == {committed_revision}
+    assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is None
+    assert load_completed_switch(store).physical_names == journal.physical_names
+
+
+@pytest.mark.asyncio
+async def test_switch_recovery_uses_runtime_snapshot(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repository = ConfigRepository(temp_db)
+    config = repository.runtime_candidate(dict(repository.read().overrides))
+
+    class Runtime:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def snapshot(self) -> Any:
+            self.calls += 1
+            return type("Snapshot", (), {"active": config})()
+
+    runtime = Runtime()
+    monkeypatch.setattr(
+        embedding_switch_runner,
+        "DaemonConfig",
+        lambda: pytest.fail("switch recovery rebuilt configuration"),
+    )
+    runner = EmbeddingSwitchRunner(ConfigStore(temp_db), temp_db, config_runtime=runtime)
+
+    assert runner._runtime_config() is config
+    assert runtime.calls == 1
+
+    captured: list[Any] = []
+
+    class DoneRunner:
+        async def run(self, _journal: FakeJournal) -> None:
+            return None
+
+    def default_factory(
+        _store: Any,
+        _db: Any,
+        _control: Any,
+        _fence: Any,
+        config_runtime: Any,
+    ) -> DoneRunner:
+        captured.append(config_runtime)
+        return DoneRunner()
+
+    monkeypatch.setattr(embedding_switch_service, "_default_runner_factory", default_factory)
+    coordinator = EmbeddingSwitchCoordinator(
+        config_store=ConfigStore(temp_db),
+        db=temp_db,
+        fence=None,
+        config_runtime=runtime,
+        load_journal=lambda: FakeJournal("runtime-run"),
+    )
+    await coordinator.resume()
+    await coordinator.task
+    assert captured == [runtime]
+
+
+@pytest.mark.asyncio
+async def test_managed_revision_converges_across_runtimes(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+    runtimes = (
+        ConfigRuntime(
+            ConfigRepository(temp_db),
+            managed_resolver=managed_embedding_projection,
+        ),
+        ConfigRuntime(
+            ConfigRepository(temp_db),
+            managed_resolver=managed_embedding_projection,
+        ),
+    )
+    try:
+        await asyncio.gather(*(runtime.start() for runtime in runtimes))
+        journal, revision = _complete_managed_switch(store)
+        await asyncio.gather(*(runtime.reconcile_revision(revision) for runtime in runtimes))
+
+        resolved = [
+            runtime.capture().managed[EMBEDDING_SWITCH_COMPLETED_KEY] for runtime in runtimes
+        ]
+        completed = resolved[0]
+        assert isinstance(completed, CompletedSwitchRecord)
+        assert completed == resolved[1]
+        assert completed.physical_names == journal.physical_names
+        assert (
+            _managed_embedding_collection(
+                runtimes[0].capture().managed,
+                "memories",
+            )
+            == "memories@4096-run"
+        )
+    finally:
+        await asyncio.gather(*(runtime.close() for runtime in runtimes))
+
+
+@pytest.mark.asyncio
+async def test_fresh_runtime_start_surfaces_journal_projection_targets(
+    temp_db: HubDatabase,
+) -> None:
+    """A daemon starting mid-switch must project into the journal's physical
+    collections from its in-memory managed mapping alone."""
+    store = ConfigStore(temp_db)
+    journal = _managed_journal()
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+
+    runtime = ConfigRuntime(
+        ConfigRepository(temp_db),
+        managed_resolver=managed_embedding_projection,
+    )
+    try:
+        await runtime.start()
+        managed = runtime.capture().managed
+        assert managed[EMBEDDING_SWITCH_JOURNAL_KEY] == journal.physical_names
+        assert managed_projection_targets(managed, "memory", "memories") == (
+            "memories",
+            "memories@4096-run",
+        )
+        assert managed_projection_targets(managed, "tool", "tool_embeddings") == (
+            "tool_embeddings",
+            "tool_embeddings@4096-run",
+        )
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_catchup_after_journal_gc(temp_db: HubDatabase) -> None:
+    store = ConfigStore(temp_db)
+    _journal, revision = _complete_managed_switch(store)
+    runtime = ConfigRuntime(
+        ConfigRepository(temp_db),
+        managed_resolver=managed_embedding_projection,
+    )
+    try:
+        await runtime.start()
+        recovered = runtime.capture().managed[EMBEDDING_SWITCH_COMPLETED_KEY]
+
+        assert isinstance(recovered, CompletedSwitchRecord)
+        assert recovered == verify_completed_switch(ConfigStore(temp_db), revision)
+        assert recovered == load_completed_switch(ConfigStore(temp_db))
+        assert recovered.run_id == "4096-run"
+        assert recovered.physical_names["memories"] == "memories@4096-run"
+    finally:
+        await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_gc_waits_for_acknowledgements(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = EmbeddingGenerationState(temp_db)
+    first, second = uuid4(), uuid4()
+    state.acknowledge(first, "old", 1, lease_seconds=30, acknowledged=False)
+    state.acknowledge(second, "old", 1, lease_seconds=30, acknowledged=False)
+
+    state.acknowledge(
+        first, "new", 2, lease_seconds=30, caught_up_watermark=0, required_watermark=0
+    )
+    assert not state.can_collect("new", 2)
+    state.acknowledge(
+        second, "new", 2, lease_seconds=30, caught_up_watermark=0, required_watermark=0
+    )
+    assert state.can_collect("new", 2)
+
+    prepared_lease = state.prepare_serving_lease(
+        first,
+        "new",
+        2,
+        lease_seconds=30,
+        caught_up_watermark=4,
+        required_watermark=4,
+    )
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="activated"):
+        prepared_lease.assert_serving()
+    prepared_lease.activate()
+    prepared_lease.assert_serving()
+
+    lease = state.prepare_serving_lease(
+        first,
+        "new",
+        2,
+        lease_seconds=30,
+        caught_up_watermark=4,
+        required_watermark=4,
+    )
+    lease.activate()
+
+    def fail_renew_transient(*_args: object, **_kwargs: object) -> None:
+        raise ConnectionError("database unavailable")
+
+    monkeypatch.setattr(state, "renew", fail_renew_transient)
+    with pytest.raises(EmbeddingGenerationLeaseRenewTransient):
+        lease.renew()
+    lease.assert_serving()
+
+    def fail_renew_lost(*_args: object, **_kwargs: object) -> None:
+        raise EmbeddingGenerationLeaseLost("Embedding generation lease no longer matches")
+
+    monkeypatch.setattr(state, "renew", fail_renew_lost)
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="no longer matches"):
+        lease.renew()
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
+        lease.assert_serving()
+    vector_store = VectorStore(serving_guard=lease.assert_serving)
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
+        await vector_store._call_client(object(), "count")  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_write_catchup_replays_into_promoted_generation(temp_db: HubDatabase) -> None:
+    state = EmbeddingGenerationState(temp_db)
+    store = ConfigStore(temp_db)
+    journal = _managed_journal()
+    journal.phase = "building"
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+    assert state.projection_targets("memory", "memories@old") == (
+        "memories@old",
+        "memories@4096-run",
+    )
+    state.append_change("memory", "memory-1")
+    enumeration_watermark = state.watermark()
+    state.append_change("tool", "tool-2")
+    state.append_change("memory", "memory-1", is_tombstone=True)
+    projected: list[tuple[str, str, bool]] = []
+
+    caught_up = state.replay_after(
+        enumeration_watermark,
+        lambda change: projected.append(
+            (change.source_kind, change.source_id, change.is_tombstone)
+        ),
+    )
+
+    assert projected == [
+        ("tool", "tool-2", False),
+        ("memory", "memory-1", True),
+    ]
+    with pytest.raises(EmbeddingGenerationNotCaughtUp):
+        state.acknowledge(
+            uuid4(),
+            "new",
+            2,
+            lease_seconds=30,
+            caught_up_watermark=enumeration_watermark,
+            required_watermark=caught_up,
+        )
+    state.acknowledge(
+        uuid4(),
+        "new",
+        2,
+        lease_seconds=30,
+        caught_up_watermark=caught_up,
+        required_watermark=caught_up,
+    )
+    complete_switch(store, journal)
+    assert state.projection_targets("memory", "memories@old") == (
+        "memories@old",
+        "memories@4096-run",
+    )
+    vector_store = VectorStore(generation_state=state)
+    vector_store._queries = AsyncMock()
+    await vector_store.upsert("memory-2", [0.1], collection_name="memories@old")
+    assert [call.args[-1] for call in vector_store._queries.upsert.await_args_list] == [
+        "memories@old",
+        "memories@4096-run",
+    ]
+
+    before_source_write = state.watermark()
+    memory_store = LocalMemoryManager(temp_db)
+    memory = memory_store.create_memory("projection source", PERSONAL_PROJECT_ID)
+    assert state.changes_after(before_source_write)[-1] == ProjectionChange(
+        sequence=state.watermark(),
+        source_kind="memory",
+        source_id=memory.id,
+        is_tombstone=False,
+    )
+    assert memory_store.delete_memory(memory.id)
+    assert state.changes_after(before_source_write)[-1].is_tombstone
+
+
 @pytest.mark.asyncio
 async def test_abort_timeout_leaves_cooperative_cleanup_running(
     monkeypatch: pytest.MonkeyPatch,
@@ -226,3 +600,19 @@ async def test_background_failure_is_observed_with_run_context(
     ]
     assert len(records) == 1
     assert getattr(records[0], "run_id", None) == "run-1"
+
+
+def test_managed_projection_survives_post_switch_mutation(temp_db: HubDatabase) -> None:
+    """B1 regression: a benign config mutation after switch completion must not
+    invalidate the completed-record verification."""
+    store = ConfigStore(temp_db)
+    _journal, revision = _complete_managed_switch(store)
+
+    store.set("ui.enabled", True)
+
+    snapshot = store.read_snapshot()
+    assert snapshot.revision == revision + 1
+    projected = managed_embedding_projection(snapshot)
+    completed = projected[EMBEDDING_SWITCH_COMPLETED_KEY]
+    assert isinstance(completed, CompletedSwitchRecord)
+    assert completed.committed_revision == revision

@@ -13,16 +13,24 @@ A switch journal (stored in ConfigStore) tracks the run state so
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
-from dataclasses import asdict, dataclass, field
-from typing import Any, Protocol
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, field, replace
+from typing import Any, Protocol, cast
 
 from gobby.ai.embedding_catalog import EmbeddingModelSpec, get_spec_or_raise
-from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    AI_EMBEDDING_QUERY_PREFIX_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
+)
 from gobby.memory.collection_names import CollectionNameResolver
-from gobby.storage.config_store import EmbeddingConfigMutationBlocked
+from gobby.storage.config_mutations import EmbeddingConfigMutationBlocked
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +43,30 @@ class EmbeddingSwitchLifecycleStore(Protocol):
     def set_internal_lifecycle(self, key: str, value: Any) -> None: ...
 
     def delete_internal_lifecycle(self, key: str, run_id: str) -> bool: ...
+
+    def complete_embedding_switch(
+        self,
+        run_id: str,
+        entries: dict[str, Any],
+        completed_key: str,
+        completed_record: dict[str, object],
+    ) -> int: ...
+
+    def read_snapshot(self) -> Any: ...
+
+
+class EmbeddingSwitchSnapshot(Protocol):
+    @property
+    def revision(self) -> int: ...
+
+    @property
+    def values(self) -> Mapping[str, object]: ...
+
+    @property
+    def overrides(self) -> Mapping[str, object]: ...
+
+    @property
+    def row_revisions(self) -> Mapping[str, int]: ...
 
 
 # Phase names in order.
@@ -75,16 +107,43 @@ class SwitchJournal:
     old_catalog_id: str | None = None
     old_dim: int | None = None
     old_physical_names: dict[str, str] = field(default_factory=dict)
+    physical_names: dict[str, str] = field(default_factory=dict)
+    caught_up_watermark: int = 0
     error: str | None = None
 
-    def to_json(self) -> str:
-        return json.dumps(asdict(self), sort_keys=True)
+    def to_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
 
     @staticmethod
-    def from_json(data: str) -> SwitchJournal:
-        d = json.loads(data)
+    def from_dict(data: Mapping[str, object]) -> SwitchJournal:
+        d = dict(data)
         d.setdefault("old_physical_names", {})
-        return SwitchJournal(**d)
+        d.setdefault("physical_names", {})
+        d.setdefault("caught_up_watermark", 0)
+        return SwitchJournal(**cast(Any, d))
+
+
+@dataclass(frozen=True, slots=True)
+class CompletedSwitchRecord:
+    """Durable proof binding one structural revision to physical collections."""
+
+    run_id: str
+    committed_revision: int
+    physical_names: dict[str, str]
+    old_physical_names: dict[str, str]
+    caught_up_watermark: int
+    catalog_key: str
+    target_dim: int
+    target_model: str
+    target_query_prefix: str | None
+    target_api_base: str | None
+
+    def to_dict(self) -> dict[str, object]:
+        return cast(dict[str, object], asdict(self))
+
+    @staticmethod
+    def from_dict(data: Mapping[str, object]) -> CompletedSwitchRecord:
+        return CompletedSwitchRecord(**cast(Any, dict(data)))
 
 
 class SwitchError(RuntimeError):
@@ -111,12 +170,12 @@ def _read_journal(config_store: EmbeddingSwitchLifecycleStore) -> SwitchJournal 
     raw = config_store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY)
     if raw is None:
         return None
-    if not isinstance(raw, str):
+    if not isinstance(raw, dict):
         raise SwitchJournalStateError(
             f"Invalid embedding switch journal type: {type(raw).__name__}"
         )
     try:
-        return SwitchJournal.from_json(raw)
+        return SwitchJournal.from_dict(raw)
     except Exception as exc:
         logger.warning("Failed to parse switch journal", exc_info=True)
         raise SwitchJournalStateError("Invalid embedding switch journal") from exc
@@ -127,7 +186,7 @@ def _write_journal(
     journal: SwitchJournal,
 ) -> None:
     """Write the switch journal to ConfigStore."""
-    config_store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_json())
+    config_store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
 
 
 def _delete_journal(
@@ -309,10 +368,152 @@ def persist_journal(
 def complete_switch(
     config_store: EmbeddingSwitchLifecycleStore,
     journal: SwitchJournal,
-) -> None:
-    """Mark the switch as complete and clean up the journal."""
-    advance_phase(config_store, journal, PHASE_GC)
-    _delete_journal(config_store, journal)
+) -> CompletedSwitchRecord:
+    """Commit structural values and durable completion proof in one revision."""
+    journal.phase = PHASE_GC
+    physical_names = journal.physical_names or build_physical_names(journal)
+    record = CompletedSwitchRecord(
+        run_id=journal.run_id,
+        committed_revision=0,
+        physical_names=dict(physical_names),
+        old_physical_names=dict(journal.old_physical_names),
+        caught_up_watermark=journal.caught_up_watermark,
+        catalog_key=journal.catalog_key,
+        target_dim=journal.target_dim,
+        target_model=journal.target_model,
+        target_query_prefix=journal.target_query_prefix,
+        target_api_base=journal.target_api_base,
+    )
+    complete = getattr(type(config_store), "complete_embedding_switch", None)
+    if complete is None:
+        _write_journal(config_store, journal)
+        _delete_journal(config_store, journal)
+        return record
+    entries = {
+        AI_EMBEDDING_MODEL_KEY: journal.target_model,
+        AI_EMBEDDING_DIM_KEY: journal.target_dim,
+        AI_EMBEDDING_CATALOG_KEY: journal.catalog_key,
+        AI_EMBEDDING_QUERY_PREFIX_KEY: journal.target_query_prefix,
+        AI_EMBEDDING_API_BASE_KEY: journal.target_api_base,
+    }
+    revision = config_store.complete_embedding_switch(
+        journal.run_id,
+        entries,
+        EMBEDDING_SWITCH_COMPLETED_KEY,
+        record.to_dict(),
+    )
+    return replace(record, committed_revision=revision)
+
+
+def load_completed_switch(
+    config_store: EmbeddingSwitchLifecycleStore,
+) -> CompletedSwitchRecord:
+    """Load the durable completed-switch proof after journal cleanup."""
+    raw = config_store.get_internal_lifecycle(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if not isinstance(raw, dict):
+        raise SwitchJournalStateError("Completed embedding switch record is missing")
+    try:
+        return CompletedSwitchRecord.from_dict(raw)
+    except (TypeError, ValueError) as exc:
+        raise SwitchJournalStateError("Invalid completed embedding switch record") from exc
+
+
+def verify_completed_switch(
+    config_store: EmbeddingSwitchLifecycleStore,
+    revision: int,
+) -> CompletedSwitchRecord:
+    """Verify a managed revision before a daemon promotes its physical targets."""
+    record = load_completed_switch(config_store)
+    return _verify_completed_record(config_store.read_snapshot(), record, revision)
+
+
+def managed_embedding_projection(snapshot: EmbeddingSwitchSnapshot) -> dict[str, object]:
+    """Resolve the verified managed projection from one config snapshot.
+
+    Also surfaces an in-flight switch journal's physical collection names so
+    in-memory consumers (VectorStore projection targets) can dual-project
+    without a per-operation database read. A malformed journal is skipped —
+    the journal is transient scratch state, so it never blocks reconciles."""
+    managed: dict[str, object] = {}
+    raw_journal = snapshot.overrides.get(EMBEDDING_SWITCH_JOURNAL_KEY)
+    if isinstance(raw_journal, Mapping):
+        physical_names = raw_journal.get("physical_names")
+        if isinstance(physical_names, Mapping):
+            names = {
+                str(kind): name
+                for kind, name in physical_names.items()
+                if isinstance(name, str) and name
+            }
+            if names:
+                managed[EMBEDDING_SWITCH_JOURNAL_KEY] = names
+    raw = snapshot.overrides.get(EMBEDDING_SWITCH_COMPLETED_KEY)
+    if raw is None:
+        return managed
+    if not isinstance(raw, Mapping):
+        raise SwitchJournalStateError("Completed embedding switch record is invalid")
+    record = CompletedSwitchRecord.from_dict(raw)
+    managed[EMBEDDING_SWITCH_COMPLETED_KEY] = _verify_completed_record_rows(snapshot, record)
+    return managed
+
+
+_COMPLETED_RECORD_ROW_KEYS = (
+    AI_EMBEDDING_MODEL_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
+    EMBEDDING_SWITCH_COMPLETED_KEY,
+)
+
+
+def _expected_completed_values(record: CompletedSwitchRecord) -> dict[str, object]:
+    return {
+        AI_EMBEDDING_MODEL_KEY: record.target_model,
+        AI_EMBEDDING_DIM_KEY: record.target_dim,
+        AI_EMBEDDING_CATALOG_KEY: record.catalog_key,
+        AI_EMBEDDING_QUERY_PREFIX_KEY: record.target_query_prefix,
+        AI_EMBEDDING_API_BASE_KEY: record.target_api_base,
+    }
+
+
+def _verify_completed_record_rows(
+    snapshot: EmbeddingSwitchSnapshot,
+    record: CompletedSwitchRecord,
+) -> CompletedSwitchRecord:
+    """Verify a completed record against any later coherent snapshot.
+
+    Sound because complete_embedding_switch writes all five structural keys and
+    the completed record in one patch_internal revision, and structural keys
+    only accept source="embedding_switch"|"install" writes — a later benign
+    config mutation advances the global revision without touching these rows.
+    """
+    committed = record.committed_revision
+    if not 0 < committed <= snapshot.revision:
+        raise SwitchJournalStateError(
+            f"Completed embedding switch revision {committed} is outside (0, {snapshot.revision}]"
+        )
+    expected = _expected_completed_values(record)
+    if any(snapshot.values.get(key) != value for key, value in expected.items()):
+        raise SwitchJournalStateError("Completed embedding switch values do not match storage")
+    if any(snapshot.row_revisions.get(key) != committed for key in _COMPLETED_RECORD_ROW_KEYS):
+        raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
+    return record
+
+
+def _verify_completed_record(
+    snapshot: EmbeddingSwitchSnapshot,
+    record: CompletedSwitchRecord,
+    revision: int,
+) -> CompletedSwitchRecord:
+    """Exact-revision verification for adoption-time verify_completed_switch."""
+    if record.committed_revision != revision:
+        raise SwitchJournalStateError(
+            f"Completed embedding switch revision {record.committed_revision} does not match {revision}"
+        )
+    expected = _expected_completed_values(record)
+    if any(snapshot.values.get(key) != value for key, value in expected.items()):
+        raise SwitchJournalStateError("Completed embedding switch values do not match storage")
+    if any(snapshot.row_revisions.get(key) != revision for key in _COMPLETED_RECORD_ROW_KEYS):
+        raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
+    return record
 
 
 def resolve_collection_names(journal: SwitchJournal) -> CollectionNameResolver:
@@ -322,6 +523,8 @@ def resolve_collection_names(journal: SwitchJournal) -> CollectionNameResolver:
 
 def build_physical_names(journal: SwitchJournal) -> dict[str, str]:
     """Return {kind: physical_name} for all daemon-managed collections."""
+    if journal.physical_names:
+        return dict(journal.physical_names)
     resolver = CollectionNameResolver()
     return {kind: resolver.physical_name(kind, journal.run_id) for kind in resolver.kinds}
 

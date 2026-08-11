@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import type { SettingsSectionId } from '../sections'
 import type { UseSettingsReturn } from '../../../hooks/useSettings'
 import type {
+  ConfigApplyFailure,
   ConfigExportBundle,
   PromptDetail,
   PromptInfo,
@@ -36,6 +37,8 @@ export interface ProjectSelectionContextValue {
 export interface SaveConfigResult {
   ok: boolean
   errors?: string[]
+  conflict?: boolean
+  terminal?: boolean
 }
 
 /**
@@ -48,7 +51,11 @@ export interface SaveConfigResult {
 export interface SettingsSectionContextValue {
   schema: Record<string, unknown> | null
   configValues: Record<string, unknown>
+  activeConfigValues?: Record<string, unknown>
   secretKeys: string[]
+  pendingRestartKeys?: string[]
+  failedLiveKeys?: Record<string, ConfigApplyFailure>
+  mutationError?: { message: string; terminal: boolean } | null
   isLoading: boolean
   saveConfig: (values: Record<string, unknown>) => Promise<SaveConfigResult>
   registerDirtyGuard: (
@@ -147,14 +154,15 @@ export interface SettingsSectionContextValue {
   saveTemplate?: (
     content: string,
   ) => Promise<{ ok: boolean; errors?: string[] }>
-  /** Export the full config bundle (`/api/config/export`); null on failure. */
+  /** Export desired daemon configuration as YAML; null on failure. */
   exportConfig?: () => Promise<ConfigExportBundle | null>
-  /** Import a config bundle (`/api/config/import`); the provider refetches. */
-  importConfig?: (bundle: {
-    config_store?: Record<string, unknown>
-    config?: Record<string, unknown>
-    prompts?: Record<string, string>
-  }) => Promise<{ success: boolean; summary: string }>
+  /** Replace desired daemon configuration from YAML; provider then refetches. */
+  importConfig?: (content: string) => Promise<{ success: boolean; summary: string }>
+  /** Execute the explicit coordinator action for a registry-managed key. */
+  runManagedAction?: (
+    action: string,
+    payload: Record<string, unknown>,
+  ) => Promise<boolean>
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =
@@ -163,7 +171,10 @@ export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =
 const FALLBACK_CONTEXT: SettingsSectionContextValue = {
   schema: null,
   configValues: {},
+  activeConfigValues: {},
   secretKeys: [],
+  pendingRestartKeys: [],
+  failedLiveKeys: {},
   isLoading: false,
   saveConfig: async () => ({ ok: false, errors: ['Settings context unavailable'] }),
   registerDirtyGuard: noopRegister,

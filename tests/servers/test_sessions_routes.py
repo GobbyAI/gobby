@@ -15,6 +15,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.servers.http import HTTPServer
 from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.hub.protocol import HubDatabase
@@ -78,7 +80,6 @@ def http_server(
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     services = ServiceContainer(
-        config=mock_config,
         database=session_storage.db,
         session_manager=session_storage,
         task_manager=MagicMock(),
@@ -87,7 +88,7 @@ def http_server(
         services=services,
         port=60887,
         test_mode=True,
-        auth_mode="disabled",
+        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
 
@@ -386,8 +387,7 @@ class TestGetSessionEdgeCases:
             "UPDATE sessions SET model = %s WHERE id = %s",
             ("future-model", session.id),
         )
-        config = MagicMock()
-        config.context_window_overrides = {"future-model": 444_000}
+        config = DaemonConfig(context_window_overrides={"future-model": 444_000})
         server = create_http_server(config=config, session_manager=session_storage)
 
         response = TestClient(server.app).get(f"/api/sessions/{session.id}")

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 
+from gobby.config.app import DaemonConfig
 from gobby.hooks.event_handlers._session_end import SessionEndMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.inbox import drain_hook_inbox_once
@@ -276,6 +277,7 @@ async def test_inbox_replays_codex_session_end_once_with_real_cleanup(
     )
 
     server = MagicMock()
+    server.config = DaemonConfig()
     app = FastAPI()
     app.state.hook_manager = hook_manager
     app.include_router(create_hooks_router(server))

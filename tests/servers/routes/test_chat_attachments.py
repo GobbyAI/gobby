@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
@@ -35,7 +36,10 @@ def client(
         database=temp_db,
         session_manager=None,
     )
-    server.services.config_store = ConfigStore(temp_db)
+    # Exercise the documented config_store fallback seam in
+    # resolve_server_attachment_limits; the attribute is dynamic, so type
+    # it through Any.
+    cast(Any, server.services).config_store = ConfigStore(temp_db)
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
     return TestClient(app)
@@ -74,7 +78,12 @@ def test_attachment_limits_returns_configured_max_file_bytes(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_file_bytes": 4,
+            "chat.attachment_max_total_bytes_per_message": 4,
+        }
+    )
 
     response = client.get("/api/chat/attachments/limits")
 
@@ -95,7 +104,7 @@ def test_upload_without_project_id_uses_server_project(
         session_manager=None,
         project_id=project.id,
     )
-    server.services.config_store = ConfigStore(temp_db)
+    cast(Any, server.services).config_store = ConfigStore(temp_db)
     app = FastAPI()
     app.include_router(create_chat_attachments_router(server))
 
@@ -145,7 +154,12 @@ def test_upload_uses_config_store_limit_and_skips_metadata_on_oversize(
     client: TestClient,
     temp_db: HubDatabase,
 ) -> None:
-    ConfigStore(temp_db).set("chat.attachment_max_file_bytes", 4)
+    ConfigStore(temp_db).set_many(
+        {
+            "chat.attachment_max_file_bytes": 4,
+            "chat.attachment_max_total_bytes_per_message": 4,
+        }
+    )
 
     response = client.post(
         "/api/chat/attachments",

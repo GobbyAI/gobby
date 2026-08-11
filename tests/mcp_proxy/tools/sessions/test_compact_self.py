@@ -922,7 +922,7 @@ class TestCompactSelfTerminalPath:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_terminal_tools(registry, session_manager, db, llm_service_resolver=MagicMock())
             register_handoff_tools(registry, session_manager)
 
         compact_self = registry.get_tool("compact_self")
@@ -1039,7 +1039,7 @@ class TestCompactSelfTerminalPath:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_terminal_tools(registry, session_manager, db, llm_service_resolver=MagicMock())
             register_handoff_tools(registry, session_manager)
 
         compact_self = registry.get_tool("compact_self")
@@ -1161,7 +1161,9 @@ class TestCompactSelfTerminalPath:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, temp_db, llm_service=MagicMock())
+            register_terminal_tools(
+                registry, session_manager, temp_db, llm_service_resolver=MagicMock()
+            )
 
         compact_self = registry.get_tool("compact_self")
         assert compact_self is not None
@@ -1289,7 +1291,7 @@ class TestCompactSelfTerminalPath:
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
-            register_terminal_tools(registry, session_manager, db, llm_service=MagicMock())
+            register_terminal_tools(registry, session_manager, db, llm_service_resolver=MagicMock())
             register_handoff_tools(registry, session_manager)
 
         compact_self = registry.get_tool("compact_self")

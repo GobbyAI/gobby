@@ -17,6 +17,34 @@ import pytest
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _checkout_gdaemon_for_schema_contract() -> Iterator[None]:
+    """Pin schema-contract gdaemon calls at this checkout's debug binary.
+
+    Schema identity enforcement compares the live database against the
+    checked-out source tree, so test schema applies must run a gdaemon built
+    from the same checkout — the installed ``~/.gobby/bin`` binary matches
+    whatever was last installed, not this branch. Session-scoped and autouse
+    so the patch is active before the session-scoped postgres fixtures run
+    their first schema apply/sweep, and uniform across the whole run (a
+    per-module patch would make schema behavior depend on which tests were
+    selected). When no debug binary has been built, resolution is untouched.
+    """
+    from gobby.utils.native_bin import native_bin_name, resolve_native_bin
+
+    binary = Path(__file__).resolve().parents[1] / "target" / "debug" / native_bin_name("gdaemon")
+    if not binary.is_file():
+        yield
+        return
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: str(binary) if name == "gdaemon" else resolve_native_bin(name),
+    )
+    yield
+    monkeypatch.undo()
+
+
 @pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""
@@ -460,8 +488,6 @@ def protect_production_resources(
 
     import os
 
-    from gobby.config.app import DaemonConfig
-
     # Use function-scoped temp_dir for logs (per-test isolation)
     safe_logs_dir = temp_dir / "logs"
     safe_logs_dir.mkdir(exist_ok=True)
@@ -480,51 +506,7 @@ def protect_production_resources(
     }
 
     with patch.dict(os.environ, env_vars):
-        # Patch load_config to return a safe config
-        # We need to use a side_effect to allow partial loading if needed,
-        # but for most tests returning a safe config object is best.
-        # However, many tests mock load_config themselves.
-        # We'll use a wrapper that returns our safe config unless arguments suggest otherwise.
-
-        try:
-            from gobby.config import app
-
-            # Capture the REAL function object before we patch anything
-            # We need this identity to find other references to it
-            _real_load_config = app.load_config
-        except ImportError:
-            _real_load_config = None
-
-        def safe_load_config(*args: Any, **kwargs: Any) -> "DaemonConfig":
-            config_store = kwargs.get("config_store")
-            config_store_db = getattr(config_store, "db", None)
-            if (
-                config_store is not None
-                and _real_load_config is not None
-                and not isinstance(config_store_db, MagicMock)
-            ):
-                return _real_load_config(*args, **kwargs)
-
-            # If creating default, let it happen but in safe location if possible
-            # But simpler is to just return a safe config object
-            config = DaemonConfig(
-                database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
-                logging={"dir": str(safe_logs_dir)},
-            )
-            # Apply overrides if present (logic from real load_config)
-            if "cli_overrides" in kwargs and kwargs["cli_overrides"]:
-                from gobby.config.app import apply_cli_overrides
-
-                start_dict = config.model_dump(exclude_none=True)
-                final_dict = apply_cli_overrides(start_dict, kwargs["cli_overrides"])
-                config = DaemonConfig(**final_dict)
-            return config
-
-        # PATCHING STRATEGY:
-        # standard patch() only patches the name in the target module.
-        # But if other modules (like gobby.runner) have already done "from gobby.config.app import load_config",
-        # they have a reference to the OLD function object.
-        # We must find ALL references to the old function and patch them too.
+        from gobby.config import app
 
         # Capture the REAL export_config_to_yaml to find rogue references
         try:
@@ -548,9 +530,6 @@ def protect_production_resources(
                     pass
             _real_export_config_to_yaml(config, config_file=config_file)
 
-        # 1. Standard patch for the definitions (covers future imports)
-        p = patch("gobby.config.app.load_config", side_effect=safe_load_config)
-        p.start()
         if _real_export_config_to_yaml is not None:
             p_export = patch(
                 "gobby.config.app.export_config_to_yaml",
@@ -558,65 +537,7 @@ def protect_production_resources(
             )
             p_export.start()
 
-        # 2. Patch known top-level importers of load_config / export_config_to_yaml.
-        #
-        # Only modules with a top-level `from gobby.config.app import load_config`
-        # hold a direct reference that patch() on the definition module won't reach.
-        # Lazy (in-function) imports resolve at call time and get the patched version.
-        #
-        # To update this list: grep for top-level `from gobby.config.app import load_config`
-        # in src/ (exclude lines inside function bodies).  Also include gobby.config since
-        # its __init__.py re-exports app-level config helpers.
-        patched_modules = []
-        import sys
-
-        _KNOWN_CONFIG_IMPORTERS = [
-            "gobby.config",  # __init__.py re-exports app-level config helpers
-            "gobby.cli",  # cli/__init__.py
-            "gobby.cli.utils",
-            "gobby.cli.tasks._utils",
-            "gobby.mcp_proxy.stdio",
-            "gobby.runner_init.storage",
-        ]
-
-        rogue_replacements: dict[int, tuple[Any, Any]] = {}
-        if _real_load_config:
-            rogue_replacements[id(_real_load_config)] = (safe_load_config, _real_load_config)
-        if _real_export_config_to_yaml:
-            rogue_replacements[id(_real_export_config_to_yaml)] = (
-                safe_export_config_to_yaml,
-                _real_export_config_to_yaml,
-            )
-
-        if rogue_replacements:
-            for mod_name in _KNOWN_CONFIG_IMPORTERS:
-                mod = sys.modules.get(mod_name)
-                if mod is None:
-                    continue
-
-                updates = {}
-                for attr_name, attr_val in mod.__dict__.items():
-                    replacement = rogue_replacements.get(id(attr_val))
-                    if replacement:
-                        updates[attr_name] = replacement  # (safe_fn, real_fn)
-
-                if updates:
-                    for attr_name, (safe_fn, _real_fn) in updates.items():
-                        setattr(mod, attr_name, safe_fn)
-                    patched_modules.append((mod, updates))
-
         yield
 
-        # Restore everything
-        p.stop()
         if _real_export_config_to_yaml is not None:
             p_export.stop()
-        for mod, updates in patched_modules:
-            for attr_name, (_safe_fn, real_fn) in updates.items():
-                if real_fn is not None:
-                    setattr(mod, attr_name, real_fn)
-                else:
-                    try:
-                        delattr(mod, attr_name)
-                    except AttributeError:
-                        pass

@@ -17,6 +17,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.mcp_proxy.tools.sessions._terminal_handoff import (
     _COMPACT_HANDOFF_FALLBACK_MAX_CHARS,
     _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
+    _capture_handoff_configs,
     _compact_handoff_digest_fallback_markdown,
     _compact_handoff_refresh_timeout_seconds,
     _compact_handoff_transcript_tail_markdown,
@@ -72,6 +73,7 @@ from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
 
 if TYPE_CHECKING:
+    from gobby.config.values import ConfigValuesService
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
     from gobby.storage.hub.protocol import HubDatabase
@@ -339,8 +341,10 @@ def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
     db: HubDatabase,
-    llm_service: Any | None = None,
+    llm_service_resolver: Callable[[], Any | None] | None = None,
     session_summary_config: Any | None = None,
+    compact_handoff_config: Any | None = None,
+    config_service_getter: Callable[[], ConfigValuesService] | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
@@ -557,13 +561,20 @@ def register_terminal_tools(
                     "error_code": "codex_interrupt_observation_unavailable",
                 }
 
+        operation_session_summary_config, operation_compact_handoff_config = (
+            _capture_handoff_configs(
+                config_service_getter,
+                session_summary_config=session_summary_config,
+                compact_handoff_config=compact_handoff_config,
+            )
+        )
         refresh_result = await _refresh_compact_handoff_context(
             resolved_session_id,
             session,
             session_manager,
             db,
-            llm_service,
-            session_summary_config,
+            llm_service_resolver() if llm_service_resolver is not None else None,
+            operation_session_summary_config,
         )
         if not refresh_result.get("success"):
             return {
@@ -652,8 +663,9 @@ def register_terminal_tools(
                 resolved_session_id,
                 session_manager,
                 db,
-                llm_service,
-                session_summary_config,
+                llm_service_resolver() if llm_service_resolver is not None else None,
+                operation_session_summary_config,
+                operation_compact_handoff_config,
             )
         result = {
             "compacted": True,

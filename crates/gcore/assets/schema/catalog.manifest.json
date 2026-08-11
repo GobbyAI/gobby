@@ -1197,12 +1197,24 @@
       "definition": "uuid|uuid|NO||NEVER"
     },
     {
+      "name": "config_state.id",
+      "definition": "boolean|bool|NO||NEVER"
+    },
+    {
+      "name": "config_state.revision",
+      "definition": "bigint|int8|NO||NEVER"
+    },
+    {
       "name": "config_store.is_secret",
       "definition": "boolean|bool|NO|false|NEVER"
     },
     {
       "name": "config_store.key",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "config_store.revision",
+      "definition": "bigint|int8|NO|0|NEVER"
     },
     {
       "name": "config_store.source",
@@ -1430,6 +1442,50 @@
     },
     {
       "name": "detection_manifests.version",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.acknowledged",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.committed_revision",
+      "definition": "bigint|int8|NO||NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.daemon_instance_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.generation",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.lease_expires_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "embedding_generation_acks.updated_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "embedding_projection_changes.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
+    },
+    {
+      "name": "embedding_projection_changes.is_tombstone",
+      "definition": "boolean|bool|NO|false|NEVER"
+    },
+    {
+      "name": "embedding_projection_changes.sequence",
+      "definition": "bigint|int8|NO||NEVER"
+    },
+    {
+      "name": "embedding_projection_changes.source_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "embedding_projection_changes.source_kind",
       "definition": "text|text|NO||NEVER"
     },
     {
@@ -5715,6 +5771,14 @@
       "definition": "PRIMARY KEY (completion_id, session_id)"
     },
     {
+      "name": "config_state.config_state_id_check",
+      "definition": "CHECK (id)"
+    },
+    {
+      "name": "config_state.config_state_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
       "name": "config_store.config_store_pkey",
       "definition": "PRIMARY KEY (key)"
     },
@@ -5809,6 +5873,18 @@
     {
       "name": "detection_manifests.detection_manifests_version_check",
       "definition": "CHECK (version ~ '^[0-9]+(\\.[0-9]+)*$'::text)"
+    },
+    {
+      "name": "embedding_generation_acks.embedding_generation_acks_pkey",
+      "definition": "PRIMARY KEY (daemon_instance_id)"
+    },
+    {
+      "name": "embedding_projection_changes.embedding_projection_changes_pkey",
+      "definition": "PRIMARY KEY (sequence)"
+    },
+    {
+      "name": "embedding_projection_changes.embedding_projection_changes_source_kind_check",
+      "definition": "CHECK (source_kind = ANY (ARRAY['memory'::text, 'tool'::text, 'github_issue'::text]))"
     },
     {
       "name": "expansion_runs.expansion_runs_input_source_check",
@@ -7067,6 +7143,10 @@
       "definition": "CREATE UNIQUE INDEX completion_subscribers_pkey ON $schema.completion_subscribers USING btree (completion_id, session_id)"
     },
     {
+      "name": "config_state_pkey",
+      "definition": "CREATE UNIQUE INDEX config_state_pkey ON $schema.config_state USING btree (id)"
+    },
+    {
       "name": "config_store_pkey",
       "definition": "CREATE UNIQUE INDEX config_store_pkey ON $schema.config_store USING btree (key)"
     },
@@ -7097,6 +7177,14 @@
     {
       "name": "detection_manifests_pkey",
       "definition": "CREATE UNIQUE INDEX detection_manifests_pkey ON $schema.detection_manifests USING btree (provider_id)"
+    },
+    {
+      "name": "embedding_generation_acks_pkey",
+      "definition": "CREATE UNIQUE INDEX embedding_generation_acks_pkey ON $schema.embedding_generation_acks USING btree (daemon_instance_id)"
+    },
+    {
+      "name": "embedding_projection_changes_pkey",
+      "definition": "CREATE UNIQUE INDEX embedding_projection_changes_pkey ON $schema.embedding_projection_changes USING btree (sequence)"
     },
     {
       "name": "expansion_runs_pkey",

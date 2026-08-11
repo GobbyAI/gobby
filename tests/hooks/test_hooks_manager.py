@@ -677,7 +677,9 @@ class TestHookManagerConfigLoadError:
         """Test that init handles config loading errors gracefully."""
         with (
             patch("gobby.hooks.factory.DaemonClient") as MockDaemonClient,
-            patch("gobby.config.app.load_config", side_effect=Exception("Config load failed")),
+            patch(
+                "gobby.hooks.factory.load_bootstrap", side_effect=Exception("Config load failed")
+            ),
         ):
             MockDaemonClient.return_value = mock_daemon_client
 
@@ -704,7 +706,9 @@ class TestHookManagerConfigLoadError:
         """Test that init uses default health check interval when config is None."""
         with (
             patch("gobby.hooks.factory.DaemonClient") as MockDaemonClient,
-            patch("gobby.config.app.load_config", side_effect=Exception("Config load failed")),
+            patch(
+                "gobby.hooks.factory.load_bootstrap", side_effect=Exception("Config load failed")
+            ),
         ):
             MockDaemonClient.return_value = mock_daemon_client
 

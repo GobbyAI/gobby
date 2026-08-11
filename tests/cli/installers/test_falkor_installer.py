@@ -192,7 +192,7 @@ class TestInstallFalkorDB:
         hub_db: HubDatabase,
     ) -> None:
         from gobby.cli.installers.falkor import _update_config
-        from gobby.storage.config_store import ConfigStore
+        from gobby.storage.config_repository import ConfigRepository
 
         class NonClosingDb:
             dialect = "postgres"
@@ -215,8 +215,8 @@ class TestInstallFalkorDB:
                 gobby_home=tmp_path,
             )
 
-        store = ConfigStore(hub_db)
-        assert store.get("databases.falkordb.host") == "127.0.0.1"
+        snapshot = ConfigRepository(hub_db).read(resolve_secrets=False)
+        assert snapshot.values["databases.falkordb.host"] == "127.0.0.1"
 
     def test_install_falkordb_returns_error_on_compose_failure(self, tmp_path: Path) -> None:
         from gobby.cli.installers.falkor import ResolvedFalkorPassword, install_falkordb

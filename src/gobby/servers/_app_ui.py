@@ -18,13 +18,9 @@ from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
-    class _ProductionUIServices(Protocol):
-        @property
-        def config(self) -> Any: ...
 
-    class _ProductionUIServer(Protocol):
-        @property
-        def services(self) -> _ProductionUIServices: ...
+class _ProductionUIServer(Protocol):
+    startup_config: Any
 
 
 logger = logging.getLogger("gobby.servers.app_factory")
@@ -172,11 +168,11 @@ async def _proxy_websocket(
 
 
 def _mount_vite_hmr_proxy(app: FastAPI, server: "HTTPServer") -> None:
-    config = server.services.config
+    config = server.startup_config
     if config is None:
         logger.debug("Vite HMR proxy not mounted: config is unavailable")
         return
-    ui_port = config.ui.port
+    ui_port = server.bootstrap_config.ui_port
 
     @app.websocket("/__vite_hmr")
     async def vite_hmr_proxy_root(websocket: WebSocket) -> None:
@@ -223,11 +219,11 @@ def _proxied_request_headers(headers: Headers) -> dict[str, str]:
 
 
 def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
-    config = server.services.config
+    config = server.startup_config
     if config is None:
         logger.debug("Dev UI proxy not mounted: config is unavailable")
         return
-    ui_port = config.ui.port
+    ui_port = server.bootstrap_config.ui_port
 
     async def vite_proxy(request: Request, path: str = "") -> Response:
         if _is_daemon_owned_ui_path(path):
@@ -284,7 +280,7 @@ def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
 
     from gobby.cli.utils import find_web_dir
 
-    web_dir = find_web_dir(server.services.config)
+    web_dir = find_web_dir(server.startup_config)
     if not web_dir:
         logger.warning("UI enabled in production mode but web/ directory not found")
         return

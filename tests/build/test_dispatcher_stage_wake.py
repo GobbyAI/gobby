@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 
 from tests._timing import wait_for_async_condition
+from tests.config_runtime_helpers import static_runtime_capture
 
 pytestmark = pytest.mark.unit
 
@@ -199,7 +200,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
 
     loop = SystemAutomationLoop(
         db=temp_db,
-        config=DaemonConfig(),
+        capture_bundle=static_runtime_capture(DaemonConfig()),
         run_db=run_inline,
     )
     services = SimpleNamespace(

@@ -12,6 +12,7 @@ from functools import partial
 from typing import Any, Literal, cast
 
 import psycopg
+from psycopg import sql as psycopg_sql
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
@@ -121,6 +122,41 @@ class PostgresHubDatabase:
         """Return this lifecycle's unique hub-backend marker."""
         return self._application_name
 
+    async def open_runtime_async_connection(self) -> psycopg.AsyncConnection[Any]:
+        """Open a pool-exempt autocommit connection under the daemon runtime role."""
+        runtime_role = self._runtime_role
+        if runtime_role is None:
+            raise RuntimeError("A runtime role is required for a pool-exempt connection")
+        connection = await psycopg.AsyncConnection.connect(
+            self._conninfo,
+            autocommit=True,
+            application_name=f"{self._application_name}-listener",
+            connect_timeout=10,
+            prepare_threshold=None,
+            row_factory=dict_row,
+            # An idle LISTEN socket can die silently on NAT/firewall timeouts;
+            # keepalives surface the dead peer so the listener reconnects.
+            keepalives=1,
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=3,
+        )
+        try:
+            statement = psycopg_sql.SQL("SET ROLE {}").format(psycopg_sql.Identifier(runtime_role))
+            await connection.execute(statement)
+            cursor = await connection.execute("SELECT current_user")
+            row = await cursor.fetchone()
+            observed = row.get("current_user") if isinstance(row, Mapping) else None
+            if observed != runtime_role:
+                raise _postgres_pool.RuntimeRoleMismatchError(
+                    "PostgreSQL runtime role mismatch: "
+                    f"expected {runtime_role!r}, observed {observed!r}"
+                )
+            return connection
+        except BaseException:
+            await connection.close()
+            raise
+
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         """Open the lazy connection pool before first use."""
         if getattr(self, "_pool_closed", False):
@@ -217,11 +253,14 @@ class PostgresHubDatabase:
         *,
         statement_timeout_ms: int = 5_000,
         lock_timeout_ms: int = 5_000,
+        repeatable_read_read_only: bool = False,
     ) -> Iterator[Transaction]:
         """Open a transaction with server-enforced local operation bounds."""
         if statement_timeout_ms <= 0 or lock_timeout_ms <= 0:
             raise ValueError("Transaction bounds must be positive milliseconds")
         with self.transaction() as txn:
+            if repeatable_read_read_only:
+                txn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
             settings = txn.execute(
                 "SELECT current_setting('statement_timeout') AS statement_timeout, "
                 "current_setting('lock_timeout') AS lock_timeout"
