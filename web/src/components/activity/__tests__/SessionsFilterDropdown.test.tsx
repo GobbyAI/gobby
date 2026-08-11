@@ -52,6 +52,34 @@ describe("SessionsFilterDropdown", () => {
     expect(screen.getByText("Date range")).toBeInTheDocument();
   });
 
+  it("fits narrow panels: capped width, container-query column collapse, flexible ref inputs (#20045)", () => {
+    renderDropdown();
+
+    // The popover caps its own width to the tab content and sizes its body
+    // with container queries so it never overflows a minimum-width panel.
+    const panel = screen.getByRole("dialog", { name: "Session filters" });
+    expect(panel.className).toContain("@container");
+    expect(panel.className).toContain("max-w-[calc(100%-1rem)]");
+
+    // Single column by default; two columns only when the popover has its
+    // full 320px width.
+    const grid = screen.getByText("Mode").closest(".grid")!;
+    expect(grid.className).toContain("grid-cols-1");
+    expect(grid.className).toContain("@min-[20rem]:grid-cols-[auto_minmax(0,1fr)]");
+
+    // Date range lives in a full-width row so all preset segments stay visible.
+    const dateColumn = screen.getByText("Date range").closest(".grid > div")!;
+    expect(dateColumn.className).toContain("@min-[20rem]:col-span-2");
+    expect(dateColumn.parentElement).toBe(grid);
+
+    // From/to inputs flex with the column instead of clipping at fixed widths.
+    for (const label of ["Session ref minimum", "Task ref maximum"]) {
+      const wrapper = screen.getByLabelText(label, { selector: "input" }).closest("label")!;
+      expect(wrapper.className).toContain("flex-1");
+      expect(wrapper.className).not.toContain("shrink-0");
+    }
+  });
+
   it("renders default include-all modes as checked with the Autonomous label", () => {
     renderDropdown();
     expect(screen.getByLabelText("Interactive")).toBeChecked();

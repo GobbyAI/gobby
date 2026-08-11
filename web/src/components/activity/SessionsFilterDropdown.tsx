@@ -162,14 +162,16 @@ export function SessionsFilterDropdown({
 
   const activeCount = countActiveFilters(filters);
 
-  // Width is capped at 320px on every viewport. On mobile (<768px) the panel
-  // becomes a centered popup modal; on larger viewports it's a right-anchored
-  // dropdown pinned to the top of the tab content, directly below the header
-  // Filter trigger. Both share the same internal 2-column body so the visual
-  // treatment is identical — only positioning changes.
+  // Width is capped at 320px on every viewport, and on desktop additionally by
+  // the tab content so the popover never overflows a minimum-width activity
+  // panel (#20045). On mobile (<768px) the panel becomes a centered popup
+  // modal; on larger viewports it's a right-anchored dropdown pinned to the
+  // top of the tab content, directly below the header Filter trigger. Both
+  // share the same internal body, which collapses from two columns to one via
+  // a container query when the popover itself is squeezed below 320px.
   const panelClass = isMobile
-    ? "fixed left-1/2 top-1/2 w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto"
-    : "absolute top-1 right-2 w-80 max-h-[60vh] overflow-y-auto";
+    ? "@container fixed left-1/2 top-1/2 w-80 max-w-[calc(100vw-1.5rem)] max-h-[80vh] -translate-x-1/2 -translate-y-1/2 overflow-y-auto"
+    : "@container absolute top-1 right-2 w-80 max-w-[calc(100%-1rem)] max-h-[60vh] overflow-y-auto";
 
   return (
     <FilterDropdownShell
@@ -180,7 +182,7 @@ export function SessionsFilterDropdown({
       ariaModal={isMobile || undefined}
       className={panelClass}
     >
-      <div className="grid grid-cols-[auto_minmax(0,1fr)] divide-x divide-border">
+      <div className="grid grid-cols-1 @min-[20rem]:grid-cols-[auto_minmax(0,1fr)]">
         {/* Left column: Mode + Provider */}
         <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
           <FilterSection label="Mode">
@@ -218,8 +220,8 @@ export function SessionsFilterDropdown({
           </FilterSection>
         </div>
 
-        {/* Right column: Session ref + Task ref + Date range */}
-        <div className="flex flex-col gap-0.5 p-1.5 min-w-0">
+        {/* Right column: Session ref + Task ref */}
+        <div className="flex flex-col gap-0.5 p-1.5 min-w-0 border-t border-border @min-[20rem]:border-t-0 @min-[20rem]:border-l">
           <FilterSection label="Session ref">
             <RefRangeInputs
               minValue={filters.sessionRefMin}
@@ -249,7 +251,10 @@ export function SessionsFilterDropdown({
               ariaLabelPrefix="Task ref"
             />
           </FilterSection>
+        </div>
 
+        {/* Date range spans the full popover so every preset segment stays visible */}
+        <div className="flex flex-col gap-0.5 p-1.5 min-w-0 border-t border-border @min-[20rem]:col-span-2">
           <FilterSection label="Date range">
             <div className="px-2 py-1">
               <SegmentedControl<DatePreset>
@@ -340,7 +345,7 @@ function RefRangeInputs({
           inputMode="numeric"
           pattern="[0-9]*"
           className={inputClassName}
-          wrapperClassName="w-[4.5rem] shrink-0"
+          wrapperClassName="min-w-0 flex-1"
           placeholder="from"
           value={minValue !== null ? String(minValue) : ""}
           onChange={(e) => onChangeMin(parseRefBound(e.target.value))}
@@ -354,7 +359,7 @@ function RefRangeInputs({
           inputMode="numeric"
           pattern="[0-9]*"
           className={inputClassName}
-          wrapperClassName="w-[4.5rem] shrink-0"
+          wrapperClassName="min-w-0 flex-1"
           placeholder="to"
           value={maxValue !== null ? String(maxValue) : ""}
           onChange={(e) => onChangeMax(parseRefBound(e.target.value))}
