@@ -23,7 +23,11 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
 
     @router.get("/values")
     async def get_config_values() -> JSONResponse:
-        return JSONResponse(content=await context.get_config_service().values())
+        try:
+            values = await context.get_config_service().values()
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
+        return JSONResponse(content=values)
 
     @router.patch("/values")
     async def patch_config_values(request: PatchConfigRequest) -> JSONResponse:

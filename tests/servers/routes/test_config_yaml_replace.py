@@ -273,6 +273,90 @@ def test_masked_export_round_trip() -> None:
     assert mutations.calls[0][2] == ConfigPatch(values=values)
 
 
+_VOICE_KEY = "voice.openai_compatible_audio"
+
+
+def _voice_binding(api_key: str | None) -> dict[str, object]:
+    return {
+        "provider": "speaches",
+        "url": "http://localhost:8080/v1",
+        "model": "whisper-large-v3",
+        "api_key": api_key,
+    }
+
+
+def test_export_masks_voice_binding_api_keys() -> None:
+    reference = "$secret:SPEACHES_KEY"
+    service, _runtime, _mutations = _service(
+        _snapshot(3, desired_values={_VOICE_KEY: [_voice_binding(reference)]})
+    )
+
+    exported = _client(service).post("/api/config/export")
+    document = cast(dict[str, Any], yaml.safe_load(exported.json()["content"]))
+
+    assert exported.status_code == 200
+    assert document["voice"]["openai_compatible_audio"][0]["api_key"] == MASKED_SECRET
+    assert reference not in exported.json()["content"]
+
+
+@pytest.mark.asyncio
+async def test_import_restores_masked_voice_binding_key() -> None:
+    reference = "$secret:SPEACHES_KEY"
+    service, _runtime, mutations = _service(
+        _snapshot(4, desired_values={_VOICE_KEY: [_voice_binding(reference)]}),
+        reconciled=_snapshot(5, desired_values={_VOICE_KEY: [_voice_binding(reference)]}),
+    )
+
+    result = await service.replace_yaml(
+        expected_revision=4,
+        content=yaml.safe_dump(
+            {"voice": {"openai_compatible_audio": [_voice_binding(MASKED_SECRET)]}}
+        ),
+    )
+
+    assert result["revision"] == 5
+    submitted = cast(list[dict[str, object]], mutations.calls[0][2].values[_VOICE_KEY])
+    assert submitted[0]["api_key"] == reference
+
+
+@pytest.mark.asyncio
+async def test_import_rejects_plaintext_voice_binding_key() -> None:
+    service, _runtime, mutations = _service(_snapshot(4))
+
+    with pytest.raises(ConfigValuesError) as error:
+        await service.replace_yaml(
+            expected_revision=4,
+            content=yaml.safe_dump(
+                {"voice": {"openai_compatible_audio": [_voice_binding("raw-plaintext-key")]}}
+            ),
+        )
+
+    assert error.value.code == "validation_error"
+    assert "$secret:NAME" in error.value.message
+    assert mutations.calls == []
+
+
+@pytest.mark.asyncio
+async def test_replace_yaml_anchors_masked_restore_to_expected_epoch() -> None:
+    reference = "$secret:SPEACHES_KEY"
+    service, _runtime, mutations = _service(
+        _snapshot(9, desired_values={_VOICE_KEY: [_voice_binding(reference)]})
+    )
+
+    with pytest.raises(ConfigValuesError) as error:
+        await service.replace_yaml(
+            expected_revision=8,
+            content=yaml.safe_dump(
+                {"voice": {"openai_compatible_audio": [_voice_binding(MASKED_SECRET)]}}
+            ),
+        )
+
+    assert error.value.code == "revision_conflict"
+    assert error.value.status_code == 409
+    assert error.value.actual_revision == 9
+    assert mutations.calls == []
+
+
 def test_stale_revision_replacement_is_rejected() -> None:
     mutations = _Mutations(
         revision=8,

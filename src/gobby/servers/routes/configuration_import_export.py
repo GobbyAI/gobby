@@ -24,6 +24,8 @@ def register_import_export_routes(
     async def export_config() -> JSONResponse:
         try:
             result = await context.get_config_documents_service().export_yaml()
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         except Exception:
             logger.exception("Configuration YAML export failed")
             return _indeterminate_response("Configuration export failed")

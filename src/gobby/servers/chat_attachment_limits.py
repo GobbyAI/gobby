@@ -97,9 +97,51 @@ def resolve_chat_attachment_limits(
 
 def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
     """Resolve attachment limits from a server's current runtime epoch."""
-    runtime = getattr(server.services, "config_runtime", None)
-    if runtime is not None:
-        daemon_config = runtime.capture().snapshot.active
-        return resolve_chat_attachment_limits(daemon_config=daemon_config)
+    from gobby.config.runtime import ConfigRuntime
+
+    services = getattr(server, "services", None)
+    runtime = getattr(services, "config_runtime", None)
+    if isinstance(runtime, ConfigRuntime) and runtime.ready:
+        return resolve_chat_attachment_limits(daemon_config=runtime.capture().snapshot.active)
     daemon_config = getattr(server, "config", None)
+    store = getattr(services, "config_store", None)
+    if store is not None and callable(getattr(store, "get", None)):
+        return ChatAttachmentLimits(
+            max_file_bytes=_store_limit(
+                store,
+                "chat.attachment_max_file_bytes",
+                _config_default(
+                    daemon_config,
+                    "attachment_max_file_bytes",
+                    DEFAULT_ATTACHMENT_MAX_FILE_BYTES,
+                ),
+            ),
+            max_total_bytes_per_message=_store_limit(
+                store,
+                "chat.attachment_max_total_bytes_per_message",
+                _config_default(
+                    daemon_config,
+                    "attachment_max_total_bytes_per_message",
+                    DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE,
+                ),
+            ),
+            max_files_per_message=_store_limit(
+                store,
+                "chat.attachment_max_files_per_message",
+                _config_default(
+                    daemon_config,
+                    "attachment_max_files_per_message",
+                    DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE,
+                ),
+            ),
+        )
     return resolve_chat_attachment_limits(daemon_config=daemon_config)
+
+
+def _store_limit(store: Any, key: str, fallback: int) -> int:
+    try:
+        value = store.get(key)
+    except Exception:
+        logger.warning("Config store read failed for %s; using fallback", key)
+        return fallback
+    return _positive_int(value, fallback)

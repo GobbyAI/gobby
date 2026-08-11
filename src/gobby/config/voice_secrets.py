@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from copy import deepcopy
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.storage.secret_names import SECRET_REF_PATTERN
+
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
 
 VOICE_AUDIO_BINDINGS_KEY = "voice.openai_compatible_audio"
 VOICE_AUDIO_API_KEY_PATH = f"{VOICE_AUDIO_BINDINGS_KEY}[].api_key"
@@ -118,6 +121,28 @@ def mask_voice_audio_api_keys(
             continue
         binding["api_key"] = MASKED_VOICE_AUDIO_API_KEY
     return masked
+
+
+def resolve_voice_binding_api_keys(
+    config: DaemonConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> DaemonConfig:
+    """Return a typed-config copy with binding API-key references resolved."""
+    bindings = config.voice.openai_compatible_audio
+    if not any(is_secret_reference(binding.api_key) for binding in bindings):
+        return config
+    resolved_config = config.model_copy(deep=True)
+    for binding in resolved_config.voice.openai_compatible_audio:
+        value = binding.api_key
+        if not isinstance(value, str):
+            continue
+        match = SECRET_REF_PATTERN.fullmatch(value)
+        if match is None:
+            continue
+        plaintext = secret_resolver(match.group(1))
+        if plaintext is not None:
+            binding.api_key = plaintext
+    return resolved_config
 
 
 def resolve_voice_audio_api_keys(

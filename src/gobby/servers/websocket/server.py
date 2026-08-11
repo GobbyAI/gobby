@@ -36,7 +36,7 @@ websockets_logger = logging.getLogger("websockets.server")
 
 
 if TYPE_CHECKING:
-    from gobby.config.values import ConfigRuntimeReader
+    from gobby.config.runtime import ConfigRuntime
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
@@ -78,7 +78,7 @@ class WebSocketServer(
         session_manager: "SessionManager | None" = None,
         db_executor: "DatabaseExecutor | None" = None,
         daemon_config: Any = None,
-        config_runtime: ConfigRuntimeReader | None = None,
+        config_runtime: "ConfigRuntime | None" = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
         tool_proxy_getter: Callable[[], Any | None] | None = None,
@@ -109,7 +109,8 @@ class WebSocketServer(
         self.completion_registry = completion_registry
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
-        self.daemon_config = daemon_config
+        self._startup_daemon_config = daemon_config
+        self._daemon_config_cache: tuple[Any, Any] | None = None
         self.config_runtime = config_runtime
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
@@ -169,6 +170,27 @@ class WebSocketServer(
         self._server: Any = None
         self._serve_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
+
+    @property
+    def daemon_config(self) -> Any:
+        """Live active daemon config; callers must treat it as read-only."""
+        runtime = self.config_runtime
+        if runtime is None or not getattr(runtime, "ready", False):
+            return self._startup_daemon_config
+        snapshot = runtime.capture().snapshot
+        cached = self._daemon_config_cache
+        if cached is not None and cached[0] is snapshot:
+            return cached[1]
+        active = snapshot.active
+        self._daemon_config_cache = (snapshot, active)
+        return active
+
+    @daemon_config.setter
+    def daemon_config(self, value: Any) -> None:
+        # Test seams assign a static config; clear the runtime-backed cache so
+        # the assigned value only serves as the no-runtime fallback.
+        self._startup_daemon_config = value
+        self._daemon_config_cache = None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run daemon database work on the bounded DB executor."""

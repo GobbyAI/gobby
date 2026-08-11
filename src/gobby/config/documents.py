@@ -19,6 +19,12 @@ from gobby.config.registry import (
 )
 from gobby.config.runtime import ConfigSnapshot
 from gobby.config.values import MASKED_SECRET, ConfigValuesError
+from gobby.config.voice_secrets import (
+    VOICE_AUDIO_BINDINGS_KEY,
+    mask_voice_audio_api_keys,
+    restore_masked_voice_audio_api_keys,
+    validate_voice_audio_api_key_references,
+)
 from gobby.storage.config_mutations import (
     ConfigConflictError,
     ConfigMutationResult,
@@ -83,7 +89,19 @@ class ConfigDocumentsService:
     ) -> dict[str, object]:
         """Validate a full YAML candidate before one daemon-namespace CAS."""
         self._validate_revision(expected_revision)
-        snapshot = self.runtime.snapshot
+        snapshot = self._runtime_snapshot()
+        if snapshot.revision != expected_revision:
+            # Masked-secret restoration below reads this snapshot; anchor it to
+            # the exact CAS epoch so restored references cannot cross epochs.
+            raise ConfigValuesError(
+                "revision_conflict",
+                "Configuration revision is stale",
+                ("expected_revision",),
+                status_code=409,
+                retryable=True,
+                expected_revision=expected_revision,
+                actual_revision=snapshot.revision,
+            )
         patch = await self.run_blocking(lambda: self._prepare(content, snapshot))
         try:
             result = await self.run_blocking(
@@ -127,9 +145,21 @@ class ConfigDocumentsService:
 
     async def export_yaml(self) -> dict[str, object]:
         """Export one desired daemon snapshot with secret references masked."""
-        snapshot = self.runtime.snapshot
+        snapshot = self._runtime_snapshot()
         content = await self.run_blocking(lambda: self._dump(snapshot))
         return {"revision": snapshot.revision, "content": content}
+
+    def _runtime_snapshot(self) -> ConfigSnapshot:
+        try:
+            return self.runtime.snapshot
+        except RuntimeError as exc:
+            raise ConfigValuesError(
+                "runtime_unavailable",
+                "Configuration runtime is not ready",
+                (),
+                status_code=503,
+                retryable=True,
+            ) from exc
 
     def _prepare(self, content: str, snapshot: ConfigSnapshot) -> ConfigPatch:
         try:
@@ -184,6 +214,8 @@ class ConfigDocumentsService:
                     validation_values=validation_values,
                 )
                 continue
+            if key == VOICE_AUDIO_BINDINGS_KEY:
+                value = self._prepare_voice_bindings(value, snapshot)
             values[key] = value
             validation_values[key] = value
         try:
@@ -195,6 +227,21 @@ class ConfigDocumentsService:
                 ("content",),
             ) from exc
         return ConfigPatch(values=values, secrets=secrets)
+
+    def _prepare_voice_bindings(self, value: object, snapshot: ConfigSnapshot) -> object:
+        """Restore masked audio API keys and reject plaintext keys on import."""
+        if not isinstance(value, list):
+            return value
+        wrapped: dict[str, object] = {VOICE_AUDIO_BINDINGS_KEY: value}
+        persisted: dict[str, object] = {
+            VOICE_AUDIO_BINDINGS_KEY: snapshot.desired_values.get(VOICE_AUDIO_BINDINGS_KEY)
+        }
+        try:
+            wrapped = restore_masked_voice_audio_api_keys(wrapped, persisted)
+            validate_voice_audio_api_key_references(wrapped)
+        except ValueError as exc:
+            raise self._invalid_key(VOICE_AUDIO_BINDINGS_KEY, str(exc)) from exc
+        return wrapped[VOICE_AUDIO_BINDINGS_KEY]
 
     def _prepare_secret(
         self,
@@ -242,9 +289,12 @@ class ConfigDocumentsService:
                 or spec.activation is ActivationPolicy.MANAGED
             ):
                 continue
-            values[key] = (
-                MASKED_SECRET if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE else value
-            )
+            if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
+                values[key] = MASKED_SECRET
+            elif key == VOICE_AUDIO_BINDINGS_KEY:
+                values[key] = mask_voice_audio_api_keys({key: value})[key]
+            else:
+                values[key] = value
         return yaml.safe_dump(
             unflatten_config(values),
             default_flow_style=False,

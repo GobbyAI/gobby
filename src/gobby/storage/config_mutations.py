@@ -30,6 +30,10 @@ from gobby.config.registry import (
     UnknownConfigKeyError,
     config_key_secrecy,
 )
+from gobby.config.voice_secrets import (
+    VOICE_AUDIO_BINDINGS_KEY,
+    validate_voice_audio_api_key_references,
+)
 from gobby.storage.config_repository import (
     MAX_CONFIG_REVISION,
     ConfigReadSnapshot,
@@ -373,6 +377,13 @@ class ConfigMutations:
                 validated = self._validate_value(spec, key, value)
                 if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
                     self._validate_reference(key, validated)
+                if key == VOICE_AUDIO_BINDINGS_KEY:
+                    try:
+                        validate_voice_audio_api_key_references(
+                            {key: to_jsonable_python(validated)}
+                        )
+                    except ValueError as exc:
+                        raise ConfigValidationError(str(exc), key=key) from exc
                 values[key] = validated
                 candidate[key] = validated
             for key, update in patch.secrets.items():

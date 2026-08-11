@@ -193,9 +193,9 @@ def test_service_capabilities_are_claim_bound_and_allowlisted(
     hub_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
 ) -> None:
-    config = server.services.config
-    assert isinstance(config, DaemonConfig)
+    config = runtime_config
     active_values = _machine_values(config)
     active_values["indexing.respect_gitignore"] = False
     server.services.config_runtime.snapshot = _snapshot(
@@ -411,9 +411,9 @@ def test_service_capabilities_broker_credentialed_or_invalid_service_urls(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     service_url: str,
+    runtime_config: DaemonConfig,
 ) -> None:
-    config = server.services.config
-    assert isinstance(config, DaemonConfig)
+    config = runtime_config
     active = config.model_copy(
         update={
             "databases": config.databases.model_copy(
@@ -447,9 +447,9 @@ def test_service_capabilities_omit_unresolved_runtime_config_markers(
     hub_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
+    runtime_config: DaemonConfig,
 ) -> None:
-    config = server.services.config
-    assert isinstance(config, DaemonConfig)
+    config = runtime_config
     active = config.model_copy(
         update={
             "embeddings": config.embeddings.model_copy(

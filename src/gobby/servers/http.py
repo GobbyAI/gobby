@@ -20,7 +20,7 @@ from starlette.responses import Response
 from gobby.ai import build_daemon_tool_chat_service
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.config.runtime import RuntimeActiveBundle
+from gobby.config.runtime import ConfigSnapshot, RuntimeActiveBundle
 from gobby.config.runtime_models import UnavailableService
 from gobby.config.ui import is_loopback_bind_host
 from gobby.hooks.broadcaster import HookEventBroadcaster
@@ -84,6 +84,7 @@ class HTTPServer:
             "gobby_http_runtime_bundle",
             default=None,
         )
+        self._active_config_cache: tuple[ConfigSnapshot, DaemonConfig] | None = None
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
@@ -401,7 +402,16 @@ class HTTPServer:
     @property
     def config(self) -> DaemonConfig | None:
         bundle = self.capture_runtime_bundle()
-        return bundle.snapshot.active if bundle else self.startup_config
+        if bundle is None:
+            return self.startup_config
+        snapshot = bundle.snapshot
+        cached = self._active_config_cache
+        if cached is not None and cached[0] is snapshot:
+            return cached[1]
+        # One typed projection per epoch; callers must treat it as read-only.
+        active = snapshot.active
+        self._active_config_cache = (snapshot, active)
+        return active
 
     @property
     def session_manager(self) -> Any:

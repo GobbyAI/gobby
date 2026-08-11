@@ -65,6 +65,7 @@ class GenerationEndpointConfig(BaseModel):
     )
     api_key: str | None = Field(
         default=None,
+        repr=False,
         description="API key for the endpoint. Use $secret:NAME for encrypted storage.",
     )
     vision_extract: bool = Field(

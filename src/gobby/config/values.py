@@ -21,6 +21,13 @@ from gobby.config.registry import (
     decode_dynamic_segment,
 )
 from gobby.config.runtime import ConfigSnapshot
+from gobby.config.voice_secrets import (
+    MASKED_VOICE_AUDIO_API_KEY,
+    VOICE_AUDIO_BINDINGS_KEY,
+    mask_voice_audio_api_keys,
+    restore_masked_voice_audio_api_keys,
+    validate_voice_audio_api_key_references,
+)
 from gobby.storage.config_mutations import (
     ConfigConflictError,
     ConfigMutationResult,
@@ -32,6 +39,7 @@ from gobby.storage.config_mutations import (
 from gobby.storage.config_store import unflatten_config
 
 MASKED_SECRET = "********"
+_GENERATION_ENDPOINT_PREFIX = "ai.generation.endpoints."
 
 
 class ConfigRuntimeReader(Protocol):
@@ -102,13 +110,40 @@ class ConfigValuesService:
         return self.registry.json_schema(ConfigVisibility.PUBLIC)
 
     async def values(self) -> dict[str, object]:
-        return self._snapshot_body(self.runtime.snapshot)
+        return self._snapshot_body(self._snapshot())
 
     def desired_config(self) -> DaemonConfig:
-        return self.runtime.snapshot.desired
+        return self._snapshot().desired
 
     def desired_secret(self, key: str) -> str | None:
-        return self.runtime.snapshot.desired_secret(key)
+        return self._snapshot().desired_secret(key)
+
+    def _snapshot(self) -> ConfigSnapshot:
+        try:
+            return self.runtime.snapshot
+        except RuntimeError as exc:
+            raise ConfigValuesError(
+                "runtime_unavailable",
+                "Configuration runtime is not ready",
+                (),
+                status_code=503,
+                retryable=True,
+            ) from exc
+
+    def _anchored_snapshot(self, expected_revision: int) -> ConfigSnapshot:
+        """Return the runtime snapshot for exactly the CAS epoch being mutated."""
+        snapshot = self._snapshot()
+        if snapshot.revision != expected_revision:
+            raise ConfigValuesError(
+                "revision_conflict",
+                "Configuration revision is stale",
+                ("expected_revision",),
+                status_code=409,
+                retryable=True,
+                expected_revision=expected_revision,
+                actual_revision=snapshot.revision,
+            )
+        return snapshot
 
     async def patch(
         self,
@@ -132,6 +167,7 @@ class ConfigValuesService:
         values: Mapping[str, object],
         unset: frozenset[str] = frozenset(),
         paths: Mapping[str, tuple[str, ...]] | None = None,
+        probe_verified: bool = False,
     ) -> dict[str, object]:
         value_updates: dict[str, object] = {}
         secret_updates: dict[str, SecretUpdate] = {}
@@ -149,11 +185,19 @@ class ConfigValuesService:
                         ("values", *path),
                     )
                 secret_updates[key] = SecretUpdate(plaintext=value, category="config")
+            elif key == VOICE_AUDIO_BINDINGS_KEY:
+                value_updates[key] = self._prepared_voice_bindings(
+                    value,
+                    path,
+                    expected_revision=expected_revision,
+                )
             else:
                 value_updates[key] = value
         for key in unset:
             path = resolved_paths.setdefault(key, tuple(key.split(".")))
             self._authorize(key, path)
+        if not probe_verified:
+            self._reject_unprobed_responses_endpoints(values, resolved_paths)
 
         patch = ConfigPatch(
             values=value_updates,
@@ -212,6 +256,82 @@ class ConfigValuesService:
                 },
             }
         return self._mutation_body(result, snapshot)
+
+    def _prepared_voice_bindings(
+        self,
+        value: object,
+        path: tuple[str, ...],
+        *,
+        expected_revision: int,
+    ) -> object:
+        """Restore masked audio API keys and reject plaintext keys before CAS."""
+        if not isinstance(value, list):
+            return value
+        wrapped: dict[str, object] = {VOICE_AUDIO_BINDINGS_KEY: value}
+        has_masked = any(
+            isinstance(binding, Mapping) and binding.get("api_key") == MASKED_VOICE_AUDIO_API_KEY
+            for binding in value
+        )
+        if has_masked:
+            snapshot = self._anchored_snapshot(expected_revision)
+            persisted: dict[str, object] = {
+                VOICE_AUDIO_BINDINGS_KEY: snapshot.desired_values.get(VOICE_AUDIO_BINDINGS_KEY)
+            }
+            try:
+                wrapped = restore_masked_voice_audio_api_keys(wrapped, persisted)
+            except ValueError as exc:
+                raise ConfigValuesError(
+                    "validation_error",
+                    str(exc),
+                    ("values", *path),
+                ) from exc
+        try:
+            validate_voice_audio_api_key_references(wrapped)
+        except ValueError as exc:
+            raise ConfigValuesError(
+                "validation_error",
+                str(exc),
+                ("values", *path),
+            ) from exc
+        return wrapped[VOICE_AUDIO_BINDINGS_KEY]
+
+    def _reject_unprobed_responses_endpoints(
+        self,
+        values: Mapping[str, object],
+        resolved_paths: Mapping[str, tuple[str, ...]],
+    ) -> None:
+        """Require the probe-gated activation route for responses-wire endpoints."""
+        touched: set[str] = {
+            key.removeprefix(_GENERATION_ENDPOINT_PREFIX).partition(".")[0]
+            for key in values
+            if key.startswith(_GENERATION_ENDPOINT_PREFIX)
+        }
+        if not touched:
+            return
+        desired = self._snapshot().desired
+        for segment in sorted(touched):
+            wire_api = values.get(f"{_GENERATION_ENDPOINT_PREFIX}{segment}.wire_api")
+            if wire_api is None:
+                try:
+                    endpoint_name = decode_dynamic_segment(segment)
+                except ValueError:
+                    endpoint_name = segment
+                endpoint = desired.ai.generation.endpoints.get(endpoint_name)
+                wire_api = endpoint.wire_api if endpoint is not None else None
+            if wire_api == "responses":
+                path = resolved_paths.get(
+                    f"{_GENERATION_ENDPOINT_PREFIX}{segment}.wire_api",
+                    ("ai", "generation", "endpoints", segment),
+                )
+                raise ConfigValuesError(
+                    "probe_required",
+                    (
+                        f"Responses endpoint {segment!r} must be saved through "
+                        f"/api/config/generation-endpoints/{segment}/activate"
+                    ),
+                    ("values", *path),
+                    action=f"/api/config/generation-endpoints/{segment}/activate",
+                )
 
     def _authorize(self, key: str, path: tuple[str, ...]) -> ConfigSecrecy:
         try:
@@ -311,6 +431,9 @@ class ConfigValuesService:
                 is_set = isinstance(value, str) and value.startswith("$secret:")
                 secret_set[key] = is_set
                 projected[key] = MASKED_SECRET if is_set else None
+            elif key == VOICE_AUDIO_BINDINGS_KEY:
+                masked = mask_voice_audio_api_keys({key: to_jsonable_python(value)})
+                projected[key] = masked[key]
             else:
                 projected[key] = to_jsonable_python(value)
         return projected, secret_set

@@ -344,8 +344,10 @@ class _EndpointService:
         expected_revision: int,
         values: Mapping[str, object],
         unset: frozenset[str] = frozenset(),
+        probe_verified: bool = False,
     ) -> dict[str, object]:
         assert not unset
+        assert probe_verified is True
         self.calls.append((expected_revision, dict(values)))
         return {
             "committed": True,
@@ -394,6 +396,184 @@ def test_endpoint_activation_uses_typed_mutation(monkeypatch: pytest.MonkeyPatch
     assert revision == 3
     assert values["ai.generation.endpoints.openrouter.api_key"] == "endpoint-secret"
     assert values["ai.generation.endpoints.openrouter.model"] == "model-a"
+
+
+_VOICE_KEY = "voice.openai_compatible_audio"
+
+
+def _voice_binding(api_key: str | None) -> dict[str, object]:
+    return {
+        "provider": "speaches",
+        "url": "http://localhost:8080/v1",
+        "model": "whisper-large-v3",
+        "api_key": api_key,
+    }
+
+
+def _voice_patch_body(expected_revision: int, api_key: str | None) -> dict[str, object]:
+    return {
+        "expected_revision": expected_revision,
+        "values": {"voice": {"openai_compatible_audio": [_voice_binding(api_key)]}},
+    }
+
+
+def test_voice_binding_api_key_rejects_plaintext() -> None:
+    service, _runtime, mutations = _service(_snapshot(3))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json=_voice_patch_body(3, "raw-plaintext-key"),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"
+    assert "$secret:NAME" in response.json()["error"]["message"]
+    assert "raw-plaintext-key" not in response.text
+    assert mutations.calls == []
+
+
+def test_voice_binding_accepts_reference_and_masks_reads() -> None:
+    reference = "$secret:SPEACHES_KEY"
+    stored = {_VOICE_KEY: [_voice_binding(reference)]}
+    service, runtime, mutations = _service(
+        _snapshot(5, desired_values=stored),
+        result=ConfigMutationResult(6, frozenset({_VOICE_KEY})),
+    )
+    runtime.reconciled = _snapshot(6, desired_values=stored)
+    client = _client(service)
+
+    patched = client.patch("/api/config/values", json=_voice_patch_body(5, reference))
+    values = client.get("/api/config/values")
+
+    assert patched.status_code == 200
+    submitted = cast(list[dict[str, object]], mutations.calls[-1][1].values[_VOICE_KEY])
+    assert submitted[0]["api_key"] == reference
+    binding = values.json()["desired"]["voice"]["openai_compatible_audio"][0]
+    assert binding["api_key"] == "********"
+    assert reference not in values.text
+
+
+def test_voice_binding_masked_key_is_restored_from_anchored_epoch() -> None:
+    reference = "$secret:SPEACHES_KEY"
+    stored = {_VOICE_KEY: [_voice_binding(reference)]}
+    service, runtime, mutations = _service(
+        _snapshot(5, desired_values=stored),
+        result=ConfigMutationResult(6, frozenset({_VOICE_KEY})),
+    )
+    runtime.reconciled = _snapshot(6, desired_values=stored)
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json=_voice_patch_body(5, "********"),
+    )
+
+    assert response.status_code == 200
+    submitted = cast(list[dict[str, object]], mutations.calls[-1][1].values[_VOICE_KEY])
+    assert submitted[0]["api_key"] == reference
+
+
+def test_voice_binding_masked_key_requires_matching_epoch() -> None:
+    stored = {_VOICE_KEY: [_voice_binding("$secret:SPEACHES_KEY")]}
+    service, _runtime, mutations = _service(_snapshot(6, desired_values=stored))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json=_voice_patch_body(5, "********"),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "revision_conflict"
+    assert response.json()["error"]["actual_revision"] == 6
+    assert mutations.calls == []
+
+
+def test_patch_rejects_unprobed_responses_endpoint_creation() -> None:
+    service, _runtime, mutations = _service(_snapshot(2))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 2,
+            "values": {
+                "ai": {
+                    "generation": {
+                        "endpoints": {
+                            "neo": {
+                                "wire_api": "responses",
+                                "api_base": "https://neo.example/v1",
+                                "model": "neo-model",
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "probe_required"
+    assert response.json()["error"]["action"] == "/api/config/generation-endpoints/neo/activate"
+    assert mutations.calls == []
+
+
+def test_patch_rejects_touching_existing_responses_endpoint() -> None:
+    desired = DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "neo": {
+                        "wire_api": "responses",
+                        "api_base": "https://neo.example/v1",
+                        "model": "neo-model",
+                        "api_key": "$secret:NEO_KEY",
+                    }
+                }
+            }
+        }
+    )
+    snapshot = ConfigSnapshot(
+        revision=3,
+        desired=desired,
+        active=desired,
+        row_revisions={},
+        pending_restart_keys=frozenset(),
+        failed_live_keys={},
+    )
+    service, _runtime, mutations = _service(snapshot)
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 3,
+            "values": {"ai": {"generation": {"endpoints": {"neo": {"model": "other-model"}}}}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "probe_required"
+    assert mutations.calls == []
+
+
+class _UnstartedRuntime:
+    @property
+    def snapshot(self) -> ConfigSnapshot:
+        raise RuntimeError("ConfigRuntime has not started")
+
+    async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:
+        raise AssertionError("reconcile must not run before the runtime starts")
+
+
+def test_values_returns_503_during_startup_window() -> None:
+    service = ConfigValuesService(
+        runtime=cast(Any, _UnstartedRuntime()),
+        mutations=_FakeMutations(),
+    )
+
+    response = _client(service).get("/api/config/values")
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "runtime_unavailable"
+    assert response.json()["error"]["retryable"] is True
 
 
 @pytest.mark.parametrize(("logical", "encoded"), DYNAMIC_SEGMENT_CODEC_VECTORS)

@@ -517,3 +517,33 @@ def test_ambient_read_is_coherent(revision_db: HubDatabase) -> None:
     assert populated.revision == 1
     assert populated.overrides["ui.enabled"] is True
     assert populated.row_revisions == {"ui.enabled": 1}
+
+
+def test_voice_binding_plaintext_api_key_is_rejected_at_storage(
+    revision_db: HubDatabase,
+    mutations: ConfigMutations,
+) -> None:
+    """Every writer hits the mutations guard: plaintext audio keys never persist."""
+    binding = {
+        "provider": "speaches",
+        "url": "http://localhost:8080/v1",
+        "model": "whisper-large-v3",
+        "api_key": "raw-plaintext-key",
+    }
+
+    with pytest.raises(ConfigValidationError, match=r"\$secret:NAME"):
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={"voice.openai_compatible_audio": [binding]}),
+        )
+
+    assert revision_db.fetchall("SELECT key FROM config_store") == []
+
+    reference_binding = dict(binding, api_key="$secret:SPEACHES_KEY")
+    result = mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(values={"voice.openai_compatible_audio": [reference_binding]}),
+    )
+
+    assert result.revision == 1
+    assert result.changed_keys == frozenset({"voice.openai_compatible_audio"})

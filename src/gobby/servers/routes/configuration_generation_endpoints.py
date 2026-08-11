@@ -42,7 +42,11 @@ def register_generation_endpoint_routes(
         service = context.get_config_service()
         encoded_name = encode_dynamic_segment(endpoint_name)
         prefix = f"ai.generation.endpoints.{encoded_name}"
-        api_key = request.api_key or service.desired_secret(f"{prefix}.api_key")
+        try:
+            api_key = request.api_key or service.desired_secret(f"{prefix}.api_key")
+            current_config = service.desired_config()
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         if not api_key:
             raise HTTPException(
                 status_code=422,
@@ -66,7 +70,7 @@ def register_generation_endpoint_routes(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-        probe_config = _probe_config(service.desired_config(), endpoint_name, endpoint)
+        probe_config = _probe_config(current_config, endpoint_name, endpoint)
         try:
             probe_result = await probe_responses_endpoint(endpoint_name, endpoint, probe_config)
         except (EndpointActivationError, ValueError) as exc:
@@ -85,6 +89,7 @@ def register_generation_endpoint_routes(
                     f"{prefix}.tool_chat": activated.tool_chat,
                     f"{prefix}.vision_extract": activated.vision_extract,
                 },
+                probe_verified=True,
             )
         except ConfigValuesError as exc:
             return JSONResponse(content=exc.public_body(), status_code=exc.status_code)

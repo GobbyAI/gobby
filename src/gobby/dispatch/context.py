@@ -20,6 +20,14 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, W
 from gobby.workflows.definitions import AgentDefinitionBody
 
 
+def services_daemon_config(services: object | None) -> Any | None:
+    """Read the active daemon config from the services' runtime epoch."""
+    runtime = getattr(services, "config_runtime", None) if services is not None else None
+    if runtime is None or not getattr(runtime, "ready", False):
+        return None
+    return runtime.capture().snapshot.active
+
+
 def reload_candidate(
     task_id: str,
     *,
@@ -79,7 +87,7 @@ def build_context(
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     children = _children(db, task.id)
     current_stage = dispatch_rules.current_stage(task)
-    build_config = getattr(services, "config", None) if services is not None else None
+    build_config = services_daemon_config(services)
     stage_registry = _stage_registry(db)
     agent_definitions = _agent_definitions(db, project_id=task.project_id)
     return SimpleNamespace(

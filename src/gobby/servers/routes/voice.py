@@ -25,6 +25,7 @@ from gobby.ai.registry import (
     build_daemon_ai_capability_registry,
     normalize_capability,
 )
+from gobby.config.voice_secrets import is_secret_reference, resolve_voice_binding_api_keys
 from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
 from gobby.servers.responses import JSONResponse
 from gobby.servers.upload_limits import read_bounded_upload
@@ -260,7 +261,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
 
         try:
             service = build_daemon_audio_service(
-                config,
+                _config_with_resolved_audio_keys(server, config),
                 registry=_cached_audio_registry(config),
             )
             result = await service.execute(
@@ -318,6 +319,18 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
             )
 
     return router
+
+
+def _config_with_resolved_audio_keys(server: HTTPServer, config: Any) -> Any:
+    """Resolve $secret: audio API-key references for adapter construction."""
+    voice = getattr(config, "voice", None)
+    bindings = getattr(voice, "openai_compatible_audio", None) if voice is not None else None
+    if not bindings or not any(is_secret_reference(binding.api_key) for binding in bindings):
+        return config
+
+    from gobby.storage.secrets import SecretStore
+
+    return resolve_voice_binding_api_keys(config, SecretStore(server.services.database).get)
 
 
 def _audio_failure_label(capability: str) -> str:
