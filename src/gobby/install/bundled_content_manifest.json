@@ -211,7 +211,7 @@
     "skills/impeccable/scripts/hook-admin.mjs": "3311dc1e62bf3786c952fb85f212fdaa6df697ea6c3d167bee4a48c28bece0c4",
     "skills/impeccable/scripts/hook-before-edit.mjs": "2a9952643ba8008f8b56ae11de375af9beb656e04fd366cb0ded623d54b58799",
     "skills/impeccable/scripts/hook-lib.mjs": "a6541c48f0fa6bf0107373c235c35ebaa769e58374539a9b767419c4d6f2aaa2",
-    "skills/impeccable/scripts/hook-project-root.mjs": "f5e3dacda81d9069fe401fb5e8eb39c108c4216688fafc80fe76d80834c5a50e",
+    "skills/impeccable/scripts/hook-project-root.mjs": "a725f6125d8f92cbcd12d2c3ea2c265b37d89368ccd63d714de1b10e63753a43",
     "skills/impeccable/scripts/hook.mjs": "8429733787c22cc9af0ed06ba65a2e1701cb93567e7b07fab2e135358781f8f1",
     "skills/impeccable/scripts/lib/artifact-schema.mjs": "ad0a72e96c74be09490b1aea095478e307f45d707b15021c922cbd4466619359",
     "skills/impeccable/scripts/lib/composition-catalog.mjs": "a733122589e5bf6dbfcfbc2f9d016d6f54db0e4cebf278ac7f6a9cea374c9916",

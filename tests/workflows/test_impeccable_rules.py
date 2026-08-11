@@ -111,7 +111,11 @@ async def test_prewarm_materializes_each_enabled_rule_skill_once(
 
 
 @pytest.mark.asyncio
-async def test_prewarm_failure_is_non_blocking(impeccable_db: HubDatabase) -> None:
+async def test_prewarm_failure_is_non_blocking(
+    impeccable_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    project_id = "00000000-0000-0000-0000-000000000123"
     materializer = AsyncMock(spec=SkillScriptMaterializer)
     resolved: list[tuple[str, str | None]] = []
 
@@ -122,9 +126,12 @@ async def test_prewarm_failure_is_non_blocking(impeccable_db: HubDatabase) -> No
     materializer.resolve.side_effect = fail
     engine = RuleEngine(impeccable_db, skill_script_materializer=materializer)
 
-    await engine.prewarm_skill_scripts(project_id=None)
+    with caplog.at_level("WARNING"):
+        await engine.prewarm_skill_scripts(project_id=project_id)
 
-    assert resolved == [("impeccable", None)]
+    assert resolved == [("impeccable", project_id)]
+    assert f"skill impeccable in project {project_id}" in caplog.text
+    assert "RuntimeError: sensitive cache path" in caplog.text
 
 
 @pytest.mark.parametrize("source", PROVIDERS)
@@ -205,6 +212,7 @@ async def test_deep_detector_schedules_for_supported_sources(
     create_task.call_args.args[0].close()
 
 
+@pytest.mark.integration
 def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     nested = worktree / "packages" / "web" / "src"
@@ -229,3 +237,27 @@ def test_hook_project_root_resolves_nested_worktree_cwd(tmp_path: Path) -> None:
     )
 
     assert completed.stdout == str(worktree)
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("event", [True, {"cwd": True}, {"workspace_roots": [42]}])
+def test_hook_project_root_rejects_non_string_path_values(tmp_path: Path, event: object) -> None:
+    helper = (
+        Path(__file__).parents[2]
+        / "src/gobby/install/shared/skills/impeccable/scripts/hook-project-root.mjs"
+    )
+    event_json = json.dumps(event)
+    script = (
+        f"import {{ resolveHookProjectCwd }} from {json.dumps(helper.as_uri())}; "
+        f"process.stdout.write(resolveHookProjectCwd({json.dumps(event_json)}, "
+        f"{json.dumps(str(tmp_path))}));"
+    )
+
+    completed = subprocess.run(
+        ["node", "--input-type=module", "--eval", script],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.stdout == str(tmp_path)

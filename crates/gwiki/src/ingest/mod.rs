@@ -25,6 +25,7 @@ use crate::WikiError;
 use crate::indexer;
 use crate::paths::raw_source_path;
 use crate::sources::SourceRecord;
+#[cfg(feature = "documents")]
 pub(crate) use crate::sources::atomic::sync_parent_dir;
 use crate::store::WikiIndexStore;
 

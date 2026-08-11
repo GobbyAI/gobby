@@ -311,14 +311,16 @@ fn architecture_invalidation_key(
     graph_edges: &[CodewikiGraphEdge],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
 ) -> String {
-    let mut key = String::from("architecture:v2\n");
+    let mut key = String::from("architecture:v3\n");
     let _ = writeln!(key, "system={}", system_model.digest());
 
     for file in file_docs {
         let _ = writeln!(
             key,
             "file\t{}\t{}\t{}",
-            file.path, file.module, file.summary
+            file.path,
+            file.module,
+            hasher::content_hash(file.summary.as_bytes())
         );
         for span in &file.source_spans {
             push_span_key(&mut key, "file-span", span);
@@ -330,13 +332,21 @@ fn architecture_invalidation_key(
             let _ = writeln!(
                 key,
                 "symbol\t{}\t{}\t{}\t{}",
-                file.path, symbol.component_label, symbol.component_id, symbol.purpose
+                file.path,
+                symbol.component_label,
+                symbol.component_id,
+                hasher::content_hash(symbol.purpose.as_bytes())
             );
         }
     }
 
     for module in module_docs {
-        let _ = writeln!(key, "module\t{}\t{}", module.module, module.summary);
+        let _ = writeln!(
+            key,
+            "module\t{}\t{}",
+            module.module,
+            hasher::content_hash(module.summary.as_bytes())
+        );
         for span in &module.source_spans {
             push_span_key(&mut key, "module-span", span);
         }
@@ -344,14 +354,18 @@ fn architecture_invalidation_key(
             let _ = writeln!(
                 key,
                 "module-file\t{}\t{}\t{}",
-                module.module, file.path, file.summary
+                module.module,
+                file.path,
+                hasher::content_hash(file.summary.as_bytes())
             );
         }
         for child in &module.child_modules {
             let _ = writeln!(
                 key,
                 "module-child\t{}\t{}\t{}",
-                module.module, child.module, child.summary
+                module.module,
+                child.module,
+                hasher::content_hash(child.summary.as_bytes())
             );
         }
     }

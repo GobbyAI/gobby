@@ -156,7 +156,10 @@ impl AiGenerationSettings {
 /// pages (infrastructure, features, deprecations) render without an LLM and are
 /// excluded.
 fn aggregate_writer_page(doc_path: &str) -> bool {
-    doc_path == REPO_DOC_PATH || doc_path == ARCHITECTURE_DOC_PATH || is_curated_doc(doc_path)
+    doc_path != CONCEPT_INDEX_DOC_PATH
+        && (doc_path == REPO_DOC_PATH
+            || doc_path == ARCHITECTURE_DOC_PATH
+            || is_curated_doc(doc_path))
 }
 
 pub(crate) fn is_curated_doc(doc_path: &str) -> bool {

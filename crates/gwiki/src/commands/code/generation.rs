@@ -19,6 +19,8 @@ use super::{
 /// mirror the AI-off/test path: no deterministic inputs, no generators,
 /// symbol-depth AI, full verify scope, silent progress, unscoped pruning.
 pub(crate) struct GenerateDocsOptions<'g, 'r> {
+    /// Ownership inputs, in order: project root, project id, and mutable
+    /// metadata used to preserve deterministic ownership assignments.
     pub ownership: Option<(&'r Path, &'r str, &'r mut OwnershipMeta)>,
     /// Deterministic workspace system model (#891, #17521). Supplies the
     /// evidence graph the architecture page's LLM-composed diagram is verified

@@ -38,15 +38,26 @@ export function WikiCodewikiStatus() {
       }
     };
 
-    void load().then((snapshot) => {
-      if (!cancelled && snapshot !== null && snapshot.state !== "disabled") {
-        timer = window.setInterval(() => void load(), POLL_INTERVAL_MS);
+    const stopPolling = () => {
+      if (timer !== undefined) {
+        window.clearInterval(timer);
+        timer = undefined;
       }
-    });
+    };
+
+    const poll = async () => {
+      const snapshot = await load();
+      if (snapshot !== null && (snapshot.state === "disabled" || snapshot.enabled === false)) {
+        stopPolling();
+      }
+    };
+
+    timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    void poll();
 
     return () => {
       cancelled = true;
-      if (timer !== undefined) window.clearInterval(timer);
+      stopPolling();
     };
   }, []);
 

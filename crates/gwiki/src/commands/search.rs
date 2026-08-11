@@ -129,18 +129,42 @@ fn run_search_attached(
     let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
         detail: format!("failed to resolve AI config for gwiki search: {error}"),
     })?;
-    let embedding = {
-        let ai_context = AiContext::resolve(None, &mut source);
-        crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
-    };
-    let qdrant = resolve_qdrant_config(&mut source);
     let falkor = resolve_falkordb_config(&mut source);
-    let embedding = embedding.ok_or_else(|| required_search_config("embedding endpoint"))?;
-    let qdrant = qdrant
-        .filter(qdrant_config_has_url)
-        .ok_or_else(|| required_search_config("Qdrant"))?;
+    let semantic_config = if include_semantic {
+        let embedding = {
+            let ai_context = AiContext::resolve(None, &mut source);
+            crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
+        }
+        .ok_or_else(|| required_search_config("embedding endpoint"))?;
+        let qdrant = resolve_qdrant_config(&mut source)
+            .filter(qdrant_config_has_url)
+            .ok_or_else(|| required_search_config("Qdrant"))?;
+        Some((embedding, qdrant))
+    } else {
+        None
+    };
+    drop(source);
     let mut graph_backend = graph_backend_from_falkor_config(falkor);
     let mut bm25_backend = wiki_search::bm25::PostgresBm25Backend::new(&mut conn);
+    let input = SearchExecutionInput {
+        output_scope,
+        search_scope,
+        vault_root,
+        query,
+        limit,
+        include_semantic,
+        token_budget,
+        include_candidates,
+    };
+    let Some((embedding, qdrant)) = semantic_config else {
+        let mut semantic_backend = search_support::UnavailableSemanticBackend;
+        return run_search_with_backends(
+            &mut bm25_backend,
+            &mut semantic_backend,
+            &mut graph_backend,
+            input,
+        );
+    };
     let mut semantic_backend = wiki_search::semantic::GobbySemanticBackend::new(
         Some(embedding),
         Some(qdrant),
@@ -151,16 +175,7 @@ fn run_search_attached(
         &mut bm25_backend,
         &mut semantic_backend,
         &mut graph_backend,
-        SearchExecutionInput {
-            output_scope,
-            search_scope,
-            vault_root,
-            query,
-            limit,
-            include_semantic,
-            token_budget,
-            include_candidates,
-        },
+        input,
     )
 }
 

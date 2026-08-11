@@ -4,7 +4,7 @@
  * no strip at all — no placeholder badge, no raw reason token.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { WikiCodewikiStatus } from "../WikiCodewikiStatus";
@@ -17,6 +17,7 @@ vi.mock("../WikiTabData", () => ({
 const mockFetchCodewikiStatus = vi.mocked(fetchCodewikiStatus);
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -54,5 +55,42 @@ describe("WikiCodewikiStatus", () => {
 
     expect(await screen.findByText("Unavailable")).toBeTruthy();
     expect(screen.getByText("Codewiki status unavailable")).toBeTruthy();
+  });
+
+  it("keeps polling after the initial status request fails", async () => {
+    vi.useFakeTimers();
+    mockFetchCodewikiStatus
+      .mockRejectedValueOnce(new Error("status route starting"))
+      .mockResolvedValue({ enabled: true, state: "enabled", reason: "" });
+
+    const { container } = render(<WikiCodewikiStatus />);
+    await act(async () => Promise.resolve());
+    expect(screen.getByText("Unavailable")).toBeTruthy();
+
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(2);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("stops polling when a later snapshot disables the surface", async () => {
+    vi.useFakeTimers();
+    mockFetchCodewikiStatus
+      .mockResolvedValueOnce({ enabled: true, state: "enabled", reason: "" })
+      .mockResolvedValue({
+        enabled: false,
+        state: "disabled",
+        reason: "pending_wiki_redesign",
+      });
+
+    render(<WikiCodewikiStatus />);
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+
+    expect(screen.getByText("Paused")).toBeTruthy();
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(2);
+
+    await act(async () => vi.advanceTimersByTimeAsync(90_000));
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(2);
   });
 });

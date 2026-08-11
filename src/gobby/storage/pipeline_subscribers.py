@@ -5,6 +5,10 @@ from __future__ import annotations
 from gobby.storage.hub.protocol import HubDatabase
 
 
+class PipelineSubscriberStorageError(RuntimeError):
+    """Transport-neutral failure while querying completion subscribers."""
+
+
 class PipelineCompletionSubscriberMixin:
     """Completion subscriber CRUD methods."""
 
@@ -83,19 +87,24 @@ class PipelineCompletionSubscriberMixin:
         """Return whether a session is durably waiting on one of its active agent runs."""
         from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES
 
-        row = self.db.fetchone(
-            """
-            SELECT EXISTS (
-                SELECT 1
-                FROM completion_subscribers AS subscribers
-                JOIN agent_runs AS runs ON runs.id = subscribers.completion_id
-                WHERE subscribers.session_id = %s
-                  AND runs.parent_session_id = %s
-                  AND runs.status = ANY(%s)
-            ) AS has_active_agent_wait
-            """,
-            (session_id, session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
-        )
+        try:
+            row = self.db.fetchone(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM completion_subscribers AS subscribers
+                    JOIN agent_runs AS runs ON runs.id = subscribers.completion_id
+                    WHERE subscribers.session_id = %s
+                      AND runs.parent_session_id = %s
+                      AND runs.status = ANY(%s)
+                ) AS has_active_agent_wait
+                """,
+                (session_id, session_id, list(ACTIVE_AGENT_RUN_STATUSES)),
+            )
+        except Exception as exc:
+            raise PipelineSubscriberStorageError(
+                f"Failed to query active agent wait for session {session_id}"
+            ) from exc
         return bool(row and row["has_active_agent_wait"])
 
     def remove_completion_subscribers(

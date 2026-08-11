@@ -285,14 +285,23 @@ mod tests {
 
     #[test]
     fn edge_queries_apply_scope_before_ordered_limit() {
-        let scope = vec!["src/a.rs".to_string(), "src/b.rs".to_string()];
+        let cases = [
+            (
+                GraphEdgeKind::Call,
+                vec!["symbol-a".to_string(), "symbol-b".to_string()],
+            ),
+            (
+                GraphEdgeKind::Import,
+                vec!["src/a.rs".to_string(), "src/b.rs".to_string()],
+            ),
+        ];
 
-        for kind in [GraphEdgeKind::Call, GraphEdgeKind::Import] {
+        for (kind, scope) in cases {
             let (query, params) = edge_query("project-id", kind, &scope, 7);
             let where_position = query.find("WHERE").expect("query has scope predicate");
             let limit_position = query.find("LIMIT 7").expect("query has requested limit");
             assert!(where_position < limit_position);
-            assert!(query.contains("'src/a.rs', 'src/b.rs'"));
+            assert!(query.contains(&format!("'{}', '{}'", scope[0], scope[1])));
             assert_eq!(params.len(), 1);
         }
     }

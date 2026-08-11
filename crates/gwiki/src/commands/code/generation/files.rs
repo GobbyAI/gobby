@@ -1,5 +1,7 @@
+use std::any::Any;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::commands::code::Symbol;
 
@@ -30,9 +32,13 @@ struct FileJob {
 enum WorkerEvent {
     Progress(String),
     Done(usize, Box<FileDoc>, BTreeSet<String>),
+    Failed(String),
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "generation inputs are explicit pipeline state"
+)]
 pub(super) fn generate_file_docs(
     input: &CodewikiInput,
     doc_scope: &DocPruneScope,
@@ -126,7 +132,10 @@ pub(super) fn generate_file_docs(
     })
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "serial and pooled paths share explicit state"
+)]
 fn generate_file_docs_serial(
     files: &[String],
     symbols_by_file: &mut BTreeMap<String, Vec<Symbol>>,
@@ -192,7 +201,6 @@ fn generate_file_docs_serial(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 fn prepare_file_job(
     index: usize,
     file: &str,
@@ -249,7 +257,10 @@ fn emit_file_doc(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "pooled generation mirrors the serial pipeline"
+)]
 fn generate_file_docs_pooled(
     pool: FileGenerationWorkers<'_>,
     files: &[String],
@@ -271,22 +282,21 @@ fn generate_file_docs_pooled(
     }
     let worker_count = pool.workers.get().min(file_total);
     let dispatch_limit = (worker_count + 2).min(file_total);
-    let (job_tx, job_rx) = mpsc::sync_channel::<FileJob>(dispatch_limit);
+    let (job_tx, job_rx) = mpsc::channel::<FileJob>();
     let job_rx = Mutex::new(job_rx);
     let (event_tx, event_rx) = mpsc::channel();
+    let live_workers = Arc::new(AtomicUsize::new(worker_count));
     let mut next_dispatch = 0_usize;
     for file in files.iter().take(dispatch_limit) {
-        job_tx
-            .send(prepare_file_job(
-                next_dispatch,
-                file,
-                symbols_by_file,
-                file_modules,
-                symbols_by_id,
-                &input.graph_edges,
-                reuse,
-            ))
-            .expect("bounded file generation queue must remain connected");
+        job_tx.send(prepare_file_job(
+            next_dispatch,
+            file,
+            symbols_by_file,
+            file_modules,
+            symbols_by_id,
+            &input.graph_edges,
+            reuse,
+        ))?;
         next_dispatch += 1;
     }
     let mut job_tx = Some(job_tx);
@@ -299,62 +309,70 @@ fn generate_file_docs_pooled(
         for _ in 0..worker_count {
             let event_tx = event_tx.clone();
             let job_rx = &job_rx;
+            let live_workers = Arc::clone(&live_workers);
             scope.spawn(move || {
-                loop {
-                    let job = job_rx
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .recv();
-                    let Ok(FileJob {
-                        index,
-                        file,
-                        module,
-                        symbols,
-                        relationships,
-                        neighbors,
-                        reused,
-                    }) = job
-                    else {
-                        break;
-                    };
-                    let mut worker_generate = |prompt: &str, system: &str, tier: PromptTier| {
-                        (pool.generate)(prompt, system, tier)
-                    };
-                    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut worker_generate);
-                    let mut worker_verify = pool
-                        .verify
-                        .filter(|_| verify_leaves)
-                        .map(|verify| move |prompt: &str, system: &str| verify(prompt, system));
-                    let mut leaf_verify: Option<&mut TextVerifier<'_>> = worker_verify
-                        .as_mut()
-                        .map(|verify| verify as &mut TextVerifier<'_>);
-                    let mut progress_sink = |message: String| {
-                        let _ = event_tx.send(WorkerEvent::Progress(message));
-                    };
-                    let file_doc = build_file_doc(
-                        &file,
-                        module,
-                        symbols,
-                        input.leading_chunks.get(&file),
-                        &relationships,
-                        deprecations,
-                        tests,
-                        reused,
-                        &mut generate,
-                        &mut leaf_verify,
-                        ai_depth,
-                        &mut progress_sink,
-                        FileDocPosition {
-                            index: index + 1,
-                            total: file_total,
-                        },
-                    );
-                    if event_tx
-                        .send(WorkerEvent::Done(index, Box::new(file_doc), neighbors))
-                        .is_err()
-                    {
-                        break;
+                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    loop {
+                        let job = job_rx
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .recv();
+                        let Ok(FileJob {
+                            index,
+                            file,
+                            module,
+                            symbols,
+                            relationships,
+                            neighbors,
+                            reused,
+                        }) = job
+                        else {
+                            break;
+                        };
+                        let mut worker_generate = |prompt: &str, system: &str, tier: PromptTier| {
+                            (pool.generate)(prompt, system, tier)
+                        };
+                        let mut generate: Option<&mut TextGenerator<'_>> =
+                            Some(&mut worker_generate);
+                        let mut worker_verify = pool
+                            .verify
+                            .filter(|_| verify_leaves)
+                            .map(|verify| move |prompt: &str, system: &str| verify(prompt, system));
+                        let mut leaf_verify: Option<&mut TextVerifier<'_>> = worker_verify
+                            .as_mut()
+                            .map(|verify| verify as &mut TextVerifier<'_>);
+                        let mut progress_sink = |message: String| {
+                            let _ = event_tx.send(WorkerEvent::Progress(message));
+                        };
+                        let file_doc = build_file_doc(
+                            &file,
+                            module,
+                            symbols,
+                            input.leading_chunks.get(&file),
+                            &relationships,
+                            deprecations,
+                            tests,
+                            reused,
+                            &mut generate,
+                            &mut leaf_verify,
+                            ai_depth,
+                            &mut progress_sink,
+                            FileDocPosition {
+                                index: index + 1,
+                                total: file_total,
+                            },
+                        );
+                        if event_tx
+                            .send(WorkerEvent::Done(index, Box::new(file_doc), neighbors))
+                            .is_err()
+                        {
+                            break;
+                        }
                     }
+                }));
+                live_workers.fetch_sub(1, Ordering::AcqRel);
+                if let Err(payload) = outcome {
+                    let _ = event_tx.send(WorkerEvent::Failed(panic_message(payload.as_ref())));
                 }
             });
         }
@@ -362,12 +380,19 @@ fn generate_file_docs_pooled(
         let mut completed: BTreeMap<usize, (FileDoc, BTreeSet<String>)> = BTreeMap::new();
         let mut next_emit = 0_usize;
         let mut emit_error = None;
+        let mut worker_error = None;
         while let Ok(event) = event_rx.recv() {
             match event {
                 WorkerEvent::Progress(message) => progress.emit(message),
+                WorkerEvent::Failed(message) => {
+                    worker_error.get_or_insert_with(|| {
+                        anyhow::anyhow!("file generation worker failed: {message}")
+                    });
+                    job_tx.take();
+                }
                 WorkerEvent::Done(index, file_doc, neighbors) => {
                     completed.insert(index, (*file_doc, neighbors));
-                    if emit_error.is_some() {
+                    if emit_error.is_some() || worker_error.is_some() {
                         continue;
                     }
                     while let Some((file_doc, neighbors)) = completed.remove(&next_emit) {
@@ -389,11 +414,12 @@ fn generate_file_docs_pooled(
                                 &input.graph_edges,
                                 reuse,
                             );
-                            job_tx
-                                .as_ref()
-                                .expect("sender exists while jobs remain")
-                                .send(job)
-                                .expect("file generation workers must remain connected");
+                            let sender = job_tx.as_ref().ok_or_else(|| {
+                                anyhow::anyhow!("file generation queue closed while jobs remain")
+                            })?;
+                            sender.send(job).map_err(|_| {
+                                anyhow::anyhow!("all file generation workers exited")
+                            })?;
                             next_dispatch += 1;
                             if next_dispatch == file_total {
                                 job_tx.take();
@@ -405,7 +431,22 @@ fn generate_file_docs_pooled(
         }
         match emit_error {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => match worker_error {
+                Some(error) => Err(error),
+                None if next_emit == file_total => Ok(()),
+                None => anyhow::bail!(
+                    "file generation stopped after {next_emit} of {file_total} files; {} workers remain",
+                    live_workers.load(Ordering::Acquire)
+                ),
+            },
         }
     })
+}
+
+fn panic_message(payload: &(dyn Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|message| (*message).to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic payload".to_string())
 }

@@ -126,7 +126,17 @@ mod serial_db {
         let setup = fixture.output_with_database_url_in(
             fixture.root(),
             &database_url,
-            &["--format", "json", "setup", "--topic", &topic],
+            &[
+                "--format",
+                "json",
+                "setup",
+                "--standalone",
+                "--no-services",
+                "--database-url",
+                &database_url,
+                "--topic",
+                &topic,
+            ],
         );
         common::assert_success(&setup, "setup");
 
@@ -146,6 +156,7 @@ mod serial_db {
                 "search",
                 "--topic",
                 &topic,
+                "--no-semantic",
                 &unique_term,
             ],
         );
@@ -178,6 +189,7 @@ mod serial_db {
                 "search",
                 "--topic",
                 &topic,
+                "--no-semantic",
                 &unique_term,
             ],
         );

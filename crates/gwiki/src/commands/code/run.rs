@@ -496,15 +496,13 @@ mod scope_tests {
         assert_eq!(capture_commit_stamp(root), None);
 
         let git = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .arg("-C")
-                .arg(root)
+            let status = isolated_test_git(root)
                 .args(args)
                 .status()
                 .expect("run git");
             assert!(status.success(), "git {args:?} failed");
         };
-        git(&["init", "-q", "--object-format=sha1"]);
+        git(&["init", "-q", "--object-format=sha1", "--template="]);
         git(&["config", "user.email", "test@example.com"]);
         git(&["config", "user.name", "Test"]);
         git(&["config", "commit.gpgSign", "false"]);
@@ -522,5 +520,30 @@ mod scope_tests {
         let dirty = capture_commit_stamp(root).expect("dirty commit stamp");
         assert_eq!(dirty.sha, clean.sha);
         assert!(dirty.dirty);
+    }
+
+    fn isolated_test_git(root: &std::path::Path) -> std::process::Command {
+        let mut command = std::process::Command::new("git");
+        command
+            .arg("-C")
+            .arg(root)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", root.join("global.gitconfig"))
+            .env("GIT_CONFIG_COUNT", "0")
+            .env("HOME", root);
+        for variable in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_TEMPLATE_DIR",
+        ] {
+            command.env_remove(variable);
+        }
+        command
     }
 }

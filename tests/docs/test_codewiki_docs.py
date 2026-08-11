@@ -70,12 +70,20 @@ def test_codewiki_guide_documents_paused_gwiki_code_contract() -> None:
 
 
 def test_active_codewiki_surfaces_have_no_stale_gcode_invocation() -> None:
+    missing_paths = [
+        path.relative_to(ROOT).as_posix() for path in ACTIVE_CODEWIKI_DOCS if not path.exists()
+    ]
+    assert missing_paths == []
+
+    normalized_phrases = [
+        " ".join(phrase.split()).casefold() for phrase in STALE_CODEWIKI_OWNERSHIP_PHRASES
+    ]
     stale_paths = [
         path.relative_to(ROOT).as_posix()
         for path in ACTIVE_CODEWIKI_DOCS
         if any(
-            phrase in path.read_text(encoding="utf-8")
-            for phrase in STALE_CODEWIKI_OWNERSHIP_PHRASES
+            phrase in " ".join(path.read_text(encoding="utf-8").split()).casefold()
+            for phrase in normalized_phrases
         )
     ]
 

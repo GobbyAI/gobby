@@ -215,12 +215,14 @@ fn code_detect_scope_uses_the_nearest_project_root() -> anyhow::Result<()> {
     let project = tempfile::tempdir()?;
     let nested = project.path().join("nested/deeper");
     std::fs::create_dir_all(project.path().join(".gobby"))?;
+    std::fs::create_dir_all(project.path().join("nested/.gobby"))?;
     std::fs::create_dir_all(&nested)?;
     std::fs::write(project.path().join(".gobby/project.json"), "{}")?;
+    std::fs::write(project.path().join("nested/.gobby/project.json"), "{}")?;
 
     assert_eq!(
         mapping::detect_project_root_from(&nested)?,
-        project.path().to_path_buf()
+        project.path().join("nested")
     );
     Ok(())
 }

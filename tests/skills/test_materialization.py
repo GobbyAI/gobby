@@ -19,6 +19,10 @@ import pytest
 
 from gobby.mcp_proxy.tools.skills import create_skills_registry
 from gobby.skills import materialization as materializer
+from gobby.skills.materialization import (
+    MaterializationTestCommandResult,
+    materialization_test_support,
+)
 from gobby.skills.script_cache import (
     BrowserCacheReadiness,
     async_export_file_lock,
@@ -130,7 +134,7 @@ def test_rejects_unsafe_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     home = _set_home(monkeypatch, tmp_path)
 
     with pytest.raises(materializer.SkillMaterializationError, match="Unsafe"):
-        materializer._validate_script_path("scripts/../../outside.js")
+        materialization_test_support.validate_script_path("scripts/../../outside.js")
 
     assert not home.exists()
 
@@ -201,7 +205,7 @@ async def test_trust_transition_publishes_distinct_generation(
         files={"scripts/value.js": "export default 1;\n"},
     )
     monkeypatch.setattr(
-        materializer,
+        materialization_test_support,
         "scan_skill_content",
         lambda *_args, **_kwargs: {"is_safe": True},
     )
@@ -310,7 +314,7 @@ async def test_scan_gate_covers_all_script_files(
         scanned.append(files)
         return {"is_safe": False, "max_severity": "HIGH"}
 
-    monkeypatch.setattr(materializer, "scan_skill_content", scan)
+    monkeypatch.setattr(materialization_test_support, "scan_skill_content", scan)
 
     result = await _tool(temp_db)(name=skill.name)
 
@@ -359,10 +363,10 @@ async def test_external_source_never_installs_dependencies(
         lambda *_args, **_kwargs: {"is_safe": True},
     )
 
-    async def forbidden(*_args: object, **_kwargs: object) -> materializer._CommandResult:
+    async def forbidden(*_args: object, **_kwargs: object) -> MaterializationTestCommandResult:
         raise AssertionError("external skill attempted executable setup")
 
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", forbidden)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", forbidden)
 
     result = await _tool(temp_db)(name=skill.name)
 
@@ -380,10 +384,10 @@ async def test_native_win32_materializes_scripts_only(
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
 
-    async def forbidden(*_args: object, **_kwargs: object) -> materializer._CommandResult:
+    async def forbidden(*_args: object, **_kwargs: object) -> MaterializationTestCommandResult:
         raise AssertionError("win32 attempted executable setup")
 
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", forbidden)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", forbidden)
 
     result = await _tool(temp_db)(name=skill.name)
 
@@ -402,19 +406,19 @@ async def test_first_root_crash_leaves_no_unmarked_root(
         name="first-root-crash",
         files={"scripts/value.js": "export default 1;\n"},
     )
-    original = materializer._publication_checkpoint
+    original = materialization_test_support.publication_checkpoint
 
     def crash(name: str) -> None:
         if name == "before-first-root-rename":
             raise OSError("injected crash")
 
-    monkeypatch.setattr(materializer, "_publication_checkpoint", crash)
+    monkeypatch.setattr(materialization_test_support, "publication_checkpoint", crash)
     failed = await _tool(temp_db)(name=skill.name)
     root = skill_scripts_root(home, skill.id)
     assert failed["success"] is False
     assert not root.exists()
 
-    monkeypatch.setattr(materializer, "_publication_checkpoint", original)
+    monkeypatch.setattr(materialization_test_support, "publication_checkpoint", original)
     result = await _tool(temp_db)(name=skill.name)
 
     assert Path(cast(str, result["scripts_dir"])).is_dir()
@@ -443,16 +447,16 @@ async def test_concurrent_materialize_single_install(
         cwd: Path,
         env: dict[str, str],
         owner_record: Path,
-    ) -> materializer._CommandResult:
+    ) -> MaterializationTestCommandResult:
         nonlocal calls
         del env, owner_record
         calls += 1
         (cwd / "node_modules").mkdir()
         started.set()
         await release.wait()
-        return materializer._CommandResult(0, "", "")
+        return MaterializationTestCommandResult(0, "", "")
 
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", install)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", install)
     tool = _tool(temp_db)
     first: asyncio.Task[dict[str, Any]] = asyncio.create_task(tool(name=skill.name))
     await started.wait()
@@ -485,16 +489,16 @@ async def test_failed_install_retry_attaches_deps(
         cwd: Path,
         env: dict[str, str],
         owner_record: Path,
-    ) -> materializer._CommandResult:
+    ) -> MaterializationTestCommandResult:
         nonlocal attempts
         del env, owner_record
         attempts += 1
         if attempts == 1:
-            return materializer._CommandResult(1, "", "offline")
+            return MaterializationTestCommandResult(1, "", "offline")
         (cwd / "node_modules").mkdir()
-        return materializer._CommandResult(0, "", "")
+        return MaterializationTestCommandResult(0, "", "")
 
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", install)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", install)
     tool = _tool(temp_db)
     first = await tool(name=skill.name)
     scripts = Path(cast(str, first["scripts_dir"]))
@@ -524,11 +528,11 @@ async def test_materializer_missing_local_puppeteer_never_invokes_npx(
     async def dependencies(**_kwargs: object) -> tuple[bool, str | None]:
         return True, None
 
-    async def forbidden(*_args: object, **_kwargs: object) -> materializer._CommandResult:
+    async def forbidden(*_args: object, **_kwargs: object) -> MaterializationTestCommandResult:
         raise AssertionError("missing local binary attempted a subprocess")
 
-    monkeypatch.setattr(materializer, "_ensure_dependencies", dependencies)
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", forbidden)
+    monkeypatch.setattr(materialization_test_support, "ensure_dependencies", dependencies)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", forbidden)
 
     result = await _tool(temp_db)(name=skill.name)
 
@@ -563,7 +567,7 @@ async def test_browser_readiness_is_compatibility_keyed(
         cwd: Path,
         env: dict[str, str],
         owner_record: Path,
-    ) -> materializer._CommandResult:
+    ) -> MaterializationTestCommandResult:
         nonlocal calls
         del cwd, owner_record
         calls += 1
@@ -572,11 +576,11 @@ async def test_browser_readiness_is_compatibility_keyed(
         binary = artifact / "chrome"
         binary.write_text("fixture")
         binary.chmod(0o700)
-        return materializer._CommandResult(0, "", "")
+        return MaterializationTestCommandResult(0, "", "")
 
-    monkeypatch.setattr(materializer, "_run_owned_subprocess", fetch)
+    monkeypatch.setattr(materialization_test_support, "run_owned_subprocess", fetch)
 
-    ready, warning = await materializer._ensure_browser(
+    ready, warning = await materialization_test_support.ensure_browser(
         home=home,
         scripts_dir=scripts,
         dependencies_ready=True,
@@ -588,7 +592,7 @@ async def test_browser_readiness_is_compatibility_keyed(
     assert browser_cache_is_ready(cache, expected)
 
     shutil.rmtree(cache / "chrome" / "chrome-151.0.0.0")
-    repaired, repaired_warning = await materializer._ensure_browser(
+    repaired, repaired_warning = await materialization_test_support.ensure_browser(
         home=home,
         scripts_dir=scripts,
         dependencies_ready=True,
@@ -621,6 +625,7 @@ async def test_lock_waiter_cancellation_leaves_lock_free(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
 async def test_timeout_reaps_subprocess(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pgid_file = tmp_path / "pgid"
     program = (
@@ -628,10 +633,10 @@ async def test_timeout_reaps_subprocess(tmp_path: Path, monkeypatch: pytest.Monk
         f"open({str(pgid_file)!r}, 'w').write(str(os.getpgrp())); "
         "os.fork(); signal.pause()"
     )
-    monkeypatch.setattr(materializer, "_SUBPROCESS_TIMEOUT_SECONDS", 0.25)
+    monkeypatch.setattr(materialization_test_support, "subprocess_timeout_seconds", 0.25)
 
     with pytest.raises(materializer.SkillMaterializationError, match="Timed out"):
-        await materializer._run_owned_subprocess(
+        await materialization_test_support.run_owned_subprocess(
             [sys.executable, "-c", program],
             cwd=tmp_path,
             env=os.environ.copy(),
@@ -643,6 +648,7 @@ async def test_timeout_reaps_subprocess(tmp_path: Path, monkeypatch: pytest.Monk
         os.killpg(pgid, 0)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX process-group contract")
 def test_orphaned_group_blocks_stage_collection(tmp_path: Path) -> None:
     parent = tmp_path / "cache"
     parent.mkdir()
@@ -678,7 +684,7 @@ async def test_repeated_crashes_leave_no_stage_accumulation(
     def crash(_name: str) -> None:
         raise OSError("injected publication crash")
 
-    monkeypatch.setattr(materializer, "_publication_checkpoint", crash)
+    monkeypatch.setattr(materialization_test_support, "publication_checkpoint", crash)
     tool = _tool(temp_db)
     for _ in range(2):
         result = await tool(name=skill.name)
@@ -700,14 +706,14 @@ async def test_cold_materialization_keeps_event_loop_responsive(
     )
     entered = threading.Event()
     release = threading.Event()
-    original = materializer._write_generation
+    original = materialization_test_support.write_generation
 
     def blocked_write(*args: Any, **kwargs: Any) -> None:
         entered.set()
         assert release.wait(timeout=5)
         original(*args, **kwargs)
 
-    monkeypatch.setattr(materializer, "_write_generation", blocked_write)
+    monkeypatch.setattr(materialization_test_support, "write_generation", blocked_write)
     task: asyncio.Task[dict[str, Any]] = asyncio.create_task(_tool(temp_db)(name=skill.name))
     assert await asyncio.to_thread(entered.wait, 5)
     heartbeat = asyncio.Event()
@@ -828,18 +834,60 @@ async def test_timed_out_waiter_leaves_shared_materialization_running(
         await release.wait()
         return func(*args, **kwargs)
 
-    waiter = asyncio.create_task(
-        asyncio.wait_for(
-            service.resolve(skill.name, project_id=None, run_db=gated_run_db),
-            timeout=0.01,
-        )
-    )
-    await started.wait()
+    waiter = asyncio.create_task(service.resolve(skill.name, project_id=None, run_db=gated_run_db))
+    await asyncio.wait_for(started.wait(), timeout=1)
     with pytest.raises(TimeoutError):
-        await waiter
+        await asyncio.wait_for(waiter, timeout=0.01)
 
     release.set()
     result = await service.resolve(skill.name, project_id=None, run_db=gated_run_db)
 
     assert calls == 1
     assert (result.scripts_dir / "hook.mjs").is_file()
+
+
+@pytest.mark.asyncio
+async def test_inflight_materializations_are_scoped_to_the_current_event_loop(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _set_home(monkeypatch, tmp_path)
+    _, skill = _create_skill(
+        temp_db,
+        name="multi-loop-single-flight",
+        files={"scripts/hook.mjs": "export {};\n"},
+    )
+    service = materializer.SkillScriptMaterializer(temp_db)
+    release = threading.Event()
+    both_started = threading.Event()
+    calls_lock = threading.Lock()
+    calls = 0
+
+    async def gated_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            if calls == 2:
+                both_started.set()
+        assert await asyncio.to_thread(release.wait, 2)
+        return func(*args, **kwargs)
+
+    async def resolve_in_new_loop() -> materializer.SkillMaterializationResult:
+        return await service.resolve(skill.name, project_id=None, run_db=gated_run_db)
+
+    thread_result = asyncio.create_task(
+        asyncio.to_thread(lambda: asyncio.run(resolve_in_new_loop()))
+    )
+    main_result = asyncio.create_task(
+        service.resolve(skill.name, project_id=None, run_db=gated_run_db)
+    )
+    try:
+        assert await asyncio.to_thread(both_started.wait, 2)
+    finally:
+        release.set()
+
+    first, second = await asyncio.gather(main_result, thread_result)
+
+    assert calls == 2
+    assert first.scripts_dir == second.scripts_dir

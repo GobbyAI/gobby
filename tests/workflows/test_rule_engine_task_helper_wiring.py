@@ -8,6 +8,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import PipelineSubscriberStorageError
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
@@ -246,7 +247,9 @@ async def test_agent_wait_lookup_failure_warns_and_keeps_stop_gates_armed(
         patch("gobby.workflows.engine.core.CompletionSubscriberManager") as manager_type,
         caplog.at_level("WARNING"),
     ):
-        manager_type.return_value.has_active_agent_wait.side_effect = RuntimeError("lookup failed")
+        manager_type.return_value.has_active_agent_wait.side_effect = (
+            PipelineSubscriberStorageError("lookup failed")
+        )
         response = await RuleEngine(db).evaluate(
             _make_event(),
             session_id="11111111-1111-4111-8111-111111111111",

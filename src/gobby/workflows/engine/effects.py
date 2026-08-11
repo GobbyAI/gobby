@@ -10,8 +10,10 @@ import logging
 import re
 import time
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.background_tasks import create_background_task
@@ -48,10 +50,17 @@ _RUN_COMMAND_BACKGROUND_DEFAULT_TIMEOUT_SECONDS = 30.0
 class _PreparedRunCommand:
     command: list[str]
     environment: dict[str, str]
+    scripts_dir: Path | None = None
+    script: str | None = None
 
 
 class EffectsMixin(DeliveryFormattingMixin):
     """Mixin providing effect handling methods for RuleEngine."""
+
+    _background_run_commands: dict[tuple[str, str], asyncio.Task[None]]
+
+    def __init__(self) -> None:
+        self._background_run_commands = {}
 
     db: Any
     _skill_manager: Any
@@ -413,6 +422,11 @@ class EffectsMixin(DeliveryFormattingMixin):
             key = (event.session_id, str(row.id))
             existing = registry.get(key)
             if existing is not None and not existing.done():
+                logger.info(
+                    "run_command[%s]: suppressed duplicate background run for session %s",
+                    row.name,
+                    event.session_id,
+                )
                 return
             task = create_background_task(
                 self._run_command_then_deliver(
@@ -447,11 +461,11 @@ class EffectsMixin(DeliveryFormattingMixin):
         timeout = remaining_blocking_effect_seconds(deadline, maximum=maximum)
         if timeout <= 0:
             result = RunCommandResult.deadline_exhausted(
-                timeout_seconds=timeout,
+                timeout_seconds=max(timeout, 0.0),
                 skill=effect.skill,
                 script=effect.script,
             )
-            await self._audit_run_command(
+            await self._record_run_command_failure(
                 result,
                 rule_name=row.name,
                 rule_id=str(row.id),
@@ -478,7 +492,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         timeout -= time.perf_counter() - started
         if timeout <= 0:
             result = RunCommandResult.deadline_exhausted(
-                timeout_seconds=timeout,
+                timeout_seconds=max(timeout, 0.0),
                 skill=effect.skill,
                 script=effect.script,
             )
@@ -490,11 +504,10 @@ class EffectsMixin(DeliveryFormattingMixin):
             )
             return
         result = await self._execute_run_command(
-            prepared.command,
+            prepared,
             cwd,
             stdin_payload,
             timeout,
-            environment=prepared.environment,
             skill=effect.skill,
             script=effect.script,
             rule_name=row.name,
@@ -524,7 +537,7 @@ class EffectsMixin(DeliveryFormattingMixin):
                 self.skill_script_materializer.resolve(skill, project_id=project_id),
                 timeout=timeout,
             )
-            target = resolve_materialized_skill_script(materialized.scripts_dir, script)
+            resolve_materialized_skill_script(materialized.scripts_dir, script)
         except TimeoutError:
             return RunCommandResult.skill_resolution_failure(
                 "skill_resolution_timeout",
@@ -543,16 +556,20 @@ class EffectsMixin(DeliveryFormattingMixin):
                 skill=skill,
                 script=script,
             )
-        return _PreparedRunCommand([*command, str(target)], materialized.environment)
+        return _PreparedRunCommand(
+            command,
+            materialized.environment,
+            scripts_dir=materialized.scripts_dir,
+            script=script,
+        )
 
     async def _execute_run_command(
         self,
-        command: list[str],
+        prepared: _PreparedRunCommand,
         cwd: str,
         stdin_payload: bytes,
         timeout: float,
         *,
-        environment: dict[str, str],
         skill: str | None,
         script: str | None,
         rule_name: str,
@@ -560,14 +577,29 @@ class EffectsMixin(DeliveryFormattingMixin):
         platform_session_id: str | None,
         background: bool,
     ) -> RunCommandResult:
+        spawn_guard: AbstractAsyncContextManager[None] | None = None
+        command_factory: Callable[[], list[str]] | None = None
+        if prepared.scripts_dir is not None and prepared.script is not None:
+            scripts_dir = prepared.scripts_dir
+            materialized_script = prepared.script
+            spawn_guard = self.skill_script_materializer.execution_guard(scripts_dir)
+
+            def resolve_command() -> list[str]:
+                target = resolve_materialized_skill_script(scripts_dir, materialized_script)
+                return [*prepared.command, str(target)]
+
+            command_factory = resolve_command
+
         result = replace(
             await execute_run_command(
-                command,
+                prepared.command,
                 cwd=cwd,
                 stdin_payload=stdin_payload,
                 timeout_seconds=timeout,
                 background=background,
-                environment=environment,
+                environment=prepared.environment,
+                spawn_guard=spawn_guard,
+                command_factory=command_factory,
             ),
             skill=skill,
             script=script,
@@ -623,7 +655,7 @@ class EffectsMixin(DeliveryFormattingMixin):
         timeout -= time.perf_counter() - started
         if timeout <= 0:
             result = RunCommandResult.deadline_exhausted(
-                timeout_seconds=timeout,
+                timeout_seconds=max(timeout, 0.0),
                 background=True,
                 skill=skill,
                 script=script,
@@ -636,11 +668,10 @@ class EffectsMixin(DeliveryFormattingMixin):
             )
             return
         result = await self._execute_run_command(
-            prepared.command,
+            prepared,
             cwd,
             stdin_payload,
             timeout,
-            environment=prepared.environment,
             skill=skill,
             script=script,
             rule_name=rule_name,
@@ -727,11 +758,7 @@ class EffectsMixin(DeliveryFormattingMixin):
     def _background_run_command_registry(
         self,
     ) -> dict[tuple[str, str], asyncio.Task[None]]:
-        registry = getattr(self, "_background_run_commands", None)
-        if registry is None:
-            registry = {}
-            self._background_run_commands = registry
-        return registry
+        return self._background_run_commands
 
     def _effect_matches_event(self, effect: Any, event: HookEvent) -> bool:
         """Check whether an effect's tool and command selectors match this event."""

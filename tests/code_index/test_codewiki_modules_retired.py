@@ -16,7 +16,9 @@ IDENTIFIER_CHAR = r"[A-Za-z0-9_]"
 def _retired_module_hits(root: Path, module: str) -> list[Path]:
     pattern = re.compile(rf"(?<!{IDENTIFIER_CHAR}){re.escape(module)}(?!{IDENTIFIER_CHAR})")
     return [
-        path.relative_to(root) for path in root.rglob("*.py") if pattern.search(path.read_text())
+        path.relative_to(root)
+        for path in root.rglob("*.py")
+        if pattern.search(path.read_text(encoding="utf-8"))
     ]
 
 

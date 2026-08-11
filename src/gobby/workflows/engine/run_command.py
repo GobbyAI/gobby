@@ -7,13 +7,15 @@ import copy
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 from typing import Literal, cast
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType
+from gobby.workflows.definitions import validate_skill_script_path
 
 STDOUT_LIMIT_BYTES = 256 * 1024
 STDERR_LIMIT_BYTES = 64 * 1024
@@ -107,12 +109,7 @@ class _StreamOverflow(Exception):
 
 def resolve_materialized_skill_script(scripts_dir: Path, script: str) -> Path:
     """Resolve a script while enforcing containment in a materialized scripts directory."""
-    posix = PurePosixPath(script)
-    windows = PureWindowsPath(script)
-    if not script.strip() or posix.is_absolute() or windows.is_absolute() or windows.drive:
-        raise ValueError("Skill script path must be non-empty and relative")
-    if ".." in posix.parts or ".." in windows.parts:
-        raise ValueError("Skill script path cannot traverse its scripts directory")
+    validate_skill_script_path(script)
 
     root = scripts_dir.resolve(strict=True)
     if not root.is_dir():
@@ -148,21 +145,32 @@ async def execute_run_command(
     timeout_seconds: float,
     background: bool,
     environment: Mapping[str, str] | None = None,
+    spawn_guard: AbstractAsyncContextManager[None] | None = None,
+    command_factory: Callable[[], list[str]] | None = None,
 ) -> RunCommandResult:
     """Run a command with capped concurrent output reads and deterministic cleanup."""
     started = time.perf_counter()
     subprocess_environment = os.environ.copy()
     if environment:
         subprocess_environment.update(environment)
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
+
+    async def spawn() -> asyncio.subprocess.Process:
+        spawn_command = command_factory() if command_factory is not None else command
+        return await asyncio.create_subprocess_exec(
+            *spawn_command,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             cwd=cwd,
             env=subprocess_environment,
         )
+
+    try:
+        if spawn_guard is None:
+            process = await spawn()
+        else:
+            async with spawn_guard:
+                process = await spawn()
     except (OSError, ValueError):
         return _result(
             "spawn_error",

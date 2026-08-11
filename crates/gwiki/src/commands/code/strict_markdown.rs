@@ -480,12 +480,13 @@ fn wrap_units(text: &str) -> Vec<String> {
     let mut bracket_depth = 0usize;
     let mut paren_depth = 0usize;
     let mut in_code = false;
+    let final_backtick = text.rfind('`');
 
     for (byte_index, ch) in text.char_indices() {
         if ch == '`' {
             if in_code {
                 in_code = false;
-            } else if text[byte_index + ch.len_utf8()..].contains('`') {
+            } else if final_backtick.is_some_and(|last| byte_index < last) {
                 in_code = true;
             }
         }

@@ -339,7 +339,7 @@ fn lock_contention_matches_legacy() {
     assert!(tests.contains("another `gwiki code` run is already writing"));
     assert!(implementation.contains("CODE_WRITER_LOCK_TIMEOUT"));
     assert!(implementation.contains("Duration::from_secs(2)"));
-    assert!(implementation.contains("started.elapsed() >= CODE_WRITER_LOCK_TIMEOUT"));
+    assert!(implementation.contains("started.elapsed() >= timeout"));
 }
 
 fn initialize_failure_project() -> TempDir {

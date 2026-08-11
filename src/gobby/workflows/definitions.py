@@ -35,6 +35,18 @@ def normalize_workflow_definition_enabled(
     return _WORKFLOW_ENABLED_ADAPTER.validate_python(data.get("enabled", default))
 
 
+def validate_skill_script_path(script: str) -> None:
+    """Validate a skill script path before materialization or execution."""
+    posix = PurePosixPath(script)
+    windows = PureWindowsPath(script)
+    if not script.strip():
+        raise ValueError("Skill script path must be non-empty")
+    if posix.is_absolute() or windows.is_absolute() or windows.drive:
+        raise ValueError("Skill script path must be relative")
+    if ".." in posix.parts or ".." in windows.parts:
+        raise ValueError("Skill script path cannot traverse its scripts directory")
+
+
 class RuleDefinition(BaseModel):
     """Named rule definition for block_tools format.
 
@@ -237,15 +249,7 @@ class RuleEffect(BaseModel):
             if self.skill is not None and not self.skill.strip():
                 raise ValueError("run_command skill must be non-empty")
             if self.script is not None:
-                script = self.script
-                posix = PurePosixPath(script)
-                windows = PureWindowsPath(script)
-                if not script.strip():
-                    raise ValueError("run_command script must be non-empty")
-                if posix.is_absolute() or windows.is_absolute() or windows.drive:
-                    raise ValueError("run_command script must be relative")
-                if ".." in posix.parts or ".." in windows.parts:
-                    raise ValueError("run_command script cannot traverse its scripts directory")
+                validate_skill_script_path(self.script)
             if self.timeout_seconds is not None and not self.timeout_seconds > 0:
                 raise ValueError(
                     "RuleEffect(type='run_command') timeout_seconds must be > 0 "

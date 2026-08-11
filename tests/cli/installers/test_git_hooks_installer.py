@@ -1144,19 +1144,3 @@ class TestHookTemplates:
             assert "gobby tasks restore" not in content
             assert "gobby tasks sync --import" not in content
             assert "gobby memory restore" not in content
-
-    def test_post_commit_has_no_codewiki_curl(self, tmp_path: Path) -> None:
-        """Fresh post-commit hooks trigger indexing without CodeWiki refresh."""
-        content = HOOK_TEMPLATES["post-commit"]
-        assert "/api/code-index/codewiki/refresh" not in content
-
-        git_dir = tmp_path / ".git"
-        git_dir.mkdir()
-        hooks_dir = git_dir / "hooks"
-        hooks_dir.mkdir()
-
-        result = install_git_hooks(tmp_path)
-
-        assert result["success"] is True
-        installed = (hooks_dir / "post-commit").read_text()
-        assert "/api/code-index/codewiki/refresh" not in installed

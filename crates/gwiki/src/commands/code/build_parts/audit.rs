@@ -153,11 +153,12 @@ fn lookback_lines<'a>(lines: &[&'a str], line_start: usize) -> Vec<&'a str> {
 /// Heuristic for a line that continues a multi-line `#[deprecated(...)]`
 /// attribute (e.g. a `note = "..."` argument on its own line).
 fn looks_like_attribute_continuation(trimmed: &str) -> bool {
-    trimmed.contains("note")
-        || trimmed.contains("since")
-        || trimmed.starts_with(')')
-        || trimmed.ends_with(',')
-        || trimmed.ends_with(')')
+    let argument = trimmed.trim_end_matches(',').trim_end();
+    ["note", "since"].iter().any(|name| {
+        argument
+            .strip_prefix(name)
+            .is_some_and(|suffix| suffix.trim_start().starts_with('='))
+    })
 }
 
 /// Detect a `#[deprecated]` / `#[deprecated(...)]` attribute in the look-back
@@ -322,6 +323,13 @@ mod tests {
             extract_note(r#"#[deprecated(note = "use new_fn")]"#).as_deref(),
             Some("use new_fn")
         );
+    }
+
+    #[test]
+    fn ordinary_code_with_note_or_since_ends_attribute_lookback() {
+        let src = "#[deprecated]\nlet note = since(value);\nfn target() {}\n";
+        let back = lookback_lines(&lines(src), 3);
+        assert!(back.is_empty());
     }
 
     #[test]

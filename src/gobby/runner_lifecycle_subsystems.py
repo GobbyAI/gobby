@@ -691,6 +691,11 @@ def _schedule_workflow_skill_prewarm(runner: GobbyRunner) -> None:
     handler = getattr(hook_manager, "_workflow_handler", None)
     engine = getattr(handler, "rule_engine", None)
     if services is None or engine is None:
+        logger.debug(
+            "Skipping workflow skill prewarm: services=%s rule_engine=%s",
+            services is not None,
+            engine is not None,
+        )
         return
 
     task = create_background_task(engine.prewarm_skill_scripts(project_id=services.project_id))
@@ -698,8 +703,13 @@ def _schedule_workflow_skill_prewarm(runner: GobbyRunner) -> None:
     def report(completed: asyncio.Task[None]) -> None:
         if completed.cancelled():
             return
-        if completed.exception() is not None:
-            logger.warning("Workflow skill prewarm failed")
+        exception = completed.exception()
+        if exception is not None:
+            logger.warning(
+                "Workflow skill prewarm failed for project %s",
+                services.project_id,
+                exc_info=(type(exception), exception, exception.__traceback__),
+            )
 
     task.add_done_callback(report)
 

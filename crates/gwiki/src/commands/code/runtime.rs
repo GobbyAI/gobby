@@ -104,12 +104,16 @@ pub(crate) fn normalize_file_arg(
     runtime: &CodeEngineRuntime,
     file: &str,
 ) -> anyhow::Result<String> {
+    normalize_file_arg_from_root(&runtime.project_root, file)
+}
+
+fn normalize_file_arg_from_root(project_root: &Path, file: &str) -> anyhow::Result<String> {
     let path = Path::new(file);
     if path.is_absolute() {
-        if let Ok(relative) = path.strip_prefix(&runtime.project_root) {
+        if let Ok(relative) = path.strip_prefix(project_root) {
             return Ok(clean_relative_path(relative));
         }
-        if let (Ok(absolute), Ok(root)) = (path.canonicalize(), runtime.project_root.canonicalize())
+        if let (Ok(absolute), Ok(root)) = (path.canonicalize(), project_root.canonicalize())
             && let Ok(relative) = absolute.strip_prefix(root)
         {
             return Ok(clean_relative_path(relative));
@@ -142,7 +146,7 @@ pub(crate) fn is_indexed_language(file_path: &str) -> bool {
 mod tests {
     use std::path::{Path, PathBuf};
 
-    use super::resolve_output_path;
+    use super::{normalize_file_arg_from_root, resolve_output_path};
 
     #[test]
     fn output_paths_are_resolved_from_the_project_root() {
@@ -156,5 +160,24 @@ mod tests {
             resolve_output_path(project_root, Some("/tmp/gwiki-output")),
             PathBuf::from("/tmp/gwiki-output")
         );
+    }
+
+    #[test]
+    fn absolute_scope_paths_must_stay_within_project_root() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let inside = project.path().join("src/lib.rs");
+        assert_eq!(
+            normalize_file_arg_from_root(project.path(), &inside.to_string_lossy())
+                .expect("in-root absolute path"),
+            "src/lib.rs"
+        );
+
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        let error = normalize_file_arg_from_root(
+            project.path(),
+            &outside.path().join("other.rs").to_string_lossy(),
+        )
+        .expect_err("out-of-root absolute path");
+        assert!(error.to_string().contains("outside the project root"));
     }
 }

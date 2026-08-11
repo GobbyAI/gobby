@@ -62,14 +62,14 @@ pub(super) fn prepare_run(
             .collect())
     })?;
 
+    progress.emit("loading leading content chunks");
+    let leading_chunks = load_leading_chunks(ctx, &files)?;
     progress.emit(format!(
         "fetching graph edges for {} files and {} symbols (limit {})",
         files.len(),
         symbols.len(),
         edge_limit
     ));
-    progress.emit("loading leading content chunks");
-    let leading_chunks = load_leading_chunks(ctx, &files)?;
     let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
     let input = CodewikiInput {
         files,

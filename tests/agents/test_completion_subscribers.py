@@ -16,7 +16,10 @@ from gobby.agents.completion_subscribers import (
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.pipeline_subscribers import (
+    CompletionSubscriberManager,
+    PipelineSubscriberStorageError,
+)
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
@@ -233,6 +236,15 @@ def test_has_active_agent_wait_matches_durable_subscription_and_owned_run(
     subscriber_manager.add_completion_subscriber(run_id, session_id)
 
     assert subscriber_manager.has_active_agent_wait(session_id) is True
+
+
+def test_has_active_agent_wait_translates_storage_failures() -> None:
+    db = MagicMock(spec=HubDatabase)
+    db.fetchone.side_effect = RuntimeError("database unavailable")
+    subscriber_manager = CompletionSubscriberManager(db)
+
+    with pytest.raises(PipelineSubscriberStorageError, match="session-id"):
+        subscriber_manager.has_active_agent_wait("session-id")
 
 
 def test_has_active_agent_wait_rejects_missing_foreign_and_orphan_subscriptions(

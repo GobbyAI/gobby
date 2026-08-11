@@ -168,3 +168,49 @@ pub fn repair_citations(
     let resolver = IndexCitationResolver::build(symbols, &snapshot);
     repair_with_resolver(out_dir, &resolver)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::code::CodewikiSymbolSnapshot;
+
+    fn symbol(line_start: usize, line_end: usize) -> Symbol {
+        Symbol {
+            id: format!("symbol-{line_start}"),
+            project_id: "project".to_string(),
+            file_path: "src/lib.rs".to_string(),
+            name: "run".to_string(),
+            qualified_name: "module::run".to_string(),
+            kind: "function".to_string(),
+            language: "rust".to_string(),
+            byte_start: 0,
+            byte_end: 0,
+            line_start,
+            line_end,
+            signature: None,
+            docstring: None,
+            parent_symbol_id: None,
+            file_content_hash: String::new(),
+            content_hash: String::new(),
+            summary: None,
+        }
+    }
+
+    #[test]
+    fn duplicate_current_identities_remain_unresolved() {
+        let mut snapshot = CodewikiIndexSnapshot::default();
+        snapshot.symbols.insert(
+            "old-symbol".to_string(),
+            CodewikiSymbolSnapshot {
+                file_path: "src/lib.rs".to_string(),
+                name: "run".to_string(),
+                qualified_name: "module::run".to_string(),
+                kind: "function".to_string(),
+                line_start: 4,
+            },
+        );
+        let resolver = IndexCitationResolver::build(&[symbol(10, 12), symbol(20, 22)], &snapshot);
+
+        assert_eq!(resolver.resolve("src/lib.rs", 4), None);
+    }
+}

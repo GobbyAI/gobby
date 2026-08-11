@@ -14,7 +14,8 @@ import sys
 import threading
 import uuid
 import weakref
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, ParamSpec, Protocol, TypeVar, cast
@@ -110,7 +111,7 @@ class _NodeState:
 
 
 @dataclass(frozen=True)
-class _CommandResult:
+class MaterializationTestCommandResult:
     returncode: int
     stdout: str
     stderr: str
@@ -159,7 +160,10 @@ class SkillScriptMaterializer:
 
     def __init__(self, db: HubDatabase, storage: LocalSkillManager | None = None) -> None:
         self._storage = storage or LocalSkillManager(db)
-        self._inflight: dict[tuple[str | None, str], asyncio.Task[SkillMaterializationResult]] = {}
+        self._inflight: weakref.WeakKeyDictionary[
+            asyncio.AbstractEventLoop,
+            dict[tuple[str | None, str], asyncio.Task[SkillMaterializationResult]],
+        ] = weakref.WeakKeyDictionary()
 
     async def resolve(
         self,
@@ -169,22 +173,34 @@ class SkillScriptMaterializer:
         run_db: RunDb | None = None,
     ) -> SkillMaterializationResult:
         key = (project_id, name)
-        task = self._inflight.get(key)
+        loop = asyncio.get_running_loop()
+        tasks = self._inflight.setdefault(loop, {})
+        task = tasks.get(key)
         if task is None:
             task = asyncio.create_task(
                 self._materialize(name, project_id=project_id, run_db=run_db)
             )
-            self._inflight[key] = task
+            tasks[key] = task
 
             def clear(completed: asyncio.Task[SkillMaterializationResult]) -> None:
-                if self._inflight.get(key) is completed:
-                    self._inflight.pop(key, None)
+                loop_tasks = self._inflight.get(loop)
+                if loop_tasks is tasks and tasks.get(key) is completed:
+                    tasks.pop(key, None)
+                    if not tasks:
+                        self._inflight.pop(loop, None)
                 if completed.cancelled():
                     return
                 completed.exception()
 
             task.add_done_callback(clear)
         return await asyncio.shield(task)
+
+    @asynccontextmanager
+    async def execution_guard(self, scripts_dir: Path) -> AsyncIterator[None]:
+        """Keep a materialized generation stable through validation and process spawn."""
+        cache_root = scripts_dir.parent.parent
+        async with async_export_file_lock(skill_scripts_root_lock_target(cache_root)):
+            yield
 
     async def _materialize(
         self,
@@ -245,7 +261,7 @@ async def _materialize_snapshot(
 
     if external:
         result = await run_blocking_safely(
-            scan_skill_content,
+            materialization_test_support.scan_skill_content,
             skill.content,
             skill.name,
             {payload.path: payload.content for payload in payloads},
@@ -271,19 +287,22 @@ async def _materialize_snapshot(
             external=external,
         )
         node = await _node_state(runtime.node_floor)
-        dependency_installed, dependency_warning = await _ensure_dependencies(
+        (
+            dependency_installed,
+            dependency_warning,
+        ) = await materialization_test_support.ensure_dependencies(
             cache_root=cache_root,
             generation=generation,
             external=external,
             node=node,
         )
 
-    browser_ready, browser_warning = await _ensure_browser(
-        home=home,
-        scripts_dir=generation / "scripts",
-        dependencies_ready=dependency_installed,
-        external=external,
-    )
+        browser_ready, browser_warning = await materialization_test_support.ensure_browser(
+            home=home,
+            scripts_dir=generation / "scripts",
+            dependencies_ready=dependency_installed,
+            external=external,
+        )
     parser_warning = _join_warnings(
         runtime.warning,
         node.warning,
@@ -460,9 +479,9 @@ def _publish_first_root(
     try:
         stage.mkdir(mode=0o700)
         write_skill_scripts_owner(stage, owner)
-        _write_generation(stage / digest, payloads, provenance)
+        materialization_test_support.write_generation(stage / digest, payloads, provenance)
         fsync_tree(stage)
-        _publication_checkpoint("before-first-root-rename")
+        materialization_test_support.publication_checkpoint("before-first-root-rename")
         os.replace(stage, root)
         fsync_directory(namespace)
     except BaseException:
@@ -478,9 +497,9 @@ def _publish_warm_generation(
 ) -> None:
     stage = root / stage_name("scripts", uuid.uuid4().hex)
     try:
-        _write_generation(stage, payloads, provenance)
+        materialization_test_support.write_generation(stage, payloads, provenance)
         fsync_tree(stage)
-        _publication_checkpoint("before-scripts-rename")
+        materialization_test_support.publication_checkpoint("before-scripts-rename")
         os.replace(stage, generation)
         fsync_directory(root)
     except FileExistsError:
@@ -599,7 +618,7 @@ async def _ensure_dependencies(
             await run_blocking_safely(_prepare_dependency_stage, stage, manifest, lockfile)
             env = os.environ.copy()
             env["PUPPETEER_CACHE_DIR"] = str((get_gobby_home() / "cache" / "puppeteer").resolve())
-            result = await _run_owned_subprocess(
+            result = await materialization_test_support.run_owned_subprocess(
                 [npm, "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
                 cwd=stage,
                 env=env,
@@ -611,7 +630,7 @@ async def _ensure_dependencies(
                 return False, f"Parser dependency install failed: {warning}"
             await run_blocking_safely(_mark_dependencies_ready, staged_modules, lock_hash)
             await run_blocking_safely(fsync_tree, staged_modules)
-            _publication_checkpoint("before-dependency-attach")
+            materialization_test_support.publication_checkpoint("before-dependency-attach")
             await run_blocking_safely(os.replace, staged_modules, target)
             await run_blocking_safely(fsync_directory, scripts)
             return True, None
@@ -679,7 +698,7 @@ async def _ensure_browser(
             return True, None
         env = os.environ.copy()
         env["PUPPETEER_CACHE_DIR"] = str(cache_root.resolve())
-        result = await _run_owned_subprocess(
+        result = await materialization_test_support.run_owned_subprocess(
             [str(executable), "browsers", "install", "chrome"],
             cwd=scripts_dir,
             env=env,
@@ -733,7 +752,7 @@ async def _run_owned_subprocess(
     cwd: Path,
     env: dict[str, str],
     owner_record: Path,
-) -> _CommandResult:
+) -> MaterializationTestCommandResult:
     read_fd, write_fd = os.pipe()
     wrapped = [sys.executable, "-c", _BARRIER_PROGRAM, str(read_fd), *command]
     process: asyncio.subprocess.Process | None = None
@@ -758,7 +777,7 @@ async def _run_owned_subprocess(
         try:
             stdout, stderr = await asyncio.wait_for(
                 asyncio.shield(communication),
-                timeout=_SUBPROCESS_TIMEOUT_SECONDS,
+                timeout=materialization_test_support.subprocess_timeout_seconds,
             )
         except TimeoutError as exc:
             await _terminate_process_group(process, communication)
@@ -766,7 +785,7 @@ async def _run_owned_subprocess(
         except asyncio.CancelledError:
             await _terminate_process_group(process, communication)
             raise
-        return _CommandResult(
+        return MaterializationTestCommandResult(
             process.returncode or 0,
             stdout.decode(errors="replace"),
             stderr.decode(errors="replace"),
@@ -820,3 +839,20 @@ def _live_stage_warning(path: Path) -> str:
 
 def _publication_checkpoint(_name: str) -> None:
     """Fault-injection seam for crash-atomic publication tests."""
+
+
+class MaterializationTestSupport:
+    """Documented internal seam for focused materialization fault-injection tests."""
+
+    def __init__(self) -> None:
+        self.subprocess_timeout_seconds = _SUBPROCESS_TIMEOUT_SECONDS
+        self.scan_skill_content = scan_skill_content
+        self.validate_script_path = _validate_script_path
+        self.run_owned_subprocess = _run_owned_subprocess
+        self.publication_checkpoint = _publication_checkpoint
+        self.write_generation = _write_generation
+        self.ensure_dependencies = _ensure_dependencies
+        self.ensure_browser = _ensure_browser
+
+
+materialization_test_support = MaterializationTestSupport()

@@ -216,3 +216,28 @@ fn pooled_reuse_makes_zero_generation_calls() {
         std::fs::read_to_string(out_dir.join(&file_page.path)).expect("file page on disk");
     assert_eq!(file_page.content, on_disk);
 }
+
+#[test]
+fn pooled_worker_panics_are_returned_as_errors() {
+    let input = multi_file_input(4);
+    let pooled_generate = |_prompt: &str, _system: &str, _tier: PromptTier| -> Option<String> {
+        panic!("worker generator failed")
+    };
+    let mut serial_generate = deterministic_generation;
+    let result = generate_hierarchical_docs(
+        &input,
+        GenerateDocsOptions {
+            generate: Some(&mut serial_generate),
+            file_workers: Some(FileGenerationWorkers {
+                workers: NonZeroUsize::new(2).expect("worker count"),
+                generate: &pooled_generate,
+                verify: None,
+            }),
+            ..Default::default()
+        },
+        &mut |_doc| Ok(()),
+    );
+
+    let error = result.expect_err("worker panic must be recoverable");
+    assert!(error.to_string().contains("worker generator failed"));
+}

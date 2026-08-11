@@ -5,6 +5,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -85,12 +87,18 @@ def _materialized_result(scripts_dir: Path, browser_cache: Path) -> SkillMateria
     )
 
 
-@pytest.mark.parametrize("layout", ["main-project", "worktree", "clone"])
+@asynccontextmanager
+async def _execution_guard(_scripts_dir: Path) -> AsyncIterator[None]:
+    yield
+
+
+def _materializer(resolve: AsyncMock) -> SimpleNamespace:
+    return SimpleNamespace(resolve=resolve, execution_guard=_execution_guard)
+
+
 @pytest.mark.asyncio
-async def test_skill_command_uses_materialized_script_from_event_cwd(
-    layout: str, tmp_path: Path
-) -> None:
-    event_cwd = tmp_path / layout / "frontend"
+async def test_skill_command_uses_materialized_script_from_event_cwd(tmp_path: Path) -> None:
+    event_cwd = tmp_path / "worktree" / "frontend"
     event_cwd.mkdir(parents=True)
     scripts_dir = tmp_path / "cache" / "scripts"
     scripts_dir.mkdir(parents=True)
@@ -105,7 +113,7 @@ async def test_skill_command_uses_materialized_script_from_event_cwd(
     materialized = _materialized_result(scripts_dir, tmp_path / "browser-cache")
     mixin = EffectsMixin()
     resolve = AsyncMock(return_value=materialized)
-    mixin.skill_script_materializer = cast(Any, SimpleNamespace(resolve=resolve))
+    mixin.skill_script_materializer = cast(Any, _materializer(resolve))
     event = _event()
     event.cwd = str(event_cwd)
     event.project_id = "project-id"
@@ -130,12 +138,57 @@ async def test_skill_command_uses_materialized_script_from_event_cwd(
     assert not (event_cwd / ".agents").exists()
 
 
-@pytest.mark.parametrize("layout", ["main-project", "worktree", "clone"])
 @pytest.mark.asyncio
-async def test_background_skill_command_uses_event_cwd_without_agents_tree(
-    layout: str, tmp_path: Path
+async def test_skill_command_revalidates_script_while_spawn_guard_is_held(
+    tmp_path: Path,
 ) -> None:
-    event_cwd = tmp_path / layout / "frontend"
+    scripts_dir = tmp_path / "cache" / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "hook.py").write_text("print('{}')\n")
+    materialized = _materialized_result(scripts_dir, tmp_path / "browser-cache")
+    guard_held = False
+    validation_states: list[bool] = []
+
+    @asynccontextmanager
+    async def execution_guard(_scripts_dir: Path) -> AsyncIterator[None]:
+        nonlocal guard_held
+        guard_held = True
+        try:
+            yield
+        finally:
+            guard_held = False
+
+    def tracked_resolve(root: Path, script: str) -> Path:
+        validation_states.append(guard_held)
+        return resolve_materialized_skill_script(root, script)
+
+    mixin = EffectsMixin()
+    resolve = AsyncMock(return_value=materialized)
+    mixin.skill_script_materializer = cast(
+        Any,
+        SimpleNamespace(resolve=resolve, execution_guard=execution_guard),
+    )
+
+    with patch(
+        "gobby.workflows.engine.effects.resolve_materialized_skill_script",
+        side_effect=tracked_resolve,
+    ):
+        await mixin._apply_effect(
+            _effect(command=[sys.executable], skill="impeccable", script="hook.py"),
+            _ROW,
+            {},
+            {"event": _event()},
+            {},
+            [],
+            [],
+        )
+
+    assert validation_states == [False, True]
+
+
+@pytest.mark.asyncio
+async def test_background_skill_command_uses_event_cwd_without_agents_tree(tmp_path: Path) -> None:
+    event_cwd = tmp_path / "worktree" / "frontend"
     event_cwd.mkdir(parents=True)
     scripts_dir = tmp_path / "cache" / "scripts"
     scripts_dir.mkdir(parents=True)
@@ -149,7 +202,7 @@ async def test_background_skill_command_uses_event_cwd_without_agents_tree(
     )
     mixin = EffectsMixin()
     resolve = AsyncMock(return_value=_materialized_result(scripts_dir, tmp_path / "browser-cache"))
-    mixin.skill_script_materializer = cast(Any, SimpleNamespace(resolve=resolve))
+    mixin.skill_script_materializer = cast(Any, _materializer(resolve))
     event = _event()
     event.cwd = str(event_cwd)
     event.project_id = "project-id"
@@ -292,7 +345,9 @@ class TestRunCommandBackground:
             )
         assert constructions == []
 
-    async def test_single_flight_registry_cleans_up_after_completion(self) -> None:
+    async def test_single_flight_registry_cleans_up_after_completion(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         mixin = EffectsMixin()
         started = asyncio.Event()
         release = asyncio.Event()
@@ -303,12 +358,13 @@ class TestRunCommandBackground:
 
         run = AsyncMock(side_effect=gated_run)
         event = _event()
-        with patch.object(mixin, "_run_command_then_deliver", run):
+        with patch.object(mixin, "_run_command_then_deliver", run), caplog.at_level("INFO"):
             await mixin._apply_effect(
                 _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
             )
-            await started.wait()
+            await asyncio.wait_for(started.wait(), timeout=1)
             registry = mixin._background_run_command_registry()
+            assert registry
             first_task = next(iter(registry.values()))
             cleanup_observed = asyncio.Event()
             first_task.add_done_callback(lambda _task: cleanup_observed.set())
@@ -317,15 +373,17 @@ class TestRunCommandBackground:
                 _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
             )
             assert run.await_count == 1
+            assert "suppressed duplicate background run" in caplog.text
 
             release.set()
             await first_task
-            await cleanup_observed.wait()
+            await asyncio.wait_for(cleanup_observed.wait(), timeout=1)
             assert registry == {}
 
             await mixin._apply_effect(
                 _effect(background=True), _ROW, {}, {"event": event}, {}, [], []
             )
+            assert registry
             second_task = next(iter(registry.values()))
             await second_task
             assert run.await_count == 2
@@ -389,6 +447,7 @@ class TestRunCommandDeadlines:
         audit_call = audit.await_args
         assert audit_call is not None
         assert audit_call.args[0].status == "deadline_exhausted"
+        assert audit_call.args[0].timeout_seconds == 0.0
 
     async def test_skill_resolution_timeout_fails_open_with_safe_status(self) -> None:
         mixin = EffectsMixin()
@@ -398,7 +457,7 @@ class TestRunCommandDeadlines:
 
         mixin.skill_script_materializer = cast(
             Any,
-            SimpleNamespace(resolve=AsyncMock(side_effect=wait_forever)),
+            _materializer(AsyncMock(side_effect=wait_forever)),
         )
         with (
             patch(
@@ -555,13 +614,13 @@ def test_resolve_materialized_skill_script_returns_contained_file(tmp_path: Path
         "/tmp/hook.mjs",
         "../other/hook.mjs",
         "nested/../../hook.mjs",
-        r"C:\\temp\\hook.mjs",
+        r"C:\temp\hook.mjs",
     ],
 )
 def test_resolve_materialized_skill_script_rejects_unsafe_path(script: str, tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()
-    with pytest.raises(ValueError, match="relative|traverse"):
+    with pytest.raises(ValueError, match="non-empty|relative|traverse"):
         resolve_materialized_skill_script(scripts_dir, script)
 
 
@@ -610,7 +669,7 @@ def test_run_command_effect_requires_skill_and_script_together(fields: dict[str,
         RuleEffect(type="run_command", command=["node"], **fields)
 
 
-@pytest.mark.parametrize("script", ["", "/tmp/hook.mjs", "../hook.mjs", r"C:\\hook.mjs"])
+@pytest.mark.parametrize("script", ["", "/tmp/hook.mjs", "../hook.mjs", r"C:\hook.mjs"])
 def test_run_command_effect_rejects_unsafe_script(script: str) -> None:
     with pytest.raises(ValueError, match="non-empty|relative|traverse"):
         RuleEffect(

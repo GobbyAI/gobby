@@ -1056,7 +1056,6 @@ fn aggregate_settings_apply_only_to_aggregate_writer_pages() {
     for path in [
         "code/repo.md",
         "code/_architecture.md",
-        "code/concepts/index.md",
         "code/narrative/01-introduction.md",
     ] {
         assert_eq!(settings.for_path(path), settings, "{path}");
@@ -1068,6 +1067,7 @@ fn aggregate_settings_apply_only_to_aggregate_writer_pages() {
         "code/modules/src.md",
         "code/infrastructure.md",
         "code/features.md",
+        "code/concepts/index.md",
     ] {
         let projected = settings.for_path(path);
         assert_eq!(projected.prose_depth, "deep", "{path}");

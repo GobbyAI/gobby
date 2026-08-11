@@ -39,7 +39,8 @@ pub(super) struct CodeArgs {
     /// Confirm destructive CodeWiki output purge.
     #[arg(long, requires = "purge")]
     force: bool,
-    /// Limit docs to indexed files under one or more paths.
+    /// Limit docs to indexed files under one or more project-relative or absolute paths.
+    /// Absolute paths must resolve inside the selected project root.
     #[arg(long, num_args = 1.., value_name = "PATH")]
     scope: Vec<String>,
     /// Treat --scope paths as the complete publication boundary.

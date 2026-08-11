@@ -141,14 +141,7 @@ fn parse_prose_register(value: &str) -> Result<ProseRegister, WikiError> {
 
 pub(crate) fn run_command(options: CodeCommandOptions) -> Result<CommandOutcome, CodeCommandError> {
     let ai = options.ai_options()?;
-    let facts = CodewikiFacts::open(&options.project_root).map_err(|source| {
-        CodeCommandError::command(
-            "open CodeWiki facts",
-            Some(options.project_root.clone()),
-            source,
-        )
-    })?;
-    let project_id = facts.project_id().to_string();
+    let compare_scope = ScopeIdentity::project(options.project_root.display().to_string());
     if let Some(base_ref) = options.compare_to.as_deref() {
         let summary = compare_to(&options.project_root, options.out.as_deref(), base_ref).map_err(
             |source| {
@@ -160,10 +153,18 @@ pub(crate) fn run_command(options: CodeCommandOptions) -> Result<CommandOutcome,
             },
         )?;
         let text = compare_summary_text(&summary);
-        return code_outcome(ScopeIdentity::project(project_id), summary, text, None).map_err(
-            |source| CodeCommandError::command("serialize CodeWiki output", None, source),
-        );
+        return code_outcome(compare_scope, summary, text, None).map_err(|source| {
+            CodeCommandError::command("serialize CodeWiki output", None, source)
+        });
     }
+    let facts = CodewikiFacts::open(&options.project_root).map_err(|source| {
+        CodeCommandError::command(
+            "open CodeWiki facts",
+            Some(options.project_root.clone()),
+            source,
+        )
+    })?;
+    let project_id = facts.project_id().to_string();
     let freshness = check_freshness(
         options.requires_freshness(),
         &options.project_root,

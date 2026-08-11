@@ -100,6 +100,12 @@ jobs:
       - name: Test (gwiki)
         run: cargo nextest run --profile ci -p gobby-wiki
 
+      - name: Test emitted Mermaid with the real parser
+        run: >-
+          cargo test -p gobby-wiki
+          emitted_mermaid_blocks_pass_real_mermaid_parser
+          -- --ignored --nocapture
+
       - name: Clippy (gwiki, no default features)
         run: cargo clippy -p gobby-wiki --all-targets --no-default-features -- -D warnings
 

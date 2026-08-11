@@ -476,7 +476,7 @@ pub(crate) fn codewiki_tool_schemas() -> Vec<ToolSchema> {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string", "description": "Project-relative file path."},
-                    "limit": {"type": "integer", "description": "Max imports (default 25, max 50)."}
+                    "limit": {"type": "integer", "maximum": 50, "description": "Max imports (default 25, max 50)."}
                 },
                 "required": ["path"]
             }),
@@ -631,6 +631,13 @@ mod tests {
                 schema.name
             );
         }
+        let imports = schemas
+            .iter()
+            .find(|schema| schema.name == "imports")
+            .expect("imports schema");
+        let limit = &imports.parameters["properties"]["limit"];
+        assert_eq!(limit["type"], "integer");
+        assert_eq!(limit["maximum"], 50);
     }
 
     #[test]

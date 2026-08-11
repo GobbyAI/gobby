@@ -282,6 +282,7 @@ mod serial_db {
                 "search",
                 "--topic",
                 &topic.name,
+                "--no-semantic",
                 "bm25needle",
                 "--limit",
                 "3",

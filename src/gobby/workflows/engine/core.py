@@ -26,7 +26,10 @@ from gobby.skills.materialization import (
     get_skill_script_materializer,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.storage.pipeline_subscribers import (
+    CompletionSubscriberManager,
+    PipelineSubscriberStorageError,
+)
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.storage.workflow_definitions import (
     LocalWorkflowDefinitionManager,
@@ -137,6 +140,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
         )
         self._agent_def_cache_revision = get_workflow_definitions_revision()
         self._agent_def_cache: dict[tuple[str, str | None], AgentDefinitionBody | None] = {}
+        self._background_run_commands: dict[tuple[str, str], asyncio.Task[None]] = {}
 
     async def prewarm_skill_scripts(self, *, project_id: str | None) -> None:
         """Prepare skill scripts referenced by enabled rules."""
@@ -148,7 +152,11 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 enabled=True,
             )
         except Exception:
-            logger.warning("Workflow skill prewarm could not load enabled rules")
+            logger.warning(
+                "Workflow skill prewarm could not load enabled rules for project %s",
+                project_id,
+                exc_info=True,
+            )
             return
 
         skills: set[str] = set()
@@ -156,7 +164,12 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
             try:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
             except Exception:
-                logger.warning("Workflow skill prewarm skipped an invalid rule definition")
+                logger.warning(
+                    "Workflow skill prewarm skipped invalid rule %s for project %s",
+                    row.name,
+                    project_id,
+                    exc_info=True,
+                )
                 continue
             skills.update(
                 effect.skill
@@ -165,16 +178,22 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 and effect.skill is not None
                 and effect.script is not None
             )
+        ordered_skills = sorted(skills)
         results = await asyncio.gather(
             *(
                 self.skill_script_materializer.resolve(skill, project_id=project_id)
-                for skill in skills
+                for skill in ordered_skills
             ),
             return_exceptions=True,
         )
-        failures = sum(isinstance(result, BaseException) for result in results)
-        if failures:
-            logger.warning("Workflow skill prewarm failed for %d skill(s)", failures)
+        for skill, result in zip(ordered_skills, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Workflow skill prewarm failed for skill %s in project %s",
+                    skill,
+                    project_id,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     async def evaluate(
         self,
@@ -272,7 +291,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                             CompletionSubscriberManager(self.db).has_active_agent_wait,
                             session_id,
                         )
-                    except Exception as exc:
+                    except PipelineSubscriberStorageError as exc:
                         logger.warning(
                             "Failed to determine active agent wait for session %s: %s",
                             session_id,
