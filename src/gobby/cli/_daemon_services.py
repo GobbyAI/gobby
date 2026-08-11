@@ -1,8 +1,12 @@
 """Managed Docker service lifecycle for daemon commands."""
 
+import contextlib
 import logging
+import os
 import shutil
+import signal
 import subprocess  # nosec B404 # subprocess needed for managed Docker services
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
@@ -17,7 +21,11 @@ from .installers.compose_env import (
     ComposeEnvironmentError,
     ComposeRuntime,
 )
-from .installers.docker_guard import DockerTestProtectError, ensure_docker_allowed
+from .installers.docker_guard import (
+    DockerTestProtectError,
+    ensure_docker_allowed,
+    resolves_to_real_run,
+)
 from .installers.managed_services_lock import (
     ManagedServicesLockError,
     managed_services_lock,
@@ -112,6 +120,49 @@ def _start_managed_services_locked(
     return _run_compose_up(compose_file, services_dir, runtime)
 
 
+def _run_compose_command(
+    cmd: list[str],
+    *,
+    timeout: int,
+    env: Mapping[str, str],
+    cwd: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run compose in its own process group so a timeout kills the plugin too.
+
+    subprocess.run's timeout kills only the docker CLI wrapper; the
+    docker-compose plugin child survives as an orphan that keeps mutating the
+    project, and concurrent orphans recreate each other's containers so
+    ``up --wait`` never converges again until they are killed by hand.
+    """
+    if not resolves_to_real_run(subprocess.run):
+        # The docker-guard contract is that unit tests stub subprocess.run;
+        # honor the stub so no real process is ever spawned under test.
+        return subprocess.run(  # nosec B603 # test stub per docker-guard contract
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=dict(env),
+            cwd=cwd,
+        )
+    with subprocess.Popen(  # nosec B603 # hardcoded docker command
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=dict(env),
+        cwd=cwd,
+        start_new_session=True,
+    ) as process:
+        try:
+            stdout, stderr = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            raise
+        return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+
+
 def _run_compose_up(
     compose_file: Path,
     services_dir: Path,
@@ -124,10 +175,8 @@ def _run_compose_up(
 
     try:
         ensure_docker_allowed("managed-services compose up", runner=subprocess.run)
-        result = subprocess.run(  # nosec B603 # hardcoded docker command
+        result = _run_compose_command(
             cmd,
-            capture_output=True,
-            text=True,
             timeout=120,
             env=runtime.environment,
             cwd=str(services_dir),
@@ -203,10 +252,8 @@ def _stop_managed_services_locked(
             command.extend(["--profile", profile])
         command.append("down")
         ensure_docker_allowed("managed-services compose down", runner=subprocess.run)
-        result = subprocess.run(  # nosec B603 # hardcoded Docker command list
+        result = _run_compose_command(
             command,
-            capture_output=True,
-            text=True,
             timeout=60,
             env=runtime.environment,
             cwd=str(services_dir),

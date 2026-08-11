@@ -13,7 +13,7 @@ class DockerTestProtectError(RuntimeError):
     """Raised when a test-protected process would execute a real Docker command."""
 
 
-def _resolves_to_real_run(runner: object) -> bool:
+def resolves_to_real_run(runner: object) -> bool:
     """Follow the ``__wrapped__`` chain to see whether ``runner`` really executes.
 
     Delegating wrappers (e.g. the launchctl guard in test conftests) apply
@@ -43,7 +43,7 @@ def ensure_docker_allowed(context: str, *, runner: object) -> None:
     """
     if os.environ.get("GOBBY_TEST_PROTECT", "").lower() not in _TRUTHY:
         return
-    if not _resolves_to_real_run(runner):
+    if not resolves_to_real_run(runner):
         return
     if os.environ.get("GOBBY_TEST_ALLOW_DOCKER", "").lower() in _TRUTHY:
         return

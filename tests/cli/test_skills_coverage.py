@@ -896,7 +896,8 @@ class TestSkillsHub:
         mock_db_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        mock_store_cls.return_value.get.return_value = None
+        snapshot = mock_store_cls.return_value.read_snapshot.return_value
+        snapshot.overrides.get.return_value = None
         result = runner.invoke(
             skills,
             ["hub", "add", "my-hub", "--type", "skillsmp", "--url", "https://hub.example.com"],
@@ -916,7 +917,8 @@ class TestSkillsHub:
         mock_db_cls: MagicMock,
         runner: CliRunner,
     ) -> None:
-        mock_store_cls.return_value.get.return_value = "skillsmp"
+        snapshot = mock_store_cls.return_value.read_snapshot.return_value
+        snapshot.overrides.get.return_value = "skillsmp"
         result = runner.invoke(
             skills,
             ["hub", "add", "my-hub", "--type", "skillsmp", "--url", "https://hub.example.com"],

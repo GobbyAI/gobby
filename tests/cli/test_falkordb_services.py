@@ -38,6 +38,8 @@ def _seed_falkordb_config(db: HubDatabase) -> None:
     store = ConfigStore(db)
     store.set("databases.falkordb.host", "localhost", source="test")
     store.set("databases.falkordb.port", 6379, source="test")
+    # is_falkordb_installed requires a recorded password reference.
+    store.set("databases.falkordb.password", "$secret:falkordb_password")
 
 
 class _FakeRedisClient:

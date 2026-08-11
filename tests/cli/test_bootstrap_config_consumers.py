@@ -31,10 +31,6 @@ _POST_DATABASE_CONSUMERS = (
 def test_pre_database_operations_use_bootstrap(monkeypatch: pytest.MonkeyPatch) -> None:
     bootstrap_loader = MagicMock(return_value=BootstrapConfig(daemon_port=61977))
     monkeypatch.setattr(install_daemon, "load_bootstrap", bootstrap_loader, raising=False)
-    monkeypatch.setattr(
-        "gobby.config.app.load_config",
-        MagicMock(return_value=SimpleNamespace(daemon_port=61978)),
-    )
 
     assert install_daemon._daemon_url() == "http://localhost:61977/"
     bootstrap_loader.assert_called_once_with(resolve_database_url=False)
@@ -52,14 +48,6 @@ def test_post_database_operations_use_runtime_snapshot(
     )
     runtime_accessor = MagicMock(return_value=runtime)
     monkeypatch.setattr(qdrant_module, "get_cli_runtime", runtime_accessor, raising=False)
-    monkeypatch.setattr(
-        "gobby.config.app.load_config",
-        MagicMock(
-            return_value=SimpleNamespace(
-                databases=SimpleNamespace(qdrant=SimpleNamespace(url="http://legacy:6333"))
-            )
-        ),
-    )
     observed_urls: list[str | None] = []
 
     async def get_qdrant_status(*, qdrant_url: str | None) -> dict[str, object]:

@@ -18,6 +18,7 @@ from click.testing import CliRunner
 from gobby.cli.agents import agents, resolve_agent_run_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
@@ -177,7 +178,9 @@ class TestResolveAgentRunId:
         session_manager: SessionManager,
         sample_project: dict[str, Any],
     ) -> None:
-        machine_id = "21000000-0000-4000-8000-000000000001"
+        # Session registration rejects foreign machine ids, so attribute the
+        # fixture rows to the local machine.
+        machine_id = require_machine_id()
         session = session_manager.register(
             external_id="agent-wildcard-test",
             machine_id=machine_id,
