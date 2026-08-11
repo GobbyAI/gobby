@@ -32,16 +32,24 @@ pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
         });
     }
     match daemon_mode_layers() {
-        Ok(Some((daemon, _routing))) => Ok(ConfigLayers {
-            daemon: Some(daemon),
-            standalone: None,
-            mode: ConfigMode::Daemon,
-        }),
-        Ok(None) => Ok(ConfigLayers {
-            daemon: None,
-            standalone: None,
-            mode: ConfigMode::Hub,
-        }),
+        Ok(Some((daemon, _routing))) => {
+            warn_for_unregistered_served_keys(&daemon);
+            Ok(ConfigLayers {
+                daemon: Some(daemon),
+                standalone: None,
+                mode: ConfigMode::Daemon,
+            })
+        }
+        Ok(None) => {
+            log::warn!(
+                "daemon runtime mode returned no served configuration; using PostgreSQL snapshot"
+            );
+            Ok(ConfigLayers {
+                daemon: None,
+                standalone: None,
+                mode: ConfigMode::Hub,
+            })
+        }
         Err(error) => {
             log::warn!(
                 "daemon runtime configuration unavailable; using PostgreSQL snapshot: {error}"
@@ -51,6 +59,17 @@ pub(crate) fn read_config_layers() -> anyhow::Result<ConfigLayers> {
                 standalone: None,
                 mode: ConfigMode::Hub,
             })
+        }
+    }
+}
+
+fn warn_for_unregistered_served_keys(served: &DaemonServedConfig) {
+    for key in served.served_keys() {
+        if !gobby_core::config::is_registered_runtime_key(key) {
+            log::warn!(
+                "daemon served configuration key {key:?} that this gcode binary's compiled \
+                 contract does not register; ignoring it — rebuild and reinstall gcode"
+            );
         }
     }
 }
@@ -114,17 +133,6 @@ impl ServiceConfigSource for ServiceSource {
         match self {
             Self::Daemon { served, hits } => {
                 if !gobby_core::config::is_registered_runtime_key(key) {
-                    // A served value for a key this binary does not register
-                    // means the compiled contract predates the daemon: fail
-                    // closed on the value, but never silently — the operator
-                    // must know the installed gcode is stale.
-                    if served.config_value(key).is_some() {
-                        log::warn!(
-                            "daemon served configuration key {key:?} that this gcode binary's \
-                             compiled contract does not register; ignoring it — rebuild and \
-                             reinstall gcode"
-                        );
-                    }
                     return Ok(None);
                 }
                 if let Some(value) = served.config_value(key) {
@@ -187,7 +195,7 @@ impl ServiceConfigSource for ServiceSource {
 mod tests {
     use std::collections::BTreeMap;
 
-    use super::ServiceSource;
+    use super::{ServiceSource, warn_for_unregistered_served_keys};
     use crate::config::services::{
         ServiceConfigSource, resolve_embedding_config_details_from_service_source,
     };
@@ -326,18 +334,13 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn daemon_service_source_warns_for_served_keys_missing_from_the_compiled_contract() {
         install_capture_logger();
         captured_warnings().clear();
 
-        let mut source = ServiceSource::daemon(served([("contract.unknown.key", "served-value")]));
-        assert_eq!(
-            source
-                .config_value("contract.unknown.key")
-                .expect("unregistered key fails closed"),
-            None
-        );
+        let source = served([("contract.unknown.key", "served-value")]);
+        warn_for_unregistered_served_keys(&source);
         let warning = captured_warnings()
             .iter()
             .find(|message| message.contains("contract.unknown.key"))
@@ -350,13 +353,7 @@ mod tests {
         );
 
         captured_warnings().clear();
-        let mut source = ServiceSource::daemon(served([]));
-        assert_eq!(
-            source
-                .config_value("contract.unknown.key")
-                .expect("unserved unregistered key stays a plain miss"),
-            None
-        );
+        warn_for_unregistered_served_keys(&served([]));
         assert!(captured_warnings().is_empty());
     }
 

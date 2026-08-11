@@ -13,6 +13,10 @@ impl DaemonServedConfig {
     pub fn new(values: BTreeMap<String, String>) -> Self {
         Self { values }
     }
+
+    pub fn served_keys(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
 }
 
 impl ConfigSource for DaemonServedConfig {

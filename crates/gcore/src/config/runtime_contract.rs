@@ -88,7 +88,10 @@ pub fn invalid_dynamic_segments() -> &'static [String] {
     &contract().codec.invalid
 }
 
-pub fn encode_dynamic_segment(value: &str) -> String {
+pub fn encode_dynamic_segment(value: &str) -> Result<String, DynamicSegmentError> {
+    if value.is_empty() {
+        return Err(DynamicSegmentError::Empty);
+    }
     let mut encoded = String::with_capacity(value.len());
     for byte in value.as_bytes() {
         if SAFE_SEGMENT_BYTES.contains(byte) {
@@ -99,7 +102,7 @@ pub fn encode_dynamic_segment(value: &str) -> String {
             encoded.push(hex_digit(byte & 0x0f));
         }
     }
-    encoded
+    Ok(encoded)
 }
 
 pub fn decode_dynamic_segment(value: &str) -> Result<String, DynamicSegmentError> {
@@ -128,7 +131,7 @@ pub fn decode_dynamic_segment(value: &str) -> Result<String, DynamicSegmentError
         }
     }
     let decoded = String::from_utf8(decoded).map_err(|_| DynamicSegmentError::InvalidUtf8)?;
-    if encode_dynamic_segment(&decoded) != value {
+    if encode_dynamic_segment(&decoded)? != value {
         return Err(DynamicSegmentError::NonCanonical);
     }
     Ok(decoded)
