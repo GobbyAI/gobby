@@ -549,6 +549,32 @@ def test_voice_binding_plaintext_api_key_is_rejected_at_storage(
     assert result.changed_keys == frozenset({"voice.openai_compatible_audio"})
 
 
+def test_runtime_candidate_resolves_secret_references(
+    revision_db: HubDatabase,
+    mutations: ConfigMutations,
+    secret_store: SecretStore,
+) -> None:
+    """Runtime consumers get plaintext for reference-secrecy keys (#20032).
+
+    Stored rows and snapshot values keep the ``$secret:`` reference form;
+    only the materialized runtime DaemonConfig carries plaintext, otherwise
+    FalkorDB, Qdrant, and generation-endpoint clients authenticate with the
+    reference literal.
+    """
+    key = "databases.falkordb.password"
+    mutations.patch(
+        expected_revision=0,
+        patch=ConfigPatch(secrets={key: SecretUpdate("falkor-plaintext-pw")}),
+    )
+
+    repository = ConfigRepository(revision_db, secret_store=secret_store)
+    snapshot = repository.read(resolve_secrets=True)
+    candidate = repository.runtime_candidate(dict(snapshot.values))
+
+    assert snapshot.values[key] == f"$secret:{config_key_to_secret_name(key)}"
+    assert candidate.databases.falkordb.password == "falkor-plaintext-pw"
+
+
 def test_expected_revision_domain_is_rejected(mutations: ConfigMutations) -> None:
     """Storage rejects out-of-domain expected revisions before touching rows."""
     from typing import Any, cast

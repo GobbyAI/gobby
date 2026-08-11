@@ -249,6 +249,15 @@ class ConfigRepository:
             spec = self._resolve(key)
             if spec.source_path is None:
                 continue
+            if (
+                config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE
+                and isinstance(value, str)
+                and value.startswith("$secret:")
+            ):
+                # Runtime consumers (FalkorDB, Qdrant, generation endpoints)
+                # need plaintext; stored rows, snapshots, and API surfaces
+                # keep the reference form.
+                value = self._secrets().get(value.removeprefix("$secret:"))
             path = self._runtime_path(spec, key)
             _assign_path(candidate, path, value)
         return DaemonConfig.model_validate(candidate)
