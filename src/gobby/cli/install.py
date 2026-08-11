@@ -30,6 +30,7 @@ from gobby.storage.secrets import (
 )
 from gobby.ui_exposure import (
     UiExposeError,
+    UiExposeResult,
     apply_installer_ui_exposure,
     resolve_installer_ui_exposure,
 )
@@ -611,13 +612,18 @@ def install(
     run_daemon_setup(project_path, configure_ide_settings=configure_ide_settings)
     if initialize_project_after_setup:
         _initialize_project_after_setup(project_path)
+    exposure_result: UiExposeResult | None = None
     try:
         exposure_result = apply_installer_ui_exposure(
             expose_ui,
             bootstrap.daemon_port,
         )
     except UiExposeError as exc:
-        raise click.ClickException(f"Failed to expose the web UI: {exc}") from exc
+        click.echo(
+            f"Warning: failed to expose the web UI: {exc}. "
+            "Install continues; run 'gobby ui expose' to retry.",
+            err=True,
+        )
     if exposure_result is not None:
         click.echo(f"Web UI exposed at {exposure_result.url}")
     if config_only_flag:

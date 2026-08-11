@@ -348,7 +348,7 @@ class TestInstallCommand:
         _config.assert_not_called()
         _setup.assert_not_called()
 
-    def test_hooks_with_expose_ui_bypasses_maintenance_return(
+    def test_expose_ui_failure_warns_and_install_continues(
         self,
         runner: CliRunner,
         monkeypatch: pytest.MonkeyPatch,
@@ -375,16 +375,22 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.run_daemon_setup") as daemon_setup,
             patch("gobby.cli.install._should_initialize_project", return_value=False),
+            patch("gobby.cli.install._configure_secret_kek_posture"),
+            patch("gobby.cli.install._provision_local_api_token"),
+            patch("gobby.cli.install._run_git_hooks_install") as git_hooks,
+            patch("gobby.cli.install._run_voice_install"),
         ):
             result = runner.invoke(
                 install,
                 ["--hooks", "--expose-ui", "--no-interactive"],
             )
 
-        assert result.exit_code == 1
-        assert "Failed to expose the web UI: sentinel" in result.output
+        assert result.exit_code == 0
+        assert "Warning: failed to expose the web UI: sentinel" in result.output
+        assert "gobby ui expose" in result.output
         daemon_setup.assert_called_once()
         apply_exposure.assert_called_once_with(True, 60887)
+        git_hooks.assert_called_once()
 
     def test_install_claude_targeted_skips_embedding_and_services(
         self,
