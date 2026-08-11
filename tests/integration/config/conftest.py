@@ -352,12 +352,15 @@ async def _dispatch(state: _WorkerState, request: dict[str, object]) -> object:
     if operation == "lease_activate":
         generation = EmbeddingGenerationState(state.db)
         watermark = await asyncio.to_thread(generation.watermark)
+        caught_up_watermark = cast(int | None, request.get("caught_up_watermark"))
+        if caught_up_watermark is None:
+            caught_up_watermark = watermark
         state.lease = generation.prepare_serving_lease(
             UUID(cast(str, request["daemon_id"])),
             cast(str, request["generation"]),
             cast(int, request["revision"]),
             lease_seconds=cast(float, request["lease_seconds"]),
-            caught_up_watermark=watermark,
+            caught_up_watermark=caught_up_watermark,
             required_watermark=watermark,
         )
         state.lease_generation_state = generation
@@ -661,6 +664,7 @@ class DaemonWorker:
         revision: int,
         *,
         lease_seconds: float,
+        caught_up_watermark: int | None = None,
     ) -> None:
         self._request_value(
             "lease_activate",
@@ -668,6 +672,7 @@ class DaemonWorker:
             generation=generation,
             revision=revision,
             lease_seconds=lease_seconds,
+            caught_up_watermark=caught_up_watermark,
         )
 
     def lease_renew(self) -> None:

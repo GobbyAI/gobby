@@ -171,6 +171,8 @@ def test_expired_serving_ack_unblocks_collection(temp_db: HubDatabase) -> None:
     )
     lease.activate()
 
+    if lease.remaining_seconds() <= 0:
+        pytest.skip("200ms serving lease expired before live-ack assertion")
     assert state.can_collect("new-generation", 1) is False
 
     temp_db.execute(

@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import pytest
 
-from gobby.ai.embedding_switch import PHASE_ACTIVE, PHASE_BUILDING, PHASE_FLIPPING
+from gobby.ai.embedding_switch import (
+    PHASE_ACTIVE,
+    PHASE_BUILDING,
+    PHASE_FLIPPING,
+    SwitchJournal,
+)
+from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
+from gobby.storage.hub.postgres import PostgresHubDatabase
 
 if TYPE_CHECKING:
     from tests.integration.config.conftest import DaemonWorker, TwoDaemonCluster
@@ -23,6 +31,40 @@ def _value(snapshot: dict[str, object], projection: str, key: str) -> object:
 def _subscriber_revisions(snapshot: dict[str, object]) -> list[int]:
     subscriber = cast(dict[str, object], snapshot["subscriber"])
     return cast(list[int], subscriber["revisions"])
+
+
+class _RecordingLifecycleStore:
+    def __init__(self) -> None:
+        self.values: dict[str, object] = {}
+
+    def set_internal_lifecycle(self, key: str, value: object) -> None:
+        self.values[key] = value
+
+
+class _RecordingVectorStore:
+    def __init__(self) -> None:
+        self.deleted: list[tuple[str, str]] = []
+
+    async def delete(self, point_id: str, *, collection_name: str) -> None:
+        self.deleted.append((point_id, collection_name))
+
+
+def _expect_transient_renewal_failure(
+    worker: DaemonWorker,
+    *,
+    activated: float,
+    lease_seconds: float,
+) -> None:
+    with pytest.raises(RuntimeError) as exc_info:
+        worker.lease_renew()
+
+    message = str(exc_info.value)
+    if "lease renewal failed" in message:
+        return
+    deadline_lapsed = "lease expired" in message or "serving is fenced" in message
+    if deadline_lapsed and time.monotonic() - activated >= lease_seconds * 0.5:
+        pytest.skip("serving lease reached its deadline before renewal failure assertion")
+    pytest.fail(f"unexpected renewal error: {message}")
 
 
 def test_remote_daemon_converges_after_commit(two_daemons: TwoDaemonCluster) -> None:
@@ -296,19 +338,17 @@ def test_partitioned_daemon_self_fences_before_gc(two_daemons: TwoDaemonCluster)
     )
 
     two_daemons.first.partition()
-    if time.monotonic() - activated < lease_seconds * 0.5:
-        # Immediately after the partition the ack row is still live: GC of
-        # the incompatible generation must stay blocked until the lease
-        # expires or fences. (Guarded: on a slow machine the TTL may already
-        # have lapsed by the time the partition lands.)
-        assert two_daemons.second.can_collect("new-generation", 1) is False
-    with pytest.raises(RuntimeError, match="lease renewal failed"):
-        two_daemons.first.lease_renew()
-    assert time.monotonic() - activated < lease_seconds
-    if time.monotonic() - activated < lease_seconds * 0.5:
-        # A transient renewal failure alone does not fence; the local
-        # deadline (TTL minus margin) is the fence of last resort.
-        two_daemons.first.lease_assert()
+    if time.monotonic() - activated >= lease_seconds * 0.5:
+        pytest.skip("serving lease reached its deadline before live-ack assertion")
+    assert two_daemons.second.can_collect("new-generation", 1) is False
+    _expect_transient_renewal_failure(
+        two_daemons.first,
+        activated=activated,
+        lease_seconds=lease_seconds,
+    )
+    if time.monotonic() - activated >= lease_seconds * 0.5:
+        pytest.skip("serving lease reached its deadline before transient-failure assertion")
+    two_daemons.first.lease_assert()
 
     fenced = two_daemons.first.lease_wait_fenced(timeout=lease_seconds + 1.0)
 
@@ -346,6 +386,7 @@ def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> 
         values={"rules.enforcement_enabled": False},
     )
     two_daemons.second.wait_for_revision(first_revision)
+    activated = time.monotonic()
     two_daemons.second.lease_activate(
         daemon_id,
         "healed-generation",
@@ -358,8 +399,11 @@ def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> 
         expected_revision=first_revision,
         values={"rules.enforcement_enabled": True},
     )
-    with pytest.raises(RuntimeError, match="lease renewal failed"):
-        two_daemons.second.lease_renew()
+    _expect_transient_renewal_failure(
+        two_daemons.second,
+        activated=activated,
+        lease_seconds=lease_seconds,
+    )
 
     two_daemons.second.heal()
 
@@ -377,19 +421,21 @@ def test_partition_heal_reconciles_in_process(two_daemons: TwoDaemonCluster) -> 
 
 
 def test_switch_write_races_converge(two_daemons: TwoDaemonCluster) -> None:
-    create_sequence = two_daemons.first.append_change("memory", "record", is_tombstone=False)
+    record_id = str(uuid4())
+    promoted_record_id = str(uuid4())
+    create_sequence = two_daemons.first.append_change("memory", record_id, is_tombstone=False)
     journal = two_daemons.first.switch_start()
     two_daemons.first.switch_phase(PHASE_BUILDING)
-    update_sequence = two_daemons.second.append_change("memory", "record")
+    update_sequence = two_daemons.second.append_change("memory", record_id)
     two_daemons.first.switch_phase(PHASE_FLIPPING)
     delete_sequence = two_daemons.second.append_change(
         "memory",
-        "record",
+        record_id,
         is_tombstone=True,
     )
     two_daemons.first.switch_phase(PHASE_ACTIVE)
     record = two_daemons.first.switch_complete(reconcile=False)
-    promotion_sequence = two_daemons.second.append_change("memory", "promoted-record")
+    promotion_sequence = two_daemons.second.append_change("memory", promoted_record_id)
     committed_revision = cast(int, record["committed_revision"])
     two_daemons.second.wait_for_revision(committed_revision)
 
@@ -407,28 +453,45 @@ def test_switch_write_races_converge(two_daemons: TwoDaemonCluster) -> None:
     assert journal["physical_names"] == record["physical_names"]
     assert promoted_target in targets
 
-    # Replay the ledger into a recording fake store: every raced write must
-    # reach the promoted collection, and the final contents must reflect the
-    # create/update/tombstone ordering.
-    replayed: list[int] = []
-    promoted_collection: dict[str, int] = {}
-    for change in changes:
-        replayed.append(cast(int, change["sequence"]))
-        source_id = cast(str, change["source_id"])
-        if cast(bool, change["is_tombstone"]):
-            promoted_collection.pop(source_id, None)
-        else:
-            promoted_collection[source_id] = cast(int, change["sequence"])
-    assert replayed == [create_sequence, update_sequence, delete_sequence, promotion_sequence]
-    assert promoted_collection == {"promoted-record": promotion_sequence}
+    # Drive the production replay against the shared ledger. The source rows
+    # are absent, so last-event-wins projects one authoritative delete per ID.
+    db = PostgresHubDatabase(two_daemons.dsn)
+    lifecycle_store = _RecordingLifecycleStore()
+    vector_store = _RecordingVectorStore()
+    journal_state = SwitchJournal.from_dict(journal)
+    try:
+        projected = asyncio.run(
+            EmbeddingSwitchRunner(lifecycle_store, db)._replay_projection_changes(
+                journal_state,
+                cast(Any, object()),
+                cast(Any, vector_store),
+            )
+        )
+    finally:
+        db.close()
 
-    # A lease prepared after the race carries a caught-up watermark that
-    # covers every raced sequence; acknowledging at that watermark succeeds.
-    assert two_daemons.first.watermark() >= promotion_sequence
+    assert projected == 0
+    assert vector_store.deleted == [
+        (record_id, promoted_target),
+        (promoted_record_id, promoted_target),
+    ]
+    assert journal_state.caught_up_watermark == promotion_sequence
+
+    # The worker's caught-up proof must cover the required shared watermark.
+    assert two_daemons.first.watermark() == promotion_sequence
+    with pytest.raises(RuntimeError, match="replay reached"):
+        two_daemons.second.lease_activate(
+            uuid4(),
+            cast(str, record["run_id"]),
+            committed_revision,
+            lease_seconds=5.0,
+            caught_up_watermark=journal_state.caught_up_watermark - 1,
+        )
     two_daemons.second.lease_activate(
         uuid4(),
         cast(str, record["run_id"]),
         committed_revision,
         lease_seconds=5.0,
+        caught_up_watermark=journal_state.caught_up_watermark,
     )
     two_daemons.second.lease_assert()

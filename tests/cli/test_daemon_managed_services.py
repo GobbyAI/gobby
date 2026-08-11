@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -62,6 +63,39 @@ def test_compose_timeout_terminates_windows_process_tree(
         check=False,
         text=True,
     )
+    process.wait.assert_called_once_with()
+
+
+def test_compose_interrupt_terminates_process_group_and_reaps_child(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = ["docker", "compose", "up"]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.pid = 42
+    process.communicate.side_effect = KeyboardInterrupt
+    process.wait.side_effect = [
+        subprocess.TimeoutExpired(command, daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
+        0,
+    ]
+    killpg = MagicMock()
+
+    monkeypatch.setattr(daemon_services, "resolves_to_real_run", lambda _run: True)
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
+    monkeypatch.setattr(daemon_services.os, "killpg", killpg)
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    with pytest.raises(KeyboardInterrupt):
+        daemon_services._run_compose_command(command, timeout=10, env={}, cwd=".")
+
+    assert killpg.call_args_list == [
+        ((42, signal.SIGTERM),),
+        ((42, signal.SIGKILL),),
+    ]
+    assert process.wait.call_args_list == [
+        call(timeout=daemon_services._COMPOSE_TERMINATION_GRACE_SECONDS),
+        call(),
+    ]
 
 
 def test_missing_docker_is_fatal(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

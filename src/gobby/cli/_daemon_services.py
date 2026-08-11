@@ -34,6 +34,8 @@ from .installers.managed_services_lock import (
 
 logger = logging.getLogger(__name__)
 
+_COMPOSE_TERMINATION_GRACE_SECONDS = 2.0
+
 
 @dataclass(frozen=True)
 class ServiceStartResult:
@@ -121,6 +123,37 @@ def _start_managed_services_locked(
     return _run_compose_up(compose_file, services_dir, runtime)
 
 
+def _terminate_compose_process(
+    process: subprocess.Popen[str],
+    *,
+    graceful: bool,
+) -> None:
+    """Terminate the compose process tree and reap its root process."""
+    if sys.platform == "win32":
+        with contextlib.suppress(OSError, subprocess.SubprocessError):
+            subprocess.run(  # nosec B603 B607 # Windows process-tree cleanup
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                capture_output=True,
+                check=False,
+                text=True,
+            )
+    elif graceful:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=_COMPOSE_TERMINATION_GRACE_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        process.wait()
+
+
 def _run_compose_command(
     cmd: list[str],
     *,
@@ -158,17 +191,10 @@ def _run_compose_command(
         try:
             stdout, stderr = process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            if sys.platform == "win32":
-                with contextlib.suppress(OSError, subprocess.SubprocessError):
-                    subprocess.run(  # nosec B603 B607 # Windows process-tree cleanup
-                        ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                        capture_output=True,
-                        check=False,
-                        text=True,
-                    )
-            else:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
+            _terminate_compose_process(process, graceful=False)
+            raise
+        except KeyboardInterrupt:
+            _terminate_compose_process(process, graceful=True)
             raise
         return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 

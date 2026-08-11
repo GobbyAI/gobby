@@ -1503,19 +1503,14 @@ class TestShutdownDaemonServices:
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.05,
+            0.0,
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
-        deadline_expired = asyncio.Event()
         block_cleanup = asyncio.Event()
 
         async def wait_for_overall_deadline(*_args: object, **_kwargs: object) -> None:
-            try:
-                await block_cleanup.wait()
-            except asyncio.CancelledError:
-                deadline_expired.set()
-                raise
+            await block_cleanup.wait()
 
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
@@ -1554,7 +1549,7 @@ class TestShutdownDaemonServices:
                 )
             )
             await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
-            await asyncio.wait_for(deadline_expired.wait(), timeout=1.0)
+            assert shutdown_task.done() is False
             runner.database.close.assert_not_called()
 
             release_worker.set()

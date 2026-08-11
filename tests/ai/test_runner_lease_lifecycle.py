@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
+import weakref
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
@@ -219,6 +221,53 @@ def test_managed_lease_identity_uses_completed_record() -> None:
     identity = services._serving_lease_identity(managed, 99, cast(Any, object()))
 
     assert identity == ("run-9", 12, 9)
+
+
+@pytest.mark.asyncio
+async def test_managed_lease_activate_schedules_and_retains_daemon_loop_renewal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop = asyncio.get_running_loop()
+    loop_thread_id = threading.get_ident()
+    started = asyncio.Event()
+    release = asyncio.Event()
+    observed: dict[str, object] = {}
+
+    async def record_renewal(_handle: services._ManagedEmbeddingLease) -> None:
+        observed["loop"] = asyncio.get_running_loop()
+        observed["thread_id"] = threading.get_ident()
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(services, "_renew_embedding_lease", record_renewal)
+    handle = services._ManagedEmbeddingLease(
+        _lease(EmbeddingGenerationState(cast(Any, _StubHubDatabase()))),
+        loop,
+        read_completed_record=lambda: None,
+        request_rebuild=lambda _record: None,
+    )
+    builder_thread_id: int | None = None
+
+    def activate() -> None:
+        nonlocal builder_thread_id
+        builder_thread_id = threading.get_ident()
+        handle.activate()
+
+    try:
+        await asyncio.to_thread(activate)
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        assert observed == {"loop": loop, "thread_id": loop_thread_id}
+        assert builder_thread_id != loop_thread_id
+        assert handle.renewal is not None
+        renewal_ref = weakref.ref(handle.renewal)
+        gc.collect()
+        assert renewal_ref() is handle.renewal
+    finally:
+        release.set()
+        if handle.renewal is not None:
+            await asyncio.wrap_future(handle.renewal)
+        handle.dispose()
 
 
 @pytest.mark.asyncio

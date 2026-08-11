@@ -107,7 +107,7 @@ def test_loopback_hooks_remain_open_when_auth_mode_is_disabled() -> None:
 
 
 def test_required_by_default(temp_db: HubDatabase) -> None:
-    def services(config: DaemonConfig | None) -> ServiceContainer:
+    def services() -> ServiceContainer:
         return ServiceContainer(
             database=temp_db,
             session_manager=MagicMock(),
@@ -117,14 +117,20 @@ def test_required_by_default(temp_db: HubDatabase) -> None:
             llm_service=MagicMock(),
         )
 
-    fallback_server = HTTPServer(services(None))
-    runtime_disabled_server = HTTPServer(services(DaemonConfig(auth_mode="disabled")))
+    fallback_server = HTTPServer(services())
+    runtime_disabled_server = HTTPServer(
+        services(),
+        startup_config=DaemonConfig(auth_mode="disabled"),
+    )
     bootstrap_disabled_server = HTTPServer(
-        services(DaemonConfig(auth_mode="required")),
+        services(),
+        startup_config=DaemonConfig(auth_mode="required"),
         bootstrap_config=BootstrapConfig(auth_mode="disabled"),
     )
 
     assert fallback_server.auth_service.enabled is True
+    assert runtime_disabled_server.startup_config is not None
+    assert runtime_disabled_server.startup_config.auth_mode == "disabled"
     assert runtime_disabled_server.auth_service.enabled is True
     assert bootstrap_disabled_server.auth_service.enabled is False
 

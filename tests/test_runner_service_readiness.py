@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock
 
 import httpx
 import psycopg
@@ -123,9 +124,13 @@ async def test_missing_qdrant_configuration_blocks_startup() -> None:
         )
 
 
-async def test_test_mode_skips_managed_service_readiness() -> None:
+async def test_test_mode_skips_managed_service_readiness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     managed_services = object()
     config = SimpleNamespace(test_mode=True, databases=managed_services)
+    check = AsyncMock()
+    monkeypatch.setattr(readiness, "_check_managed_services_ready_once", check)
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(config_runtime=_config_runtime(config)),
@@ -133,7 +138,7 @@ async def test_test_mode_skips_managed_service_readiness() -> None:
 
     await readiness.require_managed_services_ready(runner)
 
-    assert config.databases is managed_services
+    check.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "0.4.9"]
+    branches: [main, "0.4.9", "0.5.0"]
     tags:
       - "v*"
       - "ci-*"
