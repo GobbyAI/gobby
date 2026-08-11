@@ -84,7 +84,11 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
         <ExternalTerminalGlyph />
       ) : null}
       <span className="activity-row-title">{session.label}</span>
-      <span className="activity-row-meta font-mono">{session.paneRef}</span>
+      {/* paneRef embeds the raw tmux session name, which is unbounded; cap it
+          so it can never push the kebab off the row or overflow the list. */}
+      <span className="activity-row-meta max-w-[45%] truncate font-mono">
+        {session.paneRef}
+      </span>
       <span className="flex shrink-0 items-center gap-1">
         {session.dead ? (
           <span className="rounded-full border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-2xs font-medium text-destructive-foreground">

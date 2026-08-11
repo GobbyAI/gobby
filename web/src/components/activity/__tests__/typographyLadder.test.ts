@@ -85,10 +85,10 @@ describe('activity-panel typography ladder (#14245)', () => {
       '[&_.activity-panel-status-bar]:min-h-[var(--activity-panel-bar-height)]',
     )
     expect(activitySource).toContain(
-      '[&_.activity-panel-status-bar__title]:text-[length:var(--text-base)]',
+      String.raw`[&_.activity-panel-status-bar\_\_title]:text-[length:var(--text-base)]`,
     )
     expect(activitySource).toContain(
-      '[&_.activity-panel-status-bar__title]:font-[var(--font-weight-medium)]',
+      String.raw`[&_.activity-panel-status-bar\_\_title]:font-[var(--font-weight-medium)]`,
     )
     expect(mcpDetailSource).toContain('min-h-[var(--activity-panel-bar-height)]')
     expect(mcpDetailSource).toContain('text-[length:var(--text-base)]')

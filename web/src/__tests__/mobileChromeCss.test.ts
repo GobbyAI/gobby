@@ -473,7 +473,7 @@ describe('mobile chrome CSS', () => {
     )
     expect(segmentedControlSource).toContain('style={{ height: heightVar }}')
     expect(activityActionsSource).toContain(
-      '@max-[479px]/activity-panel:[&>.segmented-control__option]:[--segmented-option-px:0.5rem]',
+      String.raw`@max-[479px]/activity-panel:[&>.segmented-control\_\_option]:[--segmented-option-px:0.5rem]`,
     )
     const denseIconTokens = ['min-h-8', 'w-8', 'pointer-coarse:min-w-11'] as const
     document.body.innerHTML = `<button data-dense-header-icon class="${denseIconTokens.join(' ')}"></button>`
@@ -571,7 +571,7 @@ describe('mobile chrome CSS', () => {
     )
     expect(activityPanelSource).toContain('mobile:min-h-11')
     expect(activityPanelSource).toContain(
-      'pointer-coarse:[&_.activity-filter-dropdown__item]:min-h-11',
+      String.raw`pointer-coarse:[&_.activity-filter-dropdown\_\_item]:min-h-11`,
     )
     expect(quickMenuSource).toContain('pointer-coarse:min-h-11')
   })

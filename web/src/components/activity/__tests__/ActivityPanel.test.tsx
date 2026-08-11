@@ -298,6 +298,36 @@ describe('ActivityPanel', () => {
     }
   })
 
+  it('keeps escaped underscores in the shared row idiom classes at runtime', () => {
+    const { container } = render(
+      <ActivityPanel
+        mode={"split"}
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
+        isMobile={false}
+      />,
+    )
+
+    // Tailwind turns bare `_` into a space inside arbitrary variants, so the
+    // BEM targets must reach the DOM with `\_` escapes intact. A cooked
+    // string literal would silently strip them (gobby-#20064).
+    const panel = container.querySelector('.activity-panel') as HTMLElement
+    expect(panel.className).toContain(
+      String.raw`[&_.activity-list-row\_\_body]:flex`,
+    )
+    expect(panel.className).toContain(
+      String.raw`[&_.activity-list-row\_\_body]:min-w-0`,
+    )
+    expect(panel.className).not.toContain('[&_.activity-list-row__body]')
+  })
+
   it('clamps the desktop panel between the activity and chat 320px floors', () => {
     const previousWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {

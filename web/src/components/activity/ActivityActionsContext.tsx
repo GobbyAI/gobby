@@ -131,7 +131,7 @@ export function ActivityActionButtons() {
           options={actions.selector.options}
           ariaLabel={actions.selector.ariaLabel}
           controlHeight="sm"
-          className="activity-panel-header-segmented min-w-0 shrink @max-[479px]/activity-panel:[&>.segmented-control__option]:[--segmented-option-px:0.5rem]"
+          className="activity-panel-header-segmented min-w-0 shrink @max-[479px]/activity-panel:[&>.segmented-control\_\_option]:[--segmented-option-px:0.5rem]"
         />
       )}
       {actions.filter && (

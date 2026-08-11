@@ -101,6 +101,38 @@ describe("TerminalSessionList kebab menu", () => {
     expect(onTerminate).not.toHaveBeenCalled();
   });
 
+  it("bounds long labels and paneRefs so the kebab stays pinned to the row edge", () => {
+    const longName = "x".repeat(120);
+    render(
+      <TerminalSessionList
+        sessions={[
+          makeJoined({
+            tmux: makeTmux({ name: longName }),
+            label: longName,
+            paneRef: `default:${longName}`,
+          }),
+        ]}
+        value={null}
+        onChange={vi.fn()}
+        onTerminate={vi.fn()}
+      />,
+    );
+
+    const row = screen.getByRole("listitem");
+    // The label lives in the shared truncating title slot and the paneRef
+    // meta carries its own cap — the shared idiom marks meta shrink-0, so an
+    // uncapped tmux name would push the kebab off the row (gobby-#20064).
+    const title = row.querySelector(".activity-row-title");
+    expect(title).toHaveTextContent(longName);
+    const meta = row.querySelector(".activity-row-meta");
+    expect(meta).toHaveClass("truncate", "max-w-[45%]");
+    // Kebab wrapper is the row's last element so flex layout pins it right.
+    const kebab = screen.getByRole("button", {
+      name: `Open actions for ${longName}`,
+    });
+    expect(row.lastElementChild).toContainElement(kebab);
+  });
+
   it("keeps row selection independent of the kebab", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
