@@ -182,7 +182,7 @@ export default function App() {
   );
   const mcp = useMcp();
   const skillsHook = useSkills();
-  const projectsHook = useProjects();
+  const projectsHook = useProjects({ enabled: authenticated });
   const {
     paletteItems,
     filterInput: filterColonInput,

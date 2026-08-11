@@ -38,7 +38,16 @@ function getBaseUrl(): string {
   return ''
 }
 
-export function useProjects() {
+interface UseProjectsOptions {
+  /**
+   * Gate fetching on upstream auth state (#20066): a fresh unauthenticated
+   * load 401s the mount fetch, so flipping this true after login must re-run
+   * the fetch or the project list stays empty until a project_event arrives.
+   */
+  enabled?: boolean
+}
+
+export function useProjects({ enabled = true }: UseProjectsOptions = {}) {
   const [projects, setProjects] = useState<ProjectWithStats[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -67,8 +76,9 @@ export function useProjects() {
   }, [baseUrl])
 
   useEffect(() => {
+    if (!enabled) return
     fetchProjects()
-  }, [fetchProjects])
+  }, [enabled, fetchProjects])
 
   // Real-time updates via WebSocket
   useWebSocketEvent(
