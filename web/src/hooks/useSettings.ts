@@ -136,7 +136,9 @@ async function saveUISettings(settings: Settings): Promise<void> {
     for (const key of PERSISTABLE_KEYS) {
       body[key] = settings[key]
     }
-    await configurationClient.patch({ ui_settings: body })
+    // Last-write-wins: retry once after a revision conflict so a concurrent
+    // config commit doesn't silently drop the preference write.
+    await configurationClient.patchLastWriteWins({ ui_settings: body })
   } catch {
     // Best-effort; localStorage is the fast cache
   }

@@ -165,7 +165,10 @@ export class ConfigurationClient {
   }
 
   observeRevision(value: unknown): void {
-    const revision = parseConfigRevision(value)
+    // Called from the WebSocket event dispatcher with untrusted payload data;
+    // a malformed revision must be ignored, never thrown into the dispatcher.
+    if (!Number.isSafeInteger(value) || (value as number) < 0) return
+    const revision = value as number
     if (revision <= this.watermark || revision <= (this.snapshot?.revision ?? -1)) return
     this.watermark = revision
     if (this.refreshScheduled) return
@@ -214,14 +217,21 @@ export class ConfigurationClient {
       return { kind: 'error', message: 'Invalid configuration mutation response', retryable: false }
     }
     const revision = parseConfigRevision(body.revision)
+    const pendingRestartKeys = parseStringArray(body.pending_restart_keys)
+    const failedLiveKeys = parseFailureMap(body.failed_live_keys)
+    // The mutation response has no values payload, so bump the snapshot's
+    // revision (subsequent patches must not reuse the stale one) without
+    // publishing the torn revision/values pair, then refetch so subscribers
+    // see the committed values. The own-commit WS event arrives at or below
+    // this revision and is deliberately redundant with this refetch.
     this.snapshot = {
       ...snapshot,
       revision,
-      pending_restart_keys: parseStringArray(body.pending_restart_keys),
-      failed_live_keys: parseFailureMap(body.failed_live_keys),
+      pending_restart_keys: pendingRestartKeys,
+      failed_live_keys: failedLiveKeys,
     }
     this.watermark = Math.max(this.watermark, revision)
-    this.publish(this.snapshot)
+    await this.fetchValues()
     return {
       kind: 'success',
       committed: true,
@@ -232,9 +242,21 @@ export class ConfigurationClient {
         || body.apply_status === 'reconcile_failed'
         ? body.apply_status
         : 'applied',
-      pendingRestartKeys: this.snapshot.pending_restart_keys,
-      failedLiveKeys: this.snapshot.failed_live_keys,
+      pendingRestartKeys,
+      failedLiveKeys,
     }
+  }
+
+  /**
+   * Patch for fire-and-forget last-write-wins surfaces (ui_settings, project
+   * selection): one revision conflict means another writer committed first, so
+   * refresh has already happened inside `patch` — retry exactly once on the
+   * fresh revision instead of silently losing the write.
+   */
+  async patchLastWriteWins(values: Record<string, unknown>): Promise<ConfigMutationResult> {
+    const result = await this.patch(values)
+    if (result.kind !== 'conflict') return result
+    return this.patch(values)
   }
 
   async fetchApprovalRules(): Promise<ApprovalRulesResponse | null> {
@@ -404,14 +426,19 @@ export class ConfigurationClient {
       return { kind: 'error', message: 'Invalid configuration mutation response', retryable: false }
     }
     const revision = parseConfigRevision(body.revision)
+    const pendingRestartKeys = parseStringArray(body.pending_restart_keys)
+    const failedLiveKeys = parseFailureMap(body.failed_live_keys)
     this.watermark = Math.max(this.watermark, revision)
+    // A YAML replace rewrites values wholesale and its response carries none of
+    // them: bump the revision without publishing the torn snapshot, then
+    // refetch so subscribers converge on the committed document.
     this.snapshot = {
       ...snapshot,
       revision,
-      pending_restart_keys: parseStringArray(body.pending_restart_keys),
-      failed_live_keys: parseFailureMap(body.failed_live_keys),
+      pending_restart_keys: pendingRestartKeys,
+      failed_live_keys: failedLiveKeys,
     }
-    this.publish(this.snapshot)
+    await this.fetchValues()
     return {
       kind: 'success',
       committed: true,
@@ -422,8 +449,8 @@ export class ConfigurationClient {
         || body.apply_status === 'reconcile_failed'
         ? body.apply_status
         : 'applied',
-      pendingRestartKeys: parseStringArray(body.pending_restart_keys),
-      failedLiveKeys: parseFailureMap(body.failed_live_keys),
+      pendingRestartKeys,
+      failedLiveKeys,
     }
   }
 

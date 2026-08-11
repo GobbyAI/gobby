@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -27,18 +26,6 @@ from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _worktree_gdaemon() -> Iterator[None]:
-    patch = pytest.MonkeyPatch()
-    binary = Path.cwd() / "target" / "debug" / "gdaemon"
-    patch.setattr(
-        "gobby.storage.schema_contract.resolve_native_bin",
-        lambda name: str(binary) if name == "gdaemon" else None,
-    )
-    yield
-    patch.undo()
 
 
 def test_internal_switch_journal_is_real_but_invisible_to_public_reads(

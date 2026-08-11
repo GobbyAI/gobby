@@ -12,7 +12,11 @@ import {
   SwitchConfigField,
   TextConfigField,
 } from './configFields'
-import { asString } from './configAccessors'
+import {
+  asString,
+  decodeDynamicMapKeys,
+  encodeDynamicMapKeys,
+} from './configAccessors'
 
 /**
  * MCP & Tools settings section: the MCP client proxy (connection timeouts and
@@ -216,15 +220,16 @@ function asHubMap(value: unknown): Record<string, HubConfig> {
  * The `skills.hubs` editor: a `dict[str, HubConfig]` of named hubs. Hand-rolled
  * rather than a generic map field because each value is a multi-field object,
  * so it needs the per-entry `HubEntryFields` sub-form plus its own key input
- * and remove control. Writes the whole map back through the draft.
+ * and remove control. Writes the whole map back through the draft. Hub names
+ * are `skills.hubs.{hub}` dynamic segments: stored encoded, edited decoded.
  */
 function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
-  const hubs = asHubMap(fields.getValue('skills.hubs'))
+  const hubs = decodeDynamicMapKeys(asHubMap(fields.getValue('skills.hubs')))
   const entries = Object.entries(hubs)
   const [keyError, setKeyError] = useState<string | null>(null)
 
   function commit(next: Record<string, HubConfig>) {
-    fields.setValue('skills.hubs', next)
+    fields.setValue('skills.hubs', encodeDynamicMapKeys(next))
   }
 
   function updateKey(index: number, nextKey: string) {

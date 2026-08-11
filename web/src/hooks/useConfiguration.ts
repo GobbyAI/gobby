@@ -112,6 +112,12 @@ export function useConfiguration() {
   } | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
+  // Rules enforcement + approvals (re-derived from every snapshot below)
+  const [rulesEnforcement, setRulesEnforcementState] = useState(true)
+  const [globalApprovalRules, setGlobalApprovalRules] = useState<string[]>([])
+  const [defaultApprovalRules, setDefaultApprovalRules] = useState<string[]>([])
+  const [builtInApprovalExemptions, setBuiltInApprovalExemptions] = useState<string[]>([])
+
   const applySnapshot = useCallback((snapshot: ConfigValuesSnapshot) => {
     setConfigValues(snapshot.desired)
     setActiveConfigValues(snapshot.active)
@@ -123,6 +129,18 @@ export function useConfiguration() {
         .filter(([, state]) => state.desired)
         .map(([key]) => key),
     )
+    // Derived flags must track every snapshot (WS-triggered refetches
+    // included), not just explicit fetchConfig calls, or they go stale.
+    const rules = recordAt(snapshot.desired.rules)
+    if (typeof rules?.enforcement_enabled === 'boolean') {
+      setRulesEnforcementState(rules.enforcement_enabled)
+    }
+    const approvals = recordAt(snapshot.desired.tool_approvals)
+    if (Array.isArray(approvals?.global_rules)) {
+      setGlobalApprovalRules(
+        approvals.global_rules.filter((value): value is string => typeof value === 'string'),
+      )
+    }
   }, [])
 
   useEffect(() => configurationClient.subscribe(applySnapshot), [applySnapshot])
@@ -131,21 +149,17 @@ export function useConfiguration() {
     if ('revision' in event) configurationClient.observeRevision(event.revision)
   })
   const websocketConnected = useWebSocketConnected()
-  const connectionSeen = useRef(websocketConnected)
   const previousConnection = useRef(websocketConnected)
   useEffect(() => {
-    if (websocketConnected && !previousConnection.current && connectionSeen.current) {
+    // Every disconnected→connected transition resyncs: the first connect
+    // covers revisions missed before the socket opened (and retries an
+    // initial values fetch that failed while the daemon was unreachable);
+    // reconnects cover events lost during the outage.
+    if (websocketConnected && !previousConnection.current) {
       void configurationClient.fetchValues()
     }
-    if (websocketConnected) connectionSeen.current = true
     previousConnection.current = websocketConnected
   }, [websocketConnected])
-
-  // Rules enforcement
-  const [rulesEnforcement, setRulesEnforcementState] = useState(true)
-  const [globalApprovalRules, setGlobalApprovalRules] = useState<string[]>([])
-  const [defaultApprovalRules, setDefaultApprovalRules] = useState<string[]>([])
-  const [builtInApprovalExemptions, setBuiltInApprovalExemptions] = useState<string[]>([])
 
   // Template (full defaults + DB overrides as YAML)
   const [templateContent, setTemplateContent] = useState('')
@@ -190,16 +204,6 @@ export function useConfiguration() {
     try {
       const data = await configurationClient.fetchValues()
       if (data) applySnapshot(data)
-      const rules = recordAt(data?.desired.rules)
-      if (typeof rules?.enforcement_enabled === 'boolean') {
-        setRulesEnforcementState(rules.enforcement_enabled)
-      }
-      const approvals = recordAt(data?.desired.tool_approvals)
-      if (Array.isArray(approvals?.global_rules)) {
-        setGlobalApprovalRules(
-          approvals.global_rules.filter((value): value is string => typeof value === 'string'),
-        )
-      }
     } catch (e) {
       console.error('Failed to fetch config values:', e)
     }
@@ -264,7 +268,9 @@ export function useConfiguration() {
         terminal,
       }
     } catch (e) {
-      return { ok: false, errors: [String(e)] }
+      const message = e instanceof Error ? e.message : String(e)
+      setMutationError({ message, terminal: false })
+      return { ok: false, errors: [message] }
     }
   }, [])
 

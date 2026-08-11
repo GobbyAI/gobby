@@ -7,30 +7,32 @@ import {
 } from '../../activity/fields'
 import type { FieldOption } from '../../activity/fields'
 import { Button } from '../../ui/Button'
-import { SecretConfigField, Subsection, TextConfigField } from './configFields'
-import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
+import { SecretConfigField, Subsection } from './configFields'
+import { SettingsSection } from './SettingsSection'
+import type { SettingsSectionFields } from './SettingsSection'
 import { useSettingsSectionContext } from './SettingsSectionContext'
 import type { SecretInfo } from '../../../hooks/useConfiguration'
 
 /**
- * Secrets & Auth settings section (audit IA section 13.2). Three surfaces live
- * here: the draft-backed web-UI auth credentials (`auth.username`,
- * `auth.password`) and service credentials (`embeddings.api_key`,
- * `databases.qdrant.api_key`, `databases.falkordb.password`) — all saved through
- * the #17108 section footer, with the secret rows masked via SecretConfigField;
- * and the `$secret:` store, a standalone `/api/config/secrets` CRUD surface
- * threaded through context like the rules-enforcement toggle and saved
- * immediately by its own controls rather than the config draft.
+ * Secrets & Auth settings section (audit IA section 13.2). Two surfaces live
+ * here: the draft-backed service credentials (`ai.embeddings.api_key`,
+ * `databases.qdrant.api_key`, `databases.falkordb.password`) saved through the
+ * #17108 section footer with the rows masked via SecretConfigField; and the
+ * `$secret:` store, a standalone `/api/config/secrets` CRUD surface threaded
+ * through context like the rules-enforcement toggle and saved immediately by
+ * its own controls rather than the config draft.
+ *
+ * Web-UI auth credentials are deliberately absent: `auth.*` is not a
+ * registered runtime config surface, so a draft editor here could never
+ * persist anything. Password resets stay CLI-only until #19650 lands an auth
+ * management surface.
  */
 
-const AUTH_PATHS = ['auth.username', 'auth.password'] as const
-const SERVICE_PATHS = [
+const OWNED_PATHS: readonly string[] = [
   'ai.embeddings.api_key',
   'databases.qdrant.api_key',
   'databases.falkordb.password',
-] as const
-
-const OWNED_PATHS: readonly string[] = [...AUTH_PATHS, ...SERVICE_PATHS]
+]
 
 const DEFAULT_CATEGORY = 'general'
 
@@ -45,30 +47,6 @@ function categoryOptions(categories: string[]): FieldOption[] {
     options.push({ value: category, label: category })
   }
   return options
-}
-
-function AuthGroup({ fields }: { fields: SettingsSectionFields }) {
-  return (
-    <Subsection
-      title="Web UI authentication"
-      hint="Leave both blank to disable login. Once a username and password are set, the web UI requires them; the password is stored encrypted."
-    >
-      <TextConfigField
-        fields={fields}
-        path="auth.username"
-        label="Username"
-        ariaLabel="Web UI username"
-        placeholder="Leave empty to disable login"
-      />
-      <SecretConfigField
-        fields={fields}
-        path="auth.password"
-        label="Password"
-        ariaLabel="Web UI password"
-        placeholder="Leave empty to disable login"
-      />
-    </Subsection>
-  )
 }
 
 function ServiceCredentialsGroup({ fields }: { fields: SettingsSectionFields }) {
@@ -363,7 +341,6 @@ export function SecretsAuthSection() {
     <SettingsSection sectionId="secrets-auth" ownedPaths={OWNED_PATHS}>
       {(fields) => (
         <>
-          <AuthGroup fields={fields} />
           <ServiceCredentialsGroup fields={fields} />
           <SecretStoreGroup
             secrets={secrets ?? []}

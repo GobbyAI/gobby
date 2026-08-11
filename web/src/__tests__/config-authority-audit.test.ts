@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+import { ConfigurationClient } from '../api/config'
 
 const SRC_ROOT = join(process.cwd(), 'src')
 const AUTHORITY = 'api/config.ts'
@@ -34,9 +36,51 @@ describe('browser configuration authority', () => {
       }
     }
 
-    const authority = readFileSync(join(SRC_ROOT, AUTHORITY), 'utf8')
-    expect(authority).toContain("method: 'PATCH'")
-    expect(authority).toContain('expected_revision: snapshot.revision')
     expect(violations).toEqual([])
+  })
+
+  // Behavioral counterpart to the structural scan above: the authority's
+  // mutation path must actually carry the current revision as an optimistic
+  // concurrency guard, not merely contain the right-looking source text.
+  it('authority_patches_carry_the_current_revision', async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      requests.push({ url: String(input), init })
+      if (init?.method === 'PATCH') {
+        return new Response(
+          JSON.stringify({
+            committed: true,
+            revision: 8,
+            changed_keys: [],
+            apply_status: 'applied',
+            pending_restart_keys: [],
+            failed_live_keys: {},
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          revision: 7,
+          desired: {},
+          active: {},
+          secret_set: {},
+          pending_restart_keys: [],
+          failed_live_keys: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
+    })
+    const client = new ConfigurationClient(fetcher)
+    await client.fetchValues()
+
+    await client.patch({ ui_settings: { theme: 'light' } })
+
+    const mutation = requests.find((request) => request.init?.method === 'PATCH')
+    expect(mutation?.url).toBe('/api/config/values')
+    expect(JSON.parse(String(mutation?.init?.body))).toMatchObject({
+      expected_revision: 7,
+      values: { ui_settings: { theme: 'light' } },
+    })
   })
 })

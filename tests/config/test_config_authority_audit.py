@@ -210,7 +210,7 @@ def test_cross_language_registry_coverage() -> None:
         REPOSITORY_ROOT / "web" / "src" / "__tests__" / "config-authority-audit.test.ts"
     ).read_text()
     assert "web_has_one_config_authority" in browser_audit
-    assert "expected_revision: snapshot.revision" in browser_audit
+    assert "authority_patches_carry_the_current_revision" in browser_audit
 
 
 def test_legacy_config_surfaces_are_absent() -> None:

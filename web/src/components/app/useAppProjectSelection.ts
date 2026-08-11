@@ -137,9 +137,11 @@ export function useAppProjectSelection({
       isFirstProviderRender.current = false;
       if (!providerTouchedRef.current) return;
     }
-    configurationClient.patch({ ui_settings: { selectedProvider } }).catch((error) => {
-      console.warn("Failed to persist selected provider", error);
-    });
+    configurationClient
+      .patchLastWriteWins({ ui_settings: { selectedProvider } })
+      .catch((error) => {
+        console.warn("Failed to persist selected provider", error);
+      });
   }, [selectedProvider, uiSettingsLoaded]);
 
   const isFirstProjectRender = useRef(true);
@@ -149,7 +151,7 @@ export function useAppProjectSelection({
       isFirstProjectRender.current = false;
       if (!projectTouchedRef.current) return;
     }
-    void configurationClient.patch({ ui_settings: { selectedProjectId } });
+    void configurationClient.patchLastWriteWins({ ui_settings: { selectedProjectId } });
   }, [selectedProjectId, projectReady]);
 
   const prevProjectRef = useRef<string | null>(null);

@@ -5,6 +5,7 @@ import { DetailActionButton } from '../../activity/fields'
 import { useDetailDraft } from '../../activity/fields/useDetailDraft'
 import { getSettingsSection } from '../sections'
 import type { SettingsSectionId } from '../sections'
+import { resolveSchemaNode } from '../configSchema'
 import { useSettingsSectionContext } from './SettingsSectionContext'
 
 /**
@@ -98,7 +99,15 @@ export function SettingsSection({
     useDetailDraft<SectionDraft>({
       source,
       onSave: async (merged) => {
-        const result = await saveConfig(merged)
+        // Managed-activation paths (e.g. the embedding switch's structural
+        // keys) are mutated only through their coordinator action; the store
+        // rejects direct writes, so submitting them bricks the whole save.
+        const payload = Object.fromEntries(
+          Object.entries(merged).filter(
+            ([path]) => resolveSchemaNode(schema, path)?.activation !== 'managed',
+          ),
+        )
+        const result = await saveConfig(payload)
         return result.ok
       },
     })

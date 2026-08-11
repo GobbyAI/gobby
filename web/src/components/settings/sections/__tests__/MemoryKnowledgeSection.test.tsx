@@ -64,14 +64,24 @@ const SCHEMA: Record<string, unknown> = {
         },
       },
     },
+    // The embedding-switch structural keys carry managed activation: the
+    // store rejects direct writes, so the section must exclude them from the
+    // save payload and route catalog-key edits through the managed action.
     EmbeddingsConfig: {
       type: 'object',
       properties: {
-        model: { type: 'string' },
-        dim: { type: 'integer' },
-        api_base: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        model: { type: 'string', activation: 'managed' },
+        dim: { type: 'integer', activation: 'managed' },
+        api_base: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+          activation: 'managed',
+        },
         api_key: { anyOf: [{ type: 'string' }, { type: 'null' }] },
-        query_prefix: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        query_prefix: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+          activation: 'managed',
+        },
+        catalog_key: { type: 'string', activation: 'managed' },
       },
     },
     QdrantConfig: {
@@ -145,7 +155,10 @@ const SCHEMA: Record<string, unknown> = {
   properties: {
     memory: { $ref: '#/$defs/MemoryConfig' },
     memory_recall: { $ref: '#/$defs/MemoryRecallConfig' },
-    embeddings: { $ref: '#/$defs/EmbeddingsConfig' },
+    ai: {
+      type: 'object',
+      properties: { embeddings: { $ref: '#/$defs/EmbeddingsConfig' } },
+    },
     databases: { $ref: '#/$defs/DatabasesConfig' },
     knowledge_graph_queue: { $ref: '#/$defs/KnowledgeGraphQueueConfig' },
     memory_backup: { $ref: '#/$defs/MemoryBackupConfig' },
@@ -399,6 +412,70 @@ describe('MemoryKnowledgeSection', () => {
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
     expect(ctx.saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({ 'memory.enabled': false }),
+    )
+  })
+
+  it('excludes managed-activation paths from the save payload', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable memory' }))
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0]
+    expect(payload['memory.enabled']).toBe(false)
+    // The store rejects direct writes to the embedding switch's structural
+    // keys; submitting them would brick the whole section save.
+    for (const managedPath of [
+      'ai.embeddings.model',
+      'ai.embeddings.dim',
+      'ai.embeddings.api_base',
+      'ai.embeddings.query_prefix',
+      'ai.embeddings.catalog_key',
+    ]) {
+      expect(payload).not.toHaveProperty([managedPath])
+    }
+    // Non-managed owned rows still ride along with the section save.
+    expect(payload).toHaveProperty(['databases.qdrant.port'], 6333)
+  })
+
+  it('catalog-key edits update the row without dirtying the draft', () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    const catalogKey = screen.getByLabelText('Embedding catalog key')
+    fireEvent.change(catalogKey, { target: { value: 'ollama/qwen3-embedding' } })
+
+    // The managed action drives local state, so the row reflects the pending
+    // selection while the Model row keeps showing the stored draft value.
+    expect(catalogKey).toHaveValue('ollama/qwen3-embedding')
+    expect(screen.getByLabelText('Embedding model')).toHaveValue(
+      'text-embedding-3-small',
+    )
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+  })
+
+  it('starts the embedding switch through the managed action', async () => {
+    const runManagedAction = vi.fn(async () => true)
+    renderSection(makeContext({ runManagedAction }))
+
+    const start = screen.getByRole('button', { name: 'Start embedding switch' })
+    expect(start).toBeDisabled()
+
+    fireEvent.change(screen.getByLabelText('Embedding catalog key'), {
+      target: { value: 'ollama/qwen3-embedding' },
+    })
+    await waitFor(() => expect(start).toBeEnabled())
+    fireEvent.click(start)
+
+    await waitFor(() =>
+      expect(runManagedAction).toHaveBeenCalledWith(
+        '/api/embeddings/switch/start',
+        { catalog_key: 'ollama/qwen3-embedding' },
+      ),
     )
   })
 })

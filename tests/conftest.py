@@ -17,6 +17,34 @@ import pytest
 pytest_plugins = ["tests.fixtures.postgres", "tests.review_coverage_helpers"]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _checkout_gdaemon_for_schema_contract() -> Iterator[None]:
+    """Pin schema-contract gdaemon calls at this checkout's debug binary.
+
+    Schema identity enforcement compares the live database against the
+    checked-out source tree, so test schema applies must run a gdaemon built
+    from the same checkout — the installed ``~/.gobby/bin`` binary matches
+    whatever was last installed, not this branch. Session-scoped and autouse
+    so the patch is active before the session-scoped postgres fixtures run
+    their first schema apply/sweep, and uniform across the whole run (a
+    per-module patch would make schema behavior depend on which tests were
+    selected). When no debug binary has been built, resolution is untouched.
+    """
+    from gobby.utils.native_bin import native_bin_name, resolve_native_bin
+
+    binary = Path(__file__).resolve().parents[1] / "target" / "debug" / native_bin_name("gdaemon")
+    if not binary.is_file():
+        yield
+        return
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "gobby.storage.schema_contract.resolve_native_bin",
+        lambda name: str(binary) if name == "gdaemon" else resolve_native_bin(name),
+    )
+    yield
+    monkeypatch.undo()
+
+
 @pytest.fixture(autouse=True)
 def _assert_postgres_pools_bounded() -> Iterator[None]:
     """Require each test to release every PostgreSQL pool it creates."""

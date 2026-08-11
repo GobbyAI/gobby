@@ -460,6 +460,8 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
     setBaseline(storedCatalogKey)
     setCatalogKey(storedCatalogKey)
   }
+  // Overlays the local, managed-action-driven catalog key over the draft so
+  // the catalog-key row (and only that row) renders the pending selection.
   const catalogFields: SettingsSectionFields = {
     ...fields,
     getValue: (path) => path === 'ai.embeddings.catalog_key'
@@ -472,7 +474,7 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
       hint="The embedding model shared by memory, tools, and the code index. The API key lives in Secrets & Auth."
     >
       <TextConfigField
-        fields={catalogFields}
+        fields={fields}
         path="ai.embeddings.model"
         label="Model"
         ariaLabel="Embedding model"
@@ -498,7 +500,7 @@ function EmbeddingsGroup({ fields }: { fields: SettingsSectionFields }) {
         nullable
       />
       <TextConfigField
-        fields={fields}
+        fields={catalogFields}
         path="ai.embeddings.catalog_key"
         label="Catalog key"
         ariaLabel="Embedding catalog key"

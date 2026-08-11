@@ -199,6 +199,30 @@ describe('ProvidersModelsSection', () => {
     )
   })
 
+  it('decodes stored context-window keys for display and re-encodes on save', async () => {
+    const ctx = makeContext({
+      configValues: {
+        ...makeConfigValues(),
+        // `context_window_overrides.{model_match}` keys are dynamic
+        // segments, stored encoded ("gpt-4.1" contains a dot).
+        context_window_overrides: { 'gpt-4%2E1': 200000 },
+      },
+    })
+    renderSection(ctx)
+
+    const key = screen.getByLabelText('Context window override key 1')
+    expect(key).toHaveValue('gpt-4.1')
+
+    fireEvent.change(key, { target: { value: 'gpt-4.2' } })
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(ctx.saveConfig).mock.calls[0][0]
+    expect(payload['context_window_overrides']).toEqual({ 'gpt-4%2E2': 200000 })
+  })
+
   it('degrades gracefully when client settings and provider selection are absent', () => {
     renderSection(
       makeContext({ clientSettings: undefined, providerSelection: undefined }),

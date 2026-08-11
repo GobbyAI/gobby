@@ -93,6 +93,11 @@ function ConfigFieldState({
   const activation = activationAt(fields, path)
   const pending = fields.pendingRestartKeys?.includes(path) === true
   const failure = fields.failedLiveKeys?.[path]
+  // A freshly typed secret sits unmasked in the draft until save; the status
+  // strip must never echo it (or the stored active value) in plaintext.
+  const secret = fields.secretKeys.includes(path)
+  const statusValue = (value: unknown): string =>
+    secret && value !== undefined && value !== null ? '********' : displayValue(value)
   const label = activation === 'restart_required'
     ? 'Restart required'
     : activation === 'managed'
@@ -105,8 +110,8 @@ function ConfigFieldState({
         <span>{label}</span>
         {pending ? (
           <>
-            <span>{`Desired: ${displayValue(fields.getValue(path))}`}</span>
-            <span>{`Active: ${displayValue(fields.getActiveValue?.(path))}`}</span>
+            <span>{`Desired: ${statusValue(fields.getValue(path))}`}</span>
+            <span>{`Active: ${statusValue(fields.getActiveValue?.(path))}`}</span>
           </>
         ) : null}
         {failure ? (

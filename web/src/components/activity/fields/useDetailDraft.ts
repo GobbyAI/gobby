@@ -22,6 +22,28 @@ function cloneSource<T extends object>(source: T | null): T | null {
   return source === null ? null : { ...source };
 }
 
+/** Structural equality over the JSON-shaped values drafts hold. */
+function deepEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (
+    left === null ||
+    right === null ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const leftEntries = Object.entries(left as Record<string, unknown>);
+  const rightRecord = right as Record<string, unknown>;
+  if (leftEntries.length !== Object.keys(rightRecord).length) return false;
+  return leftEntries.every(
+    ([key, value]) =>
+      Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+      deepEqual(value, rightRecord[key]),
+  );
+}
+
 const DISCARD_UNSAVED_CHANGES_MESSAGE = "Discard unsaved changes?";
 
 export function useDetailDraft<T extends object>({
@@ -42,9 +64,13 @@ export function useDetailDraft<T extends object>({
   }, [dirty]);
 
   useEffect(() => {
+    const previous = latestSourceRef.current;
     latestSourceRef.current = source;
     if (dirtyRef.current) {
-      setServerChanged(true);
+      // A refetch that returns identical values (post-save convergence, an
+      // unrelated key changing elsewhere in the config) is not a server
+      // change; only genuinely different owned values warrant the warning.
+      if (!deepEqual(previous, source)) setServerChanged(true);
       return;
     }
     editedKeysRef.current.clear();

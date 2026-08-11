@@ -8,15 +8,13 @@ import {
 import type { SecretInfo } from '../../../../hooks/useConfiguration'
 
 // The section owns no schema-backed selects, so a minimal schema suffices; the
-// secret-typed rows render through SecretConfigField (masked text + reveal),
-// and `auth.username` is the one plain row.
+// secret-typed rows render through SecretConfigField (masked text + reveal).
 const SCHEMA: Record<string, unknown> = { type: 'object', properties: {} }
 
 // `/api/config/values` masks secret-valued keys as "********" (MASKED_SECRET).
 // A set secret arrives masked; an unset one arrives null/empty.
 function makeConfigValues(): Record<string, unknown> {
   return {
-    auth: { username: 'admin', password: '********' },
     ai: { embeddings: { api_key: '********' } },
     databases: {
       qdrant: { api_key: '********' },
@@ -45,7 +43,6 @@ function makeContext(
     schema: SCHEMA,
     configValues: makeConfigValues(),
     secretKeys: [
-      'auth.password',
       'ai.embeddings.api_key',
       'databases.qdrant.api_key',
       'databases.falkordb.password',
@@ -74,29 +71,31 @@ afterEach(() => {
 })
 
 describe('SecretsAuthSection', () => {
-  it('renders the plain username row and the masked password row', () => {
+  it('renders no web-UI auth editor (password resets stay CLI-only, #19650)', () => {
     renderSection(makeContext())
 
-    expect(screen.getByRole('textbox', { name: 'Web UI username' })).toHaveValue(
-      'admin',
-    )
-
-    const password = screen.getByLabelText('Web UI password')
-    expect(password).toHaveValue('********')
-    expect(password).toHaveAttribute('type', 'password')
+    expect(
+      screen.queryByRole('textbox', { name: 'Web UI username' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Web UI password')).not.toBeInTheDocument()
+    expect(screen.queryByText('Web UI authentication')).not.toBeInTheDocument()
   })
 
   it('reveals and re-hides a masked secret value through the toggle', () => {
     renderSection(makeContext())
 
-    const password = screen.getByLabelText('Web UI password')
-    expect(password).toHaveAttribute('type', 'password')
+    const apiKey = screen.getByLabelText('Embeddings API key')
+    expect(apiKey).toHaveAttribute('type', 'password')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show Web UI password' }))
-    expect(password).toHaveAttribute('type', 'text')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Show Embeddings API key' }),
+    )
+    expect(apiKey).toHaveAttribute('type', 'text')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide Web UI password' }))
-    expect(password).toHaveAttribute('type', 'password')
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Hide Embeddings API key' }),
+    )
+    expect(apiKey).toHaveAttribute('type', 'password')
   })
 
   it('renders the service-credential secret rows, masked when set and empty when unset', () => {
@@ -234,11 +233,9 @@ describe('SecretsAuthSection', () => {
     ).toBeInTheDocument()
   })
 
-  it('still renders the auth rows when the secret store is unavailable', () => {
+  it('still renders the service-credential rows when the secret store is unavailable', () => {
     renderSection(makeContext({ saveSecret: undefined, deleteSecret: undefined }))
 
-    expect(
-      screen.getByRole('textbox', { name: 'Web UI username' }),
-    ).toBeInTheDocument()
+    expect(screen.getByLabelText('Embeddings API key')).toBeInTheDocument()
   })
 })

@@ -14,7 +14,7 @@ import {
   useSettingsSectionContext,
   type ProviderSelectionContextValue,
 } from './SettingsSectionContext'
-import { asMap } from './configAccessors'
+import { asMap, decodeDynamicMapKeys, encodeDynamicMapKeys } from './configAccessors'
 import {
   NumberConfigField,
   SchemaSelectField,
@@ -358,6 +358,9 @@ function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
 }
 
 function ContextWindowGroup({ fields }: { fields: SettingsSectionFields }) {
+  // `context_window_overrides.{model_match}` keys are dynamic segments:
+  // stored encoded (a model match like "gpt-4.1" contains a dot), edited
+  // decoded.
   return (
     <Subsection
       title="Context window overrides"
@@ -366,11 +369,11 @@ function ContextWindowGroup({ fields }: { fields: SettingsSectionFields }) {
       <KeyValueMapField<number>
         label="Overrides"
         ariaLabel="Context window override"
-        value={asMap<number>(fields.getValue(CONTEXT_WINDOW_PATH))}
+        value={decodeDynamicMapKeys(asMap<number>(fields.getValue(CONTEXT_WINDOW_PATH)))}
         keyPlaceholder="model substring (e.g. opus)"
         addLabel="Add override"
         createValue={() => 0}
-        onChange={(next) => fields.setValue(CONTEXT_WINDOW_PATH, next)}
+        onChange={(next) => fields.setValue(CONTEXT_WINDOW_PATH, encodeDynamicMapKeys(next))}
         renderValue={(tokens, onValueChange, key) => (
           <NumberField
             label=""
