@@ -1,4 +1,4 @@
-"""Release guards for warning-free daemon runtime dependencies."""
+"""Release guards for daemon runtime dependencies and managed services."""
 
 from __future__ import annotations
 
@@ -29,9 +29,9 @@ def test_warning_sensitive_runtime_dependencies_are_exactly_pinned() -> None:
     assert str(_runtime_requirement("qdrant-client").specifier) == "==1.17.1"
 
 
-def test_qdrant_service_matches_client_pin() -> None:
-    """Managed Qdrant server and Python client must use the same release."""
-    expected_image = "qdrant/qdrant:v1.17.1"
+def test_qdrant_service_tracks_latest_image() -> None:
+    """Managed Qdrant follows the operator-approved floating image policy."""
+    expected_image = "qdrant/qdrant:latest"
     for compose_path in _COMPOSE_PATHS:
         compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
         assert compose["services"]["qdrant"]["image"] == expected_image
