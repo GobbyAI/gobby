@@ -35,6 +35,7 @@ from gobby.storage.config_mutations import (
 def _snapshot(
     revision: int,
     *,
+    desired_config: DaemonConfig | None = None,
     desired_values: Mapping[str, object] | None = None,
     active_values: Mapping[str, object] | None = None,
     desired_secrets: Mapping[str, str] | None = None,
@@ -54,8 +55,8 @@ def _snapshot(
     active = dict(active_values if active_values is not None else desired)
     return ConfigSnapshot(
         revision=revision,
-        desired=DaemonConfig(),
-        active=DaemonConfig(),
+        desired=desired_config or DaemonConfig(),
+        active=desired_config or DaemonConfig(),
         row_revisions=dict.fromkeys(desired, revision),
         pending_restart_keys=pending_restart_keys,
         failed_live_keys=failed_live_keys or {},
@@ -546,6 +547,36 @@ def test_patch_rejects_touching_existing_responses_endpoint() -> None:
         json={
             "expected_revision": 3,
             "values": {"ai": {"generation": {"endpoints": {"neo": {"model": "other-model"}}}}},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "probe_required"
+    assert mutations.calls == []
+
+
+def test_patch_rejects_unset_only_edit_of_existing_responses_endpoint() -> None:
+    desired = DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "neo": {
+                        "wire_api": "responses",
+                        "api_base": "https://neo.example/v1",
+                        "model": "neo-model",
+                    }
+                }
+            }
+        }
+    )
+    service, _runtime, mutations = _service(_snapshot(3, desired_config=desired))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 3,
+            "values": {},
+            "unset": ["ai.generation.endpoints.neo.model"],
         },
     )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 from starlette.testclient import TestClient
@@ -676,3 +676,25 @@ def test_effective_config_returns_503_when_runtime_config_is_unavailable(
     response = client.get("/api/config/effective")
 
     assert response.status_code == 503
+
+
+def test_effective_config_reads_return_retryable_503_during_startup(
+    client: TestClient,
+    server: Any,
+    hub_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    runtime = server.services.config_runtime
+    type(runtime).snapshot = PropertyMock(side_effect=RuntimeError("ConfigRuntime has not started"))
+    _run, agent_headers = _agent_headers(hub_db, session_manager, sample_project)
+
+    responses = (
+        client.get("/api/config/effective"),
+        client.get("/api/config/service-capabilities", headers=agent_headers),
+    )
+
+    for response in responses:
+        assert response.status_code == 503
+        assert response.json()["error"]["code"] == "runtime_unavailable"
+        assert response.json()["error"]["retryable"] is True

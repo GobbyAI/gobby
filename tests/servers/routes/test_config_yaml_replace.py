@@ -42,6 +42,7 @@ _CANDIDATE_REPOSITORY = ConfigRepository(
 def _snapshot(
     revision: int,
     *,
+    desired: DaemonConfig | None = None,
     desired_values: Mapping[str, object] | None = None,
     desired_secrets: Mapping[str, str] | None = None,
     pending_restart_keys: frozenset[str] = frozenset(),
@@ -54,8 +55,8 @@ def _snapshot(
     values = dict(desired_values or {})
     return ConfigSnapshot(
         revision=revision,
-        desired=DaemonConfig(),
-        active=DaemonConfig(),
+        desired=desired or DaemonConfig(),
+        active=desired or DaemonConfig(),
         row_revisions=dict.fromkeys(values, revision),
         pending_restart_keys=pending_restart_keys,
         failed_live_keys=failed_live_keys or {},
@@ -169,6 +170,93 @@ def _client(service: ConfigDocumentsService) -> TestClient:
     register_import_export_routes(router, context)
     app.include_router(router)
     return TestClient(app)
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (("PUT", "/api/config/template"), ("POST", "/api/config/import")),
+)
+def test_yaml_paths_reject_unprobed_responses_endpoint(method: str, path: str) -> None:
+    service, _runtime, mutations = _service(_snapshot(2))
+    content = yaml.safe_dump(
+        {
+            "ai": {
+                "generation": {
+                    "endpoints": {
+                        "neo": {
+                            "wire_api": "responses",
+                            "api_base": "https://neo.example/v1",
+                            "model": "neo-model",
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    response = _client(service).request(
+        method,
+        path,
+        json={"expected_revision": 2, "content": content},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "probe_required"
+    assert mutations.calls == []
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (("PUT", "/api/config/template"), ("POST", "/api/config/import")),
+)
+def test_yaml_paths_accept_unchanged_probed_responses_endpoint(method: str, path: str) -> None:
+    desired = DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "neo": {
+                        "wire_api": "responses",
+                        "api_base": "https://neo.example/v1",
+                        "model": "neo-model",
+                    }
+                }
+            }
+        }
+    )
+    values = {
+        "ai.generation.endpoints.neo.wire_api": "responses",
+        "ai.generation.endpoints.neo.api_base": "https://neo.example/v1",
+        "ai.generation.endpoints.neo.model": "neo-model",
+    }
+    service, _runtime, mutations = _service(
+        _snapshot(2, desired=desired, desired_values=values),
+        reconciled=_snapshot(3, desired=desired, desired_values=values),
+    )
+    content = yaml.safe_dump(
+        {
+            "ai": {
+                "generation": {
+                    "endpoints": {
+                        "neo": {
+                            "wire_api": "responses",
+                            "api_base": "https://neo.example/v1",
+                            "model": "neo-model",
+                        }
+                    }
+                }
+            },
+            "websocket": {"ping_interval": 17.0},
+        }
+    )
+
+    response = _client(service).request(
+        method,
+        path,
+        json={"expected_revision": 2, "content": content},
+    )
+
+    assert response.status_code == 200
+    assert len(mutations.calls) == 1
 
 
 @pytest.mark.asyncio

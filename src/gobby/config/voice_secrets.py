@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
 
 VOICE_AUDIO_BINDINGS_KEY = "voice.openai_compatible_audio"
-VOICE_AUDIO_API_KEY_PATH = f"{VOICE_AUDIO_BINDINGS_KEY}[].api_key"
 MASKED_VOICE_AUDIO_API_KEY = "********"
 
 
@@ -40,72 +39,84 @@ def _bindings(config: dict[str, Any]) -> object | None:
     return None
 
 
-def contains_voice_audio_bindings(config: dict[str, Any]) -> bool:
-    """Return whether config explicitly supplies the audio binding collection."""
-    if VOICE_AUDIO_BINDINGS_KEY in config:
-        return True
-    voice = config.get("voice")
-    return isinstance(voice, dict) and "openai_compatible_audio" in voice
-
-
-def validate_voice_audio_api_key_references(config: dict[str, Any]) -> None:
-    """Reject persisted audio API keys that are not explicit secret references."""
-    bindings = _bindings(config)
-    if not isinstance(bindings, list):
+def validate_structured_references(
+    key: str,
+    value: object,
+    reference_fields: Collection[str],
+) -> None:
+    """Reject plaintext values in registry-declared structured secret fields."""
+    if not isinstance(value, list):
         return
-
-    for index, binding in enumerate(bindings):
-        if not isinstance(binding, dict) or "api_key" not in binding:
+    for index, item in enumerate(value):
+        if not isinstance(item, dict):
             continue
-        value = binding["api_key"]
-        if value in (None, ""):
-            continue
-        if is_secret_reference(value):
-            continue
-        raise ValueError(
-            f"{VOICE_AUDIO_BINDINGS_KEY}[{index}].api_key must use a "
-            "$secret:NAME reference; plaintext API keys cannot be persisted"
-        )
+        for field in reference_fields:
+            field_value = item.get(field)
+            if field_value in (None, "") or is_secret_reference(field_value):
+                continue
+            raise ValueError(
+                f"{key}[{index}].{field} must use a $secret:NAME reference; "
+                "plaintext values cannot be persisted"
+            )
 
 
-def restore_masked_voice_audio_api_keys(
-    config: dict[str, Any],
-    persisted_config: dict[str, Any],
-) -> dict[str, Any]:
-    """Restore masked submitted keys from previously persisted safe references."""
-    restored = deepcopy(config)
-    bindings = _bindings(restored)
-    persisted_bindings = _bindings(persisted_config)
-    if not isinstance(bindings, list):
+def restore_masked_structured_references(
+    key: str,
+    value: object,
+    persisted_value: object,
+    reference_fields: Collection[str],
+) -> object:
+    """Restore masked structured fields from persisted secret references."""
+    restored = deepcopy(value)
+    if not isinstance(restored, list):
         return restored
 
-    references_by_provider: dict[str, str] = {}
-    if isinstance(persisted_bindings, list):
-        for binding in persisted_bindings:
-            if not isinstance(binding, dict):
+    references: dict[tuple[str | int, str], str] = {}
+    if isinstance(persisted_value, list):
+        for index, item in enumerate(persisted_value):
+            if not isinstance(item, dict):
                 continue
-            provider = binding.get("provider")
-            api_key = binding.get("api_key")
-            if (
-                isinstance(provider, str)
-                and isinstance(api_key, str)
-                and is_secret_reference(api_key)
-            ):
-                references_by_provider[provider] = api_key
+            identity = item.get("provider")
+            identity_key = identity if isinstance(identity, str) else index
+            for field in reference_fields:
+                field_value = item.get(field)
+                if isinstance(field_value, str) and is_secret_reference(field_value):
+                    references[(identity_key, field)] = field_value
 
-    for index, binding in enumerate(bindings):
-        if not isinstance(binding, dict) or binding.get("api_key") != MASKED_VOICE_AUDIO_API_KEY:
+    for index, item in enumerate(restored):
+        if not isinstance(item, dict):
             continue
-        provider = binding.get("provider")
-        reference = references_by_provider.get(provider) if isinstance(provider, str) else None
-        if reference is None:
-            raise ValueError(
-                f"{VOICE_AUDIO_BINDINGS_KEY}[{index}].api_key is masked but no persisted "
-                "secret reference exists; provide $secret:NAME"
-            )
-        binding["api_key"] = reference
+        identity = item.get("provider")
+        identity_key = identity if isinstance(identity, str) else index
+        for field in reference_fields:
+            if item.get(field) != MASKED_VOICE_AUDIO_API_KEY:
+                continue
+            reference = references.get((identity_key, field))
+            if reference is None:
+                raise ValueError(
+                    f"{key}[{index}].{field} is masked but no persisted secret reference "
+                    "exists; provide $secret:NAME"
+                )
+            item[field] = reference
 
     return restored
+
+
+def mask_structured_references(
+    value: object,
+    reference_fields: Collection[str],
+) -> object:
+    """Return a copy with registry-declared structured secret fields masked."""
+    masked = deepcopy(value)
+    if not isinstance(masked, list):
+        return masked
+    for item in masked:
+        if not isinstance(item, dict):
+            continue
+        for field in reference_fields:
+            if item.get(field) not in (None, ""):
+                item[field] = MASKED_VOICE_AUDIO_API_KEY
+    return masked
 
 
 def mask_voice_audio_api_keys(
@@ -152,29 +163,4 @@ def resolve_voice_binding_api_keys(
         if plaintext is None:
             raise VoiceSecretResolutionError(secret_name)
         binding.api_key = plaintext
-    return resolved_config
-
-
-def resolve_voice_audio_api_keys(
-    config: dict[str, Any],
-    secret_resolver: Callable[[str], str | None],
-) -> dict[str, Any]:
-    """Return a copy with exact audio API-key references resolved for runtime use."""
-    resolved_config = deepcopy(config)
-    bindings = _bindings(resolved_config)
-    if not isinstance(bindings, list):
-        return resolved_config
-
-    for binding in bindings:
-        if not isinstance(binding, dict):
-            continue
-        value = binding.get("api_key")
-        if not isinstance(value, str):
-            continue
-        match = SECRET_REF_PATTERN.fullmatch(value)
-        if match is None:
-            continue
-        resolved_value = secret_resolver(match.group(1))
-        if resolved_value is not None:
-            binding["api_key"] = resolved_value
     return resolved_config

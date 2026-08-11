@@ -29,11 +29,9 @@ from gobby.config.registry import (
     RegistrySpec,
     UnknownConfigKeyError,
     config_key_secrecy,
+    config_reference_fields,
 )
-from gobby.config.voice_secrets import (
-    VOICE_AUDIO_BINDINGS_KEY,
-    validate_voice_audio_api_key_references,
-)
+from gobby.config.voice_secrets import validate_structured_references
 from gobby.storage.config_repository import (
     MAX_CONFIG_REVISION,
     ConfigReadSnapshot,
@@ -385,10 +383,12 @@ class ConfigMutations:
                     existing_binding = candidate_bindings.get(key)
                     if existing_binding is None or existing_binding.reference != validated:
                         candidate_bindings[key] = SecretBinding(validated, None)
-                if key == VOICE_AUDIO_BINDINGS_KEY:
+                if reference_fields := config_reference_fields(spec):
                     try:
-                        validate_voice_audio_api_key_references(
-                            {key: to_jsonable_python(validated)}
+                        validate_structured_references(
+                            key,
+                            to_jsonable_python(validated),
+                            tuple(field.name for field in reference_fields),
                         )
                     except ValueError as exc:
                         raise ConfigValidationError(str(exc), key=key) from exc

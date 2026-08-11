@@ -16,14 +16,18 @@ from gobby.config.registry import (
     ConfigVisibility,
     UnknownConfigKeyError,
     config_key_secrecy,
+    config_reference_fields,
 )
 from gobby.config.runtime import ConfigSnapshot
-from gobby.config.values import MASKED_SECRET, ConfigValuesError
+from gobby.config.values import (
+    MASKED_SECRET,
+    ConfigValuesError,
+    reject_unprobed_responses_endpoints,
+)
 from gobby.config.voice_secrets import (
-    VOICE_AUDIO_BINDINGS_KEY,
-    mask_voice_audio_api_keys,
-    restore_masked_voice_audio_api_keys,
-    validate_voice_audio_api_key_references,
+    mask_structured_references,
+    restore_masked_structured_references,
+    validate_structured_references,
 )
 from gobby.storage.config_mutations import (
     ConfigConflictError,
@@ -214,10 +218,27 @@ class ConfigDocumentsService:
                     validation_values=validation_values,
                 )
                 continue
-            if key == VOICE_AUDIO_BINDINGS_KEY:
-                value = self._prepare_voice_bindings(value, snapshot)
+            if reference_fields := config_reference_fields(spec):
+                value = self._prepare_structured_references(
+                    key,
+                    value,
+                    snapshot,
+                    tuple(field.name for field in reference_fields),
+                )
             values[key] = value
             validation_values[key] = value
+        changed_values = {
+            key: value
+            for key, value in validation_values.items()
+            if key not in snapshot.desired_values or snapshot.desired_values[key] != value
+        }
+        omitted = frozenset(set(snapshot.desired_values) - set(validation_values))
+        reject_unprobed_responses_endpoints(
+            changed_values,
+            omitted,
+            {key: tuple(key.split(".")) for key in (*changed_values, *omitted)},
+            snapshot.desired,
+        )
         try:
             self.runtime_candidate(validation_values)
         except (ValueError, TypeError) as exc:
@@ -228,20 +249,27 @@ class ConfigDocumentsService:
             ) from exc
         return ConfigPatch(values=values, secrets=secrets)
 
-    def _prepare_voice_bindings(self, value: object, snapshot: ConfigSnapshot) -> object:
-        """Restore masked audio API keys and reject plaintext keys on import."""
+    def _prepare_structured_references(
+        self,
+        key: str,
+        value: object,
+        snapshot: ConfigSnapshot,
+        reference_fields: tuple[str, ...],
+    ) -> object:
+        """Restore masked structured fields and reject plaintext on import."""
         if not isinstance(value, list):
             return value
-        wrapped: dict[str, object] = {VOICE_AUDIO_BINDINGS_KEY: value}
-        persisted: dict[str, object] = {
-            VOICE_AUDIO_BINDINGS_KEY: snapshot.desired_values.get(VOICE_AUDIO_BINDINGS_KEY)
-        }
         try:
-            wrapped = restore_masked_voice_audio_api_keys(wrapped, persisted)
-            validate_voice_audio_api_key_references(wrapped)
+            value = restore_masked_structured_references(
+                key,
+                value,
+                snapshot.desired_values.get(key),
+                reference_fields,
+            )
+            validate_structured_references(key, value, reference_fields)
         except ValueError as exc:
-            raise self._invalid_key(VOICE_AUDIO_BINDINGS_KEY, str(exc)) from exc
-        return wrapped[VOICE_AUDIO_BINDINGS_KEY]
+            raise self._invalid_key(key, str(exc)) from exc
+        return value
 
     def _prepare_secret(
         self,
@@ -302,8 +330,11 @@ class ConfigDocumentsService:
                     values[key] = MASKED_SECRET
                 else:
                     values[key] = value
-            elif key == VOICE_AUDIO_BINDINGS_KEY:
-                values[key] = mask_voice_audio_api_keys({key: value})[key]
+            elif reference_fields := config_reference_fields(spec):
+                values[key] = mask_structured_references(
+                    value,
+                    tuple(field.name for field in reference_fields),
+                )
             else:
                 values[key] = value
         return yaml.safe_dump(

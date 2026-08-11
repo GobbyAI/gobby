@@ -15,7 +15,9 @@ from gobby.config.registry import (
     INVALID_DYNAMIC_SEGMENTS,
     ActivationPolicy,
     ConfigPatternSpec,
+    ConfigSecrecy,
     ConfigVisibility,
+    UnknownConfigKeyError,
     decode_dynamic_segment,
     encode_dynamic_segment,
 )
@@ -78,7 +80,9 @@ def test_every_daemon_leaf_has_one_spec() -> None:
     daemon_leaves = {
         path
         for path, is_mapping in _walk_model(DaemonConfig)
-        if not is_mapping and path not in bootstrap_paths and path != "hub_backend"
+        if not is_mapping
+        and path not in bootstrap_paths
+        and path not in {"hub_backend", "postgres_pool"}
     }
 
     registered_by_source: dict[str, list[str]] = {}
@@ -147,6 +151,27 @@ def test_visibility_partitions_are_disjoint() -> None:
                 "activation",
                 "machineExport",
             }.issubset(metadata)
+
+
+def test_structured_voice_api_key_secrecy_is_registry_owned() -> None:
+    spec = CONFIG_REGISTRY.resolve("voice.openai_compatible_audio")
+
+    assert {field.name: field.secrecy for field in spec.field_specs}["api_key"] is (
+        ConfigSecrecy.REFERENCE
+    )
+    properties = cast(
+        Mapping[str, object],
+        CONFIG_REGISTRY.json_schema(ConfigVisibility.PUBLIC)["properties"],
+    )
+    metadata = cast(Mapping[str, object], properties["voice.openai_compatible_audio"])
+    fields = cast(Mapping[str, object], metadata["fields"])
+    api_key = cast(Mapping[str, object], fields["api_key"])
+    assert api_key["secrecy"] == "reference"
+
+
+def test_postgres_pool_is_bootstrap_only() -> None:
+    with pytest.raises(UnknownConfigKeyError):
+        CONFIG_REGISTRY.resolve("postgres_pool")
 
 
 def _pattern_segments(pattern: ConfigPatternSpec) -> dict[str, str]:

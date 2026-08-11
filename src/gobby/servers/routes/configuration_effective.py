@@ -24,6 +24,7 @@ from gobby.config.registry import (
     config_key_secrecy,
 )
 from gobby.config.runtime import ConfigSnapshot
+from gobby.config.values import ConfigValuesError
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.utils.local_token import AgentApiTokenClaims
@@ -285,11 +286,13 @@ def register_effective_routes(
     def get_effective_config() -> JSONResponse:
         """Serve resolved client configuration."""
         try:
-            values = _machine_config_values(context.get_config_runtime().snapshot)
+            values = _machine_config_values(context.get_config_snapshot())
             return JSONResponse(
                 content={"config": values},
                 headers={"Cache-Control": "no-store"},
             )
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         except HTTPException:
             raise
         except Exception as exc:
@@ -300,9 +303,12 @@ def register_effective_routes(
     def get_service_capabilities(
         request: Request,
         response: Response,
-    ) -> ServiceCapabilityBundle:
+    ) -> ServiceCapabilityBundle | JSONResponse:
         claims = require_agent_claims(request)
-        snapshot = context.get_config_runtime().snapshot
+        try:
+            snapshot = context.get_config_snapshot()
+        except ConfigValuesError as exc:
+            return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
         if claims.agent_run_id is not None and claims.managed_execution_id is None:
             owner_kind: Literal["agent_run", "tool_chat"] = "agent_run"
             execution_id = claims.agent_run_id

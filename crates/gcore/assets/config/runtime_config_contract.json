@@ -437,6 +437,20 @@
         }
       ],
       "description": "Provider-scoped aliases into the OpenRouter model metadata registry.",
+      "fields": {
+        "openrouter_model_id": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "provider": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "provider_model_id": {
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
       "key": "ai.model_metadata_aliases",
       "machineExport": false,
       "namespace": "ai.model_metadata_aliases",
@@ -1232,7 +1246,7 @@
       "default": null,
       "description": "FalkorDB password (Redis AUTH). `databases.falkordb.password` resolves to secret-store name `falkordb_password` for stable disambiguation. Must be provided when FalkorDB is enabled. Supports ${ENV_VAR} pattern for env var expansion at load time.",
       "key": "databases.falkordb.password",
-      "machineExport": false,
+      "machineExport": true,
       "namespace": "databases",
       "secrecy": "reference",
       "type": [
@@ -2006,6 +2020,56 @@
       "activation": "live",
       "default": [],
       "description": "List of webhook endpoint configurations",
+      "fields": {
+        "can_block": {
+          "default": false,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "events": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "fail_closed": {
+          "default": false,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "headers": {
+          "default": [],
+          "secrecy": "none",
+          "type": "object"
+        },
+        "name": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "retry_count": {
+          "default": 3,
+          "secrecy": "none",
+          "type": "integer"
+        },
+        "retry_delay": {
+          "default": 1.0,
+          "secrecy": "none",
+          "type": "number"
+        },
+        "timeout": {
+          "default": 10.0,
+          "secrecy": "none",
+          "type": "number"
+        },
+        "url": {
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
       "key": "hook_extensions.webhooks.endpoints",
       "machineExport": false,
       "namespace": "hook_extensions",
@@ -3402,23 +3466,6 @@
     },
     {
       "activation": "live",
-      "default": {
-        "acquire_timeout_seconds": 5.0,
-        "max_lifetime_seconds": 300.0,
-        "max_size": 2,
-        "min_size": 2,
-        "open_timeout_seconds": 30.0
-      },
-      "description": "PostgreSQL client pool settings selected by bootstrap.yaml.",
-      "key": "postgres_pool",
-      "machineExport": false,
-      "namespace": "postgres_pool",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": [
         {
           "candidate": "codex/gpt-5.6-terra",
@@ -4347,6 +4394,23 @@
       "activation": "live",
       "default": [],
       "description": "Per-tool approval policies (server/tool glob patterns)",
+      "fields": {
+        "policy": {
+          "default": "always_ask",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "server_pattern": {
+          "default": "*",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "tool_pattern": {
+          "default": "*",
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
       "key": "tool_approval.policies",
       "machineExport": false,
       "namespace": "tool_approval",
@@ -4766,6 +4830,66 @@
     {
       "activation": "live",
       "default": [],
+      "fields": {
+        "categories": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "enabled": {
+          "default": true,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "evidence_weakening_args_any": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "evidence_weakening_bare_args_after": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "forbidden_args_any": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "id": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "label": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "languages": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "non_executing_args_any": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "prefixes": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "required_args_all": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "required_args_any": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        }
+      },
       "key": "validation_detection.custom_matchers",
       "machineExport": false,
       "namespace": "validation_detection",
@@ -4818,6 +4942,36 @@
     {
       "activation": "live",
       "default": [],
+      "fields": {
+        "delimiter": {
+          "default": "--",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "id": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "kind": {
+          "default": "prefix",
+          "secrecy": "none",
+          "type": "string"
+        },
+        "label": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "prefixes": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        },
+        "strip_options_with_values": {
+          "default": [],
+          "secrecy": "none",
+          "type": "array"
+        }
+      },
       "key": "validation_detection.wrapper_rules",
       "machineExport": false,
       "namespace": "validation_detection",
@@ -4966,6 +5120,43 @@
       "activation": "live",
       "default": [],
       "description": "OpenAI-compatible audio capability bindings for audio_transcribe and audio_translate.",
+      "fields": {
+        "api_key": {
+          "default": null,
+          "secrecy": "reference",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "provider": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "default": 120.0,
+          "secrecy": "none",
+          "type": "number"
+        },
+        "transcription_enabled": {
+          "default": true,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "translation_enabled": {
+          "default": true,
+          "secrecy": "none",
+          "type": "boolean"
+        },
+        "url": {
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
       "key": "voice.openai_compatible_audio",
       "machineExport": false,
       "namespace": "voice",
@@ -5476,6 +5667,16 @@
       "activation": "live",
       "default": [],
       "description": "Project and topic wiki roots to watch.",
+      "fields": {
+        "path": {
+          "secrecy": "none",
+          "type": "string"
+        },
+        "scope": {
+          "secrecy": "none",
+          "type": "string"
+        }
+      },
       "key": "wiki.roots",
       "machineExport": false,
       "namespace": "wiki",

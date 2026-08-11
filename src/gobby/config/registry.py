@@ -188,6 +188,7 @@ class ConfigKeySpec:
     secrecy: ConfigSecrecy = ConfigSecrecy.NONE
     machine_export: bool = False
     description: str | None = None
+    field_specs: tuple[PatternFieldSpec, ...] = ()
 
     @property
     def namespace(self) -> str:
@@ -412,6 +413,11 @@ def config_key_secrecy(spec: RegistrySpec, key: str) -> ConfigSecrecy:
     return ConfigSecrecy.NONE if field is None else field.secrecy
 
 
+def config_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
+    """Return structured fields that must contain secret references."""
+    return tuple(field for field in spec.field_specs if field.secrecy is ConfigSecrecy.REFERENCE)
+
+
 def _patterns_overlap(left: ConfigPatternSpec, right: ConfigPatternSpec) -> bool:
     left_parts = left.pattern.split(".")
     right_parts = right.pattern.split(".")
@@ -458,15 +464,15 @@ def _schema_metadata(spec: RegistrySpec) -> dict[str, object]:
         metadata["description"] = spec.description
     if isinstance(spec, ConfigPatternSpec):
         metadata["pattern"] = spec.pattern
-        if spec.field_specs:
-            metadata["fields"] = {
-                field.name: {
-                    "type": _json_type(field.annotation),
-                    "secrecy": field.secrecy.value,
-                    **({"default": _json_default(field.default)} if field.has_default else {}),
-                }
-                for field in spec.field_specs
+    if spec.field_specs:
+        metadata["fields"] = {
+            field.name: {
+                "type": _json_type(field.annotation),
+                "secrecy": field.secrecy.value,
+                **({"default": _json_default(field.default)} if field.has_default else {}),
             }
+            for field in spec.field_specs
+        }
     return metadata
 
 
@@ -541,6 +547,28 @@ def _field_default(field: FieldInfo, instance_value: object = _MISSING) -> objec
     return _MISSING if default is PydanticUndefined else _freeze(default)
 
 
+def _field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
+    model = _model_type(annotation)
+    if model is None:
+        return ()
+    return tuple(
+        PatternFieldSpec(
+            name=name,
+            annotation=field.annotation,
+            default=_field_default(field),
+            secrecy=_secrecy(name),
+        )
+        for name, field in model.model_fields.items()
+    )
+
+
+def _list_field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
+    if get_origin(annotation) is not list:
+        return ()
+    arguments = get_args(annotation)
+    return _field_specs(arguments[0]) if arguments else ()
+
+
 @dataclass(frozen=True, slots=True)
 class _Leaf:
     source_path: str
@@ -601,7 +629,7 @@ def _flatten_mapping(value: Mapping[str, object], prefix: str = "") -> Iterator[
 
 
 BOOTSTRAP_RUNTIME_PATHS = frozenset(_flatten_mapping(BootstrapConfig().to_config_dict()))
-_REMOVED_RUNTIME_PATHS = frozenset({"hub_backend"})
+_REMOVED_RUNTIME_PATHS = frozenset({"hub_backend", "postgres_pool"})
 
 _RESTART_PATHS = frozenset({"cors_origins", "test_mode", "memory.backend"})
 _RESTART_PREFIXES = (
@@ -688,25 +716,13 @@ def _secrecy(source_path: str) -> ConfigSecrecy:
 def _pattern_from_mapping(leaf: _Leaf, pattern: str) -> ConfigPatternSpec:
     arguments = get_args(leaf.annotation)
     value_annotation = arguments[1] if len(arguments) == 2 else object
-    value_model = _model_type(value_annotation)
-    field_specs: tuple[PatternFieldSpec, ...] = ()
-    if value_model is not None:
-        field_specs = tuple(
-            PatternFieldSpec(
-                name=name,
-                annotation=field.annotation,
-                default=_field_default(field),
-                secrecy=_secrecy(name),
-            )
-            for name, field in value_model.model_fields.items()
-        )
     return ConfigPatternSpec(
         pattern=pattern,
         annotation=value_annotation,
         default=leaf.default,
         source_path=leaf.source_path,
         description=leaf.description,
-        field_specs=field_specs,
+        field_specs=_field_specs(value_annotation),
     )
 
 
@@ -779,6 +795,7 @@ def _build_registry() -> ConfigRegistry:
             secrecy=_secrecy(leaf.source_path),
             machine_export=_canonical_key(leaf.source_path) in _MACHINE_EXPORT_KEYS,
             description=leaf.description,
+            field_specs=_list_field_specs(leaf.annotation),
         )
         for leaf in leaves
         if leaf.source_path not in BOOTSTRAP_RUNTIME_PATHS
@@ -819,6 +836,7 @@ __all__ = [
     "PatternFieldSpec",
     "RegistryError",
     "UnknownConfigKeyError",
+    "config_reference_fields",
     "decode_dynamic_segment",
     "config_key_secrecy",
     "encode_dynamic_segment",
