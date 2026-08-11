@@ -265,5 +265,9 @@ class TmuxPTYBridge:
             args.extend(["-S", config.socket_path])
         elif config.socket_name:
             args.extend(["-L", config.socket_name])
-        args.extend(["attach-session", "-t", session_name])
+        # The forced TERM=xterm-256color terminfo carries no RGB capability, so
+        # tmux would downgrade 24-bit SGRs to the 256-color palette for this
+        # client. The web terminal renders truecolor, so declare the client's
+        # real feature set explicitly (-T requires tmux >= 3.2, our floor).
+        args.extend(["-T", "256,RGB", "attach-session", "-t", session_name])
         return args

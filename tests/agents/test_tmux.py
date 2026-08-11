@@ -1262,19 +1262,37 @@ class TestTmuxPTYBridge:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="gobby")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "-L", "gobby", "attach-session", "-t", "my-session"]
+        assert cmd == [
+            "tmux",
+            "-L",
+            "gobby",
+            "-T",
+            "256,RGB",
+            "attach-session",
+            "-t",
+            "my-session",
+        ]
 
     def test_build_attach_cmd_default_server(self) -> None:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "attach-session", "-t", "my-session"]
+        assert cmd == ["tmux", "-T", "256,RGB", "attach-session", "-t", "my-session"]
 
     def test_build_attach_cmd_socket_path(self) -> None:
         bridge = TmuxPTYBridge()
         config = TmuxConfig(socket_name="", socket_path="/tmp/tmux-1000/gobby")
         cmd = bridge._build_attach_cmd("my-session", config)
-        assert cmd == ["tmux", "-S", "/tmp/tmux-1000/gobby", "attach-session", "-t", "my-session"]
+        assert cmd == [
+            "tmux",
+            "-S",
+            "/tmp/tmux-1000/gobby",
+            "-T",
+            "256,RGB",
+            "attach-session",
+            "-t",
+            "my-session",
+        ]
 
     @pytest.mark.asyncio
     async def test_detach_missing_is_noop(self) -> None:
