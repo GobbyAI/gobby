@@ -222,7 +222,7 @@ function ActivityDropdown({
         <DropdownCaret open={isOpen} />
       </Button>
       {isOpen && (
-        <div className="activity-panel-mobile-menu absolute inset-x-0 top-[calc(100%+0.25rem)] z-[5] rounded-lg border border-border bg-[var(--bg-secondary)] p-1 [columns:3_10rem] [column-gap:0.125rem] shadow-[var(--shadow-lg)]">
+        <div className="activity-panel-mobile-menu absolute left-0 top-[calc(100%+0.25rem)] z-[5] grid max-h-[70vh] w-[min(19rem,calc(100vw-1.5rem))] grid-cols-2 gap-0.5 overflow-y-auto rounded-lg border border-border bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-lg)]">
           {[...tabs].sort((a, b) => a.label.localeCompare(b.label)).map((tab) => (
             <Button
               key={tab.id}
@@ -233,7 +233,7 @@ function ActivityDropdown({
               aria-current={activeTab === tab.id ? "page" : undefined}
               className={cn(
                 "activity-panel-mobile-menu__item",
-                "mb-0.5 inline-flex min-h-7 w-full break-inside-avoid items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] mobile:min-h-11 mobile:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
+                "inline-flex min-h-7 w-full items-center justify-start gap-1.5 rounded-md border-0 bg-transparent px-2 py-1 text-left text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)] mobile:min-h-11 mobile:min-w-11 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
                 activeTab === tab.id &&
                   "active bg-[var(--bg-tertiary)] text-[var(--text-primary)]",
                 coarseHitAreaCls,

@@ -264,6 +264,40 @@ describe('ActivityPanel', () => {
     )
   })
 
+  it('lays the dropdown menu out as a two-column grid with left-aligned items', async () => {
+    render(
+      <ActivityPanel
+        mode={"split"}
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="sessions"
+        onTabChange={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
+        isMobile={true}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /sessions/i }))
+
+    const disclosure = document.querySelector('.activity-panel-mobile-menu')
+    expect(disclosure).not.toBeNull()
+    // Two fixed columns keep all 16 tabs (Terminal included) reachable on
+    // phone widths; the scroll guard covers short viewports.
+    expect(disclosure).toHaveClass('grid', 'grid-cols-2', 'overflow-y-auto')
+    const items = within(disclosure as HTMLElement).getAllByRole('button')
+    expect(
+      within(disclosure as HTMLElement).getByRole('button', { name: /terminal/i }),
+    ).toBeInTheDocument()
+    for (const item of items) {
+      expect(item).toHaveClass('justify-start')
+      expect(item.className).not.toContain('justify-center')
+    }
+  })
+
   it('clamps the desktop panel between the activity and chat 320px floors', () => {
     const previousWidth = window.innerWidth
     Object.defineProperty(window, 'innerWidth', {
