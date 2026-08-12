@@ -502,6 +502,7 @@ def build_condition_helpers(
         task_tree_complete,
         task_type_in,
         touches_claude_memory_path,
+        touches_docker_policy_path,
     )
     from .monolith_guard import (
         outstanding_monolith_paths,
@@ -528,6 +529,7 @@ def build_condition_helpers(
             task_commit_project_path_allowlist_violation
         ),
         "touches_claude_memory_path": touches_claude_memory_path,
+        "touches_docker_policy_path": touches_docker_policy_path,
     }
 
     # --- Task helpers ---

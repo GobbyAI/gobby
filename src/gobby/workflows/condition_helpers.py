@@ -197,6 +197,16 @@ def touches_claude_memory_path(
     )
 
 
+def touches_docker_policy_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> bool:
+    """Return True when canonical or native path fields touch Docker policy."""
+    return any(
+        _is_docker_policy_path(path) for path in _event_and_tool_paths(event_data, tool_input)
+    )
+
+
 def _first_matching_path(
     event_data: Mapping[str, Any] | None,
     tool_input: Any,
@@ -271,6 +281,25 @@ def _is_tdd_test_path(path: str) -> bool:
         _path_has_segment(normalized, "tests")
         or name.startswith("test_")
         or normalized.endswith("_test.py")
+    )
+
+
+def _is_docker_policy_path(path: str) -> bool:
+    normalized = _normalize_condition_path(path)
+    parts = [part for part in normalized.split("/") if part]
+    if not parts:
+        return False
+
+    lowered_parts = [part.lower() for part in parts]
+    filename = lowered_parts[-1]
+    if ".docker" in lowered_parts:
+        return True
+    if filename == "dockerfile" or filename.startswith("dockerfile."):
+        return True
+    if filename in {".dockerignore", "docker-bake.hcl", "docker-bake.json"}:
+        return True
+    return filename.endswith((".yml", ".yaml")) and (
+        filename.startswith("docker-compose") or filename.startswith("compose.")
     )
 
 

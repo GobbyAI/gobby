@@ -24,6 +24,7 @@ from gobby.workflows.condition_helpers import (
     task_tree_complete,
     task_type_in,
     touches_claude_memory_path,
+    touches_docker_policy_path,
 )
 
 pytestmark = pytest.mark.unit
@@ -622,6 +623,35 @@ class TestTouchesClaudeMemoryPath:
         tool_input = {"file_path": ".claude/plans/design.md"}
 
         assert touches_claude_memory_path({}, tool_input) is False
+
+
+class TestTouchesDockerPolicyPath:
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "Dockerfile",
+            "containers/Dockerfile.dev",
+            "deploy/docker-compose.services.yml",
+            "deploy/compose.prod.yaml",
+            ".dockerignore",
+            "docker-bake.hcl",
+            ".docker/config.json",
+        ],
+    )
+    def test_matches_docker_policy_paths(self, path: str) -> None:
+        assert touches_docker_policy_path({"canonical_file_path": path}, {}) is True
+
+    def test_matches_protected_path_in_multi_file_event(self) -> None:
+        event_data = {
+            "canonical_file_paths": ["README.md", "ops/docker-compose.yml"],
+        }
+
+        assert touches_docker_policy_path(event_data, {}) is True
+
+    def test_skips_unrelated_paths(self) -> None:
+        event_data = {"canonical_file_paths": ["README.md", "config/app.yaml"]}
+
+        assert touches_docker_policy_path(event_data, {}) is False
 
 
 class TestAllTasksHaveLabel:

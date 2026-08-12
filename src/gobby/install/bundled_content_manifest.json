@@ -560,6 +560,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
+    "workflows/rules/worker-safety/require-docker-policy-approval.yaml": "984102909c02c9405ec1683eb38b4e60bc29a6c21edc5115f4d6d4454c0e023b",
     "workflows/variables/gobby-default-variables.yaml": "5c966335ef7b61d89856eefee0ecdd56f8976e67140f8101efd14b4f188dfdb4"
   },
   "hash_algorithm": "sha256",
