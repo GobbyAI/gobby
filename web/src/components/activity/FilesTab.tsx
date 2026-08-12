@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   type CSSProperties,
-  type Ref,
 } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
@@ -17,29 +16,16 @@ import { MarkdownBody, markdownBodyClassName } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'
 import { EditableViewActions } from '../shared/EditableView'
 import { detectLanguageFromPath, useEditableContent } from '../shared/editableContent'
-import {
-  FOLDER_ICON_COLOR_VAR,
-  getGitStatusColorVar,
-  getLanguageColorVar,
-} from '../../lib/languageColors'
 import { cn } from '../../lib/utils'
-import { Button } from '../ui/Button'
-import { Card } from '../ui/Card'
-import { Input } from '../ui/Input'
-import { coarseHitAreaCls } from '../ui/controlStyles'
 import { ActivityPanelEmpty, FilesEmptyIcon } from './ActivityPanelEmpty'
-
-interface FilesTabProps {
-  projectId?: string | null
-  onAddToChat?: (filePath: string) => void
-  layout?: 'stack' | 'responsive-split'
-}
-
-// The base-layer focus ring sits 2px outside the row, so the tree pane's
-// overflow clips it to a stray full-width line between rows (#20046); an
-// inset ring stays fully visible inside the scroller.
-const treeRowFocusCls =
-  'focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-2px]'
+import { FilesTabContextMenu, FilesTabMoveDialog } from './FilesTabActionSurfaces'
+import type {
+  ContextMenuState,
+  FileEntry,
+  FilesTabProps,
+  RenamingState,
+} from './FilesTab.types'
+import { FilesTabTree } from './FilesTabTree'
 
 const FILES_TAB_LEFT_WIDTH_KEY = 'gobby:files-tab:left-width'
 const FILES_TAB_LEFT_WIDTH_DEFAULT = 320
@@ -59,73 +45,8 @@ function readPersistedLeftWidth(): number {
   }
 }
 
-interface FileEntry {
-  name: string
-  path: string
-  is_dir: boolean
-  size?: number
-  extension?: string
-}
-
-interface ContextMenuState {
-  x: number
-  y: number
-  entry: FileEntry
-}
-
-interface FileTreeRenameInputProps {
-  name: string
-  inputRef: Ref<HTMLInputElement>
-  onSubmit: () => void
-  onCancel: () => void
-}
-
-function FileTreeRenameInput({
-  name,
-  inputRef,
-  onSubmit,
-  onCancel,
-}: FileTreeRenameInputProps) {
-  return (
-    <span className="min-w-0 flex-1" onClick={(event) => event.stopPropagation()}>
-      <Input
-        ref={inputRef}
-        aria-label={`Rename ${name}`}
-        wrapperClassName="min-w-0 flex-1"
-        className="h-auto flex-1 rounded border-[var(--accent)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 text-[length:inherit] text-[var(--text-primary)] outline-none"
-        defaultValue={name}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter') onSubmit()
-          if (event.key === 'Escape') onCancel()
-        }}
-        onBlur={onSubmit}
-        onClick={(event) => event.stopPropagation()}
-      />
-    </span>
-  )
-}
-
 function getBaseUrl(): string {
   return import.meta.env.VITE_API_BASE_URL || ''
-}
-
-function FolderIcon({ open }: { open: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={FOLDER_ICON_COLOR_VAR} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-      {open && <line x1="9" y1="14" x2="15" y2="14" />}
-    </svg>
-  )
-}
-
-function FileIconSvg({ extension }: { extension: string }) {
-  const color = getLanguageColorVar(extension)
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-      <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-      <polyline points="13 2 13 9 20 9" />
-    </svg>
-  )
 }
 
 const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, layout = 'stack' }: FilesTabProps) {
@@ -155,7 +76,7 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   const [fileLoading, setFileLoading] = useState(false)
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null)
   const ctxMenuRef = useRef<HTMLDivElement>(null)
-  const [renaming, setRenaming] = useState<{ path: string; name: string } | null>(null)
+  const [renaming, setRenaming] = useState<RenamingState | null>(null)
   const [moving, setMoving] = useState<FileEntry | null>(null)
   const [movePath, setMovePath] = useState('')
   const [moveError, setMoveError] = useState<string | null>(null)
@@ -458,154 +379,6 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
   if (loading) return <ActivityPanelEmpty body="Loading files…" />
   if (!projectId) return <ActivityPanelEmpty body="No project selected" />
 
-  const renderEntry = (entry: FileEntry, depth: number) => {
-    const isDir = entry.is_dir
-    const isExpanded = expandedPaths.has(entry.path)
-    const isSelected = entry.path === selectedFile
-    const children = childrenMap.get(entry.path)
-    const isRenaming = renaming?.path === entry.path
-    const ext = entry.name.split('.').pop() ?? ''
-
-    if (isDir) {
-      // Indent base 0.5rem must equal px-2's inline padding: at depth 0 the
-      // inline indent and the utility agree, so row geometry is identical
-      // whichever wins the cascade.
-      return (
-        <div key={entry.path}>
-          <div
-            className={cn(
-              'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
-              treeRowFocusCls,
-              isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
-            )}
-            style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}
-            role="treeitem"
-            tabIndex={0}
-            aria-level={depth + 1}
-            aria-expanded={isExpanded}
-            onClick={() => toggleDir(entry.path)}
-            onKeyDown={(e) => {
-              if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
-              e.preventDefault()
-              toggleDir(entry.path)
-            }}
-            onContextMenu={(e) => handleContextMenu(e, entry)}
-          >
-            <FolderIcon open={isExpanded} />
-            {isRenaming ? (
-              <FileTreeRenameInput
-                name={renaming.name}
-                inputRef={renameInputRef}
-                onSubmit={submitRename}
-                onCancel={() => setRenaming(null)}
-              />
-            ) : (
-              <span className={cn('min-w-0 flex-1 truncate', getDirStatus(entry.path) && 'text-[var(--color-warning-foreground)]')}>{entry.name}</span>
-            )}
-            {!isRenaming && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                dense
-                className={cn(coarseHitAreaCls, 'ml-auto size-6 shrink-0 rounded border-0 bg-transparent p-0 text-[var(--text-muted)] opacity-0 group-hover/files-tree:opacity-100 group-focus-within/files-tree:opacity-100 aria-expanded:opacity-100 hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] focus-visible:bg-[var(--bg-secondary)] focus-visible:text-[var(--text-primary)]')}
-                aria-label={`Actions for ${entry.name}`}
-                aria-haspopup="menu"
-                aria-expanded={ctxMenu?.entry.path === entry.path}
-                onClick={(e) => handleActionsMenu(e, entry)}
-              >
-                <span aria-hidden="true">⋯</span>
-              </Button>
-            )}
-          </div>
-          {isExpanded && children?.map((c) => renderEntry(c, depth + 1))}
-          {isExpanded && !children && (
-            <div className="px-2 py-1 text-[length:var(--text-sm)] italic text-[var(--text-muted)]" style={{ paddingLeft: `calc(0.5rem + ${depth + 1} * 1rem)` }}>Loading...</div>
-          )}
-        </div>
-      )
-    }
-
-    const fileStatus = getFileStatus(entry.path)
-
-    return (
-      <div key={entry.path}>
-        <div
-          className={cn(
-            'group/files-tree flex cursor-pointer select-none items-center gap-1.5 px-2 py-[0.1875rem] text-[length:var(--text-base)] font-[var(--font-weight-medium)] text-[var(--text-secondary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)] hover:text-[var(--text-primary)]',
-            treeRowFocusCls,
-            isSelected && 'bg-[color-mix(in_srgb,var(--accent)_8%,transparent)]',
-          )}
-          style={{ paddingLeft: `calc(0.5rem + ${depth} * 1rem)` }}
-          role="treeitem"
-          tabIndex={0}
-          aria-level={depth + 1}
-          aria-selected={isSelected}
-          onClick={() => openFile(entry.path)}
-          onKeyDown={(e) => {
-            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
-            e.preventDefault()
-            openFile(entry.path)
-          }}
-          onContextMenu={(e) => handleContextMenu(e, entry)}
-          draggable
-          onDragStart={(e) => {
-            e.dataTransfer.setData('application/x-gobby-file', entry.path)
-            e.dataTransfer.effectAllowed = 'copy'
-          }}
-        >
-          <FileIconSvg extension={ext} />
-          {isRenaming ? (
-            <FileTreeRenameInput
-              name={renaming.name}
-              inputRef={renameInputRef}
-              onSubmit={submitRename}
-              onCancel={() => setRenaming(null)}
-            />
-          ) : (
-            <span
-              className={cn(
-                'min-w-0 flex-1 truncate',
-                fileStatus === 'M' && 'text-[var(--color-warning-foreground)]',
-                fileStatus === 'A' && 'text-[var(--color-success-foreground)]',
-                fileStatus === 'D' && 'text-[var(--color-error)] line-through',
-                fileStatus === '??' && 'text-[var(--text-muted)]',
-              )}
-            >
-              {entry.name}
-            </span>
-          )}
-          {(() => {
-            if (fileStatus) return <GitStatusBadge status={fileStatus} />
-            return null
-          })()}
-          {!isRenaming && (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              dense
-              className={cn(coarseHitAreaCls, 'ml-auto size-6 shrink-0 rounded border-0 bg-transparent p-0 text-[var(--text-muted)] opacity-0 group-hover/files-tree:opacity-100 group-focus-within/files-tree:opacity-100 aria-expanded:opacity-100 hover:bg-[var(--bg-secondary)] hover:text-[var(--text-primary)] focus-visible:bg-[var(--bg-secondary)] focus-visible:text-[var(--text-primary)]')}
-              aria-label={`Actions for ${entry.name}`}
-              aria-haspopup="menu"
-              aria-expanded={ctxMenu?.entry.path === entry.path}
-              onClick={(e) => handleActionsMenu(e, entry)}
-            >
-              <span aria-hidden="true">⋯</span>
-            </Button>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  // Git status helpers
-  const getFileStatus = (path: string): string | null => gitStatus[path] ?? null
-  const getDirStatus = (dirPath: string): boolean => {
-    const prefix = dirPath ? dirPath + '/' : ''
-    return Object.keys(gitStatus).some((p) => p.startsWith(prefix))
-  }
-
   const language = selectedFile ? detectLanguageFromPath(selectedFile) : 'text'
 
   return (
@@ -626,9 +399,22 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
             body="Project files appear here once a project is loaded"
           />
         ) : (
-          <div role="tree" aria-label="Project files">
-            {rootEntries.map((e) => renderEntry(e, 0))}
-          </div>
+          <FilesTabTree
+            entries={rootEntries}
+            expandedPaths={expandedPaths}
+            selectedFile={selectedFile}
+            childrenMap={childrenMap}
+            renaming={renaming}
+            renameInputRef={renameInputRef}
+            contextMenu={ctxMenu}
+            gitStatus={gitStatus}
+            onToggleDirectory={toggleDir}
+            onOpenFile={openFile}
+            onContextMenu={handleContextMenu}
+            onActionsMenu={handleActionsMenu}
+            onSubmitRename={() => void submitRename()}
+            onCancelRename={() => setRenaming(null)}
+          />
         )}
       </div>
 
@@ -699,104 +485,28 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
         </div>
       )}
 
-      {/* Context menu */}
-      {ctxMenu && (
-        <>
-          <div className="fixed inset-0 z-[90]" onClick={closeCtxMenu} />
-          <div
-            ref={ctxMenuRef}
-            className="z-[91] min-w-[140px] rounded-md border border-[var(--border)] bg-[var(--bg-secondary)] p-1 shadow-[var(--shadow-md)]"
-            role="menu"
-            aria-label={`Actions for ${ctxMenu.entry.name}`}
-            style={{ position: 'fixed', left: ctxMenu.x, top: ctxMenu.y }}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') closeCtxMenu()
-            }}
-          >
-            {onAddToChat && !ctxMenu.entry.is_dir && (
-              <Button
-                type="button"
-                role="menuitem"
-                variant="ghost"
-                size="sm"
-                dense
-                className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')}
-                onClick={() => { onAddToChat(ctxMenu.entry.path); closeCtxMenu() }}
-              >
-                Add to chat
-              </Button>
-            )}
-            {!ctxMenu.entry.is_dir && (
-              <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleDuplicate(ctxMenu.entry)}>
-                Duplicate
-              </Button>
-            )}
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleRename(ctxMenu.entry)}>
-              Rename
-            </Button>
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--text-primary)] transition-colors duration-100 hover:bg-[var(--bg-tertiary)]')} onClick={() => handleMove(ctxMenu.entry)}>
-              Move
-            </Button>
-            <Button type="button" role="menuitem" variant="ghost" size="sm" dense className={cn(coarseHitAreaCls, 'block w-full rounded bg-transparent px-2.5 py-1.5 text-left text-[length:var(--text-md)] text-[var(--color-error)] transition-colors duration-100 hover:bg-[color-mix(in_srgb,var(--color-error)_10%,transparent)]')} onClick={() => handleDelete(ctxMenu.entry)}>
-              Delete
-            </Button>
-          </div>
-        </>
-      )}
-      {moving && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--surface-scrim)] p-4"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setMoving(null)
-          }}
-        >
-          <Card asChild padding="md" className="w-full max-w-md shadow-xl">
-            <form
-              ref={moveDialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="files-move-title"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void submitMove()
-              }}
-            >
-              <h2 id="files-move-title" className="mb-3 text-base font-semibold text-foreground">
-                Move {moving.name}
-              </h2>
-              <div className="grid gap-1.5 text-sm text-foreground">
-                <span id="files-move-path-label">Move to path</span>
-                <Input
-                  autoFocus
-                  aria-labelledby="files-move-path-label"
-                  value={movePath}
-                  onChange={(event) => {
-                    setMovePath(event.target.value)
-                    setMoveError(null)
-                  }}
-                  className="min-h-10 rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-                />
-              </div>
-              {moveError && <p className="mt-2 text-sm text-destructive-foreground" role="alert">{moveError}</p>}
-              <div className="mt-4 flex justify-end gap-2">
-                <Button type="button" variant="outline" size="sm" dense className={coarseHitAreaCls} onClick={() => setMoving(null)}>
-                  Cancel
-                </Button>
-                <Button
-                  type="submit"
-                  variant="accent"
-                  size="sm"
-                  dense
-                  className={coarseHitAreaCls}
-                  disabled={!movePath.trim() || movePath.trim() === moving.path}
-                >
-                  Move file
-                </Button>
-              </div>
-            </form>
-          </Card>
-        </div>
-      )}
+      <FilesTabContextMenu
+        contextMenu={ctxMenu}
+        menuRef={ctxMenuRef}
+        onAddToChat={onAddToChat}
+        onClose={closeCtxMenu}
+        onDuplicate={(entry) => void handleDuplicate(entry)}
+        onRename={handleRename}
+        onMove={(entry) => void handleMove(entry)}
+        onDelete={(entry) => void handleDelete(entry)}
+      />
+      <FilesTabMoveDialog
+        moving={moving}
+        formRef={moveDialogRef}
+        movePath={movePath}
+        error={moveError}
+        onMovePathChange={(path) => {
+          setMovePath(path)
+          setMoveError(null)
+        }}
+        onClose={() => setMoving(null)}
+        onSubmit={() => void submitMove()}
+      />
       {ConfirmDialogElement}
     </div>
   )
@@ -805,17 +515,3 @@ const FilesTabProject = memo(function FilesTabProject({ projectId, onAddToChat, 
 export const FilesTab = memo(function FilesTab(props: FilesTabProps) {
   return <FilesTabProject key={props.projectId ?? 'no-project'} {...props} />
 })
-
-function GitStatusBadge({ status }: { status: string }) {
-  const label = status === '??' ? '?' : status.charAt(0)
-  const color = getGitStatusColorVar(label)
-  return (
-    <span
-      className="ml-1.5 shrink-0 pr-1 text-[length:var(--text-2xs)] font-bold [font-family:inherit]"
-      style={{ color }}
-      title={status === 'M' ? 'Modified' : status === 'A' ? 'Added' : status === 'D' ? 'Deleted' : status === 'R' ? 'Renamed' : 'Untracked'}
-    >
-      {label}
-    </span>
-  )
-}
