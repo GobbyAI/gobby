@@ -460,10 +460,28 @@ def test_results_tool_schemas_bound_every_input() -> None:
     assert search_properties["limit"]["maximum"] == 50
     assert get_properties["offset"]["minimum"] == 0
     assert get_properties["limit"]["minimum"] == 1
-    assert get_properties["limit"]["maximum"] == (
-        config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
-    )
+    assert get_properties["limit"]["maximum"] == 1_000_000 - _WRAPPER_MUTATION_RESERVE
+    assert get_properties["limit"]["default"] == 1_000
     assert search_properties["result_id"] == get_properties["result_id"]
+
+
+def test_results_schema_limit_is_stable_across_initial_configs() -> None:
+    low = _config().model_copy(update={"max_envelope_chars": 4_000})
+    high = _config().model_copy(update={"max_envelope_chars": 20_000})
+
+    low_schema = create_results_registry(cast(HubDatabase, MagicMock()), low).get_schema(
+        "get_tool_result"
+    )
+    high_schema = create_results_registry(cast(HubDatabase, MagicMock()), high).get_schema(
+        "get_tool_result"
+    )
+
+    assert low_schema is not None
+    assert high_schema is not None
+    assert (
+        low_schema["inputSchema"]["properties"]["limit"]
+        == high_schema["inputSchema"]["properties"]["limit"]
+    )
 
 
 def test_results_tools_are_schema_discovery_exempt() -> None:

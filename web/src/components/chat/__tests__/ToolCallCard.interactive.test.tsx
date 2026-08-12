@@ -172,15 +172,28 @@ describe("ToolCallCard interactions", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Read/ }));
     fireEvent.click(screen.getByRole("button", { name: /Edit/ }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Other" })[0]);
     fireEvent.click(screen.getAllByRole("button", { name: "Other" })[1]);
-    fireEvent.change(screen.getByPlaceholderText("Type your answer..."), {
+    const customInputs = screen.getAllByPlaceholderText("Type your answer...");
+    fireEvent.change(customInputs[0], {
+      target: { value: "Search" },
+    });
+    fireEvent.change(customInputs[1], {
       target: { value: "Use the indexed search first" },
     });
+    expect(screen.getByRole("button", { name: /Read/ })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getAllByRole("button", { name: "Other" })[0]).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     fireEvent.click(screen.getByRole("button", { name: "Submit" }));
 
     expect(onRespond).toHaveBeenCalledOnce();
     expect(onRespond).toHaveBeenCalledWith("question-1", {
-      "Which tools?": "Read, Edit",
+      "Which tools?": "Read, Edit, Search",
       "Anything else?": "Use the indexed search first",
     });
     expect(screen.getByRole("button", { name: /Read/ })).toBeDisabled();

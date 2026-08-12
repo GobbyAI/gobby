@@ -654,32 +654,30 @@ fn reconcile_machine_state_locked(
     database_url: &str,
     project_id: &str,
 ) -> anyhow::Result<SweepOutcome> {
-    let refreshed = discover_global_project_prune(database_url)?;
-    if !refreshed
-        .machine_states
-        .iter()
-        .any(|project| project.id == project_id)
-    {
-        let mut conn = db::connect_readonly(database_url)?;
-        let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
-        let project_id = db::id_param(project_id)?;
-        let exists = conn
-            .query_opt(
-                "SELECT 1 FROM code_indexed_project_states
-                 WHERE machine_id = $1 AND project_id = $2",
-                &[&machine_id, &project_id],
-            )?
-            .is_some();
-        return Ok(if exists {
-            SweepOutcome::Active
-        } else {
-            SweepOutcome::AlreadyMissing
-        });
+    let mut conn = db::connect_readwrite(database_url)?;
+    let local_machine_id = gobby_core::machine::read_local_machine_id()?;
+    let machine_id = db::id_param(&local_machine_id)?;
+    let project_uuid = db::id_param(project_id)?;
+    let Some(row) = conn.query_opt(
+        "SELECT root_path,
+                updated_at <= NOW() - ($3::INT * INTERVAL '1 hour') AS eligible
+         FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &project_uuid, &CODE_INDEX_RETENTION_HOURS],
+    )?
+    else {
+        return Ok(SweepOutcome::AlreadyMissing);
+    };
+    let state = MachineProjectState {
+        machine_id: local_machine_id,
+        project_id: project_id.to_string(),
+        root_path: row.get("root_path"),
+        eligible: row.get("eligible"),
+    };
+    if !state.eligible || !machine_state_remains_stale(&mut conn, &state)? {
+        return Ok(SweepOutcome::Active);
     }
 
-    let mut conn = db::connect_readwrite(database_url)?;
-    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
-    let project_uuid = db::id_param(project_id)?;
     let mut tx = conn.transaction()?;
     tx.execute(
         "DELETE FROM code_indexed_file_states
@@ -712,6 +710,44 @@ fn reconcile_machine_state_locked(
     Ok(SweepOutcome::Deleted)
 }
 
+fn machine_state_remains_stale(
+    conn: &mut postgres::Client,
+    state: &MachineProjectState,
+) -> anyhow::Result<bool> {
+    if stale_root_reason(&state.project_id, &state.root_path).is_some() {
+        return Ok(true);
+    }
+    let Ok(root) = Path::new(&state.root_path).canonicalize() else {
+        return Ok(false);
+    };
+    let Ok(identity) = config::resolve_project_identity(&root, config::MissingIdentity::Error)
+    else {
+        return Ok(false);
+    };
+    if identity.project_id == state.project_id {
+        return Ok(false);
+    }
+
+    let machine_id = db::id_param(&state.machine_id)?;
+    let current_project_id = db::id_param(&identity.project_id)?;
+    let Some(row) = conn.query_opt(
+        "SELECT root_path FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &current_project_id],
+    )?
+    else {
+        return Ok(false);
+    };
+    let current_root_path: String = row.get("root_path");
+    if stale_root_reason(&identity.project_id, &current_root_path).is_some() {
+        return Ok(false);
+    }
+    let Ok(current_root) = Path::new(&current_root_path).canonicalize() else {
+        return Ok(false);
+    };
+    Ok(current_root == root)
+}
+
 fn mutate_registry_projects(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
     let project_ids = discovery
         .registry_projects
@@ -738,22 +774,25 @@ fn reconcile_registry_project_locked(
     database_url: &str,
     project_id: &str,
 ) -> anyhow::Result<SweepOutcome> {
-    let refreshed = discover_global_project_prune(database_url)?;
-    if !refreshed
-        .registry_projects
-        .iter()
-        .any(|project| project.id == project_id)
-    {
-        let mut conn = db::connect_readonly(database_url)?;
-        return Ok(if db::indexed_project_exists(&mut conn, project_id)? {
-            SweepOutcome::Active
-        } else {
-            SweepOutcome::AlreadyMissing
-        });
-    }
-
     let mut conn = db::connect_readwrite(database_url)?;
     let project_uuid = db::id_param(project_id)?;
+    let Some(row) = conn.query_opt(
+        "SELECT updated_at <= NOW() - ($2::INT * INTERVAL '1 hour') AS eligible,
+                EXISTS (
+                    SELECT 1 FROM code_indexed_project_states state
+                    WHERE state.project_id = project.id
+                ) AS has_state
+         FROM code_indexed_projects project
+         WHERE project.id = $1",
+        &[&project_uuid, &CODE_INDEX_RETENTION_HOURS],
+    )?
+    else {
+        return Ok(SweepOutcome::AlreadyMissing);
+    };
+    if !row.get::<_, bool>("eligible") || row.get::<_, bool>("has_state") {
+        return Ok(SweepOutcome::Active);
+    }
+
     let deleted = conn.execute(
         "DELETE FROM code_indexed_projects project
          WHERE project.id = $1

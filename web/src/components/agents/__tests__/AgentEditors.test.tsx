@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AgentEditForm } from "../AgentEditForm";
-import type { AgentFormData } from "../AgentEditForm.types";
+import type { AgentFormData, AgentItemForPanel } from "../AgentEditForm.types";
 import { AgentRulesEditor } from "../AgentRulesEditor";
 import { AgentVariablesEditor } from "../AgentVariablesEditor";
 
@@ -77,6 +77,110 @@ afterEach(() => {
 });
 
 describe("agent definition editors", () => {
+  it("resets provider-dependent state when the provider changes", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const form: AgentFormData = {
+      ...panelForm,
+      provider: "claude",
+      model: "stale-model",
+      reasoning_effort: "high",
+      reasoning_required: true,
+    };
+    render(
+      <AgentEditForm
+        isOpen
+        form={form}
+        onChange={onChange}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        providerCatalog={[]}
+      />,
+    );
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "codex");
+
+    expect(onChange).toHaveBeenCalledWith({
+      ...form,
+      provider: "codex",
+      model: "",
+      reasoning_effort: "auto",
+      reasoning_required: false,
+    });
+  });
+
+  it("renders agent details without edit controls in read-only mode", () => {
+    const agentItem: AgentItemForPanel = {
+      definition: {
+        name: "reviewer",
+        description: "Reviews changes",
+        role: null,
+        goal: null,
+        personality: null,
+        instructions: null,
+        provider: "claude",
+        model: "sonnet",
+        fallback_agent: null,
+        mode: "inherit",
+        isolation: null,
+        base_branch: "inherit",
+        timeout: 0,
+        default_workflow: null,
+        sandbox: null,
+        workflows: { rule_selectors: { include: ["review"] } },
+        lifecycle_variables: {},
+        default_variables: {},
+      },
+      source: "project",
+      source_path: null,
+      db_id: null,
+    };
+
+    render(
+      <AgentEditForm
+        isOpen
+        form={panelForm}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        readOnly
+        agentItem={agentItem}
+        providerCatalog={[]}
+      />,
+    );
+
+    expect(screen.getByText("Reviews changes")).toBeInTheDocument();
+    expect(screen.getByText("review")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close panel" })).toBeEnabled();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uses a non-editable fallback when read-only agent data is absent", () => {
+    render(
+      <AgentEditForm
+        isOpen
+        form={panelForm}
+        onChange={vi.fn()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+        isEditing
+        readOnly
+        providerCatalog={[]}
+      />,
+    );
+
+    expect(
+      screen.getByText("Agent details are unavailable."),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close panel" })).toBeEnabled();
+    expect(screen.queryByLabelText("Name")).not.toBeInTheDocument();
+  });
+
   it("exposes a labelled modal dialog and traps focus in the agent editor", async () => {
     makeElementsVisible();
     const user = userEvent.setup();

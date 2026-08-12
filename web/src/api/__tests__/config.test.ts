@@ -304,6 +304,18 @@ describe("ConfigurationClient mutation convergence", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("reset_cancels_an_observed_revision_refresh_before_its_microtask", async () => {
+    const { fetcher } = makeServer({ revision: 1, desired: {} });
+    const client = new ConfigurationClient(fetcher);
+
+    client.observeRevision(2);
+    client.reset();
+    await Promise.resolve();
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(client.currentSnapshot).toBeNull();
+  });
+
   it("reset_ignores_an_in_flight_refresh_continuation", async () => {
     let resolveRequest: (response: Response) => void = () => {
       throw new Error("request resolver was not installed");

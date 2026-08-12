@@ -20,6 +20,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
 
 if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
 
@@ -30,8 +31,8 @@ def create_session_messages_registry(
     session_manager: SessionManager | None = None,
     llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
-    startup_config: Any | None = None,
-    config_resolver: Callable[[], Any | None] | None = None,
+    startup_config: DaemonConfig | None = None,
+    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     db: Any | None = None,
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
@@ -60,7 +61,7 @@ def create_session_messages_registry(
         description="Session management and message querying - CRUD, retrieval, search",
     )
 
-    def _config() -> Any | None:
+    def _config() -> DaemonConfig | None:
         config = config_resolver() if config_resolver is not None else None
         return config if config is not None else startup_config
 

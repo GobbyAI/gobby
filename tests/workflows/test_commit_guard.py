@@ -20,7 +20,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.commit_guard import _format_ref
+from gobby.workflows.commit_guard import DirtyEditOwnershipInspectionError, _format_ref
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.hooks import WorkflowHookHandler
@@ -414,7 +414,7 @@ async def test_dirty_edit_ownership_inspection_failure_allows(
 
     with patch(
         "gobby.workflows.commit_guard._active_foreign_path_owners",
-        side_effect=RuntimeError("database unavailable"),
+        side_effect=DirtyEditOwnershipInspectionError("database unavailable"),
     ):
         response = await guard_harness.handler._evaluate_rules(
             guard_harness.edit_event("foreign.txt")

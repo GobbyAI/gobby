@@ -616,7 +616,10 @@ def test_mark_graph_processed_resets_retry_state(memory_manager, db) -> None:
     assert row["graph_status"] == "completed"
 
 
-def test_list_live_ids_applies_offset_without_limit(memory_manager, monkeypatch) -> None:
+def test_list_live_ids_applies_offset_without_limit(
+    memory_manager: LocalMemoryManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fetchall = MagicMock(return_value=[{"id": "mem-3"}])
     monkeypatch.setattr(memory_manager.db, "fetchall", fetchall)
 
@@ -627,9 +630,12 @@ def test_list_live_ids_applies_offset_without_limit(memory_manager, monkeypatch)
     )
 
 
-def test_list_live_ids_excludes_soft_deleted_memories(memory_manager, db) -> None:
-    live = memory_manager.create_memory(content="Live")
-    deleted = memory_manager.create_memory(content="Soft deleted")
+def test_list_live_ids_excludes_soft_deleted_memories(
+    memory_manager: LocalMemoryManager,
+    db: HubDatabase,
+) -> None:
+    live = memory_manager.create_memory(content="Live", project_id=PERSONAL_PROJECT_ID)
+    deleted = memory_manager.create_memory(content="Soft deleted", project_id=PERSONAL_PROJECT_ID)
     db.execute("UPDATE memories SET deleted_at = NOW() WHERE id = %s", (deleted.id,))
 
     assert memory_manager.list_live_ids() == [live.id]

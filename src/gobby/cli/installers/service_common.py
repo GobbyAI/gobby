@@ -12,10 +12,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import psycopg
 from jinja2 import Environment, FileSystemLoader
+from psycopg_pool import PoolTimeout
 
+from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.paths import get_gobby_home
+from gobby.storage.config_repository import ConfigRepositoryError
 
 # Template directory
 _TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "install" / "shared" / "services"
@@ -109,7 +113,7 @@ def _runtime_log_file(gobby_home_path: Path) -> str:
 
     try:
         logging_settings = get_cli_runtime().require_config(apply_migrations=False).logging
-    except Exception:
+    except (BootstrapConfigError, ConfigRepositoryError, psycopg.OperationalError, PoolTimeout):
         return str(gobby_home_path / "logs" / RUNTIME_LOG_FILENAME)
     return str(resolved_log_path(logging_settings, RUNTIME_LOG_FILENAME))
 

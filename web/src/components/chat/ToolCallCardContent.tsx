@@ -45,7 +45,7 @@ export function ToolArgumentsContent({
 }: {
   args: Record<string, unknown>;
   callId: string;
-}) {
+}): JSX.Element {
   const filePath = stringValue(args.file_path);
 
   if (filePath && typeof args.content === "string") {
@@ -117,7 +117,7 @@ export function ToolArgumentsContent({
   );
 }
 
-export function ToolErrorBody({ error }: { error: string }) {
+export function ToolErrorBody({ error }: { error: string }): JSX.Element {
   const cleaned = error.replace(/<\/?tool_use_error>/g, "").trim();
   const looksLikeJson = cleaned.startsWith("{") || cleaned.startsWith("[");
   return (
@@ -158,7 +158,7 @@ export function ToolLocations({
 }: {
   callId: string;
   locations: Record<string, unknown>[];
-}) {
+}): JSX.Element {
   return (
     <div>
       <div className={cn("text-muted-foreground", TOOL_CARD_SPACING.label)}>
@@ -175,7 +175,7 @@ export function ToolLocations({
   );
 }
 
-export function ToolResultContent({ call }: { call: ToolCall }) {
+export function ToolResultContent({ call }: { call: ToolCall }): JSX.Element {
   const toolType = resolveToolType(call);
   const extractedContent = extractResultContent(call.result);
   const rawContent =

@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useState } from "react";
 import {
   AUTO_REASONING_EFFORT,
   getModelsForProvider,
@@ -11,6 +11,7 @@ import { Input } from "../ui/Input";
 import { NativeSelect } from "../ui/NativeSelect";
 import { coarseHitAreaCls } from "../ui/controlStyles";
 import type { AgentFormData } from "./AgentEditForm.types";
+import { AgentMetaRow as MetaRow } from "./AgentMetaRow";
 
 const FALLBACK_PROVIDER_OPTIONS = ["claude", "codex", "qwen", "droid"];
 
@@ -22,15 +23,6 @@ interface AgentProviderSettingsProps {
   isGitProject: boolean;
   pipelines?: { id: string; name: string }[];
   agentNames: string[];
-}
-
-function MetaRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid min-h-9 grid-cols-[110px_minmax(0,1fr)] items-center gap-3 py-1">
-      <span className="text-sm text-[var(--text-secondary)]">{label}</span>
-      <div className="min-w-0 text-right">{children}</div>
-    </div>
-  );
 }
 
 export function AgentProviderSettings({
@@ -456,7 +448,10 @@ export function AgentProviderSettings({
           min={0}
           aria-label="Timeout in seconds"
           value={form.timeout}
-          onChange={(event) => set("timeout", Number(event.target.value))}
+          onChange={(event) => {
+            const timeout = Number(event.target.value);
+            set("timeout", Number.isFinite(timeout) ? timeout : 0);
+          }}
         />
       </MetaRow>
     </div>

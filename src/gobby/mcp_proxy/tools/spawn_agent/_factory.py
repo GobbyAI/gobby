@@ -28,6 +28,7 @@ from ._spawn_guards import max_active_agents_for_project
 if TYPE_CHECKING:
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.runner import AgentRunner
+    from gobby.config.app import DaemonConfig
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
 
@@ -278,7 +279,7 @@ def create_spawn_agent_registry(
     session_manager: Any | None = None,
     db: HubDatabase | None = None,
     completion_registry: Any | None = None,
-    config_resolver: Callable[[], Any | None] | None = None,
+    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     code_index: Any | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:

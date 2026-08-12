@@ -462,8 +462,10 @@ export class ConfigurationClient {
 
   private scheduleRefresh(): void {
     if (this.refreshScheduled) return;
+    const generation = this.generation;
     this.refreshScheduled = true;
     queueMicrotask(() => {
+      if (generation !== this.generation) return;
       this.refreshScheduled = false;
       void this.fetchValues().catch(() => {
         // Keep pendingConvergenceRevision set. A same-revision own-commit

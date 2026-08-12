@@ -180,8 +180,14 @@ export function AgentEditForm({
             onSave={!readOnly ? onYamlSave : undefined}
           />
         </div>
-      ) : readOnly && agentItem ? (
-        <AgentReadOnlyDetails agentItem={agentItem} />
+      ) : readOnly ? (
+        agentItem ? (
+          <AgentReadOnlyDetails agentItem={agentItem} />
+        ) : (
+          <div className="px-5 py-4 text-sm text-[var(--text-muted)]">
+            Agent details are unavailable.
+          </div>
+        )
       ) : (
         <>
           <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">

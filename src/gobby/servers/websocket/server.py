@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 from collections.abc import Callable, Coroutine
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
@@ -40,7 +41,7 @@ websockets_logger = logging.getLogger("websockets.server")
 
 
 if TYPE_CHECKING:
-    from gobby.config.runtime import ConfigRuntime
+    from gobby.config.runtime import ConfigRuntime, RuntimeActiveBundle
     from gobby.hooks.broadcaster import HookEventBroadcaster
     from gobby.hooks.event_handlers import EventHandlers
     from gobby.hooks.webhooks import WebhookDispatcher
@@ -118,6 +119,9 @@ class WebSocketServer(
         self._bootstrap_config = bootstrap_config or BootstrapConfig()
         self._daemon_config_cache: tuple[Any, DaemonConfig] | None = None
         self._daemon_config_cache_lock = threading.Lock()
+        self._runtime_bundle_context: ContextVar[tuple[bool, RuntimeActiveBundle | None]] = (
+            ContextVar("gobby_websocket_runtime_bundle", default=(False, None))
+        )
         self.config_runtime = config_runtime
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
@@ -182,9 +186,15 @@ class WebSocketServer(
     def daemon_config(self) -> DaemonConfig | None:
         """Return the shared bootstrap-overlaid projection for the active epoch."""
         runtime = self.config_runtime
-        if runtime is None or not getattr(runtime, "ready", False):
+        is_captured, bundle = self._runtime_bundle_context.get()
+        if is_captured:
+            if bundle is None:
+                return self._startup_daemon_config
+            snapshot = bundle.snapshot
+        elif runtime is None or not getattr(runtime, "ready", False):
             return self._startup_daemon_config
-        snapshot = runtime.capture().snapshot
+        else:
+            snapshot = runtime.capture().snapshot
         cached = self._daemon_config_cache
         if cached is not None and cached[0] is snapshot:
             return cached[1]
@@ -365,7 +375,17 @@ class WebSocketServer(
 
         handler = self._dispatch_table.get(cast(str, msg_type))
         if handler:
-            await handler(websocket, data)
+            runtime = self.config_runtime
+            bundle = (
+                runtime.capture()
+                if runtime is not None and getattr(runtime, "ready", False)
+                else None
+            )
+            token = self._runtime_bundle_context.set((True, bundle))
+            try:
+                await handler(websocket, data)
+            finally:
+                self._runtime_bundle_context.reset(token)
         else:
             logger.warning("Unknown message type: %s", msg_type)
             await self._send_error(websocket, f"Unknown message type: {msg_type}")

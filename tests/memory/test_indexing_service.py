@@ -60,7 +60,7 @@ class _MemoryStorage:
         return memories[offset:end]
 
     def list_live_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]:
-        ids = [memory.id for memory in self.memories]
+        ids = [memory.id for memory in self.memories if memory.deleted_at is None]
         end = None if limit is None else offset + limit
         return ids[offset:end]
 
@@ -281,7 +281,9 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
 
 @pytest.mark.asyncio
 async def test_reconcile_deletes_tombstone_vector_and_keeps_live_vector() -> None:
-    storage = _MemoryStorage([_memory("live", "Live")])
+    soft_deleted = _memory("soft-deleted", "Deleted")
+    soft_deleted.deleted_at = soft_deleted.updated_at
+    storage = _MemoryStorage([_memory("live", "Live"), soft_deleted])
     vector_store = _VectorStore()
     vector_store.ids = ["live", "soft-deleted"]
 

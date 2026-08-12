@@ -1,20 +1,11 @@
-import type { ReactNode } from "react";
 import { Card } from "../ui/Card";
 import { Chip } from "../ui/Chip";
 import { Heading } from "../shared/Heading";
 import type { AgentItemForPanel } from "./AgentEditForm.types";
+import { AgentMetaRow as MetaRow } from "./AgentMetaRow";
 
 interface AgentReadOnlyDetailsProps {
   agentItem: AgentItemForPanel;
-}
-
-function MetaRow({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="grid min-h-9 grid-cols-[110px_minmax(0,1fr)] items-center gap-3 py-1">
-      <span className="text-sm text-[var(--text-secondary)]">{label}</span>
-      <div className="min-w-0 text-right">{children}</div>
-    </div>
-  );
 }
 
 function DefinitionSection({
@@ -56,6 +47,10 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           !Array.isArray(value),
       )
     : [];
+  const includedRuleSelectors =
+    definition.workflows?.rule_selectors?.include ?? [];
+  const excludedRuleSelectors =
+    definition.workflows?.rule_selectors?.exclude ?? [];
 
   return (
     <>
@@ -196,13 +191,13 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
           >
             Rule Selectors
           </Heading>
-          {definition.workflows.rule_selectors.include.length > 0 && (
+          {includedRuleSelectors.length > 0 && (
             <div>
               <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
                 Include
               </span>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {definition.workflows.rule_selectors.include.map((selector) => (
+                {includedRuleSelectors.map((selector) => (
                   <Chip
                     key={selector}
                     tone="info"
@@ -214,13 +209,13 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
               </div>
             </div>
           )}
-          {definition.workflows.rule_selectors.exclude.length > 0 && (
+          {excludedRuleSelectors.length > 0 && (
             <div className="mt-1.5">
               <span className="text-xs tracking-[0.3px] text-[var(--text-muted)] uppercase">
                 Exclude
               </span>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                {definition.workflows.rule_selectors.exclude.map((selector) => (
+                {excludedRuleSelectors.map((selector) => (
                   <Chip
                     key={selector}
                     tone="error"

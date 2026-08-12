@@ -183,18 +183,25 @@ impl PruneBackend for SystemPruneBackend {
     }
 
     fn reconcile_topic(&mut self, topic_name: &str) -> Result<SweepOutcome, WikiError> {
-        if sql_scope_exists(&mut self.conn, "topic", topic_name)? {
-            return Ok(SweepOutcome::Active);
-        }
-        let projection_existed = self.qdrant_topic_scopes.contains(topic_name)
-            || self.falkor_topic_scopes.contains(topic_name);
         let scope = ScopeIdentity::topic(topic_name);
-        let search_scope = SearchScope::topic(topic_name);
-        let state = purge_scope_state(&mut self.conn, &self.configs, &scope, &search_scope)?;
-        if state.postgres.total() == 0 && !projection_existed {
-            Ok(SweepOutcome::AlreadyMissing)
-        } else {
-            Ok(SweepOutcome::Deleted)
+        match try_acquire_prune_lock(&scope.to_string())? {
+            PruneProjectLock::Busy => Ok(SweepOutcome::Busy),
+            PruneProjectLock::ProjectExists => Ok(SweepOutcome::Active),
+            PruneProjectLock::Acquired(_guard) => {
+                if sql_scope_exists(&mut self.conn, "topic", topic_name)? {
+                    return Ok(SweepOutcome::Active);
+                }
+                let projection_existed = self.qdrant_topic_scopes.contains(topic_name)
+                    || self.falkor_topic_scopes.contains(topic_name);
+                let search_scope = SearchScope::topic(topic_name);
+                let state =
+                    purge_scope_state(&mut self.conn, &self.configs, &scope, &search_scope)?;
+                if state.postgres.total() == 0 && !projection_existed {
+                    Ok(SweepOutcome::AlreadyMissing)
+                } else {
+                    Ok(SweepOutcome::Deleted)
+                }
+            }
         }
     }
 }

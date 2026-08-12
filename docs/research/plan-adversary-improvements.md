@@ -772,7 +772,7 @@ do-not-reopen record unless named source or plan evidence changed.
     one full-plan lane for old-scope misses; route the other two first through
     changed sections, repair obligations, and semantic adjacency.
 12. **Precompute one shared research bundle and pin one code-index generation.**
-    Start all lanes from the same snapshot and use `--no-freshness` for
+    Start all lanes from the same snapshot and use `--allow-stale` for
     immutable searches.
 13. **Make offloaded evidence results first-class inputs.** Pass snapshot,
     manifest, lane output, and final result by stable handle rather than model

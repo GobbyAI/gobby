@@ -28,6 +28,8 @@ from gobby.utils.project_context import get_project_context
 logger = logging.getLogger(__name__)
 
 _MAX_SEARCH_LIMIT = 50
+_MAX_SLICE_CHARS = 1_000_000 - _WRAPPER_MUTATION_RESERVE
+_DEFAULT_SLICE_CHARS = 1_000
 _RESULT_ID_SCHEMA: dict[str, object] = {
     "type": "string",
     "minLength": 1,
@@ -49,9 +51,6 @@ def create_results_registry(
         description="Retrieve oversized MCP tool results by result_id",
     )
     resolve_config = config_resolver if callable(config_resolver) else lambda: config_resolver
-    initial_config = resolve_config()
-    initial_response_limit = initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
-    initial_default_limit = min(10_000, initial_response_limit)
     store = ToolResultStore(db, resolve_config)
     search_backend = pick_search_backend(db, "tool_result_chunks")
 
@@ -142,7 +141,7 @@ def create_results_registry(
     def get_tool_result(
         result_id: str,
         offset: int = 0,
-        limit: int = initial_default_limit,
+        limit: int = _DEFAULT_SLICE_CHARS,
     ) -> dict[str, Any]:
         config = resolve_config()
         response_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
@@ -191,8 +190,8 @@ def create_results_registry(
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": initial_response_limit,
-                    "default": initial_default_limit,
+                    "maximum": _MAX_SLICE_CHARS,
+                    "default": _DEFAULT_SLICE_CHARS,
                 },
             },
             "required": ["result_id"],

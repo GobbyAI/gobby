@@ -237,7 +237,10 @@ describe("activity-panel typography ladder (#14245)", () => {
   });
 
   it("locks files-tab tree rows to --text-base and meta size to --text-sm", () => {
-    const source = readSource("src/components/activity/FilesTabTree.tsx");
+    const source = [
+      readSource("src/components/activity/FilesTabTree.tsx"),
+      readSource("src/components/activity/FilesTabActionSurfaces.tsx"),
+    ].join("\n");
 
     expect(source).toContain("text-[length:var(--text-base)]");
     expect(source).toContain("font-[var(--font-weight-medium)]");

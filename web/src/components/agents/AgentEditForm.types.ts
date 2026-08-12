@@ -44,7 +44,7 @@ export interface AgentItemForPanel {
     workflows: {
       pipeline?: string;
       rules?: string[];
-      rule_selectors?: { include: string[]; exclude: string[] };
+      rule_selectors?: { include?: string[]; exclude?: string[] };
       variables?: Record<string, unknown>;
       [key: string]: unknown;
     } | null;

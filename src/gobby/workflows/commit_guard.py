@@ -13,6 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+from psycopg_pool import PoolTimeout
+
 from gobby.workflows.observer_utils import _extract_shell_command
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.task_claim_state import (
@@ -55,6 +58,10 @@ class ForeignPathOwner:
     path: str
     session_ref: str
     task_ref: str
+
+
+class DirtyEditOwnershipInspectionError(RuntimeError):
+    """Expected Git or database failure while inspecting dirty edit ownership."""
 
 
 def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...]:
@@ -127,12 +134,15 @@ def foreign_staged_commit_conflict(
         return ""
 
     try:
-        owners = _active_foreign_path_owners(
-            db,
-            session_id=session_id,
-            project_id=project_id,
-            checkout_root=project_path,
-        )
+        try:
+            owners = _active_foreign_path_owners(
+                db,
+                session_id=session_id,
+                project_id=project_id,
+                checkout_root=project_path,
+            )
+        except (psycopg.OperationalError, PoolTimeout) as exc:
+            raise DirtyEditOwnershipInspectionError("database ownership inspection failed") from exc
         if not owners:
             return ""
 
@@ -168,7 +178,7 @@ def foreign_staged_commit_conflict(
         if not conflicts:
             return ""
         return _format_conflict_reason(conflicts)
-    except Exception:
+    except DirtyEditOwnershipInspectionError:
         logger.warning(
             "Cross-session commit ownership inspection failed",
             extra={"session_id": session_id, "project_id": project_id},
@@ -311,16 +321,19 @@ def _active_foreign_path_owners(
 
 
 def _git_paths(project_path: str, *args: str) -> set[str]:
-    result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
-        ["git", *args],
-        cwd=Path(project_path),
-        check=False,
-        capture_output=True,
-        timeout=10,
-    )
+    try:
+        result = subprocess.run(  # Hardcoded git command. # nosec B603 B607
+            ["git", *args],
+            cwd=Path(project_path),
+            check=False,
+            capture_output=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise DirtyEditOwnershipInspectionError("git ownership inspection failed") from exc
     if result.returncode != 0:
         stderr = os.fsdecode(result.stderr).strip()
-        raise RuntimeError(f"git {' '.join(args[:2])} failed: {stderr}")
+        raise DirtyEditOwnershipInspectionError(f"git {' '.join(args[:2])} failed: {stderr}")
     return {
         path
         for raw_path in result.stdout.split(b"\0")

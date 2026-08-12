@@ -1,4 +1,5 @@
 import { memo, useCallback, useMemo, useState } from "react";
+import type { ReactElement } from "react";
 import type { ToolCall } from "../../types/chat";
 import { cn } from "../../lib/utils";
 import { TOOL_CARD_SPACING } from "../shared/spacing";
@@ -58,7 +59,7 @@ const ToolCallItem = memo(function ToolCallItem({
     decision: "approve" | "reject" | "approve_always",
   ) => boolean | void;
   nested?: boolean;
-}) {
+}): ReactElement {
   const displayName = getToolDisplayName(call);
   const toolType = resolveToolType(call);
   const [expanded, setExpanded] = useState(defaultExpandedForCall(call));
@@ -197,7 +198,7 @@ const ToolCallItem = memo(function ToolCallItem({
   );
 });
 
-function StatusIcon({ status }: { status: string }) {
+function StatusIcon({ status }: { status: string }): ReactElement | null {
   if (status === "calling") {
     return (
       <svg
@@ -285,7 +286,7 @@ function GroupStatusIcon({
   hasErrors: boolean;
   allCompleted: boolean;
   hasInFlight: boolean;
-}) {
+}): ReactElement | null {
   if (hasInFlight) {
     return (
       <svg
@@ -365,7 +366,7 @@ function ToolCallGroupHeader({
     toolCallId: string,
     decision: "approve" | "reject" | "approve_always",
   ) => boolean | void;
-}) {
+}): ReactElement {
   const serverName = group.tool_calls[0]?.server_name;
   const groupBorderClass = group.hasErrors
     ? "border-destructive-foreground/50"
@@ -424,7 +425,7 @@ export const ToolCallCards = memo(function ToolCallCards({
   toolCalls,
   onRespond,
   onRespondToApproval,
-}: ToolCallCardProps) {
+}: ToolCallCardProps): ReactElement | null {
   const visibleToolCalls = useMemo(
     () => toolCalls.filter(hasVisibleToolCall),
     [toolCalls],

@@ -23,6 +23,7 @@ def test_default_bind_is_localhost() -> None:
 class _LiveRuntime:
     def __init__(self, config: DaemonConfig, *, ready: bool = True) -> None:
         self.ready = ready
+        self.capture_count = 0
         self.set_active(config)
 
     def set_active(self, config: DaemonConfig) -> None:
@@ -39,6 +40,7 @@ class _LiveRuntime:
         )
 
     def capture(self) -> RuntimeActiveBundle:
+        self.capture_count += 1
         return self._bundle
 
 
@@ -111,6 +113,34 @@ def test_daemon_config_falls_back_before_runtime_ready() -> None:
 
     no_runtime = WebSocketServer(config=WebSocketConfig(), mcp_manager=MagicMock())
     assert no_runtime.daemon_config is None
+
+
+@pytest.mark.asyncio
+async def test_message_dispatch_pins_one_runtime_bundle() -> None:
+    runtime = _LiveRuntime(DaemonConfig(voice={"enabled": False}))
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        config_runtime=cast(Any, runtime),
+    )
+    observed: list[bool] = []
+
+    async def handler(_websocket: Any, _data: dict[str, Any]) -> None:
+        initial = server.daemon_config
+        assert initial is not None
+        observed.append(initial.voice.enabled)
+        runtime.set_active(DaemonConfig(voice={"enabled": True}))
+        repeated = server.daemon_config
+        assert repeated is not None
+        observed.append(repeated.voice.enabled)
+
+    server._dispatch_table = {"test": handler}
+
+    await server._handle_message(MagicMock(), '{"type":"test"}')
+    await server._handle_message(MagicMock(), '{"type":"test"}')
+
+    assert observed == [False, False, True, True]
+    assert runtime.capture_count == 2
 
 
 @pytest.mark.asyncio

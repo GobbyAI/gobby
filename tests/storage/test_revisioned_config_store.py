@@ -440,12 +440,17 @@ def test_colliding_secret_key_names_stay_distinct(
 
 
 def test_derived_secret_name_is_bounded_with_hash_tail() -> None:
-    key = f"ai.generation.endpoints.{'x' * 500}.api_key"
+    first_key = f"ai.generation.endpoints.{'x' * 500}.api_key"
+    second_key = f"ai.generation.endpoints.{'x' * 500}.different_api_key"
 
-    secret_name = config_key_to_secret_name(key)
+    first_name = config_key_to_secret_name(first_key)
+    second_name = config_key_to_secret_name(second_key)
 
-    assert len(secret_name) == 200
-    assert len(secret_name.rsplit("_", 1)[-1]) == 8
+    assert first_name != second_name
+    assert len(first_name) == 200
+    assert len(first_name.rsplit("_", 1)[-1]) == 8
+    assert len(second_name) == 200
+    assert len(second_name.rsplit("_", 1)[-1]) == 8
 
 
 def test_shared_secret_reference_survives_partial_unset(
@@ -772,11 +777,13 @@ def test_config_mutations_reject_python_only_values(
     key: str,
     value: object,
 ) -> None:
+    revision = mutations.repository.current_revision()
     with pytest.raises(ConfigValidationError, match="Invalid value"):
         mutations.patch(
-            expected_revision=0,
+            expected_revision=revision,
             patch=ConfigPatch(values={key: value}),
         )
+    assert mutations.repository.current_revision() == revision
 
 
 def test_ambient_read_is_coherent(revision_db: HubDatabase) -> None:

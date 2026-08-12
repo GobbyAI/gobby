@@ -29,7 +29,7 @@ export function ToolApprovalCard({
     toolCallId: string,
     decision: "approve" | "reject" | "approve_always",
   ) => boolean | void;
-}) {
+}): JSX.Element {
   const displayName = getToolDisplayName(call);
   const isLive = onRespondToApproval && call.status === "pending_approval";
   const [decided, setDecided] = useState(false);
@@ -37,7 +37,7 @@ export function ToolApprovalCard({
 
   const handleDecision = (
     decision: "approve" | "reject" | "approve_always",
-  ) => {
+  ): void => {
     if (decided) return;
     const sent = onRespondToApproval?.(call.id, decision);
     if (sent === false) {
@@ -191,7 +191,7 @@ export function AskUserQuestionCard({
     toolCallId: string,
     answers: Record<string, string>,
   ) => boolean | void;
-}) {
+}): JSX.Element | null {
   const args = call.arguments as
     { questions?: AskUserQuestionItem[] } | undefined;
   const questions = args?.questions;
@@ -262,7 +262,7 @@ export function AskUserQuestionCard({
     questionIndex: number,
     label: string,
     multiSelect: boolean,
-  ) => {
+  ): void => {
     if (submitted) return;
     setSelectedOptions((previous) => {
       const current = previous[questionIndex] || [];
@@ -301,13 +301,19 @@ export function AskUserQuestionCard({
     });
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = (): void => {
     if (!onRespond || submitted) return;
     const answers: Record<string, string> = {};
     questions.forEach((question, questionIndex) => {
       const selected = selectedOptions[questionIndex] || [];
       if (selected.includes("__other__")) {
-        answers[question.question] = otherTexts[questionIndex] || "";
+        const customValue = otherTexts[questionIndex] || "";
+        answers[question.question] = question.multiSelect
+          ? [
+              ...selected.filter((label) => label !== "__other__"),
+              ...(customValue ? [customValue] : []),
+            ].join(", ")
+          : customValue;
       } else if (selected.length > 0) {
         answers[question.question] = selected.join(", ");
       }
@@ -362,6 +368,7 @@ export function AskUserQuestionCard({
                       ? "border-accent bg-accent/20 text-foreground"
                       : "border-border text-muted-foreground hover:bg-muted",
                   )}
+                  aria-pressed={isSelected}
                   onClick={() =>
                     handleOptionClick(
                       questionIndex,
@@ -389,6 +396,9 @@ export function AskUserQuestionCard({
                 (selectedOptions[questionIndex] || []).includes("__other__")
                   ? "border-accent bg-accent/20 text-foreground"
                   : "border-border text-muted-foreground hover:bg-muted",
+              )}
+              aria-pressed={(selectedOptions[questionIndex] || []).includes(
+                "__other__",
               )}
               onClick={() =>
                 handleOptionClick(

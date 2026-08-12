@@ -6,14 +6,34 @@ use super::*;
 #[test]
 fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
     let local_machine = "local";
-    let active_root = std::env::current_dir().expect("current directory");
+    let temp = tempfile::tempdir().expect("tempdir");
+    let active_root = temp.path().canonicalize().expect("canonical root");
+    let gobby_dir = active_root.join(".gobby");
+    std::fs::create_dir(&gobby_dir).expect("create .gobby");
+    std::fs::write(
+        gobby_dir.join("project.json"),
+        serde_json::json!({
+            "id": crate::project::code_index_id_for_root(&active_root),
+            "name": "test-project"
+        })
+        .to_string(),
+    )
+    .expect("write project identity");
+    let active_project_id =
+        config::resolve_project_identity(&active_root, config::MissingIdentity::Error)
+            .expect("current project identity")
+            .project_id;
+    let duplicate_project_id = "11111111-1111-4111-8111-111111111111";
+    let sentinel_project_id = "00000000-0000-4000-8000-000000000000";
     let registry = [
-        ("active", false),
+        (active_project_id.as_str(), false),
         ("missing-old", false),
         ("missing-recent", false),
         ("remote", false),
         ("registry-old", true),
         ("registry-recent", false),
+        (duplicate_project_id, false),
+        (sentinel_project_id, false),
     ]
     .map(|(id, eligible)| RegistryProjectState {
         id: id.to_string(),
@@ -22,7 +42,7 @@ fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
     let states = vec![
         MachineProjectState {
             machine_id: local_machine.to_string(),
-            project_id: "active".to_string(),
+            project_id: active_project_id.clone(),
             root_path: active_root.to_string_lossy().into_owned(),
             eligible: true,
         },
@@ -44,6 +64,18 @@ fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
             root_path: "/missing/on-remote-machine".to_string(),
             eligible: true,
         },
+        MachineProjectState {
+            machine_id: local_machine.to_string(),
+            project_id: sentinel_project_id.to_string(),
+            root_path: active_root.to_string_lossy().into_owned(),
+            eligible: true,
+        },
+        MachineProjectState {
+            machine_id: local_machine.to_string(),
+            project_id: duplicate_project_id.to_string(),
+            root_path: active_root.to_string_lossy().into_owned(),
+            eligible: true,
+        },
     ];
 
     let discovery = classify_global_project_prune(local_machine, &registry, &states);
@@ -54,7 +86,28 @@ fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
             .iter()
             .map(|project| project.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["missing-old"]
+        vec!["missing-old", sentinel_project_id, duplicate_project_id]
+    );
+    assert_eq!(
+        discovery
+            .machine_states
+            .iter()
+            .map(|project| (project.id.clone(), project.reason.clone()))
+            .collect::<BTreeMap<_, _>>(),
+        BTreeMap::from([
+            ("missing-old".to_string(), "path does not exist".to_string()),
+            (
+                sentinel_project_id.to_string(),
+                "sentinel project (not a code project)".to_string(),
+            ),
+            (
+                duplicate_project_id.to_string(),
+                format!(
+                    "duplicate root superseded by current project id {}",
+                    crate::utils::short_id(&active_project_id)
+                ),
+            ),
+        ])
     );
     assert_eq!(
         discovery
@@ -67,21 +120,26 @@ fn global_prune_discovery_uses_local_roots_and_24_hour_grace() {
     assert_eq!(
         discovery.machine_state_counts,
         DiscoveryCounts {
-            scanned: 4,
+            scanned: 6,
             active: 3,
         }
     );
     assert_eq!(
         discovery.registry_project_counts,
         DiscoveryCounts {
-            scanned: 6,
-            active: 5,
+            scanned: 8,
+            active: 7,
         }
     );
     assert!(discovery.authority.contains("remote"));
     assert_eq!(
         discovery.stale_project_ids,
-        HashSet::from(["missing-old".to_string(), "registry-old".to_string()])
+        HashSet::from([
+            "missing-old".to_string(),
+            "registry-old".to_string(),
+            sentinel_project_id.to_string(),
+            duplicate_project_id.to_string(),
+        ])
     );
 }
 

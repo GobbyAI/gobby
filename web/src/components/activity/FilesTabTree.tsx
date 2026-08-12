@@ -1,4 +1,4 @@
-import type { MouseEvent, Ref } from "react";
+import { useMemo, type MouseEvent, type Ref } from "react";
 
 import {
   FOLDER_ICON_COLOR_VAR,
@@ -155,6 +155,20 @@ export function FilesTabTree({
   onSubmitRename,
   onCancelRename,
 }: FilesTabTreeProps) {
+  const gitStatusDirectoryPrefixes = useMemo(() => {
+    const prefixes = new Set<string>();
+    for (const path of Object.keys(gitStatus)) {
+      prefixes.add("");
+      const segments = path.split("/");
+      let prefix = "";
+      for (const segment of segments.slice(0, -1)) {
+        prefix += `${segment}/`;
+        prefixes.add(prefix);
+      }
+    }
+    return prefixes;
+  }, [gitStatus]);
+
   const renderEntry = (entry: FileEntry, depth: number) => {
     const isDirectory = entry.is_dir;
     const isExpanded = expandedPaths.has(entry.path);
@@ -165,9 +179,7 @@ export function FilesTabTree({
 
     if (isDirectory) {
       const prefix = entry.path ? `${entry.path}/` : "";
-      const hasGitStatus = Object.keys(gitStatus).some((path) =>
-        path.startsWith(prefix),
-      );
+      const hasGitStatus = gitStatusDirectoryPrefixes.has(prefix);
 
       return (
         <div key={entry.path}>
@@ -232,14 +244,19 @@ export function FilesTabTree({
               </Button>
             )}
           </div>
-          {isExpanded &&
-            children?.map((child) => renderEntry(child, depth + 1))}
-          {isExpanded && !children && (
-            <div
-              className="px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-muted)] italic"
-              style={{ paddingLeft: `calc(0.5rem + ${depth + 1} * 1rem)` }}
-            >
-              Loading...
+          {isExpanded && (
+            <div role="group">
+              {children?.map((child) => renderEntry(child, depth + 1))}
+              {!children && (
+                <div
+                  className="px-2 py-1 text-[length:var(--text-sm)] text-[var(--text-muted)] italic"
+                  style={{
+                    paddingLeft: `calc(0.5rem + ${depth + 1} * 1rem)`,
+                  }}
+                >
+                  Loading...
+                </div>
+              )}
             </div>
           )}
         </div>

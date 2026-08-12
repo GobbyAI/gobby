@@ -1095,11 +1095,24 @@ class TestRuntimeLogFile:
     def test_falls_back_when_config_is_unreachable(self, tmp_path: Path) -> None:
         from gobby.cli.installers.service_common import _runtime_log_file
         from gobby.config.logging import RUNTIME_LOG_FILENAME
+        from gobby.storage.config_repository import ConfigRepositoryError
 
         with patch(
             "gobby.cli.runtime.get_cli_runtime",
-            side_effect=RuntimeError("CLI runtime is unavailable outside a Click invocation"),
+            side_effect=ConfigRepositoryError("config repository is unavailable"),
         ):
             result = _runtime_log_file(tmp_path)
 
         assert result == str(tmp_path / "logs" / RUNTIME_LOG_FILENAME)
+
+    def test_unexpected_runtime_log_failure_propagates(self, tmp_path: Path) -> None:
+        from gobby.cli.installers.service_common import _runtime_log_file
+
+        with (
+            patch(
+                "gobby.cli.runtime.get_cli_runtime",
+                side_effect=RuntimeError("programming error"),
+            ),
+            pytest.raises(RuntimeError, match="programming error"),
+        ):
+            _runtime_log_file(tmp_path)
