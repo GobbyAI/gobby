@@ -144,8 +144,8 @@ class CloneGitManager:
         """
         return self._run_git(args, cwd=cwd, timeout=timeout, check=check, env=env)
 
-    def _resolve_deletable_clone_path(self, clone_path: str | Path) -> Path | None:
-        """Resolve a clone path and ensure it is a child of the managed clones root."""
+    def resolve_managed_clone_path(self, clone_path: str | Path) -> Path | None:
+        """Canonicalize a clone path and enforce containment under the managed root."""
         resolved_path = Path(clone_path).expanduser().resolve()
         clones_root = CLONES_ROOT.expanduser().resolve()
 
@@ -153,16 +153,11 @@ class CloneGitManager:
             return None
         return resolved_path
 
-    def _resolve_creatable_clone_path(self, clone_path: str | Path) -> Path | None:
-        """Resolve a new clone path and ensure it stays under the managed clones root."""
-        resolved_path = Path(clone_path).expanduser().resolve()
-        clones_root = CLONES_ROOT.expanduser().resolve()
-
-        if resolved_path == clones_root or not resolved_path.is_relative_to(clones_root):
-            return None
-        return resolved_path
-
-    def get_remote_url(self, remote: str = "origin") -> str | None:
+    def get_remote_url(
+        self,
+        remote: str = "origin",
+        cwd: str | Path | None = None,
+    ) -> str | None:
         """
         Get the remote URL for the repository.
 
@@ -173,10 +168,14 @@ class CloneGitManager:
             Remote URL or None if not found
         """
         try:
-            result = self._run_git(
-                ["remote", "get-url", remote],
-                timeout=10,
-            )
+            if cwd is None:
+                result = self._run_git(["remote", "get-url", remote], timeout=10)
+            else:
+                result = self._run_git(
+                    ["remote", "get-url", remote],
+                    cwd=cwd,
+                    timeout=10,
+                )
             if result.returncode == 0:
                 return result.stdout.strip()
             return None
@@ -203,7 +202,7 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        resolved_clone_path = self._resolve_creatable_clone_path(clone_path)
+        resolved_clone_path = self.resolve_managed_clone_path(clone_path)
         if resolved_clone_path is None:
             return GitOperationResult(
                 success=False,
@@ -300,7 +299,7 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        resolved_clone_path = self._resolve_creatable_clone_path(clone_path)
+        resolved_clone_path = self.resolve_managed_clone_path(clone_path)
         if resolved_clone_path is None:
             return GitOperationResult(
                 success=False,
@@ -464,7 +463,7 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        resolved_clone_path = self._resolve_deletable_clone_path(clone_path)
+        resolved_clone_path = self.resolve_managed_clone_path(clone_path)
         if resolved_clone_path is None:
             clones_root = CLONES_ROOT.expanduser().resolve()
             return GitOperationResult(
@@ -538,6 +537,7 @@ class CloneGitManager:
                 timeout=5,
             )
             branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
+            branch = branch or None
 
             # Get current commit
             commit_result = self._run_git(
@@ -546,6 +546,7 @@ class CloneGitManager:
                 timeout=5,
             )
             commit = commit_result.stdout.strip() if commit_result.returncode == 0 else None
+            commit = commit or None
 
             # Get status (porcelain for parsing)
             status_result = self._run_git(

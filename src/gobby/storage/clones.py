@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+import psycopg
+
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workspace_machine_scope import (
     get_owned_workspace_row,
@@ -281,12 +283,90 @@ class LocalCloneManager:
 
     def get_by_path(self, clone_path: str) -> Clone | None:
         """Get clone by path."""
+        clone = self.get_by_path_any_status(clone_path)
+        if clone and clone.status == CloneStatus.CLEANUP.value:
+            return None
+        return clone
+
+    def get_by_path_any_status(self, clone_path: str) -> Clone | None:
+        """Get a local clone by path, including terminal cleanup records."""
         row = self.db.fetchone(
             """SELECT * FROM clones
-               WHERE clone_path = %s AND machine_id = %s AND status != %s""",
-            (clone_path, require_machine_id(), CloneStatus.CLEANUP.value),
+               WHERE clone_path = %s AND machine_id = %s""",
+            (clone_path, require_machine_id()),
         )
         return Clone.from_row(row) if row else None
+
+    def register_adopted(
+        self,
+        project_id: str,
+        branch_name: str | None,
+        clone_path: str,
+        base_branch: str,
+        remote_url: str | None,
+    ) -> tuple[Clone, bool]:
+        """Register inspected clone metadata, reviving cleanup tombstones safely."""
+        existing = self.get_by_path_any_status(clone_path)
+        if existing is not None:
+            return self._reuse_adopted(
+                existing,
+                project_id=project_id,
+                branch_name=branch_name,
+                base_branch=base_branch,
+                remote_url=remote_url,
+            )
+
+        try:
+            return (
+                self.create(
+                    project_id=project_id,
+                    branch_name=branch_name,
+                    clone_path=clone_path,
+                    base_branch=base_branch,
+                    remote_url=remote_url,
+                ),
+                True,
+            )
+        except psycopg.IntegrityError:
+            existing = self.get_by_path_any_status(clone_path)
+            if existing is None:
+                raise
+            return self._reuse_adopted(
+                existing,
+                project_id=project_id,
+                branch_name=branch_name,
+                base_branch=base_branch,
+                remote_url=remote_url,
+            )
+
+    def _reuse_adopted(
+        self,
+        existing: Clone,
+        *,
+        project_id: str,
+        branch_name: str | None,
+        base_branch: str,
+        remote_url: str | None,
+    ) -> tuple[Clone, bool]:
+        if existing.project_id != project_id:
+            raise ValueError(f"Clone path belongs to another project: {existing.clone_path}")
+        if existing.status != CloneStatus.CLEANUP.value:
+            return existing, False
+
+        revived = self.update(
+            existing.id,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            remote_url=remote_url,
+            task_id=None,
+            agent_session_id=None,
+            status=CloneStatus.ACTIVE.value,
+            cleanup_after=None,
+            last_sync_at=None,
+        )
+        if revived is None:
+            raise RuntimeError(f"Failed to revive clone record: {existing.id}")
+        return revived, True
 
     def get_by_branch(self, project_id: str, branch_name: str) -> Clone | None:
         """Get clone by project and branch name."""

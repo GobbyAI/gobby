@@ -7,9 +7,11 @@ import logging
 import subprocess  # nosec B404 # exceptions from CloneGitManager's fixed git argv
 from typing import Any, Literal
 
+from gobby.clones import git as clone_git
 from gobby.mcp_proxy.tools._clones_context import CloneRegistryContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.clones import CloneStatus
+from gobby.storage.clones import Clone, CloneStatus
+from gobby.storage.projects import LocalProjectManager
 from gobby.utils.git import (
     get_checkout_mutation_lock,
     new_stash_marker,
@@ -114,10 +116,77 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         return {"success": True, "message": f"Deleted clone {clone_id}"}
 
+    async def adopt_clone_path(clone_path: str) -> Clone | dict[str, Any]:
+        git_manager = ctx.git_manager
+        if git_manager is None:
+            return {"success": False, "error": "Clone tools require a git repository context"}
+        if ctx.project_id is None:
+            return {"success": False, "error": "No project context available for clone deletion"}
+
+        project = LocalProjectManager(ctx.clone_storage.db).get(ctx.project_id)
+        if project is None:
+            return {"success": False, "error": f"Project not found: {ctx.project_id}"}
+
+        resolved_path = git_manager.resolve_managed_clone_path(clone_path)
+        if resolved_path is None:
+            return {
+                "success": False,
+                "error": f"Clone path must be under {clone_git.CLONES_ROOT.expanduser()}",
+            }
+
+        project_directory = (clone_git.CLONES_ROOT.expanduser().resolve() / project.name).resolve()
+        if resolved_path.parent != project_directory:
+            return {
+                "success": False,
+                "error": f"Clone path must be directly under {project_directory}",
+            }
+
+        existing = ctx.clone_storage.get_by_path_any_status(str(resolved_path))
+        if existing is not None:
+            if existing.project_id != project.id:
+                return {
+                    "success": False,
+                    "error": f"Clone path belongs to another project: {resolved_path}",
+                }
+            if existing.status != CloneStatus.CLEANUP.value:
+                return existing
+
+        if not resolved_path.is_dir():
+            return {"success": False, "error": f"Clone path does not exist: {resolved_path}"}
+
+        status = await asyncio.to_thread(git_manager.get_clone_status, resolved_path)
+        if status is None or (status.branch is None and status.commit is None):
+            return {"success": False, "error": f"Path is not a valid Git clone: {resolved_path}"}
+        remote_url = await asyncio.to_thread(
+            git_manager.get_remote_url,
+            "origin",
+            resolved_path,
+        )
+
+        clone, _ = ctx.clone_storage.register_adopted(
+            project_id=project.id,
+            branch_name=status.branch,
+            clone_path=str(resolved_path),
+            base_branch="main",
+            remote_url=remote_url,
+        )
+        return clone
+
     async def delete_clone(
-        clone_id: str,
+        clone_id: str | None = None,
+        clone_path: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
+        if (clone_id is None) == (clone_path is None):
+            return {"success": False, "error": "Provide exactly one of clone_id or clone_path"}
+
+        if clone_path is not None:
+            adopted = await adopt_clone_path(clone_path)
+            if isinstance(adopted, dict):
+                return adopted
+            clone_id = adopted.id
+
+        assert clone_id is not None
         cancellation_requested = asyncio.Event()
         return await run_to_completion(
             _delete_clone_impl(clone_id, force, cancellation_requested),
@@ -134,13 +203,20 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     "type": "string",
                     "description": "Clone ID to delete",
                 },
+                "clone_path": {
+                    "type": "string",
+                    "description": "Managed clone path to adopt and delete",
+                },
                 "force": {
                     "type": "boolean",
                     "description": "Force deletion even with uncommitted changes",
                     "default": False,
                 },
             },
-            "required": ["clone_id"],
+            "oneOf": [
+                {"required": ["clone_id"], "not": {"required": ["clone_path"]}},
+                {"required": ["clone_path"], "not": {"required": ["clone_id"]}},
+            ],
         },
         func=delete_clone,
     )

@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.storage.clones import Clone, CloneStatus, LocalCloneManager
@@ -757,6 +758,183 @@ class TestLocalCloneManagerStatusMethods:
         result = manager.claim("clone-123", "sess-1")
 
         assert result is None
+
+
+class TestLocalCloneManagerRegisterAdopted:
+    """Tests for idempotent clone registration during adoption."""
+
+    @pytest.fixture
+    def mock_db(self) -> MagicMock:
+        return MagicMock(spec=HubDatabase)
+
+    @pytest.fixture
+    def manager(self, mock_db: MagicMock) -> LocalCloneManager:
+        return LocalCloneManager(mock_db)
+
+    def test_get_by_path_any_status_includes_cleanup(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        mock_db.fetchone.return_value = _clone_row(status=CloneStatus.CLEANUP.value)
+
+        clone = manager.get_by_path_any_status("/tmp/clones/test")
+
+        assert clone is not None
+        assert clone.status == CloneStatus.CLEANUP.value
+        assert mock_db.fetchone.call_args.args[1] == ("/tmp/clones/test", MACHINE_ID)
+
+    @pytest.mark.parametrize("branch_name", ["feature/adopted", None])
+    def test_registers_inspected_branch_or_detached_clone(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+        branch_name: str | None,
+    ) -> None:
+        mock_db.fetchone.return_value = None
+
+        clone, registered = manager.register_adopted(
+            project_id="proj-abc",
+            branch_name=branch_name,
+            clone_path="/tmp/clones/adopted",
+            base_branch="main",
+            remote_url="file:///tmp/source",
+        )
+
+        assert registered is True
+        assert clone.branch_name == branch_name
+        assert clone.remote_url == "file:///tmp/source"
+        insert_values = mock_db.execute.call_args.args[1]
+        assert insert_values[1] == "proj-abc"
+        assert insert_values[3:6] == (branch_name, "/tmp/clones/adopted", "main")
+        assert insert_values[9] == "file:///tmp/source"
+
+    def test_rejects_existing_path_from_another_project(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        mock_db.fetchone.return_value = _clone_row(project_id="other-project")
+
+        with pytest.raises(ValueError, match="another project"):
+            manager.register_adopted(
+                project_id="proj-abc",
+                branch_name="main",
+                clone_path="/tmp/clones/test",
+                base_branch="main",
+                remote_url=None,
+            )
+
+        mock_db.execute.assert_not_called()
+
+    def test_revives_cleanup_record_with_actual_metadata_and_cleared_ownership(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        cleanup_row = _clone_row(
+            branch_name="stale",
+            task_id="task-1",
+            agent_session_id="session-1",
+            status=CloneStatus.CLEANUP.value,
+            remote_url="https://stale.invalid/repo.git",
+            last_sync_at=CLONE_UPDATED_AT,
+            cleanup_after=CLONE_UPDATED_AT,
+        )
+        revived_row = _clone_row(
+            branch_name=None,
+            task_id=None,
+            agent_session_id=None,
+            status=CloneStatus.ACTIVE.value,
+            remote_url="file:///tmp/source",
+            last_sync_at=None,
+            cleanup_after=None,
+        )
+        mock_db.fetchone.side_effect = [cleanup_row, revived_row]
+
+        clone, registered = manager.register_adopted(
+            project_id="proj-abc",
+            branch_name=None,
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            remote_url="file:///tmp/source",
+        )
+
+        assert registered is True
+        assert clone.branch_name is None
+        assert clone.status == CloneStatus.ACTIVE.value
+        assert clone.task_id is None
+        assert clone.agent_session_id is None
+        assert clone.last_sync_at is None
+        assert clone.cleanup_after is None
+        update_values = mock_db.execute.call_args.args[1]
+        assert update_values[:8] == (
+            None,
+            "main",
+            "file:///tmp/source",
+            None,
+            None,
+            CloneStatus.ACTIVE.value,
+            None,
+            None,
+        )
+
+    def test_preserves_deleting_record_as_retry_state(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        mock_db.fetchone.return_value = _clone_row(status=CloneStatus.DELETING.value)
+
+        clone, registered = manager.register_adopted(
+            project_id="proj-abc",
+            branch_name="changed",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            remote_url="file:///tmp/changed",
+        )
+
+        assert registered is False
+        assert clone.status == CloneStatus.DELETING.value
+        assert clone.branch_name == "feature/test"
+        mock_db.execute.assert_not_called()
+
+    def test_collapses_same_path_registration_race(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        winner = _clone_row(branch_name="winner")
+        mock_db.fetchone.side_effect = [None, winner]
+        mock_db.execute.side_effect = psycopg.IntegrityError("duplicate path")
+
+        clone, registered = manager.register_adopted(
+            project_id="proj-abc",
+            branch_name="loser",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            remote_url=None,
+        )
+
+        assert registered is False
+        assert clone.branch_name == "winner"
+
+    def test_propagates_unrelated_registration_conflict(
+        self,
+        manager: LocalCloneManager,
+        mock_db: MagicMock,
+    ) -> None:
+        mock_db.fetchone.side_effect = [None, None]
+        mock_db.execute.side_effect = psycopg.IntegrityError("unrelated constraint")
+
+        with pytest.raises(psycopg.IntegrityError, match="unrelated constraint"):
+            manager.register_adopted(
+                project_id="proj-abc",
+                branch_name="main",
+                clone_path="/tmp/clones/test",
+                base_branch="main",
+                remote_url=None,
+            )
 
     def test_release(self, manager, mock_db) -> None:
         """release clears agent_session_id."""

@@ -13,12 +13,15 @@ import asyncio
 import subprocess
 import threading
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
 import pytest
 
+from gobby.clones.git import CloneStatus as GitCloneStatus
 from gobby.storage.clones import Clone, CloneStatus
 from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.git import get_checkout_mutation_lock
@@ -801,6 +804,253 @@ class TestDeleteClone:
             await operation
 
         mock_clone_storage.delete.assert_called_once_with("clone-123")
+
+
+class TestDeleteCloneAdoption:
+    """Tests for adopting an unmanaged clone during path-based deletion."""
+
+    def test_schema_requires_exactly_one_identifier(self, registry: Any) -> None:
+        schema = registry.get_schema("delete_clone")
+
+        assert schema is not None
+        assert schema["inputSchema"]["oneOf"] == [
+            {"required": ["clone_id"], "not": {"required": ["clone_path"]}},
+            {"required": ["clone_path"], "not": {"required": ["clone_id"]}},
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("arguments", [{}, {"clone_id": "clone-1", "clone_path": "/tmp/x"}])
+    async def test_runtime_requires_exactly_one_identifier(
+        self,
+        registry: Any,
+        arguments: dict[str, str],
+    ) -> None:
+        result = await registry.call("delete_clone", arguments)
+
+        assert result == {
+            "success": False,
+            "error": "Provide exactly one of clone_id or clone_path",
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("branch_name", ["feature/adopted", None])
+    async def test_adopts_actual_branch_and_origin_then_deletes(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+        branch_name: str | None,
+    ) -> None:
+        project_id = "11111111-1111-4111-8111-111111110001"
+        clones_root = tmp_path / "clones"
+        clone_path = clones_root / "project" / "adopted"
+        clone_path.mkdir(parents=True)
+        adopted = replace(
+            _merge_test_clone(),
+            id="adopted-clone",
+            project_id=project_id,
+            branch_name=branch_name,
+            clone_path=str(clone_path),
+            remote_url="file:///tmp/source",
+        )
+        mock_git_manager.resolve_managed_clone_path.return_value = clone_path
+        mock_git_manager.get_clone_status.return_value = GitCloneStatus(
+            has_uncommitted_changes=False,
+            has_staged_changes=False,
+            has_untracked_files=False,
+            branch=branch_name,
+            commit="abc123",
+        )
+        mock_git_manager.get_remote_url.return_value = "file:///tmp/source"
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.get_by_path_any_status.return_value = None
+        mock_clone_storage.register_adopted.return_value = (adopted, True)
+        mock_clone_storage.get.return_value = adopted
+        mock_clone_storage.delete.return_value = True
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id=project_id,
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(clone_path)})
+
+        assert result["success"] is True
+        mock_git_manager.get_remote_url.assert_called_once_with("origin", clone_path)
+        mock_clone_storage.register_adopted.assert_called_once_with(
+            project_id=project_id,
+            branch_name=branch_name,
+            clone_path=str(clone_path),
+            base_branch="main",
+            remote_url="file:///tmp/source",
+        )
+        mock_clone_storage.delete.assert_called_once_with("adopted-clone")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("outside_root", [True, False])
+    async def test_rejects_outside_root_or_wrong_project_directory(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+        outside_root: bool,
+    ) -> None:
+        clones_root = tmp_path / "clones"
+        requested_path = tmp_path / "outside" if outside_root else clones_root / "other" / "clone"
+        mock_git_manager.resolve_managed_clone_path.return_value = (
+            None if outside_root else requested_path
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id="11111111-1111-4111-8111-111111110001",
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(requested_path)})
+
+        assert result["success"] is False
+        expected_error = "must be under" if outside_root else "directly under"
+        assert expected_error in result["error"]
+        mock_clone_storage.register_adopted.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_git_directory(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        clones_root = tmp_path / "clones"
+        clone_path = clones_root / "project" / "invalid"
+        clone_path.mkdir(parents=True)
+        mock_git_manager.resolve_managed_clone_path.return_value = clone_path
+        mock_git_manager.get_clone_status.return_value = None
+        mock_clone_storage.get_by_path_any_status.return_value = None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id="11111111-1111-4111-8111-111111110001",
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(clone_path)})
+
+        assert result["success"] is False
+        assert "not a valid Git clone" in result["error"]
+        mock_clone_storage.register_adopted.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_rejects_existing_path_registered_to_another_project(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        clones_root = tmp_path / "clones"
+        clone_path = clones_root / "project" / "clone"
+        mock_git_manager.resolve_managed_clone_path.return_value = clone_path
+        mock_clone_storage.get_by_path_any_status.return_value = replace(
+            _merge_test_clone(),
+            id="foreign-clone",
+            project_id="other-project",
+            branch_name="main",
+            clone_path=str(clone_path),
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id="11111111-1111-4111-8111-111111110001",
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(clone_path)})
+
+        assert result["success"] is False
+        assert "another project" in result["error"]
+        mock_git_manager.get_clone_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_preserves_deleting_record_for_path_retry(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        project_id = "11111111-1111-4111-8111-111111110001"
+        clones_root = tmp_path / "clones"
+        clone_path = clones_root / "project" / "clone"
+        deleting = replace(
+            _merge_test_clone(),
+            id="deleting-clone",
+            project_id=project_id,
+            clone_path=str(clone_path),
+            task_id="task-1",
+            agent_session_id="session-1",
+            status=CloneStatus.DELETING.value,
+            last_sync_at=RECENT_TIMESTAMP,
+            cleanup_after=RECENT_TIMESTAMP,
+        )
+        mock_git_manager.resolve_managed_clone_path.return_value = clone_path
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.get_by_path_any_status.return_value = deleting
+        mock_clone_storage.get.return_value = deleting
+        mock_clone_storage.delete.return_value = True
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id=project_id,
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(clone_path)})
+
+        assert result["success"] is True
+        mock_git_manager.get_clone_status.assert_not_called()
+        mock_git_manager.get_remote_url.assert_not_called()
+        mock_clone_storage.register_adopted.assert_not_called()
+        mock_clone_storage.delete.assert_called_once_with("deleting-clone")
 
 
 class TestSyncClone:
@@ -1853,8 +2103,8 @@ class TestDetectStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at=STALE_TIMESTAMP,
-                updated_at=STALE_TIMESTAMP,
+                created_at=datetime.fromisoformat(STALE_TIMESTAMP),
+                updated_at=datetime.fromisoformat(STALE_TIMESTAMP),
             ),
         ]
 
@@ -2210,8 +2460,8 @@ class TestCleanupStaleClones:
                 remote_url=None,
                 last_sync_at=None,
                 cleanup_after=None,
-                created_at=STALE_TIMESTAMP,
-                updated_at=STALE_TIMESTAMP,
+                created_at=datetime.fromisoformat(STALE_TIMESTAMP),
+                updated_at=datetime.fromisoformat(STALE_TIMESTAMP),
             ),
         ]
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
