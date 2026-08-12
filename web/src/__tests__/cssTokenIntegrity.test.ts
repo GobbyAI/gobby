@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest'
 const SOURCE_EXTENSIONS = new Set(['.css', '.ts', '.tsx', '.js', '.jsx', '.mjs'])
 const IGNORED_SEGMENTS = new Set(['__tests__', '__visual__', 'test'])
 const DYNAMIC_TOKEN_PREFIXES = [
-  '--category-',
   '--channel-',
   '--isolation-',
   '--lang-',

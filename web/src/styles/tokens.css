@@ -182,17 +182,6 @@
   --channel-sms: oklch(74% 0.15 145);
   --channel-gobby_chat: oklch(70% 0.005 125);
 
-  /* Task-category palette — see components/agents/AgentPortfolioPage.tsx. */
-  --category-code: oklch(70% 0.18 250);
-  --category-test: oklch(72% 0.20 145);
-  --category-docs: oklch(72% 0.22 295);
-  --category-config: oklch(78% 0.16 75);
-  --category-refactor: oklch(72% 0.13 200);
-  --category-research: oklch(72% 0.22 350);
-  --category-planning: oklch(60% 0.005 125);
-  --category-manual: oklch(72% 0.18 50);
-  --category-default: oklch(50% 0.005 125);
-
   /* Agent-isolation palette — see components/workflows/isolationColors.ts. */
   --isolation-clone: oklch(72% 0.20 350);
   --isolation-worktree: oklch(78% 0.16 75);
@@ -459,17 +448,6 @@
   --channel-email: oklch(45% 0.20 25);
   --channel-sms: oklch(45% 0.16 145);
   --channel-gobby_chat: oklch(45% 0.005 125);
-
-  /* Task-category palette — light theme variants. */
-  --category-code: oklch(45% 0.20 250);
-  --category-test: oklch(45% 0.20 145);
-  --category-docs: oklch(45% 0.22 295);
-  --category-config: oklch(50% 0.18 75);
-  --category-refactor: oklch(45% 0.15 200);
-  --category-research: oklch(48% 0.22 350);
-  --category-planning: oklch(40% 0.005 125);
-  --category-manual: oklch(48% 0.20 50);
-  --category-default: oklch(45% 0.005 125);
 
   /* Agent-isolation palette — light theme variants. */
   --isolation-clone: oklch(52% 0.22 350);

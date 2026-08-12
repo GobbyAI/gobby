@@ -35,7 +35,6 @@ const AGENT_EDITOR_FILES = [
 ] as const
 const AGENT_SURFACE_FILES = [
   'src/components/activity/agents/AgentsTabList.tsx',
-  'src/components/agents/AgentPortfolioPage.tsx',
 ] as const
 const ACTIVITY_LIST_DETAIL_SURFACE_FILES = [
   'src/components/activity/ActivityMcpTab.tsx',

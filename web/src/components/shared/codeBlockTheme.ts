@@ -65,7 +65,7 @@ export const CODE_CHROME_TYPOGRAPHY = {
 
 /**
  * Canonical line-number gutter style for view-only code blocks. File
- * viewers (FilesTab, FilesPage) override `minWidth` to `3em` via the
+ * viewers such as FilesTab override `minWidth` to `3em` via the
  * `lineNumberMinWidth` prop on `CodeBlock` to fit 4-digit line numbers.
  */
 export const lineNumberStyle = {

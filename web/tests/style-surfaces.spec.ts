@@ -2138,28 +2138,6 @@ const REPRESENTATIVE_MAPPINGS: readonly RepresentativeMapping[] = [
       "by component tests plus the KnowledgeGraph capture, which exercises " +
       "the same graph chrome.",
   },
-  {
-    surface: "AgentPortfolioPage",
-    componentFile: "components/agents/AgentPortfolioPage.tsx",
-    coveredBy: ["components/agents/__tests__/AgentPortfolioPage.test.tsx"],
-    rationale:
-      "Zero production mounts (test-only imports); the 4.2 sweep is covered " +
-      "by component tests, with agent cards photographed via the tab-agents " +
-      "cells.",
-  },
-  {
-    surface: "FilesPage",
-    componentFile: "components/FilesPage.tsx",
-    coveredBy: [
-      "components/__tests__/FilesPage.test.tsx",
-      "components/__tests__/FilesPage.truncated.test.tsx",
-      "capture cell family: tab-files (FilesTab is the live files surface)",
-    ],
-    rationale:
-      "FilesPage has zero production mounts — the app has no router and " +
-      "mounts only FilesTab inside the activity panel. The 4.6 sweep is " +
-      "covered by FilesPage component tests plus the tab-files cells.",
-  },
 ];
 
 // ---------------------------------------------------------------------------
