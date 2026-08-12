@@ -3530,30 +3530,22 @@ class TestHooksEndpoints:
         self,
         session_storage: SessionManager,
     ) -> None:
-        """A stalled non-critical hook degrades before its adapter finishes."""
+        """A non-critical adapter timeout returns a graceful response."""
         server = create_http_server(
             port=60887,
             test_mode=True,
-            config=DaemonConfig(),
+            config=DaemonConfig(hooks={"adapter_timeout": 91}),
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
-        server.config.hooks.adapter_timeout = 0.01
-        release_adapter = threading.Event()
-        adapter_finished = threading.Event()
-
-        def stalled_evaluation(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
-            if not release_adapter.wait(timeout=1):
-                raise AssertionError("test did not release stalled adapter")
-            adapter_finished.set()
-            return {"continue": True}
 
         with (
             TestClient(server.app) as client,
             patch(
-                "gobby.adapters.droid.DroidAdapter.handle_native",
-                side_effect=stalled_evaluation,
-            ),
+                "gobby.servers.routes.mcp.hooks._run_adapter_hook",
+                new_callable=AsyncMock,
+                side_effect=TimeoutError,
+            ) as run_adapter_hook,
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -3563,14 +3555,13 @@ class TestHooksEndpoints:
                     input_data={"session_id": "droid-123", "tool_name": "Read"},
                 ),
             )
-            assert adapter_finished.is_set() is False
-            release_adapter.set()
-            assert adapter_finished.wait(timeout=1)
+            run_adapter_hook.assert_awaited_once()
+            assert run_adapter_hook.await_args.kwargs["timeout_seconds"] == 91
 
         assert response.status_code == 200
         data = response.json()
         assert data["continue"] is True
-        assert "timed out after 0.01s" in data["systemMessage"]
+        assert "timed out after 91s" in data["systemMessage"]
 
     def test_stalled_workflow_dependencies_do_not_starve_control_plane(
         self,

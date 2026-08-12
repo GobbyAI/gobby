@@ -61,7 +61,6 @@ def expansion_registry(task_manager):
     ctx = RegistryContext(
         task_manager=task_manager,
         task_validator_resolver=None,
-        config=None,
     )
     return create_expansion_registry(ctx)
 
