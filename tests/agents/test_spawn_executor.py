@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
@@ -680,6 +681,56 @@ class TestExecuteSpawn:
             assert result.success is True
             assert result.child_session_id == "gobby-sess-123"
             assert result.pid == 12345
+
+    async def test_qwen_spawn_preparation_keeps_event_loop_responsive(self) -> None:
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="qwen",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+        )
+        loop = asyncio.get_running_loop()
+        prepare_started = asyncio.Event()
+        release_prepare = threading.Event()
+
+        def blocking_prepare(**_kwargs: object) -> MagicMock:
+            loop.call_soon_threadsafe(prepare_started.set)
+            release_prepare.wait(timeout=2.0)
+            return MagicMock(
+                session_id="gobby-sess-123",
+                agent_run_id="run-abc123",
+                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+            )
+
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345)
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                side_effect=blocking_prepare,
+            ),
+            patch(
+                "gobby.agents.spawn_executor.build_cli_command",
+                return_value=(["qwen"], {}),
+            ),
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+        ):
+            started_at = loop.time()
+            spawn_task = asyncio.create_task(execute_spawn(request))
+            await asyncio.wait_for(prepare_started.wait(), timeout=1.0)
+            elapsed = loop.time() - started_at
+            release_prepare.set()
+            result = await asyncio.wait_for(spawn_task, timeout=2.0)
+
+        assert elapsed < 0.5
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_codex_terminal_direct_spawn(self, mock_codex_prompt_delivery):

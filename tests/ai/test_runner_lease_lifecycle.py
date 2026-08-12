@@ -6,6 +6,7 @@ import asyncio
 import gc
 import threading
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
@@ -285,6 +286,40 @@ async def test_renew_with_backoff_retries_transient_then_succeeds(
 
     lease.assert_serving()
     assert db.fail_renew_times == 0
+
+
+def test_renew_with_backoff_bypasses_saturated_default_executor() -> None:
+    async def scenario() -> None:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        blocker_started = asyncio.Event()
+        release_blocker = threading.Event()
+        renewed = asyncio.Event()
+
+        def block_default_executor() -> None:
+            loop.call_soon_threadsafe(blocker_started.set)
+            release_blocker.wait(timeout=5.0)
+
+        def renew() -> None:
+            loop.call_soon_threadsafe(renewed.set)
+
+        blocker = loop.run_in_executor(None, block_default_executor)
+        await asyncio.wait_for(blocker_started.wait(), timeout=1.0)
+        lease = cast(Any, SimpleNamespace(renew=renew))
+        renew_task = asyncio.create_task(services._renew_with_backoff(lease))
+
+        try:
+            await asyncio.wait_for(renewed.wait(), timeout=1.0)
+            assert await asyncio.wait_for(renew_task, timeout=1.0) is True
+        finally:
+            release_blocker.set()
+            await blocker
+            if not renew_task.done():
+                renew_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await renew_task
+
+    asyncio.run(scenario())
 
 
 @pytest.mark.asyncio

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -60,6 +60,10 @@ _EMBEDDING_LEASE_RENEW_SECONDS = 10.0
 _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS = 1.0
 _EMBEDDING_RENEW_BACKOFF_CAP_SECONDS = 5.0
 _EMBEDDING_REACQUIRE_POLL_SECONDS = 5.0
+_EMBEDDING_LEASE_RENEW_EXECUTOR = ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="gobby-embedding-lease-renew",
+)
 _UNMANAGED_GENERATION_PREFIX = "config-revision:"
 
 
@@ -179,9 +183,10 @@ async def _renew_with_backoff(lease: EmbeddingServingLease) -> bool:
     propagates with the lease already fenced.
     """
     backoff = _EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS
+    loop = asyncio.get_running_loop()
     while True:
         try:
-            await asyncio.to_thread(lease.renew)
+            await loop.run_in_executor(_EMBEDDING_LEASE_RENEW_EXECUTOR, lease.renew)
             return True
         except EmbeddingGenerationLeaseRenewTransient:
             if lease.remaining_seconds() <= backoff:

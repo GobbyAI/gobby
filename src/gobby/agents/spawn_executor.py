@@ -5,6 +5,7 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
+import asyncio
 import logging
 import shutil
 from dataclasses import replace
@@ -268,7 +269,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         return validation_error
 
     # Prepare spawn context (creates child session, builds env vars)
-    spawn_context = prepare_terminal_spawn(
+    spawn_context = await asyncio.to_thread(
+        prepare_terminal_spawn,
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,
         project_id=request.project_id,
@@ -406,7 +408,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Qwen"):
         return validation_error
 
-    spawn_context = prepare_terminal_spawn(
+    spawn_context = await asyncio.to_thread(
+        prepare_terminal_spawn,
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,
         project_id=request.project_id,
@@ -509,7 +512,8 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Grok"):
         return validation_error
 
-    spawn_context = prepare_terminal_spawn(
+    spawn_context = await asyncio.to_thread(
+        prepare_terminal_spawn,
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,
         project_id=request.project_id,
@@ -624,7 +628,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     if validation_error := _session_manager_validation_error(request, "Codex"):
         return validation_error
 
-    spawn_context = prepare_terminal_spawn(
+    spawn_context = await asyncio.to_thread(
+        prepare_terminal_spawn,
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,
         project_id=request.project_id,
@@ -763,7 +768,8 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
             error="droid CLI not found in PATH. Install droid first: see docs/cli-integrations/droid.md",
         )
 
-    spawn_context = prepare_terminal_spawn(
+    spawn_context = await asyncio.to_thread(
+        prepare_terminal_spawn,
         session_manager=cast("ChildSessionManager", request.session_manager),
         parent_session_id=request.parent_session_id,
         project_id=request.project_id,
