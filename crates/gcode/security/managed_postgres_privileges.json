@@ -12,6 +12,7 @@
   },
   "relations": [
     {"relation": "projects", "operations": ["SELECT"], "columns": ["id", "name", "repo_path"], "scope_column": "id"},
+    {"relation": "config_state", "operations": ["SELECT"], "columns": ["id", "revision"], "scope_note": "single global runtime configuration revision row; no per-project data"},
     {"relation": "code_indexed_projects", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "id"},
     {"relation": "code_indexed_project_states", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id", "machine_scope_column": "machine_id"},
     {"relation": "code_indexed_file_states", "operations": ["SELECT", "INSERT", "UPDATE", "DELETE"], "scope_column": "project_id", "machine_scope_column": "machine_id"},
@@ -56,7 +57,7 @@
     {"path": "crates/gcode/src/commands/status/prune.rs", "calls": {"execute": 4, "query": 2, "query_opt": 2}, "classification": "operator-only"},
     {"path": "crates/gcode/src/commands/status/shared.rs", "calls": {"query": 1}, "classification": "operator-only"},
     {"path": "crates/gcode/src/config/context.rs", "calls": {"query": 1, "query_one": 1}, "classification": "operator-only"},
-    {"path": "crates/gcode/src/config/runtime_contract.rs", "calls": {"query": 1, "query_one": 1}, "classification": "operator-only"},
+    {"path": "crates/gcode/src/config/runtime_contract.rs", "calls": {"query": 1, "query_one": 1}, "classification": "project-read"},
 {"path": "crates/gcode/src/db/queries.rs", "calls": {"execute": 8, "query": 9, "query_one": 1, "query_opt": 1}, "classification": "project-write"},
     {"path": "crates/gcode/src/freshness.rs", "calls": {"query_opt": 1}, "classification": "project-read"},
     {"path": "crates/gcode/src/graph/code_graph/read/graph_payloads.rs", "calls": {"query": 12}, "classification": "external-non-postgresql"},

@@ -56,6 +56,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     relations = {entry["relation"]: entry for entry in manifest["relations"]}
     assert set(relations) == {
         "projects",
+        "config_state",
         "code_indexed_projects",
         "code_indexed_project_states",
         "code_indexed_file_states",
@@ -68,6 +69,12 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
         "code_index_prune_dirty_projects",
     }
     assert relations["projects"]["operations"] == ["SELECT"]
+    assert relations["config_state"] == {
+        "relation": "config_state",
+        "operations": ["SELECT"],
+        "columns": ["id", "revision"],
+        "scope_note": "single global runtime configuration revision row; no per-project data",
+    }
     assert relations["code_symbols"]["operations"] == [
         "SELECT",
         "INSERT",
@@ -78,3 +85,7 @@ def test_manifest_privileges_match_the_managed_relation_set() -> None:
     assert "tasks" in manifest["explicitly_denied_relations"]
     assert "sessions" in manifest["explicitly_denied_relations"]
     assert "schema_migrations" in manifest["explicitly_denied_relations"]
+    inventory = {entry["path"]: entry for entry in manifest["source_inventory"]}
+    assert inventory["crates/gcode/src/config/runtime_contract.rs"]["classification"] == (
+        "project-read"
+    )

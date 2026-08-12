@@ -22,7 +22,7 @@ use super::verify::{VerificationReport, qualified_name, validate_identifier, ver
 /// four artifacts stay in lockstep. Hubs more than one hop behind must recreate
 /// from a verified backup.
 pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "aa020423247db981ae48c76e607c88189126b47f743b9d28edc74ee42c3fd9fb";
+    "d4ff5a9a80305e7c4fb0e9aeff80cfdb88440081702204fb2276c2d6b62688b6";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -451,45 +451,9 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
 
 pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
     let body = statement_body(statement);
-    let refreshes_schema = [
-        "ALTER TABLE gobby_agent_auth.principal_bindings\n    ADD COLUMN IF NOT EXISTS code_overlay_project_id",
-        "CREATE EXTENSION IF NOT EXISTS pgcrypto",
-        "CREATE OR REPLACE FUNCTION gobby_agent_auth.code_index_project_id",
-        "GRANT SELECT (id, machine_id, worktree_id, clone_id)",
-        "GRANT SELECT (id, project_id, machine_id, worktree_path)",
-        "GRANT SELECT (id, project_id, machine_id, clone_path)",
-        "CREATE OR REPLACE FUNCTION gobby_agent_auth.current_code_overlay_project_id",
-        "CREATE OR REPLACE FUNCTION gobby_agent_auth.current_machine_id",
-        "ALTER FUNCTION gobby_agent_auth.code_index_project_id",
-        "ALTER FUNCTION gobby_agent_auth.current_code_overlay_project_id",
-        "ALTER FUNCTION gobby_agent_auth.current_machine_id",
-        "REVOKE ALL ON FUNCTION gobby_agent_auth.code_index_project_id",
-        "REVOKE ALL ON FUNCTION\n    gobby_agent_auth.current_code_overlay_project_id",
-        "GRANT EXECUTE ON FUNCTION\n    gobby_agent_auth.current_code_overlay_project_id",
-        "DO $gcode_rls$",
-    ]
-    .iter()
-    .any(|prefix| statement_starts_with_identifier_boundary(body, prefix))
-        || (statement_starts_with_identifier_boundary(
-            body,
-            "CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_principal",
-        ) && body.contains("resolved_overlay_project_id"))
-        || (statement_starts_with_identifier_boundary(
-            body,
-            "CREATE OR REPLACE FUNCTION gobby_agent_auth.rotate_principal",
-        ) && body.contains("source_binding.code_overlay_project_id"))
-        || (statement_starts_with_identifier_boundary(body, "GRANT EXECUTE ON FUNCTION")
-            && body.contains(".digest(BYTEA, TEXT) TO gobby_agent_issuer"));
+    let refreshes_schema = body.trim_end()
+        == "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
     refreshes_schema.then(|| statement.to_owned())
-}
-
-fn statement_starts_with_identifier_boundary(statement: &str, prefix: &str) -> bool {
-    statement.strip_prefix(prefix).is_some_and(|remainder| {
-        remainder
-            .as_bytes()
-            .first()
-            .is_none_or(|byte| !is_identifier_byte(*byte))
-    })
 }
 
 pub(super) fn statement_body(mut statement: &str) -> &str {

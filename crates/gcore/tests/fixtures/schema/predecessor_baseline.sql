@@ -5803,3 +5803,521 @@ TO gobby_daemon_runtime;
 
 ALTER TABLE clones ALTER COLUMN branch_name DROP NOT NULL;
 ALTER TABLE worktrees ALTER COLUMN branch_name DROP NOT NULL;
+
+-- Managed gcode principals may read their parent index and an isolated overlay.
+-- Isolated principals write only the overlay; direct principals write the parent.
+
+ALTER TABLE gobby_agent_auth.principal_bindings
+    ADD COLUMN IF NOT EXISTS code_overlay_project_id UUID;
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA "public";
+GRANT EXECUTE ON FUNCTION "public".digest(BYTEA, TEXT) TO gobby_agent_issuer;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.code_index_project_id(root_path TEXT)
+RETURNS UUID
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+    uuid_bytes BYTEA;
+BEGIN
+    uuid_bytes := substring(
+        "public".digest(
+            pg_catalog.uuid_send('c0de1de0-0000-4000-8000-000000000000'::UUID)
+                || pg_catalog.convert_to(root_path, 'UTF8'),
+            'sha1'
+        )
+        FROM 1 FOR 16
+    );
+    uuid_bytes := pg_catalog.set_byte(
+        uuid_bytes,
+        6,
+        (pg_catalog.get_byte(uuid_bytes, 6) & 15) | 80
+    );
+    uuid_bytes := pg_catalog.set_byte(
+        uuid_bytes,
+        8,
+        (pg_catalog.get_byte(uuid_bytes, 8) & 63) | 128
+    );
+    RETURN pg_catalog.encode(uuid_bytes, 'hex')::UUID;
+END
+$function$;
+
+GRANT SELECT (id, machine_id, worktree_id, clone_id)
+    ON public.agent_runs TO gobby_agent_issuer;
+GRANT SELECT (id, project_id, machine_id, worktree_path)
+    ON public.worktrees TO gobby_agent_issuer;
+GRANT SELECT (id, project_id, machine_id, clone_path)
+    ON public.clones TO gobby_agent_issuer;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.current_code_overlay_project_id()
+RETURNS UUID
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+PARALLEL SAFE
+SET search_path = gobby_agent_auth, pg_temp
+AS $function$
+DECLARE
+    binding_count INTEGER;
+    bound_overlay_project_id UUID;
+BEGIN
+    SELECT count(*), min(code_overlay_project_id::TEXT)::UUID
+    INTO binding_count, bound_overlay_project_id
+    FROM principal_bindings
+    WHERE role_name = session_user::NAME
+      AND revoked_at IS NULL
+      AND expires_at > clock_timestamp();
+
+    IF binding_count <> 1 THEN
+        RAISE EXCEPTION 'managed principal binding is missing, expired, revoked, or duplicated'
+            USING ERRCODE = '42501';
+    END IF;
+    RETURN bound_overlay_project_id;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.current_machine_id()
+RETURNS UUID
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+PARALLEL SAFE
+SET search_path = gobby_agent_auth, pg_temp
+AS $function$
+DECLARE
+    binding_count INTEGER;
+    bound_machine_id UUID;
+BEGIN
+    SELECT count(*), min(issuing_machine_id::TEXT)::UUID
+    INTO binding_count, bound_machine_id
+    FROM principal_bindings
+    WHERE role_name = session_user::NAME
+      AND revoked_at IS NULL
+      AND expires_at > clock_timestamp();
+
+    IF binding_count <> 1 THEN
+        RAISE EXCEPTION 'managed principal binding is missing, expired, revoked, or duplicated'
+            USING ERRCODE = '42501';
+    END IF;
+    RETURN bound_machine_id;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.issue_principal(
+    requested_execution_id UUID,
+    requested_owner_kind TEXT,
+    requested_session_id UUID,
+    requested_agent_run_id UUID,
+    requested_machine_id UUID,
+    requested_expires_at TIMESTAMPTZ,
+    requested_password TEXT
+)
+RETURNS TABLE(role_name NAME, credential_generation INTEGER)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = gobby_agent_auth, pg_temp
+SET createrole_self_grant = ''
+AS $function$
+DECLARE
+    resolved_project_id UUID;
+    resolved_agent_run_id UUID;
+    resolved_run_machine_id UUID;
+    resolved_worktree_id UUID;
+    resolved_clone_id UUID;
+    resolved_workspace_path TEXT;
+    resolved_overlay_project_id UUID;
+    derived_role_name NAME;
+    binding_id UUID;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(requested_execution_id::TEXT, 0));
+    IF requested_owner_kind NOT IN ('agent_run', 'tool_chat') THEN
+        RAISE EXCEPTION 'unsupported managed principal owner kind'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'managed principal expiry must be in the future'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_password IS NULL OR requested_password = '' THEN
+        RAISE EXCEPTION 'managed principal password must not be empty'
+            USING ERRCODE = '22023';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM principal_bindings
+        WHERE managed_execution_id = requested_execution_id
+    ) THEN
+        RAISE EXCEPTION 'managed execution already has a principal binding'
+            USING ERRCODE = '23505';
+    END IF;
+
+    SELECT project_id, agent_run_id
+    INTO resolved_project_id, resolved_agent_run_id
+    FROM public.sessions
+    WHERE id = requested_session_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'managed principal session does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+    IF resolved_agent_run_id IS DISTINCT FROM requested_agent_run_id THEN
+        RAISE EXCEPTION 'managed principal agent run does not match its session'
+            USING ERRCODE = '23503';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM public.machines WHERE id = requested_machine_id) THEN
+        RAISE EXCEPTION 'managed principal issuing machine does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+
+    IF requested_owner_kind = 'agent_run' THEN
+        IF requested_agent_run_id IS NULL THEN
+            RAISE EXCEPTION 'agent-run principal requires an agent run'
+                USING ERRCODE = '23503';
+        END IF;
+        SELECT machine_id, worktree_id, clone_id
+        INTO resolved_run_machine_id, resolved_worktree_id, resolved_clone_id
+        FROM public.agent_runs
+        WHERE id = requested_agent_run_id;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'managed principal agent run does not exist'
+                USING ERRCODE = '23503';
+        END IF;
+        IF resolved_run_machine_id IS DISTINCT FROM requested_machine_id THEN
+            RAISE EXCEPTION 'managed principal agent run belongs to another machine'
+                USING ERRCODE = '23503';
+        END IF;
+        IF resolved_worktree_id IS NOT NULL AND resolved_clone_id IS NOT NULL THEN
+            RAISE EXCEPTION 'managed principal agent run has multiple isolation workspaces'
+                USING ERRCODE = '23514';
+        END IF;
+        IF resolved_worktree_id IS NOT NULL THEN
+            SELECT worktree_path INTO resolved_workspace_path
+            FROM public.worktrees
+            WHERE id = resolved_worktree_id
+              AND project_id = resolved_project_id
+              AND machine_id = requested_machine_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'managed principal worktree does not match project and machine'
+                    USING ERRCODE = '23503';
+            END IF;
+        ELSIF resolved_clone_id IS NOT NULL THEN
+            SELECT clone_path INTO resolved_workspace_path
+            FROM public.clones
+            WHERE id = resolved_clone_id
+              AND project_id = resolved_project_id
+              AND machine_id = requested_machine_id;
+            IF NOT FOUND THEN
+                RAISE EXCEPTION 'managed principal clone does not match project and machine'
+                    USING ERRCODE = '23503';
+            END IF;
+        END IF;
+        IF resolved_workspace_path IS NOT NULL THEN
+            resolved_overlay_project_id := code_index_project_id(resolved_workspace_path);
+        END IF;
+    END IF;
+
+    derived_role_name := (
+        'gobby_agent_' || replace(requested_execution_id::TEXT, '-', '') || '_1'
+    )::NAME;
+    EXECUTE format(
+        'CREATE ROLE %I LOGIN PASSWORD %L VALID UNTIL %L INHERIT '
+        'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS',
+        derived_role_name,
+        requested_password,
+        requested_expires_at
+    );
+    EXECUTE format(
+        'GRANT %I TO %I WITH ADMIN FALSE, INHERIT TRUE, SET FALSE',
+        'gobby_gcode_capability',
+        derived_role_name
+    );
+
+    INSERT INTO principal_bindings (
+        role_name,
+        owner_kind,
+        managed_execution_id,
+        agent_run_id,
+        session_id,
+        project_id,
+        code_overlay_project_id,
+        issuing_machine_id,
+        expires_at,
+        credential_generation
+    ) VALUES (
+        derived_role_name,
+        requested_owner_kind,
+        requested_execution_id,
+        requested_agent_run_id,
+        requested_session_id,
+        resolved_project_id,
+        resolved_overlay_project_id,
+        requested_machine_id,
+        requested_expires_at,
+        1
+    ) RETURNING id INTO binding_id;
+
+    INSERT INTO principal_audit_events (
+        binding_id,
+        event_type,
+        managed_execution_id,
+        role_name,
+        credential_generation,
+        project_id
+    ) VALUES (
+        binding_id,
+        'issue',
+        requested_execution_id,
+        derived_role_name,
+        1,
+        resolved_project_id
+    );
+    RETURN QUERY SELECT derived_role_name, 1;
+END
+$function$;
+
+CREATE OR REPLACE FUNCTION gobby_agent_auth.rotate_principal(
+    requested_execution_id UUID,
+    requested_expires_at TIMESTAMPTZ,
+    requested_password TEXT
+)
+RETURNS TABLE(role_name NAME, credential_generation INTEGER)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = gobby_agent_auth, pg_temp
+SET createrole_self_grant = ''
+AS $function$
+DECLARE
+    source_binding principal_bindings%ROWTYPE;
+    active_count INTEGER;
+    next_generation INTEGER;
+    derived_role_name NAME;
+    binding_id UUID;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended(requested_execution_id::TEXT, 0));
+    IF requested_expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'managed principal expiry must be in the future'
+            USING ERRCODE = '22023';
+    END IF;
+    IF requested_password IS NULL OR requested_password = '' THEN
+        RAISE EXCEPTION 'managed principal password must not be empty'
+            USING ERRCODE = '22023';
+    END IF;
+    SELECT count(*) INTO active_count
+    FROM principal_bindings
+    WHERE managed_execution_id = requested_execution_id
+      AND revoked_at IS NULL
+      AND expires_at > clock_timestamp();
+    IF active_count <> 1 THEN
+        RAISE EXCEPTION 'rotation requires exactly one active principal binding'
+            USING ERRCODE = '42501';
+    END IF;
+    SELECT * INTO STRICT source_binding
+    FROM principal_bindings
+    WHERE managed_execution_id = requested_execution_id
+      AND revoked_at IS NULL
+      AND expires_at > clock_timestamp();
+    SELECT COALESCE(max(pb.credential_generation), 0) + 1
+    INTO next_generation
+    FROM principal_bindings pb
+    WHERE pb.managed_execution_id = requested_execution_id;
+
+    derived_role_name := (
+        'gobby_agent_' || replace(requested_execution_id::TEXT, '-', '') || '_' || next_generation
+    )::NAME;
+    EXECUTE format(
+        'CREATE ROLE %I LOGIN PASSWORD %L VALID UNTIL %L INHERIT '
+        'NOSUPERUSER NOCREATEROLE NOCREATEDB NOREPLICATION NOBYPASSRLS',
+        derived_role_name,
+        requested_password,
+        requested_expires_at
+    );
+    EXECUTE format(
+        'GRANT %I TO %I WITH ADMIN FALSE, INHERIT TRUE, SET FALSE',
+        'gobby_gcode_capability',
+        derived_role_name
+    );
+
+    INSERT INTO principal_bindings (
+        role_name,
+        owner_kind,
+        managed_execution_id,
+        agent_run_id,
+        session_id,
+        project_id,
+        code_overlay_project_id,
+        issuing_machine_id,
+        expires_at,
+        credential_generation
+    ) VALUES (
+        derived_role_name,
+        source_binding.owner_kind,
+        requested_execution_id,
+        source_binding.agent_run_id,
+        source_binding.session_id,
+        source_binding.project_id,
+        source_binding.code_overlay_project_id,
+        source_binding.issuing_machine_id,
+        requested_expires_at,
+        next_generation
+    ) RETURNING id INTO binding_id;
+
+    INSERT INTO principal_audit_events (
+        binding_id,
+        event_type,
+        managed_execution_id,
+        role_name,
+        credential_generation,
+        project_id
+    ) VALUES (
+        binding_id,
+        'rotate',
+        requested_execution_id,
+        derived_role_name,
+        next_generation,
+        source_binding.project_id
+    );
+    RETURN QUERY SELECT derived_role_name, next_generation;
+END
+$function$;
+
+ALTER FUNCTION gobby_agent_auth.code_index_project_id(TEXT)
+    OWNER TO gobby_agent_issuer;
+ALTER FUNCTION gobby_agent_auth.current_code_overlay_project_id()
+    OWNER TO gobby_agent_issuer;
+ALTER FUNCTION gobby_agent_auth.current_machine_id()
+    OWNER TO gobby_agent_issuer;
+
+REVOKE ALL ON FUNCTION gobby_agent_auth.code_index_project_id(TEXT) FROM PUBLIC;
+REVOKE ALL ON FUNCTION
+    gobby_agent_auth.current_code_overlay_project_id(),
+    gobby_agent_auth.current_machine_id()
+    FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION
+    gobby_agent_auth.current_code_overlay_project_id(),
+    gobby_agent_auth.current_machine_id()
+    TO gobby_gcode_capability;
+
+DO $gcode_rls$
+DECLARE
+    target_schema NAME := current_schema();
+    table_name TEXT;
+    project_column TEXT;
+    read_expression TEXT;
+    write_expression TEXT;
+    machine_expression TEXT;
+BEGIN
+    FOREACH table_name IN ARRAY ARRAY[
+        'code_indexed_projects',
+        'code_indexed_project_states',
+        'code_indexed_file_states',
+        'code_indexed_files',
+        'code_symbols',
+        'code_imports',
+        'code_calls',
+        'code_content_chunks',
+        'code_index_projection_cleanup_pending',
+        'code_index_prune_dirty_projects'
+    ]
+    LOOP
+        IF to_regclass(format('%I.%I', target_schema, table_name)) IS NULL THEN
+            RAISE EXCEPTION 'gcode authorization requires relation %.%',
+                target_schema,
+                table_name;
+        END IF;
+        IF table_name = 'code_indexed_projects' THEN
+            project_column := 'id';
+        ELSE
+            project_column := 'project_id';
+        END IF;
+        read_expression := format(
+            '(%1$I = gobby_agent_auth.current_project_id() OR '
+            '%1$I = gobby_agent_auth.current_code_overlay_project_id())',
+            project_column
+        );
+        write_expression := format(
+            '%I = COALESCE(gobby_agent_auth.current_code_overlay_project_id(), '
+            'gobby_agent_auth.current_project_id())',
+            project_column
+        );
+        IF table_name IN (
+            'code_indexed_project_states',
+            'code_indexed_file_states',
+            'code_index_prune_dirty_projects'
+        ) THEN
+            machine_expression :=
+                'machine_id = gobby_agent_auth.current_machine_id()';
+            read_expression := format(
+                '(%s AND %s)',
+                read_expression,
+                machine_expression
+            );
+            write_expression := format(
+                '(%s AND %s)',
+                write_expression,
+                machine_expression
+            );
+        END IF;
+
+        EXECUTE format(
+            'DROP POLICY IF EXISTS gobby_agent_project_scope ON %I.%I',
+            target_schema,
+            table_name
+        );
+        EXECUTE format(
+            'DROP POLICY IF EXISTS gobby_gcode_project_read ON %I.%I',
+            target_schema,
+            table_name
+        );
+        EXECUTE format(
+            'DROP POLICY IF EXISTS gobby_gcode_project_insert ON %I.%I',
+            target_schema,
+            table_name
+        );
+        EXECUTE format(
+            'DROP POLICY IF EXISTS gobby_gcode_project_update ON %I.%I',
+            target_schema,
+            table_name
+        );
+        EXECUTE format(
+            'DROP POLICY IF EXISTS gobby_gcode_project_delete ON %I.%I',
+            target_schema,
+            table_name
+        );
+        EXECUTE format(
+            'CREATE POLICY gobby_gcode_project_read ON %I.%I '
+            'FOR SELECT TO %I USING (%s)',
+            target_schema,
+            table_name,
+            'gobby_gcode_capability',
+            read_expression
+        );
+        EXECUTE format(
+            'CREATE POLICY gobby_gcode_project_insert ON %I.%I '
+            'FOR INSERT TO %I WITH CHECK (%s)',
+            target_schema,
+            table_name,
+            'gobby_gcode_capability',
+            write_expression
+        );
+        EXECUTE format(
+            'CREATE POLICY gobby_gcode_project_update ON %I.%I '
+            'FOR UPDATE TO %I USING (%s) WITH CHECK (%s)',
+            target_schema,
+            table_name,
+            'gobby_gcode_capability',
+            write_expression,
+            write_expression
+        );
+        EXECUTE format(
+            'CREATE POLICY gobby_gcode_project_delete ON %I.%I '
+            'FOR DELETE TO %I USING (%s)',
+            target_schema,
+            table_name,
+            'gobby_gcode_capability',
+            write_expression
+        );
+    END LOOP;
+END
+$gcode_rls$;

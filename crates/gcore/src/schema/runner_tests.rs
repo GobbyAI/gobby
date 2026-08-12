@@ -162,6 +162,33 @@ fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::R
     Ok(())
 }
 
+fn assert_gcode_config_state_read_privileges(client: &mut Client) -> anyhow::Result<()> {
+    for column in ["id", "revision"] {
+        let granted: bool = client
+            .query_one(
+                "SELECT has_column_privilege(\
+                     'gobby_gcode_capability', 'config_state', $1, 'SELECT'\
+                 )",
+                &[&column],
+            )?
+            .get(0);
+        assert!(
+            granted,
+            "gcode capability lacks SELECT on config_state.{column}"
+        );
+    }
+    for privilege in ["INSERT", "UPDATE", "DELETE"] {
+        let granted: bool = client
+            .query_one(
+                "SELECT has_table_privilege('gobby_gcode_capability', 'config_state', $1)",
+                &[&privilege],
+            )?
+            .get(0);
+        assert!(!granted, "gcode capability has {privilege} on config_state");
+    }
+    Ok(())
+}
+
 fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
     let rows = client.query(
         "SELECT tablename, policyname, cmd, COALESCE(qual, ''), COALESCE(with_check, '') \
@@ -362,6 +389,7 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         assert!(exists, "refresh must create {table}");
         assert_runtime_crud_privileges(&mut client, table)?;
     }
+    assert_gcode_config_state_read_privileges(&mut client)?;
     for table in ["clones", "worktrees"] {
         let nullable: String = client
             .query_one(
@@ -490,6 +518,13 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
 
     let validation = match database.connect_as(&role_name, &password) {
         Ok(mut scoped) => (|| -> anyhow::Result<()> {
+            let revision: i64 = scoped
+                .query_one("SELECT revision FROM config_state WHERE id = true", &[])?
+                .get(0);
+            assert_eq!(
+                revision, 0,
+                "scoped gcode principal must read config revision"
+            );
             let parent_exists: bool = scoped
                 .query_one(
                     "SELECT EXISTS( \
@@ -621,20 +656,41 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> an
 }
 
 #[test]
-fn baseline_refresh_prefix_ignores_leading_comments_and_checks_identifier_boundary() {
-    let refreshable = "-- retained context\nCREATE EXTENSION IF NOT EXISTS pgcrypto";
-    let misleading = "CREATE EXTENSION IF NOT EXISTS pgcrypto_extra";
+fn baseline_refresh_ignores_leading_comments_and_requires_exact_statement() {
+    let refreshable = "-- retained context\n\
+        GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
+    let misleading =
+        "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability_extra";
 
     assert!(baseline_refresh_statement(refreshable).is_some());
     assert!(baseline_refresh_statement(misleading).is_none());
 }
 
 #[test]
-fn baseline_refresh_rejects_identifier_prefix_collisions() {
+fn baseline_refresh_rejects_broader_config_state_grants() {
     assert!(
-        baseline_refresh_statement("CREATE EXTENSION IF NOT EXISTS pgcrypto_history").is_none()
+        baseline_refresh_statement("GRANT SELECT ON TABLE config_state TO gobby_gcode_capability")
+            .is_none()
     );
-    assert!(baseline_refresh_statement("CREATE EXTENSION IF NOT EXISTS pgcrypto").is_some());
+    assert!(
+        baseline_refresh_statement(
+            "GRANT SELECT(id,revision,secret) ON TABLE config_state TO gobby_gcode_capability"
+        )
+        .is_none()
+    );
+    assert!(
+        baseline_refresh_statement(
+            "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability \
+             WITH GRANT OPTION"
+        )
+        .is_none()
+    );
+    assert!(
+        baseline_refresh_statement(
+            "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability"
+        )
+        .is_some()
+    );
 }
 
 #[test]
