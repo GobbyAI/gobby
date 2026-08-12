@@ -162,14 +162,18 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
             "origin",
             resolved_path,
         )
+        base_branch = await asyncio.to_thread(git_manager.get_default_branch)
 
-        clone, _ = ctx.clone_storage.register_adopted(
-            project_id=project.id,
-            branch_name=status.branch,
-            clone_path=str(resolved_path),
-            base_branch="main",
-            remote_url=remote_url,
-        )
+        try:
+            clone, _ = ctx.clone_storage.register_adopted(
+                project_id=project.id,
+                branch_name=status.branch,
+                clone_path=str(resolved_path),
+                base_branch=base_branch,
+                remote_url=remote_url,
+            )
+        except ValueError as error:
+            return {"success": False, "error": str(error)}
         return clone
 
     async def delete_clone(

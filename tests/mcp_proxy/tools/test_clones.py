@@ -863,6 +863,7 @@ class TestDeleteCloneAdoption:
             commit="abc123",
         )
         mock_git_manager.get_remote_url.return_value = "file:///tmp/source"
+        mock_git_manager.get_default_branch.return_value = "trunk"
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
         mock_clone_storage.get_by_path_any_status.return_value = None
         mock_clone_storage.register_adopted.return_value = (adopted, True)
@@ -890,10 +891,58 @@ class TestDeleteCloneAdoption:
             project_id=project_id,
             branch_name=branch_name,
             clone_path=str(clone_path),
-            base_branch="main",
+            base_branch="trunk",
             remote_url="file:///tmp/source",
         )
         mock_clone_storage.delete.assert_called_once_with("adopted-clone")
+
+    @pytest.mark.asyncio
+    async def test_cross_project_registration_race_returns_error(
+        self,
+        registry: Any,
+        mock_clone_storage: MagicMock,
+        mock_git_manager: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        project_id = "11111111-1111-4111-8111-111111110001"
+        clones_root = tmp_path / "clones"
+        clone_path = clones_root / "project" / "raced"
+        clone_path.mkdir(parents=True)
+        mock_git_manager.resolve_managed_clone_path.return_value = clone_path
+        mock_git_manager.get_clone_status.return_value = GitCloneStatus(
+            has_uncommitted_changes=False,
+            has_staged_changes=False,
+            has_untracked_files=False,
+            branch="feature/raced",
+            commit="abc123",
+        )
+        mock_git_manager.get_remote_url.return_value = None
+        mock_git_manager.get_default_branch.return_value = "main"
+        mock_clone_storage.get_by_path_any_status.return_value = None
+        mock_clone_storage.register_adopted.side_effect = ValueError(
+            f"Clone path belongs to another project: {clone_path}"
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.clone_git.CLONES_ROOT",
+                clones_root,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools._clones_operations.LocalProjectManager"
+            ) as project_manager,
+        ):
+            project_manager.return_value.get.return_value = SimpleNamespace(
+                id=project_id,
+                name="project",
+            )
+            result = await registry.call("delete_clone", {"clone_path": str(clone_path)})
+
+        assert result == {
+            "success": False,
+            "error": f"Clone path belongs to another project: {clone_path}",
+        }
+        mock_clone_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("outside_root", [True, False])

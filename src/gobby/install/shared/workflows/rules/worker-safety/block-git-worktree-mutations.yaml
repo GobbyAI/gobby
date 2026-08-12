@@ -1,4 +1,4 @@
-tags: [worker-safety, enforcement, default, gobby]
+tags: [worker-safety, enforcement, gobby]
 
 rules:
   block-git-worktree-mutations:
@@ -12,15 +12,3 @@ rules:
         tools: [Bash]
         command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+worktree\\s+(?:add|remove|move|prune|repair)(?=\\s|$|&&|;|\\|)"
         reason: "Use gobby-worktrees.create_worktree to create a managed worktree. Use gobby-worktrees.delete_worktree with worktree_path to remove or clean up an existing worktree."
-
-  block-git-worktree-mutations-interactive:
-    description: "Block unmanaged Git worktree lifecycle mutations with an interactive escape hatch."
-    event: before_tool
-    enabled: true
-    priority: 55
-    when: "not variables.get('is_spawned_agent')"
-    effects:
-      - type: block
-        tools: [Bash]
-        command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+worktree\\s+(?:add|remove|move|prune|repair)(?=\\s|$|&&|;|\\|)"
-        reason: "Use gobby-worktrees.create_worktree to create a managed worktree. Use gobby-worktrees.delete_worktree with worktree_path to remove or clean up an existing worktree. Ask the user for permission to disable this rule if you need to proceed."

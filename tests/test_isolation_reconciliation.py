@@ -113,9 +113,11 @@ async def test_reconciliation_adopts_each_stray_once_and_logs_one_summary(
     assert worktree is not None
     assert worktree.project_id == project.id
     assert worktree.branch_name == "task/reconcile"
+    assert worktree.base_branch == "main"
     assert clone is not None
     assert clone.project_id == project.id
     assert clone.branch_name is None
+    assert clone.base_branch == "main"
     assert clone.remote_url == str(repo)
     assert LocalCloneManager(temp_db).get_by_path(str(nested_clone_path.resolve())) is None
     assert "LocalProjectManager.list" in db_calls
@@ -175,6 +177,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
 
     manager = SimpleNamespace(
         inspect_worktree=inspect_worktree,
+        get_default_branch=lambda: "trunk",
     )
     monkeypatch.setattr(reconciliation, "WorktreeGitManager", lambda _path: manager)
     monkeypatch.setattr(worktree_git_status, "list_worktrees", list_worktrees)
@@ -198,7 +201,7 @@ async def test_worktree_scan_skips_primary_bare_prunable_and_reserved_names(
 
     assert adopted == 1
     assert inspected_paths == [valid_path.resolve()]
-    assert registrations == [("project-1", "task/valid", str(valid_path.resolve()), "main")]
+    assert registrations == [("project-1", "task/valid", str(valid_path.resolve()), "trunk")]
 
 
 @pytest.mark.asyncio

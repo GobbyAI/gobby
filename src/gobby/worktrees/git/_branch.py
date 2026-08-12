@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import logging
+import subprocess  # nosec B404 # typing only; execution stays in the runner
+from typing import Protocol
 
 from gobby.worktrees.git._runner import GitRunner
 
 logger = logging.getLogger(__name__)
 
 
-def get_default_branch(runner: GitRunner) -> str:
+class SupportsRunGit(Protocol):
+    """Structural runner contract for read-only default-branch detection."""
+
+    def _run_git(
+        self,
+        args: list[str],
+        *,
+        timeout: int = ...,
+    ) -> subprocess.CompletedProcess[str]: ...
+
+
+def get_default_branch(runner: SupportsRunGit) -> str:
     """
     Get the default branch for the repository.
 

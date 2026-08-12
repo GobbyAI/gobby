@@ -325,7 +325,8 @@ class TestManagedGitIsolationRules:
         assert worker_effect.command_pattern == interactive_effect.command_pattern
         assert worker_row.priority == 50
         assert interactive_row.priority == 55
-        assert "default" in (worker_row.tags or [])
+        assert "worker-safety" in (worker_row.tags or [])
+        assert "default" not in (worker_row.tags or [])
         assert "default" in (interactive_row.tags or [])
         assert "Ask the user for permission to disable this rule" not in (
             worker_effect.reason or ""

@@ -107,6 +107,7 @@ async def _reconcile_project_worktrees(
             manager,
             failure_log_level=logging.DEBUG,
         )
+        base_branch = await asyncio.to_thread(manager.get_default_branch)
     except Exception as exc:
         logger.debug("Skipping worktree reconciliation for %s: %s", project.name, exc)
         return 0
@@ -126,7 +127,7 @@ async def _reconcile_project_worktrees(
                 project.id,
                 inspected.branch,
                 inspected.path,
-                "main",
+                base_branch,
             )
             adopted += int(created)
         except Exception as exc:
@@ -157,6 +158,10 @@ async def _reconcile_project_clones(
         logger.debug("Skipping clone reconciliation for %s: %s", project.name, exc)
         return 0
 
+    if not candidates:
+        return 0
+    base_branch = await asyncio.to_thread(manager.get_default_branch)
+
     adopted = 0
     for candidate in candidates:
         try:
@@ -177,7 +182,7 @@ async def _reconcile_project_clones(
                 project.id,
                 status.branch,
                 str(resolved_path),
-                "main",
+                base_branch,
                 remote_url,
             )
             adopted += int(created)

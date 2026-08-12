@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from gobby.utils.url_sanitize import sanitize_url
+from gobby.worktrees.git import get_default_branch as _detect_default_branch
 
 logger = logging.getLogger(__name__)
 CLONES_ROOT = Path.home() / ".gobby" / "clones"
@@ -182,6 +183,10 @@ class CloneGitManager:
         except (subprocess.SubprocessError, OSError) as e:
             logger.exception("Failed to get remote URL for '%s': %s", remote, e)
             return None
+
+    def get_default_branch(self) -> str:
+        """Detect the default branch of the parent repository."""
+        return _detect_default_branch(self)
 
     def shallow_clone(
         self,
