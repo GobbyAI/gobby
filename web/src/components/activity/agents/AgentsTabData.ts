@@ -2,7 +2,7 @@ import {
   fetchProviderModelCatalog,
   type ProviderModelEntry,
 } from "../../../lib/providerModels";
-import type { AgentFormData } from "../../agents/AgentEditForm";
+import type { AgentFormData } from "../../agents/AgentEditForm.types";
 import type { WorkflowStep } from "../../agents/AgentStepsEditor";
 
 export type AgentSourceFilter = "installed" | "project" | "templates";

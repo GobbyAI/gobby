@@ -2,7 +2,8 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentEditForm, type AgentFormData } from '../AgentEditForm'
+import { AgentEditForm } from '../AgentEditForm'
+import type { AgentFormData } from '../AgentEditForm.types'
 import { AgentRulesEditor } from '../AgentRulesEditor'
 import { AgentVariablesEditor } from '../AgentVariablesEditor'
 

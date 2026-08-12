@@ -1,0 +1,334 @@
+import type { ReactNode } from 'react'
+import { Card } from '../ui/Card'
+import { Chip } from '../ui/Chip'
+import { Heading } from '../shared/Heading'
+import type { AgentItemForPanel } from './AgentEditForm.types'
+
+interface AgentReadOnlyDetailsProps {
+  agentItem: AgentItemForPanel
+}
+
+function MetaRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-h-9 grid-cols-[110px_minmax(0,1fr)] items-center gap-3 py-1">
+      <span className="text-sm text-[var(--text-secondary)]">{label}</span>
+      <div className="min-w-0 text-right">{children}</div>
+    </div>
+  )
+}
+
+function DefinitionSection({ title, content }: { title: string; content: string }) {
+  return (
+    <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+      <Heading
+        level={4}
+        className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+      >
+        {title}
+      </Heading>
+      <pre className="m-0 whitespace-pre-wrap font-sans text-sm leading-relaxed text-[var(--text-secondary)]">
+        {content}
+      </pre>
+    </div>
+  )
+}
+
+export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
+  const definition = agentItem.definition
+  const workflowMetadataKeys = ['rules', 'variables', 'pipeline', 'rule_selectors']
+  const workflowEntries = definition.workflows
+    ? Object.entries(definition.workflows).filter(
+        ([name, value]) =>
+          !workflowMetadataKeys.includes(name) &&
+          typeof value === 'object' &&
+          value !== null &&
+          !Array.isArray(value),
+      )
+    : []
+
+  return (
+    <>
+      <div className="border-b border-border px-5 py-3">
+        <MetaRow label="Provider">
+          <span>{definition.provider}</span>
+        </MetaRow>
+        <MetaRow label="Model">
+          <span>{definition.model || '(default)'}</span>
+        </MetaRow>
+        <MetaRow label="Reasoning">
+          <span>{definition.reasoning_effort || 'Auto'}</span>
+        </MetaRow>
+        <MetaRow label="Require reasoning">
+          <span>{definition.reasoning_required ? 'Yes' : 'No'}</span>
+        </MetaRow>
+        {definition.fallback_agent && (
+          <MetaRow label="Fallback">
+            <span>{definition.fallback_agent}</span>
+          </MetaRow>
+        )}
+        <MetaRow label="Mode">
+          <span>{definition.mode}</span>
+        </MetaRow>
+        <MetaRow label="Isolation">
+          <span>{definition.isolation || 'none'}</span>
+        </MetaRow>
+        <MetaRow label="Base branch">
+          <span>{definition.base_branch}</span>
+        </MetaRow>
+        <MetaRow label="Timeout">
+          <span>{definition.timeout}s</span>
+        </MetaRow>
+        {definition.default_workflow && (
+          <MetaRow label="Default workflow">
+            <span>{definition.default_workflow}</span>
+          </MetaRow>
+        )}
+        {definition.workflows?.pipeline && (
+          <MetaRow label="Pipeline">
+            <span>{definition.workflows.pipeline}</span>
+          </MetaRow>
+        )}
+      </div>
+
+      {definition.description && (
+        <DefinitionSection title="Description" content={definition.description} />
+      )}
+      {definition.role && <DefinitionSection title="Role" content={definition.role} />}
+      {definition.goal && <DefinitionSection title="Goal" content={definition.goal} />}
+      {definition.personality && (
+        <DefinitionSection title="Personality" content={definition.personality} />
+      )}
+      {definition.instructions && (
+        <DefinitionSection title="Instructions" content={definition.instructions} />
+      )}
+
+      {workflowEntries.length > 0 && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Workflows
+          </Heading>
+          <div className="flex flex-col gap-1.5">
+            {workflowEntries.map(([workflowName, rawWorkflow]) => {
+              const workflow = rawWorkflow as {
+                type?: string
+                file?: string
+                mode?: string
+                internal?: boolean
+                step_count?: number
+                description?: string
+              }
+              return (
+                <div
+                  key={workflowName}
+                  className="flex flex-wrap items-center gap-1.5 text-sm"
+                >
+                  <span className="font-[inherit] font-semibold text-[var(--text-primary)]">
+                    {workflowName}
+                  </span>
+                  {workflow.type && <Chip>{workflow.type}</Chip>}
+                  {workflow.file && <Chip>{workflow.file}</Chip>}
+                  {workflow.internal && <Chip>internal</Chip>}
+                  {workflow.step_count != null && <Chip>{workflow.step_count} steps</Chip>}
+                  {workflow.description && (
+                    <span className="basis-full text-xs text-[var(--text-muted)]">
+                      {workflow.description}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {definition.workflows?.rules && definition.workflows.rules.length > 0 && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Rules
+          </Heading>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {definition.workflows.rules.map(name => (
+              <Chip key={name} className="border border-border text-sm">
+                {name}
+              </Chip>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {definition.workflows?.rule_selectors && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Rule Selectors
+          </Heading>
+          {definition.workflows.rule_selectors.include.length > 0 && (
+            <div>
+              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+                Include
+              </span>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {definition.workflows.rule_selectors.include.map(selector => (
+                  <Chip
+                    key={selector}
+                    tone="info"
+                    className="border border-dashed border-[var(--color-info)] text-sm"
+                  >
+                    {selector}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+          {definition.workflows.rule_selectors.exclude.length > 0 && (
+            <div className="mt-1.5">
+              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+                Exclude
+              </span>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                {definition.workflows.rule_selectors.exclude.map(selector => (
+                  <Chip
+                    key={selector}
+                    tone="error"
+                    className="border border-dashed border-[var(--color-error)] text-sm"
+                  >
+                    {selector}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {definition.workflows?.variables &&
+        Object.keys(definition.workflows.variables).length > 0 && (
+          <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+            <Heading
+              level={4}
+              className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+            >
+              Variables
+            </Heading>
+            <div className="flex flex-col gap-1">
+              {Object.entries(definition.workflows.variables).map(([key, value]) => (
+                <div key={key} className="flex items-center gap-2 text-sm">
+                  <code className="min-w-[80px] font-semibold text-[var(--text-primary)]">
+                    {key}
+                  </code>
+                  <span className="flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[var(--text-muted)]">
+                    {typeof value === 'string' ? value : JSON.stringify(value)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      {((definition.blocked_tools && definition.blocked_tools.length > 0) ||
+        (definition.blocked_mcp_tools && definition.blocked_mcp_tools.length > 0)) && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Tool Restrictions
+          </Heading>
+          {definition.blocked_tools && definition.blocked_tools.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+                Blocked Tools
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {definition.blocked_tools.map(tool => (
+                  <Chip key={tool} className="border border-border text-xs">
+                    {tool}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+          {definition.blocked_mcp_tools && definition.blocked_mcp_tools.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs uppercase tracking-[0.3px] text-[var(--text-muted)]">
+                Blocked MCP Tools
+              </span>
+              <div className="flex flex-wrap gap-1">
+                {definition.blocked_mcp_tools.map(tool => (
+                  <Chip key={tool} className="border border-border text-xs">
+                    {tool}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {definition.steps && definition.steps.length > 0 && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Steps ({definition.steps.length})
+          </Heading>
+          <div className="flex flex-col gap-1">
+            {definition.steps.map((step, index) => (
+              <Card key={index} padding="sm" className="flex items-center gap-2 text-sm">
+                <Chip tone="accent">{step.name}</Chip>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {step.description || ''}
+                  {step.transitions && step.transitions.length > 0
+                    ? ` → ${step.transitions.map(transition => transition.to).join(', ')}`
+                    : ''}
+                </span>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {definition.sandbox && (
+        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+          <Heading
+            level={4}
+            className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+          >
+            Sandbox
+          </Heading>
+          <pre className="m-0 overflow-x-auto rounded border border-border bg-[var(--bg-primary)] p-2 font-[inherit] text-xs text-[var(--text-secondary)]">
+            {JSON.stringify(definition.sandbox, null, 2)}
+          </pre>
+        </div>
+      )}
+
+      <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
+        <Heading
+          level={4}
+          className="mt-0 mb-1 text-sm font-semibold uppercase tracking-wider text-[var(--text-muted)]"
+        >
+          Source
+        </Heading>
+        <div className="text-sm text-[var(--text-secondary)] [&_code]:break-all [&_code]:font-[inherit] [&_code]:text-xs [&_code]:text-[var(--text-muted)]">
+          {agentItem.source_path ? (
+            <code>{agentItem.source_path}</code>
+          ) : (
+            <span>
+              Database ({agentItem.source})
+              {agentItem.db_id ? ` — ${agentItem.db_id.slice(0, 8)}` : ''}
+            </span>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}

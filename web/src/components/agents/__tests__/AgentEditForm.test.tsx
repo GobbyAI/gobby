@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AgentEditForm, type AgentFormData } from '../AgentEditForm'
+import { AgentEditForm } from '../AgentEditForm'
+import type { AgentFormData } from '../AgentEditForm.types'
 
 const form: AgentFormData = {
   name: 'reviewer',
