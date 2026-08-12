@@ -123,33 +123,14 @@ def mcp_wrapper_current_source_fingerprint() -> str:
     return _source_fingerprint(_capture_source_digests(MCP_WRAPPER_SOURCE_PATHS))
 
 
-def _stale_mcp_wrapper_source_paths() -> list[str]:
-    stale_paths = []
-    for path, startup_digest in _MCP_WRAPPER_SOURCE_DIGESTS.items():
-        if _hash_source(Path(path)) != startup_digest:
-            stale_paths.append(path)
-    return stale_paths
-
-
 def mcp_wrapper_source_stale_result(tool_name: str) -> dict[str, Any] | None:
-    if tool_name not in WAIT_TOOL_NAMES:
-        return None
+    """Allow the daemon to decide whether a running wrapper is compatible.
 
-    stale_paths = _stale_mcp_wrapper_source_paths()
-    if not stale_paths:
-        return None
-
-    return {
-        "success": False,
-        "error_code": MCP_WRAPPER_STALE_ERROR_CODE,
-        "error": (
-            "Gobby MCP stdio wrapper source changed since this MCP process started. "
-            "Restart the Gobby MCP server before running wait tools."
-        ),
-        "tool_name": tool_name,
-        "stale_source_paths": stale_paths,
-        "restart_required": True,
-    }
+    On-disk byte drift cannot determine protocol compatibility. Dispatching lets
+    the structured proxy recover in place while the daemon fingerprint gate
+    retains authority over genuine incompatibilities.
+    """
+    return None
 
 
 def mcp_wrapper_fingerprint_stale_result(

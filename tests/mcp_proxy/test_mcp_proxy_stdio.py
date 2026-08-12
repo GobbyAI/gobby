@@ -65,7 +65,7 @@ def test_generation_gwiki_timeout_sits_below_extended_http_cap() -> None:
     assert GENERATION_GWIKI_TIMEOUT_SECONDS < wait_tools.MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS
 
 
-def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> None:
+def test_wait_tool_source_drift_uses_in_place_recovery(tmp_path: Path) -> None:
     from gobby.mcp_proxy import wait_tools
 
     source_path = tmp_path / "wait_tools.py"
@@ -76,12 +76,7 @@ def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> N
     with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
         result = wait_tools.mcp_wrapper_source_stale_result("wait_for_summary")
 
-    assert result is not None
-    assert result["success"] is False
-    assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-    assert result["tool_name"] == "wait_for_summary"
-    assert result["stale_source_paths"] == [str(source_path)]
-    assert result["restart_required"] is True
+    assert result is None
 
 
 def test_source_stale_result_ignores_non_wait_tool(tmp_path: Path) -> None:
@@ -1988,21 +1983,19 @@ class TestMCPToolsWrapper:
         )
 
     @pytest.mark.asyncio
-    async def test_call_tool_returns_stale_wrapper_error_before_wait_request(self) -> None:
-        _, mock_proxy, run_tool = self._register_tools()
-        stale_result = {
-            "success": False,
-            "error_code": "GOBBY_MCP_WRAPPER_STALE",
-            "error": "restart required",
-            "tool_name": "wait_for_summary",
-            "stale_source_paths": ["/repo/src/gobby/mcp_proxy/wait_tools.py"],
-            "restart_required": True,
-        }
+    async def test_call_tool_dispatches_wait_when_wrapper_source_drifted(
+        self, tmp_path: Path
+    ) -> None:
+        from gobby.mcp_proxy import wait_tools
 
-        with patch(
-            "gobby.mcp_proxy.stdio.mcp_wrapper_source_stale_result",
-            return_value=stale_result,
-        ):
+        _, mock_proxy, run_tool = self._register_tools()
+        mock_proxy.call_tool.return_value = {"success": True, "completed": True}
+        source_path = tmp_path / "wait_tools.py"
+        source_path.write_text("before")
+        startup_digests = {str(source_path): wait_tools._hash_source(source_path)}
+        source_path.write_text("after")
+
+        with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
             result = await run_tool(
                 "call_tool",
                 server_name="gobby-sessions",
@@ -2010,11 +2003,45 @@ class TestMCPToolsWrapper:
                 arguments={"session_id": "session-123", "timeout_seconds": 300},
             )
 
-        assert result == stale_result
-        mock_proxy.call_tool.assert_not_awaited()
+        assert result == {"success": True, "completed": True}
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 300},
+            preflight_enabled=True,
+        )
 
     @pytest.mark.asyncio
-    async def test_call_tool_local_failures_never_delegate_but_failure_result_does(
+    async def test_call_tool_propagates_daemon_fingerprint_refusal(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        stale_result = {
+            "success": False,
+            "error_code": "GOBBY_MCP_WRAPPER_STALE",
+            "error": "wrapper protocol is incompatible",
+            "tool_name": "wait_for_summary",
+            "provided_wrapper_fingerprint": "stale-wrapper",
+            "expected_wrapper_fingerprint": "current-wrapper",
+            "restart_required": True,
+        }
+        mock_proxy.call_tool.return_value = stale_result
+
+        result = await run_tool(
+            "call_tool",
+            server_name="gobby-sessions",
+            tool_name="wait_for_summary",
+            arguments={"session_id": "session-123", "timeout_seconds": 300},
+        )
+
+        assert result == stale_result
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 300},
+            preflight_enabled=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_input_failures_never_delegate_but_failure_result_does(
         self,
     ) -> None:
         _, mock_proxy, run_tool = self._register_tools()
@@ -2022,24 +2049,8 @@ class TestMCPToolsWrapper:
             "success": False,
             "error": "delegated failure",
         }
-        stale_result = {
-            "success": False,
-            "error_code": "GOBBY_MCP_WRAPPER_STALE",
-            "error": "restart required",
-        }
-
         malformed = await run_tool("call_tool", arguments="{not-json")
         missing_route = await run_tool("call_tool", arguments={})
-        with patch(
-            "gobby.mcp_proxy.stdio.mcp_wrapper_source_stale_result",
-            return_value=stale_result,
-        ):
-            stale = await run_tool(
-                "call_tool",
-                server_name="gobby-sessions",
-                tool_name="wait_for_summary",
-                arguments={"session_id": "session-123"},
-            )
 
         mock_proxy.call_tool.assert_not_awaited()
         delegated = await run_tool(
@@ -2051,7 +2062,6 @@ class TestMCPToolsWrapper:
 
         assert malformed["success"] is False
         assert missing_route["success"] is False
-        assert stale == stale_result
         assert delegated == {"success": False, "error": "delegated failure"}
         mock_proxy.call_tool.assert_awaited_once_with(
             "server-a",
