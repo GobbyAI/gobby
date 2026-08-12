@@ -218,7 +218,6 @@ describe('MarkdownBody typography ownership', () => {
 
     const hosts = [
       'src/components/chat/MessageItem.tsx',
-      'src/components/FilesPage.tsx',
       'src/components/activity/FilesTab.tsx',
       'src/components/activity/PlanReviewCard.tsx',
       'src/components/activity/SessionsTabDetail.tsx',
@@ -252,7 +251,7 @@ describe('MarkdownBody typography ownership', () => {
     expect(container.querySelector('.message-content')).toBeNull()
 
     const directConsumers = {
-      'src/components/chat/ToolCallCard.tsx': [
+      'src/components/chat/ToolCallCardContent.tsx': [
         '<MarkdownBody id={`tool-plan-${callId}`} content={args.plan} />',
         '<MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />',
       ],

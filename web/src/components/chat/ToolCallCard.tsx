@@ -1,333 +1,73 @@
 import { memo, useCallback, useMemo, useState } from 'react'
-import { CodeBlock } from '../shared/CodeBlock'
-import { MarkdownBody } from '../shared/MarkdownBody'
-import type { ToolCall, ToolResult } from '../../types/chat'
+import type { ToolCall } from '../../types/chat'
 import { cn } from '../../lib/utils'
+import { TOOL_CARD_SPACING } from '../shared/spacing'
 import { Badge } from '../ui/Badge'
-import { Button } from '../ui/Button'
 import { DropdownCaret } from '../ui/DropdownCaret'
-import { Input } from '../ui/Input'
 import { JsonBlock } from './JsonBlock'
 import { RichContentBlocks } from './RichContentBlocks'
 import {
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
   defaultExpandedForCall,
-  extractBase64Image,
-  extractResultContent,
-  extractResultMetadata,
-  extractShellOutputContent,
   FILE_TOOL_TYPES,
-  formatToolName,
   getToolDisplayName,
-  getLanguageFromPath,
   getToolSummary,
   groupToolCalls,
   hasVisibleToolCall,
-  parseGrepOutput,
-  parseReadOutput,
   pathBasename,
   resolveToolType,
   type ToolCallGroup,
-  unwrapMcpResultEnvelope,
 } from './ToolCallCard.helpers'
 import {
-  JsonResultBlock,
-  MetadataStrip,
-  ToolResultBody,
-} from './ToolResultBlocks'
-import { ToolResultImage } from './ToolResultImage'
-import { DiffBlock } from '../shared/DiffBlock'
-import { computeSyntheticDiffLines } from '../shared/DiffBlock.helpers'
-import { TOOL_CARD_SPACING } from '../shared/spacing'
-import { TOOL_ERROR_PRE_CLASS, TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
+  ToolArgumentsContent,
+  ToolErrorBody,
+  ToolLocations,
+  ToolResultContent,
+} from './ToolCallCardContent'
+import { AskUserQuestionCard, ToolApprovalCard } from './ToolCallCardInteractions'
 
 interface ToolCallCardProps {
   toolCalls: ToolCall[]
   onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  onRespondToApproval?: (
+    toolCallId: string,
+    decision: 'approve' | 'reject' | 'approve_always',
+  ) => boolean | void
 }
 
-interface AskUserOption {
-  label: string
-  description: string
-}
-
-interface AskUserQuestionItem {
-  question: string
-  header: string
-  options: AskUserOption[]
-  multiSelect: boolean
-}
-
-function ToolArgumentsContent({
-  args,
-  callId,
+const ToolCallItem = memo(function ToolCallItem({
+  call,
+  onRespond,
+  onRespondToApproval,
+  nested = false,
 }: {
-  args: Record<string, unknown>
-  callId: string
+  call: ToolCall
+  onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
+  onRespondToApproval?: (
+    toolCallId: string,
+    decision: 'approve' | 'reject' | 'approve_always',
+  ) => boolean | void
+  nested?: boolean
 }) {
-  const filePath = stringValue(args.file_path)
-
-  // Write pattern: file_path + content
-  if (filePath && typeof args.content === 'string') {
-    const language = getLanguageFromPath(filePath)
-    return (
-      <div>
-        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
-          Write <span className="font-mono text-foreground">{filePath}</span>
-        </div>
-        <CodeBlock
-          language={language}
-          startingLineNumber={1}
-          className="tool-code-surface"
-          customStyle={TOOL_RESULT_CUSTOM_STYLE}
-        >
-          {args.content as string}
-        </CodeBlock>
-      </div>
-    )
-  }
-
-  // Edit pattern: file_path + old_string + new_string — unified diff
-  if (filePath && typeof args.old_string === 'string' && typeof args.new_string === 'string') {
-    const language = getLanguageFromPath(filePath)
-    return (
-      <div>
-        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
-          Edit <span className="font-mono text-foreground">{filePath}</span>
-        </div>
-        <DiffBlock lines={computeSyntheticDiffLines(args.old_string as string, args.new_string as string)} language={language} className="tool-code-surface" />
-      </div>
-    )
-  }
-
-  // Plan pattern (ExitPlanMode / ExitSpecMode and other plan-mode tools): the
-  // `plan` arg is markdown. Render it formatted instead of an escaped JSON blob
-  // that leaks literal \n\n and \" to the reader.
-  if (typeof args.plan === 'string') {
-    const title =
-      typeof args.title === 'string' && args.title.trim() ? args.title : 'Plan'
-    return (
-      <div>
-        <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>{title}</div>
-        <MarkdownBody id={`tool-plan-${callId}`} content={args.plan} />
-      </div>
-    )
-  }
-
-  // Fallback: syntax-highlighted JSON
-  return (
-    <div>
-      <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Arguments</div>
-      <JsonBlock
-        value={args}
-        className="rounded max-h-96 tool-code-surface"
-        testId="toolcall-json"
-      />
-    </div>
-  )
-}
-
-function ToolErrorBody({ error }: { error: string }) {
-  const cleaned = error.replace(/<\/?tool_use_error>/g, '').trim()
-  const looksLikeJson = cleaned.startsWith('{') || cleaned.startsWith('[')
-  return (
-    <div>
-      <div className={cn('text-destructive-foreground', TOOL_CARD_SPACING.label)}>Error</div>
-      {looksLikeJson ? (
-        <JsonResultBlock value={cleaned} variant="error" />
-      ) : (
-        <pre className={TOOL_ERROR_PRE_CLASS}>{cleaned}</pre>
-      )}
-    </div>
-  )
-}
-
-function formatToolLocation(location: Record<string, unknown>): string {
-  const uri = stringValue(location.uri) || stringValue(location.path) || stringValue(location.file)
-  const line = numberValue(location.line) ?? numberValue(location.startLine)
-  const column = numberValue(location.column) ?? numberValue(location.startColumn)
-  const suffix = [
-    line != null ? line : null,
-    column != null ? column : null,
-  ].filter((value) => value != null).join(':')
-  if (uri && suffix) return `${uri}:${suffix}`
-  if (uri) return uri
-  return JSON.stringify(location)
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === 'string' && value ? value : null
-}
-
-function numberValue(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
-function ToolResultContent({ call }: { call: ToolCall }) {
-  const toolType = resolveToolType(call)
-  const extractedContent = extractResultContent(call.result)
-  const rawContent = toolType === 'bash'
-    ? extractShellOutputContent(extractedContent)
-    : extractedContent
-  const metadata = extractResultMetadata(call.result)
-
-  const imageSrc = useMemo(() => extractBase64Image(rawContent), [rawContent])
-
-  const resultStr = useMemo(() => {
-    try {
-      if (typeof rawContent === 'string') {
-        try {
-          return JSON.stringify(JSON.parse(rawContent), null, 2)
-        } catch {
-          return rawContent
-        }
-      } else {
-        return JSON.stringify(rawContent, null, 2)
-      }
-    } catch (e) {
-      if (process.env.NODE_ENV === 'development') console.error('Failed to serialize tool call result:', e)
-      return String(rawContent)
-    }
-  }, [rawContent])
-  const filePath = stringValue(call.arguments?.file_path)
-
-  // Base64 image — render inline
-  if (imageSrc) {
-    return <ToolResultImage src={imageSrc} />
-  }
-
-  if (filePath) {
-    const parsed = parseReadOutput(resultStr)
-    if (parsed) {
-      const language = getLanguageFromPath(filePath)
-      const fileName = pathBasename(filePath)
-      const lineCount = metadata?.line_count as number | undefined
-      return (
-        <div className="rounded overflow-hidden">
-          <div className="flex items-center justify-between bg-muted/50 px-3 py-1 text-xs">
-            <span className="text-muted-foreground font-mono truncate">{fileName}</span>
-            {lineCount != null && (
-              <span className="text-muted-foreground/60 ml-2">{lineCount} lines</span>
-            )}
-          </div>
-          <CodeBlock
-            language={language}
-            startingLineNumber={parsed.startLine}
-            wrapLongLines
-            className="tool-code-surface"
-            customStyle={{
-              ...TOOL_RESULT_CUSTOM_STYLE,
-              borderRadius: 0,
-            }}
-          >
-            {parsed.content}
-          </CodeBlock>
-        </div>
-      )
-    }
-  }
-
-  // Grep content mode: parse file:line:content and render per-file with highlighting
-  if (toolType === 'grep') {
-    const groups = parseGrepOutput(resultStr)
-    if (groups) {
-      const matchCount = metadata?.match_count as number | undefined
-      return (
-        <div className="space-y-2">
-          {matchCount != null && (
-            <div className="text-muted-foreground/60 text-xs">{matchCount} match{matchCount !== 1 ? 'es' : ''}</div>
-          )}
-          {groups.map((group, i) => {
-            const lang = getLanguageFromPath(group.filePath)
-            const content = group.lines.map(l => l.content).join('\n')
-            const startLine = group.lines[0].lineNum
-            return (
-              <div key={i}>
-                <div className="text-muted-foreground text-xs mb-1 font-mono [overflow-wrap:anywhere]">{group.filePath}</div>
-                <CodeBlock
-                  language={lang}
-                  startingLineNumber={startLine}
-                  wrapLongLines
-                  className="tool-code-surface"
-                  customStyle={TOOL_RESULT_CUSTOM_STYLE}
-                >
-                  {content}
-                </CodeBlock>
-              </div>
-            )
-          })}
-        </div>
-      )
-    }
-    // files_with_matches / count mode — render as a clean file list
-    const fileLines = resultStr.trim().split('\n').filter(l => l.trim())
-    if (fileLines.length > 0) {
-      return (
-        <div className="font-mono text-xs space-y-0.5 py-1 [overflow-wrap:anywhere]">
-          {fileLines.map((f, i) => (
-            <div key={i} className="text-muted-foreground">{f}</div>
-          ))}
-        </div>
-      )
-    }
-  }
-
-  // Bash results: show exit code from metadata when available
-  if (toolType === 'bash' && metadata?.exit_code != null) {
-    const exitCode = metadata.exit_code as number
-    return (
-      <div>
-        {exitCode !== 0 && (
-          <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
-        )}
-        <ToolResultBody body={resultStr} />
-      </div>
-    )
-  }
-
-  // Agent/Task results: render as markdown
-  const toolName = formatToolName(call.tool_name)
-  if (toolName === 'Agent' || toolName === 'Task') {
-    return (
-      <div className="max-h-96 overflow-y-auto text-xs p-2 tool-code-surface">
-        <MarkdownBody content={resultStr} id={`tool-result-${call.id}`} />
-      </div>
-    )
-  }
-
-  // MCP-style structured envelope: surface the dominant string field as the
-  // body and the remaining keys as a compact metadata strip.
-  const envelope = unwrapMcpResultEnvelope(rawContent)
-  if (envelope) {
-    return (
-      <div className="overflow-hidden rounded border border-border/40">
-        <MetadataStrip meta={envelope.meta} />
-        <ToolResultBody body={envelope.primary} />
-      </div>
-    )
-  }
-
-  return <ToolResultBody body={resultStr} />
-}
-
-const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToApproval, nested = false }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void; nested?: boolean }) {
   const displayName = getToolDisplayName(call)
   const toolType = resolveToolType(call)
   const [expanded, setExpanded] = useState(defaultExpandedForCall(call))
   const summary = getToolSummary(call)
-  const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
+  const isCompact =
+    summary !== null &&
+    (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
+
   if (call.tool_name === 'AskUserQuestion') {
     return <AskUserQuestionCard call={call} onRespond={onRespond} />
   }
-
   if (call.status === 'pending_approval') {
     return <ToolApprovalCard call={call} onRespondToApproval={onRespondToApproval} />
   }
 
-  const hasDetails = call.arguments ||
+  const hasDetails =
+    call.arguments ||
     call.result != null ||
     call.error ||
     Boolean(call.content_blocks?.length) ||
@@ -335,21 +75,30 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     call.raw_output != null
 
   return (
-    <div className={cn(
-      '@container',
-      nested
-        ? 'border-b border-border last:border-b-0 overflow-hidden'
-        : 'rounded-lg border border-border overflow-hidden my-1.5',
-      call.status === 'error' && 'border-destructive-foreground/30'
-    )}>
+    <div
+      className={cn(
+        '@container',
+        nested
+          ? 'border-b border-border last:border-b-0 overflow-hidden'
+          : 'rounded-lg border border-border overflow-hidden my-1.5',
+        call.status === 'error' && 'border-destructive-foreground/30',
+      )}
+    >
       <div
-        className={cn(TOOL_CARD_SPACING.header, 'text-sm cursor-pointer hover:bg-muted/50 transition-colors')}
+        className={cn(
+          TOOL_CARD_SPACING.header,
+          'text-sm cursor-pointer hover:bg-muted/50 transition-colors',
+        )}
         role="button"
         tabIndex={0}
         aria-expanded={expanded}
         onClick={() => hasDetails && setExpanded(!expanded)}
-        onKeyDown={(event) => {
-          if (event.target === event.currentTarget && hasDetails && (event.key === 'Enter' || event.key === ' ')) {
+        onKeyDown={event => {
+          if (
+            event.target === event.currentTarget &&
+            hasDetails &&
+            (event.key === 'Enter' || event.key === ' ')
+          ) {
             event.preventDefault()
             setExpanded(!expanded)
           }
@@ -364,362 +113,111 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
         )}
         {summary && isFileHeader ? (
           <>
-            <span className="text-muted-foreground text-xs truncate hidden @sm:inline">{summary}</span>
-            <span className="text-muted-foreground text-xs truncate @sm:hidden">{pathBasename(summary)}</span>
+            <span className="text-muted-foreground text-xs truncate hidden @sm:inline">
+              {summary}
+            </span>
+            <span className="text-muted-foreground text-xs truncate @sm:hidden">
+              {pathBasename(summary)}
+            </span>
           </>
         ) : summary ? (
-          <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">{summary}</span>
+          <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">
+            {summary}
+          </span>
         ) : null}
         <div className="flex-1" />
-        {hasDetails && (
-          <DropdownCaret open={expanded} />
-        )}
+        {hasDetails && <DropdownCaret open={expanded} />}
       </div>
       {expanded && hasDetails && (
         <div className={cn(TOOL_CARD_SPACING.body, 'text-xs')}>
-          {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
-            <ToolArgumentsContent args={call.arguments} callId={call.id} />
-          )}
-          {call.locations && call.locations.length > 0 && (
-            <div>
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Locations</div>
-              <div className="space-y-1 font-mono text-muted-foreground">
-                {call.locations.map((location, index) => (
-                  <div key={`${call.id}-loc-${index}`} className="truncate">
-                    {formatToolLocation(location)}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+        {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
+          <ToolArgumentsContent args={call.arguments} callId={call.id} />
+        )}
+        {call.locations && call.locations.length > 0 && (
+          <ToolLocations callId={call.id} locations={call.locations} />
+        )}
           {call.content_blocks && call.content_blocks.length > 0 && (
             <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Content</div>
-              <RichContentBlocks blocks={call.content_blocks} idPrefix={`tool-content-${call.id}`} />
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
+                Content
+              </div>
+              <RichContentBlocks
+                blocks={call.content_blocks}
+                idPrefix={`tool-content-${call.id}`}
+              />
             </div>
           )}
           {call.status === 'completed' && call.result != null && toolType !== 'edit' && (
             <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Result</div>
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
+                Result
+              </div>
               <ToolResultContent call={call} />
             </div>
           )}
           {call.raw_output != null && (
             <div className="min-w-0 max-w-full overflow-hidden">
-              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Raw Output</div>
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>
+                Raw Output
+              </div>
               <JsonBlock value={call.raw_output} />
             </div>
           )}
-          {call.status === 'error' && call.error && (
-            <ToolErrorBody error={call.error} />
-          )}
+          {call.status === 'error' && call.error && <ToolErrorBody error={call.error} />}
         </div>
       )}
     </div>
   )
 })
 
-function ToolApprovalCard({ call, onRespondToApproval }: { call: ToolCall; onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void }) {
-  const displayName = getToolDisplayName(call)
-  const isLive = onRespondToApproval && call.status === 'pending_approval'
-  const [decided, setDecided] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-
-  const handleDecision = (decision: 'approve' | 'reject' | 'approve_always') => {
-    if (decided) return
-    const sent = onRespondToApproval?.(call.id, decision)
-    if (sent === false) {
-      setSendError('Disconnected — reconnecting...')
-    } else {
-      setSendError(null)
-      setDecided(true)
-    }
-  }
-
-  // Read-only: show what happened
-  if (!isLive) {
-    const wasApproved = call.status === 'completed'
-    const wasError = call.status === 'error'
-    return (
-      <div className="rounded-lg border border-border/30 bg-muted/5 overflow-hidden my-1.5 opacity-75">
-        <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
-          <span className="font-mono text-foreground">{displayName}</span>
-          {wasApproved && <Badge variant="success">Approved</Badge>}
-          {wasError && <Badge variant="error">Rejected</Badge>}
-          {!wasApproved && !wasError && <Badge variant="warning">Pending</Badge>}
-        </div>
-        {call.arguments && Object.keys(call.arguments).length > 0 && (
-          <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
-            <ToolArgumentsContent args={call.arguments} callId={call.id} />
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="rounded-lg border border-warning-foreground/30 bg-warning/20 overflow-hidden my-1.5">
-      <div className={cn(TOOL_CARD_SPACING.headerDense, 'text-sm')}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground shrink-0">
-          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-          <line x1="12" y1="9" x2="12" y2="13" />
-          <line x1="12" y1="17" x2="12.01" y2="17" />
-        </svg>
-        <span className="font-mono text-foreground">{displayName}</span>
-        <Badge variant="warning">Approval Required</Badge>
-      </div>
-      {call.arguments && Object.keys(call.arguments).length > 0 && (
-        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs')}>
-          <ToolArgumentsContent args={call.arguments} callId={call.id} />
-        </div>
-      )}
-      <div className="flex items-center gap-2 px-3 pb-2">
-        <Button size="sm" variant="accent" onClick={() => handleDecision('approve')} disabled={decided}>
-          Approve
-        </Button>
-        <Button size="sm" variant="outline" onClick={() => handleDecision('approve_always')} disabled={decided}>
-          Always Approve
-        </Button>
-        <Button size="sm" variant="destructive" onClick={() => handleDecision('reject')} disabled={decided}>
-          Reject
-        </Button>
-      </div>
-      {sendError && (
-        <div className={cn(TOOL_CARD_SPACING.bodyCompact, 'text-xs text-warning-foreground')}>{sendError}</div>
-      )}
-    </div>
-  )
-}
-
-/** Parse answered values from AskUserQuestion result content. */
-function normalizeAnsweredValues(value: unknown): Record<string, string> | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-
-  const answers: Record<string, string> = {}
-  for (const [question, answer] of Object.entries(value)) {
-    if (typeof answer === 'string') {
-      answers[question] = answer
-      continue
-    }
-
-    const serialized = Array.isArray(answer) && answer.every((item) => typeof item === 'string')
-      ? answer.join(', ')
-      : JSON.stringify(answer)
-    if (serialized !== undefined) answers[question] = serialized
-  }
-  return answers
-}
-
-function parseAnsweredValues(result: ToolResult | undefined): Record<string, string> | null {
-  if (!result?.content) return null
-  if (result.kind === 'json') {
-    if (typeof result.content !== 'object' || Array.isArray(result.content)) return null
-    const obj = result.content as Record<string, unknown>
-    return normalizeAnsweredValues(obj.answers ?? obj)
-  }
-  if (result.kind === 'text') {
-    if (typeof result.content !== 'string') return null
-    const text = result.content
-    try {
-      const parsed = JSON.parse(text)
-      if (parsed && typeof parsed === 'object') {
-        const answers = normalizeAnsweredValues(parsed.answers ?? parsed)
-        if (answers) return answers
-      }
-    } catch {
-      // Fall back to treating content as a plain string
-    }
-    if (text.trim()) {
-      return { _raw: text }
-    }
-  }
-  return null
-}
-
-function AskUserQuestionCard({ call, onRespond }: { call: ToolCall; onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void }) {
-  const args = call.arguments as { questions?: AskUserQuestionItem[] } | undefined
-  const questions = args?.questions
-  const [selectedOptions, setSelectedOptions] = useState<Record<number, string[]>>({})
-  const [otherTexts, setOtherTexts] = useState<Record<number, string>>({})
-  const [submitted, setSubmitted] = useState(false)
-  const [sendError, setSendError] = useState<string | null>(null)
-
-  if (!questions || !Array.isArray(questions)) return null
-
-  const isLive = onRespond && call.status === 'calling'
-
-  // Read-only mode: show what was answered
-  if (!isLive) {
-    const answered = parseAnsweredValues(call.result)
-    return (
-      <div className="rounded-lg border border-border/30 bg-muted/5 overflow-hidden my-1.5 p-3 opacity-75">
-        {questions.map((q, qi) => {
-          const answer = answered?.[q.question]
-          const answerLabels = answer ? answer.split(', ') : []
-          return (
-            <div key={qi} className="mb-3 last:mb-0">
-              <div className="flex items-center gap-2 mb-1.5">
-                <Badge variant="info">{q.header}</Badge>
-                {answer ? <Badge variant="success">Answered</Badge> : <Badge variant="default">No response</Badge>}
-              </div>
-              <div className="text-sm text-foreground mb-2">{q.question}</div>
-              <div className="flex flex-wrap gap-1.5">
-                {q.options.map((opt, oi) => {
-                  const wasSelected = answerLabels.includes(opt.label)
-                  return (
-                    <div
-                      key={oi}
-                      className={cn(
-                        'rounded-md border px-3 py-1.5 text-sm text-left',
-                        wasSelected
-                          ? 'border-accent bg-accent/20 text-foreground'
-                          : 'border-border/50 text-muted-foreground/50'
-                      )}
-                    >
-                      <div className="font-medium">{opt.label}</div>
-                    </div>
-                  )
-                })}
-              </div>
-              {answer && !q.options.some((o) => answerLabels.includes(o.label)) && (
-                <div className="mt-1.5 text-sm text-foreground italic">&ldquo;{answer}&rdquo;</div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  const handleOptionClick = (qi: number, label: string, multiSelect: boolean) => {
-    if (submitted) return
-    setSelectedOptions((prev) => {
-      const current = prev[qi] || []
-      if (label === '__other__') {
-        if (current.includes('__other__')) return { ...prev, [qi]: current.filter((l) => l !== '__other__') }
-        return multiSelect ? { ...prev, [qi]: [...current, '__other__'] } : { ...prev, [qi]: ['__other__'] }
-      }
-      if (multiSelect) {
-        return current.includes(label)
-          ? { ...prev, [qi]: current.filter((l) => l !== label) }
-          : { ...prev, [qi]: [...current.filter((l) => l !== '__other__'), label] }
-      }
-      return { ...prev, [qi]: [label] }
-    })
-  }
-
-  const handleSubmit = () => {
-    if (!onRespond || submitted) return
-    const answers: Record<string, string> = {}
-    questions.forEach((q, qi) => {
-      const selected = selectedOptions[qi] || []
-      if (selected.includes('__other__')) answers[q.question] = otherTexts[qi] || ''
-      else if (selected.length > 0) answers[q.question] = selected.join(', ')
-    })
-    const sent = onRespond(call.id, answers)
-    if (sent === false) {
-      setSendError('Disconnected — reconnecting...')
-    } else {
-      setSendError(null)
-      setSubmitted(true)
-    }
-  }
-
-  const hasSelection = Object.values(selectedOptions).some((s) => s.length > 0)
-
-  return (
-    <div className={cn('rounded-lg border border-accent/30 bg-accent/5 overflow-hidden my-1.5 p-3', submitted && 'opacity-60')}>
-      {questions.map((q, qi) => (
-        <div key={qi} className="mb-3 last:mb-0">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Badge variant="info">{q.header}</Badge>
-            {q.multiSelect && <span className="text-xs text-muted-foreground">Select multiple</span>}
-          </div>
-          <div className="text-sm text-foreground mb-2">{q.question}</div>
-          <div className="flex flex-wrap gap-1.5">
-            {q.options.map((opt, oi) => {
-              const isSelected = (selectedOptions[qi] || []).includes(opt.label)
-              return (
-                <Button
-                  key={oi}
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className={cn(
-                    'justify-start whitespace-normal rounded-md border px-3 py-1.5 text-left text-sm font-normal transition-colors',
-                    isSelected ? 'border-accent bg-accent/20 text-foreground' : 'border-border hover:bg-muted text-muted-foreground'
-                  )}
-                  onClick={() => handleOptionClick(qi, opt.label, q.multiSelect)}
-                  disabled={submitted}
-                >
-                  <div className="font-medium">{opt.label}</div>
-                  {opt.description && <div className="text-xs opacity-75">{opt.description}</div>}
-                </Button>
-              )
-            })}
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className={cn(
-                'rounded-md border px-3 py-1.5 text-sm transition-colors',
-                (selectedOptions[qi] || []).includes('__other__') ? 'border-accent bg-accent/20 text-foreground' : 'border-border hover:bg-muted text-muted-foreground'
-              )}
-              onClick={() => handleOptionClick(qi, '__other__', q.multiSelect)}
-              disabled={submitted}
-            >
-              Other
-            </Button>
-          </div>
-          {(selectedOptions[qi] || []).includes('__other__') && (
-            <Input
-              wrapperClassName="mt-2"
-              className="h-auto w-full rounded-md border border-border bg-transparent px-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-accent"
-              type="text"
-              placeholder="Type your answer..."
-              value={otherTexts[qi] || ''}
-              onChange={(e) => setOtherTexts((p) => ({ ...p, [qi]: e.target.value }))}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSubmit()
-                }
-              }}
-              disabled={submitted}
-            />
-          )}
-        </div>
-      ))}
-      {!submitted && hasSelection && (
-        <Button size="sm" variant="accent" onClick={handleSubmit} className="mt-2">
-          Submit
-        </Button>
-      )}
-      {sendError && (
-        <div className="mt-1.5 text-xs text-warning-foreground">{sendError}</div>
-      )}
-    </div>
-  )
-}
-
 function StatusIcon({ status }: { status: string }) {
   if (status === 'calling') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-accent animate-spin" aria-label="In flight" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-accent animate-spin"
+        aria-label="In flight"
+        role="img"
+      >
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (status === 'completed') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-success-foreground"
+        aria-label="Completed"
+        role="img"
+      >
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
   }
   if (status === 'error') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-destructive-foreground" aria-label="Errors" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-destructive-foreground"
+        aria-label="Errors"
+        role="img"
+      >
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -727,7 +225,17 @@ function StatusIcon({ status }: { status: string }) {
   }
   if (status === 'pending' || status === 'pending_approval') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground" aria-label="Pending" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-warning-foreground"
+        aria-label="Pending"
+        role="img"
+      >
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>
@@ -736,17 +244,45 @@ function StatusIcon({ status }: { status: string }) {
   return null
 }
 
-function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: boolean; allCompleted: boolean; hasInFlight: boolean }) {
+function GroupStatusIcon({
+  hasErrors,
+  allCompleted,
+  hasInFlight,
+}: {
+  hasErrors: boolean
+  allCompleted: boolean
+  hasInFlight: boolean
+}) {
   if (hasInFlight) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" className="text-accent animate-spin" aria-label="In flight" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.25"
+        className="text-accent animate-spin"
+        aria-label="In flight"
+        role="img"
+      >
         <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="16" />
       </svg>
     )
   }
   if (hasErrors) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.75" className="text-destructive-foreground" aria-label="Errors" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2.75"
+        className="text-destructive-foreground"
+        aria-label="Errors"
+        role="img"
+      >
         <line x1="18" y1="6" x2="6" y2="18" />
         <line x1="6" y1="6" x2="18" y2="18" />
       </svg>
@@ -754,7 +290,17 @@ function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: 
   }
   if (allCompleted) {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-success-foreground" aria-label="Completed" role="img">
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className="text-success-foreground"
+        aria-label="Completed"
+        role="img"
+      >
         <polyline points="20 6 9 17 4 12" />
       </svg>
     )
@@ -762,12 +308,21 @@ function GroupStatusIcon({ hasErrors, allCompleted, hasInFlight }: { hasErrors: 
   return null
 }
 
-function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondToApproval }: {
+function ToolCallGroupHeader({
+  group,
+  expanded,
+  onToggle,
+  onRespond,
+  onRespondToApproval,
+}: {
   group: ToolCallGroup
   expanded: boolean
   onToggle: () => void
   onRespond?: (toolCallId: string, answers: Record<string, string>) => boolean | void
-  onRespondToApproval?: (toolCallId: string, decision: 'approve' | 'reject' | 'approve_always') => boolean | void
+  onRespondToApproval?: (
+    toolCallId: string,
+    decision: 'approve' | 'reject' | 'approve_always',
+  ) => boolean | void
 }) {
   const serverName = group.tool_calls[0]?.server_name
   const groupBorderClass = group.hasErrors
@@ -786,17 +341,23 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
         tabIndex={0}
         aria-expanded={expanded}
         onClick={onToggle}
-        onKeyDown={(event) => {
+        onKeyDown={event => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
             onToggle()
           }
         }}
       >
-        <GroupStatusIcon hasErrors={group.hasErrors} allCompleted={group.allCompleted} hasInFlight={group.hasInFlight} />
+        <GroupStatusIcon
+          hasErrors={group.hasErrors}
+          allCompleted={group.allCompleted}
+          hasInFlight={group.hasInFlight}
+        />
         <span className="font-mono text-foreground">{group.displayName}</span>
         <Badge variant="default">×{group.tool_calls.length}</Badge>
-        {serverName && serverName !== 'builtin' && <span className="text-muted-foreground text-xs">{serverName}</span>}
+        {serverName && serverName !== 'builtin' && (
+          <span className="text-muted-foreground text-xs">{serverName}</span>
+        )}
         <div className="flex-1" />
         <DropdownCaret open={expanded} />
       </div>
@@ -817,20 +378,21 @@ function ToolCallGroupHeader({ group, expanded, onToggle, onRespond, onRespondTo
   )
 }
 
-export const ToolCallCards = memo(function ToolCallCards({ toolCalls, onRespond, onRespondToApproval }: ToolCallCardProps) {
-  const visibleToolCalls = useMemo(
-    () => toolCalls.filter(hasVisibleToolCall),
-    [toolCalls],
-  )
+export const ToolCallCards = memo(function ToolCallCards({
+  toolCalls,
+  onRespond,
+  onRespondToApproval,
+}: ToolCallCardProps) {
+  const visibleToolCalls = useMemo(() => toolCalls.filter(hasVisibleToolCall), [toolCalls])
   const segments = useMemo(() => groupToolCalls(visibleToolCalls), [visibleToolCalls])
-  const [groupExpansionOverrides, setGroupExpansionOverrides] = useState<Record<string, boolean>>({})
+  const [groupExpansionOverrides, setGroupExpansionOverrides] = useState<
+    Record<string, boolean>
+  >({})
 
   const toggleGroup = useCallback((key: string, defaultExpanded: boolean) => {
-    setGroupExpansionOverrides(prev => {
-      const current = prev[key]
-      const next = { ...prev }
-      next[key] = current == null ? !defaultExpanded : !current
-      return next
+    setGroupExpansionOverrides(previous => {
+      const current = previous[key]
+      return { ...previous, [key]: current == null ? !defaultExpanded : !current }
     })
   }, [])
 
