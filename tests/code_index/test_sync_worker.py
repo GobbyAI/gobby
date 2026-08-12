@@ -921,7 +921,7 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     code_storage: CodeIndexStorage,
     tmp_path: Path,
 ) -> None:
-    """Vector gcode timeouts stay pending without traceback logs."""
+    """Vector gcode timeouts exhaust bounded retries and stay pending."""
     project_id = PROJECT_ID
     file_path = "src/app.py"
     _write_source(tmp_path)
@@ -948,8 +948,8 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
         )
 
     assert did_sync is False
-    assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)]
-    assert gcode_gateway.vector_sync_timeouts == [123.0]
+    assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)] * 3
+    assert gcode_gateway.vector_sync_timeouts == [123.0] * 3
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is False
@@ -957,11 +957,13 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     assert code_storage.list_projection_cleanup_pending()
     assert any(
         record.levelno == logging.WARNING
-        and "Sync worker: vector sync transport failure for src/app.py" in record.getMessage()
+        and "Sync worker: transient vector sync failure for src/app.py" in record.getMessage()
         and not record.exc_info
         for record in caplog.records
     )
-    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(errors) == 1
+    assert "vector sync retries exhausted for src/app.py" in errors[0].getMessage()
 
 
 @pytest.mark.asyncio

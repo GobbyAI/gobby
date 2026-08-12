@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
@@ -34,6 +34,7 @@ INCIDENT_STDERR = (
 DAEMON_CONFIG_STDERR = (
     "Error: daemon effective config request failed: daemon could not be reached (timeout)"
 )
+EMBEDDING_CONFIG_STDERR = "Error: embedding config is required for vector lifecycle commands"
 
 
 class FakeClock:
@@ -263,6 +264,21 @@ class DaemonConfigGateway:
         return {"success": True}
 
 
+class RetryingVectorGateway:
+    def __init__(self, failures: list[GcodeCommandError | None]) -> None:
+        self.failures = failures
+        self.vector_calls: list[str] = []
+
+    async def vector_sync_file(
+        self, project_root: Path, file_path: str, *, timeout: float | None = None
+    ) -> dict[str, Any]:
+        self.vector_calls.append(file_path)
+        failure = self.failures.pop(0) if self.failures else None
+        if failure is not None:
+            raise failure
+        return {"success": True}
+
+
 def _write_files(root: Path, paths: list[str]) -> None:
     for path in paths:
         full = root / path
@@ -354,7 +370,7 @@ async def test_open_breaker_fetches_graph_only_batches(tmp_path: Path) -> None:
         vector_breaker=breaker,
     )
     assert breaker.state is BreakerState.OPEN
-    assert len(gateway.vector_calls) == 5  # threshold reached during the pass
+    assert len(gateway.vector_calls) == 15  # five exhausted three-attempt bursts
 
     storage.get_pending_sync_files.reset_mock()
     gateway.vector_calls.clear()
@@ -389,7 +405,7 @@ async def test_half_open_probes_single_file_then_reopens(tmp_path: Path) -> None
         batch_size=50,
         vector_breaker=breaker,
     )
-    assert gateway.vector_calls == ["src/f0.py"]  # exactly one probe
+    assert gateway.vector_calls == ["src/f0.py"] * 3  # one file, one bounded retry burst
     assert breaker.state is BreakerState.OPEN  # failed probe reopened
 
 
@@ -643,6 +659,86 @@ async def test_embedding_transport_failure_does_not_block_graph_sync(tmp_path: P
 
     assert vector_breaker.state is BreakerState.OPEN
     assert gateway_breaker.state is BreakerState.CLOSED
-    assert gateway.vector_calls == [path]
+    assert gateway.vector_calls == [path] * 3
     assert gateway.graph_calls == [path]
     storage.mark_graph_synced.assert_called_once_with(file.id, file.content_hash)
+
+
+async def test_embedding_config_unavailable_retries_with_backoff_and_warns_once(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "src/f0.py"
+    _write_files(tmp_path, [path])
+    file = _indexed_file(path)
+    storage = _make_storage(tmp_path, [file])
+    failures = [
+        GcodeCommandError(("gcode", "vector", "sync-file"), 1, EMBEDDING_CONFIG_STDERR),
+        GcodeCommandError(("gcode", "vector", "sync-file"), 1, EMBEDDING_CONFIG_STDERR),
+        None,
+    ]
+    gateway = RetryingVectorGateway(failures)
+    retry_sleep = AsyncMock()
+    monkeypatch.setattr("gobby.code_index.sync_worker.asyncio.sleep", retry_sleep)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        await _sync_pass(
+            storage=storage,
+            gcode_gateway=cast(Any, gateway),
+            config=_config(),
+            batch_size=50,
+        )
+
+    assert gateway.vector_calls == [path, path, path]
+    assert retry_sleep.await_args_list == [call(1.0), call(2.0)]
+    storage.mark_vectors_synced.assert_called_once_with(file.id, file.content_hash)
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "transient vector sync failure" in warnings[0].getMessage()
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+async def test_embedding_transport_exhaustion_errors_then_pending_file_retries(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = "src/f0.py"
+    _write_files(tmp_path, [path])
+    file = _indexed_file(path)
+    storage = _make_storage(tmp_path, [file])
+    failures: list[GcodeCommandError | None] = [
+        GcodeEmbeddingTransportError(("gcode", "vector", "sync-file"), 1, INCIDENT_STDERR)
+        for _ in range(3)
+    ]
+    gateway = RetryingVectorGateway(failures)
+    retry_sleep = AsyncMock()
+    monkeypatch.setattr("gobby.code_index.sync_worker.asyncio.sleep", retry_sleep)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        await _sync_pass(
+            storage=storage,
+            gcode_gateway=cast(Any, gateway),
+            config=_config(),
+            batch_size=50,
+        )
+
+    assert gateway.vector_calls == [path, path, path]
+    storage.mark_vectors_synced.assert_not_called()
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    errors = [record for record in caplog.records if record.levelno == logging.ERROR]
+    assert len(warnings) == 1
+    assert len(errors) == 1
+    assert "vector sync retries exhausted" in errors[0].getMessage()
+
+    await _sync_pass(
+        storage=storage,
+        gcode_gateway=cast(Any, gateway),
+        config=_config(),
+        batch_size=50,
+    )
+
+    assert gateway.vector_calls == [path, path, path, path]
+    assert storage.get_pending_sync_files.call_count == 2
+    storage.mark_vectors_synced.assert_called_once_with(file.id, file.content_hash)

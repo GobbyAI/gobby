@@ -38,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 _pool_outage_log = ThrottledLogger()
 
+_EMBEDDING_CONFIG_UNAVAILABLE = "embedding config is required for vector lifecycle commands"
+_VECTOR_SYNC_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
+
 _GRAPH_SYNC_LANGUAGES = frozenset(
     {
         "c",
@@ -69,6 +72,47 @@ class _MissingProject:
 
 def _file_needs_graph_sync(file: IndexedFile) -> bool:
     return file.symbol_count > 0 and file.language.lower() in _GRAPH_SYNC_LANGUAGES
+
+
+def _is_transient_vector_error(error: Exception) -> bool:
+    if isinstance(error, (GcodeEmbeddingTransportError, GcodeTimeoutError, GcodeUnavailableError)):
+        return True
+    return isinstance(error, GcodeCommandError) and (
+        _EMBEDDING_CONFIG_UNAVAILABLE in error.stderr.casefold()
+    )
+
+
+async def _sync_vector_file_with_retry(
+    gcode_gateway: GcodeGateway,
+    project_root: Path,
+    file: IndexedFile,
+    *,
+    timeout: float | None = None,
+) -> bool:
+    attempts = len(_VECTOR_SYNC_RETRY_BACKOFF_SECONDS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return await _sync_vector_file(
+                gcode_gateway=gcode_gateway,
+                project_root=project_root,
+                file=file,
+                timeout=timeout,
+            )
+        except (GcodeCommandError, GcodeTimeoutError, GcodeUnavailableError) as error:
+            if not _is_transient_vector_error(error):
+                raise
+            if attempt == 1:
+                logger.warning(
+                    "Sync worker: transient vector sync failure for %s; retrying up to %s times: %s",
+                    file.file_path,
+                    attempts - 1,
+                    error,
+                )
+            if attempt == attempts:
+                raise
+            await asyncio.sleep(_VECTOR_SYNC_RETRY_BACKOFF_SECONDS[attempt - 1])
+
+    raise AssertionError("unreachable vector retry state")
 
 
 def _arm_breakers(
@@ -339,7 +383,7 @@ async def _sync_file(
         if gcode_gateway is not None and armed is not None:
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
-                await _sync_vector_file(
+                await _sync_vector_file_with_retry(
                     gcode_gateway=gcode_gateway,
                     project_root=root,
                     file=current,
@@ -375,25 +419,33 @@ async def _sync_file(
                 return False
             except GcodeEmbeddingTransportError as e:
                 _record_breaker_outcomes(armed, failed=(vector_breaker,))
-                logger.warning(
-                    "Sync worker: vector sync transport failure for %s: %s",
+                logger.error(
+                    "Sync worker: vector sync retries exhausted for %s: %s",
                     current.file_path,
                     e,
                 )
             except (GcodeTimeoutError, GcodeUnavailableError) as e:
                 _record_breaker_outcomes(armed, failed=(vector_breaker,))
-                logger.warning(
-                    "Sync worker: vector sync transport failure for %s: %s",
+                logger.error(
+                    "Sync worker: vector sync retries exhausted for %s: %s",
                     current.file_path,
                     e,
                 )
             except GcodeCommandError as e:
-                _record_breaker_outcomes(armed)
-                logger.exception(
-                    "Sync worker: vector sync failed for %s: %s",
-                    current.file_path,
-                    e,
-                )
+                if _is_transient_vector_error(e):
+                    _record_breaker_outcomes(armed, failed=(gateway_breaker,))
+                    logger.error(
+                        "Sync worker: vector sync retries exhausted for %s: %s",
+                        current.file_path,
+                        e,
+                    )
+                else:
+                    _record_breaker_outcomes(armed)
+                    logger.exception(
+                        "Sync worker: vector sync failed for %s: %s",
+                        current.file_path,
+                        e,
+                    )
             except Exception as e:
                 _record_breaker_outcomes(armed)
                 logger.exception(
