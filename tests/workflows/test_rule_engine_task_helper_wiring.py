@@ -262,7 +262,7 @@ async def test_agent_wait_lookup_failure_warns_and_keeps_stop_gates_armed(
 
 
 @pytest.mark.asyncio
-async def test_human_wait_marker_yields_for_one_turn_and_can_be_reset(
+async def test_stale_human_wait_marker_does_not_yield_or_suppress_attempts(
     db: HubDatabase,
 ) -> None:
     _sync_bundled(db)
@@ -277,20 +277,14 @@ async def test_human_wait_marker_yields_for_one_turn_and_can_be_reset(
     }
     engine = RuleEngine(db)
 
-    first_wait = await engine.evaluate(_make_event(), session_id, variables)
-    assert first_wait.decision == "allow"
-    assert variables["stop_attempts"] == 4
+    first_stop = await engine.evaluate(_make_event(), session_id, variables)
+    assert first_stop.decision == "block"
+    assert variables["stop_attempts"] == 5
 
     await engine.evaluate(_make_event(HookEventType.BEFORE_AGENT), session_id, variables)
-    assert variables["waiting_on_user_input"] is False
+    assert variables["waiting_on_user_input"] is True
     assert variables["stop_attempts"] == 0
 
-    variables["waiting_on_user_input"] = True
-    repeated_wait = await engine.evaluate(_make_event(), session_id, variables)
-    assert repeated_wait.decision == "allow"
-    assert variables["stop_attempts"] == 0
-
-    await engine.evaluate(_make_event(HookEventType.BEFORE_AGENT), session_id, variables)
-    rearmed = await engine.evaluate(_make_event(), session_id, variables)
-    assert rearmed.decision == "block"
+    repeated_stop = await engine.evaluate(_make_event(), session_id, variables)
+    assert repeated_stop.decision == "block"
     assert variables["stop_attempts"] == 1

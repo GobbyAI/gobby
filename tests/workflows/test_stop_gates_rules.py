@@ -476,24 +476,18 @@ class TestRequireTaskClose:
 
 class TestLegitimateWaitConditions:
     @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
-    @pytest.mark.parametrize(
-        ("waiting_on_user_input", "active_agent_wait"),
-        [(True, False), (False, True)],
-    )
-    def test_wait_state_yields_stop_gate(
+    def test_active_agent_wait_yields_stop_gate(
         self,
         db: HubDatabase,
         manager: LocalWorkflowDefinitionManager,
         rule_name: str,
-        waiting_on_user_input: bool,
-        active_agent_wait: bool,
     ) -> None:
         _sync_bundled(db)
         row = _get_rule(manager, rule_name)
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         variables = {
             **_claimed_task_variables(),
-            "waiting_on_user_input": waiting_on_user_input,
+            "waiting_on_user_input": True,
         }
         evaluator = SafeExpressionEvaluator(
             context={"variables": variables},
@@ -501,7 +495,7 @@ class TestLegitimateWaitConditions:
                 "list": list,
                 "all_tasks_have_label": lambda _task_ids, _label: False,
                 "task_tree_complete": lambda _task_ids: False,
-                "has_active_agent_wait": lambda: active_agent_wait,
+                "has_active_agent_wait": lambda: True,
             },
         )
 
@@ -509,7 +503,7 @@ class TestLegitimateWaitConditions:
         assert evaluator.evaluate(body.when) is False
 
     @pytest.mark.parametrize("rule_name", ["require-task-close", "require-epic-tree-close"])
-    def test_plain_claimed_work_still_blocks(
+    def test_stale_human_wait_state_does_not_yield_stop_gate(
         self,
         db: HubDatabase,
         manager: LocalWorkflowDefinitionManager,
@@ -522,7 +516,7 @@ class TestLegitimateWaitConditions:
             context={
                 "variables": {
                     **_claimed_task_variables(),
-                    "waiting_on_user_input": False,
+                    "waiting_on_user_input": True,
                 }
             },
             allowed_funcs={

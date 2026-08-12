@@ -13,9 +13,6 @@ variables:
   stop_attempts:
     value: 0
     description: Default stop_attempts to 0
-  waiting_on_user_input:
-    value: false
-    description: One-turn marker for an outstanding interactive user prompt
   max_stop_attempts:
     value: 8
     description: Default max_stop_attempts to 8

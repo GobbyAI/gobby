@@ -988,6 +988,28 @@ variables:
         result = sync_bundled_variables(db, variables_path=var_dir)
         assert result["orphaned"] >= 1
 
+    def test_removed_human_wait_variable_is_soft_deleted(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        from gobby.workflows.sync_variables import sync_bundled_variables
+
+        obsolete = manager.create(
+            name="waiting_on_user_input",
+            definition_json=json.dumps({"value": False}),
+            workflow_type="variable",
+            source="installed",
+            tags=["gobby"],
+        )
+
+        result = sync_bundled_variables(db)
+
+        assert result["orphaned"] == 1
+        assert manager.get_by_name("waiting_on_user_input", workflow_type="variable") is None
+        deleted = manager.get(obsolete.id, include_deleted=True)
+        assert deleted.deleted_at is not None
+
     def test_empty_directory_does_not_orphan_existing_variable(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:

@@ -266,9 +266,6 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
                 is_turn_end = RuleTriggerEvent.TURN_END in resolved_rule_events
 
-                if is_turn_start:
-                    variables["waiting_on_user_input"] = False
-
                 config_snapshot = (
                     self._config_runtime.snapshot
                     if self._config_runtime is not None
@@ -379,12 +376,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                         )
                         variables["servers_listed"] = True
 
-                # Auto-increment ordinary turn-end attempts; legitimate waits consume none.
+                # Auto-increment ordinary turn-end attempts; active agent waits consume none.
                 if is_turn_end:
-                    legitimate_wait = active_agent_wait or bool(
-                        variables.get("waiting_on_user_input")
-                    )
-                    if not legitimate_wait:
+                    if not active_agent_wait:
                         variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
                         "TURN_END gate diagnostics",
@@ -397,7 +391,6 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                             "claimed_tasks": variables.get("claimed_tasks"),
                             "edit_write_pending": variables.get("edit_write_pending"),
                             "tool_block_pending": variables.get("tool_block_pending"),
-                            "waiting_on_user_input": variables.get("waiting_on_user_input"),
                             "active_agent_wait": active_agent_wait,
                         },
                     )
