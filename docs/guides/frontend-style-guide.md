@@ -230,6 +230,26 @@ Use `resolveCssVar()` from `web/src/lib/utils.ts` when canvas or Three.js code
 needs a concrete RGB/RGBA value. It resolves OKLCH custom properties through the
 browser and caches by theme.
 
+## Formatting
+
+Prettier owns formatting for hand-maintained TypeScript, TSX, JavaScript, CSS,
+HTML, and package/config JSON in `web/`. Run these commands from that directory:
+
+```bash
+npm run format
+npm run format:check
+```
+
+The formatter uses Prettier core defaults. Its Tailwind plugin loads Tailwind 4
+utilities from `src/styles/index.css` and sorts classes in JSX plus strings
+passed to `cn`, `clsx`, `cva`, and `twMerge`. Duplicate classes are preserved.
+
+`.prettierignore` excludes dependency locks, generated runtime codec and
+transcript fixtures, copied VAD/Ghostty assets, dependencies, coverage, and
+build/test outputs. Hand-maintained public assets, including the audio worklet,
+remain formatter-owned. Prettier or plugin version upgrades require an exact
+dependency pin and an isolated formatting baseline.
+
 ## Layout And Spacing
 
 Use Tailwind's default spacing scale for component layout. The base unit is
@@ -668,7 +688,7 @@ Pages are lazy-loaded through `web/src/components/app/AppPages.tsx`.
 web/src/
 ├── components/
 │   ├── activity/           # Activity panel tabs (sessions, filters, modals)
-│   ├── agents/             # Agent portfolio and agent run UI
+│   ├── agents/             # Agent configuration and agent run UI
 │   ├── app/                # App shell helpers, navigation, lazy pages
 │   ├── auth/               # Login and auth surfaces
 │   ├── chat/               # Chat page, input, and message components
@@ -703,7 +723,7 @@ web/src/
 
 | Type | Convention | Example |
 |------|------------|---------|
-| Component files | PascalCase | `AgentPortfolioPage.tsx`, `SessionsTab.tsx` |
+| Component files | PascalCase | `AgentsTab.tsx`, `SessionsTab.tsx` |
 | Hook files | camelCase with `use` prefix | `useSettings.ts`, `useTasks.ts` |
 | CSS classes | kebab-case or BEM | `.app-toast`, `.command-bar-btn__label` |
 | TypeScript types | PascalCase | `ChatMessage`, `TaskCreateDefaults` |

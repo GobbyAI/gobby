@@ -1,1 +1,17 @@
+node_modules/
+dist/
+dist-setup/
+.vite/
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+package-lock.json
+
+public/silero_vad_legacy.onnx
+public/vad.worklet.bundle.min.js
+public/wasm/ghostty-vt.wasm
+
+src/__visual__/transcripts/fixtures/*.json
 src/api/runtimeConfigCodecVectors.gen.ts
