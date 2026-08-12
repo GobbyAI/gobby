@@ -272,9 +272,7 @@ class ConfigRuntime:
                         await self._dispose(prepared, subscriber)
                     await self._reconcile_locked(force=False)
                     continue
-                if failure is not None:
-                    raise RuntimeError(str(failure.error)) from failure.error
-                assert prepared is not None
+                prepared_map = {name: prepared} if prepared is not None else {}
                 snapshot, services, handles, old_handles = self._activate(
                     bundle,
                     stored,
@@ -282,17 +280,18 @@ class ConfigRuntime:
                     desired_bindings,
                     subscriber.keys,
                     subscriber.keys,
-                    {name: prepared},
-                    None,
+                    prepared_map,
+                    failure,
                 )
                 self._bundle = RuntimeActiveBundle(
                     snapshot,
                     MappingProxyType(services),
                     MappingProxyType(handles),
-                    managed,
+                    managed if failure is None else bundle.managed,
                 )
                 await self._dispose_replaced(old_handles)
-                await self._activate_many({name: prepared}, (subscriber,))
+                if prepared is not None:
+                    await self._activate_many(prepared_map, (subscriber,))
                 return snapshot
 
     async def reconcile_local_commit(self, revision: int) -> ConfigSnapshot:

@@ -381,6 +381,7 @@ class EmbeddingGenerationState:
               AND generation = %s
               AND committed_revision = %s
               AND acknowledged IS TRUE
+              AND lease_expires_at > CURRENT_TIMESTAMP
             """,
             (lease_seconds, daemon_instance_id, generation, revision),
         )

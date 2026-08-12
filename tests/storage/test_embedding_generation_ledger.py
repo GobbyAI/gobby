@@ -106,9 +106,16 @@ def test_dream_visibility_producers_append_events(temp_db: HubDatabase) -> None:
     assert _events(temp_db, memory.id)[-1] == ("memory", True)
 
 
-def test_project_purge_tombstones_embedded_artifacts(temp_db: HubDatabase) -> None:
+def test_project_purge_tombstones_embedded_artifacts(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.projects.purge._LEDGER_PURGE_BATCH_SIZE", 1)
     project = LocalProjectManager(temp_db).create(name="purge-ledger")
     memory = LocalMemoryManager(temp_db).create_memory("purge ledger target", project.id)
+    second_memory = LocalMemoryManager(temp_db).create_memory(
+        "second purge ledger target", project.id
+    )
 
     mcp_manager = LocalMCPManager(temp_db)
     mcp_manager.upsert(
@@ -135,6 +142,7 @@ def test_project_purge_tombstones_embedded_artifacts(temp_db: HubDatabase) -> No
 
     assert temp_db.fetchone("SELECT 1 FROM memories WHERE id = %s", (memory.id,)) is None
     assert _events(temp_db, memory.id)[-1] == ("memory", True)
+    assert _events(temp_db, second_memory.id)[-1] == ("memory", True)
     assert _events(temp_db, tool_id)[-1] == ("tool", True)
 
 
@@ -196,6 +204,39 @@ def test_expired_serving_ack_unblocks_collection(temp_db: HubDatabase) -> None:
         (daemon_instance_id,),
     )
     assert state.can_collect("new-generation", 1) is True
+
+
+def test_renew_rejects_an_already_expired_database_lease(temp_db: HubDatabase) -> None:
+    from uuid import uuid4
+
+    state = EmbeddingGenerationState(temp_db)
+    watermark = state.watermark()
+    daemon_instance_id = uuid4()
+    lease = state.prepare_serving_lease(
+        daemon_instance_id,
+        "expired-generation",
+        1,
+        lease_seconds=30,
+        caught_up_watermark=watermark,
+        required_watermark=watermark,
+    )
+    lease.activate()
+    temp_db.execute(
+        "UPDATE embedding_generation_acks "
+        "SET lease_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' "
+        "WHERE daemon_instance_id = %s",
+        (daemon_instance_id,),
+    )
+
+    with pytest.raises(EmbeddingGenerationLeaseLost, match="no longer matches"):
+        lease.renew()
+
+    expired = temp_db.fetchone(
+        "SELECT lease_expires_at <= CURRENT_TIMESTAMP AS expired "
+        "FROM embedding_generation_acks WHERE daemon_instance_id = %s",
+        (daemon_instance_id,),
+    )
+    assert expired is not None and expired["expired"] is True
 
 
 def test_stale_activation_cannot_overwrite_successor_ack(temp_db: HubDatabase) -> None:

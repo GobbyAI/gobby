@@ -3789,6 +3789,8 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_store TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_state TO gobby_daemon_runtime;
 
+GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability;
+
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE cron_jobs TO gobby_daemon_runtime;
 
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE cron_runs TO gobby_daemon_runtime;

@@ -418,15 +418,6 @@ def load_completed_switch(
         raise SwitchJournalStateError("Invalid completed embedding switch record") from exc
 
 
-def verify_completed_switch(
-    config_store: EmbeddingSwitchLifecycleStore,
-    revision: int,
-) -> CompletedSwitchRecord:
-    """Verify a managed revision before a daemon promotes its physical targets."""
-    record = load_completed_switch(config_store)
-    return _verify_completed_record(config_store.read_snapshot(), record, revision)
-
-
 def managed_embedding_projection(snapshot: EmbeddingSwitchSnapshot) -> dict[str, object]:
     """Resolve the verified managed projection from one config snapshot.
 
@@ -492,29 +483,8 @@ def _verify_completed_record_rows(
     expected = _expected_completed_values(record)
     if any(snapshot.values.get(key) != value for key, value in expected.items()):
         raise SwitchJournalStateError("Completed embedding switch values do not match storage")
-    if any(
-        snapshot.row_revisions.get(key, committed + 1) > committed
-        for key in _COMPLETED_RECORD_ROW_KEYS
-    ):
+    if any(snapshot.row_revisions.get(key, 0) > committed for key in _COMPLETED_RECORD_ROW_KEYS):
         raise SwitchJournalStateError("Completed embedding switch rows postdate the commit")
-    return record
-
-
-def _verify_completed_record(
-    snapshot: EmbeddingSwitchSnapshot,
-    record: CompletedSwitchRecord,
-    revision: int,
-) -> CompletedSwitchRecord:
-    """Exact-revision verification for adoption-time verify_completed_switch."""
-    if record.committed_revision != revision:
-        raise SwitchJournalStateError(
-            f"Completed embedding switch revision {record.committed_revision} does not match {revision}"
-        )
-    expected = _expected_completed_values(record)
-    if any(snapshot.values.get(key) != value for key, value in expected.items()):
-        raise SwitchJournalStateError("Completed embedding switch values do not match storage")
-    if any(snapshot.row_revisions.get(key) != revision for key in _COMPLETED_RECORD_ROW_KEYS):
-        raise SwitchJournalStateError("Completed embedding switch rows span multiple revisions")
     return record
 
 

@@ -404,7 +404,10 @@ class EmbeddingSwitchRunner:
             latest = {(change.source_kind, change.source_id): change for change in changes}
             for change in latest.values():
                 self._check_abort()
-                projected += await self._project_change(journal, service, vector_store, change)
+                if change.is_tombstone:
+                    await self._delete_projection_tombstone(journal, vector_store, change)
+                else:
+                    projected += await self._project_change(journal, service, vector_store, change)
             journal.caught_up_watermark = changes[-1].sequence
             persist_journal(self.config_store, journal)
         raise EmbeddingSwitchRunError(
@@ -550,6 +553,31 @@ class EmbeddingSwitchRunner:
             )
             return 0
         return 1
+
+    @staticmethod
+    async def _delete_projection_tombstone(
+        journal: SwitchJournal,
+        vector_store: VectorStore,
+        change: ProjectionChange,
+    ) -> None:
+        collection_kinds = {
+            "memory": "memories",
+            "tool": "tool_embeddings",
+            "github_issue": "gobby_github_issues",
+        }
+        point_id = change.source_id
+        if change.source_kind == "github_issue":
+            try:
+                project_id, repo, issue_number = change.source_id.rsplit(":", 2)
+                point_id = issue_point_id(project_id, repo, int(issue_number))
+            except (TypeError, ValueError) as exc:
+                raise EmbeddingSwitchRunError(
+                    f"Invalid GitHub issue projection source ID: {change.source_id}"
+                ) from exc
+        await vector_store.delete(
+            point_id,
+            collection_name=build_physical_names(journal)[collection_kinds[change.source_kind]],
+        )
 
     async def _build_memory_collection(
         self,

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+import gobby.runner_init.embedding_lease as embedding_lease
 import gobby.runner_init.services as services
 from gobby.ai.embedding_switch import CompletedSwitchRecord
 from gobby.config.embedding_keys import EMBEDDING_SWITCH_COMPLETED_KEY
@@ -227,10 +228,10 @@ def test_managed_lease_identity_uses_completed_record() -> None:
 def test_managed_lease_renews_while_daemon_event_loop_is_stalled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
     loop = asyncio.new_event_loop()
     db = _StubHubDatabase()
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         _lease(EmbeddingGenerationState(cast(Any, db))),
         loop,
         read_completed_record=lambda: None,
@@ -254,14 +255,14 @@ def test_renew_with_backoff_retries_transient_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_RENEW_BACKOFF_INITIAL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     lease = _lease(state, lease_seconds=30.0)
     lease.activate()
     db.fail_renew_times = 2
 
-    assert services._renew_with_backoff(lease) is True
+    assert embedding_lease._renew_with_backoff(lease) is True
 
     lease.assert_serving()
     assert db.fail_renew_times == 0
@@ -287,7 +288,7 @@ def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> None:
     lease.activate()
     db.fail_execute = ConnectionError("partition")
 
-    assert services._renew_with_backoff(lease) is False
+    assert embedding_lease._renew_with_backoff(lease) is False
 
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
         lease.assert_serving()
@@ -297,21 +298,21 @@ def test_renew_with_backoff_fences_when_deadline_budget_exhausted() -> None:
 async def test_reacquire_matching_record_reacknowledges_fresh_lease(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     lease = _lease(state, generation="run-1", revision=7, watermark=3)
     lease.activate()
     lease.fence()
     rebuilds: list[CompletedSwitchRecord | None] = []
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: _completed_record(run_id="run-1", committed_revision=7),
         request_rebuild=rebuilds.append,
     )
 
-    assert await services._reacquire_lease(handle) is True
+    assert await embedding_lease._reacquire_lease(handle) is True
 
     assert handle.lease is not lease
     handle.assert_serving()
@@ -323,7 +324,7 @@ async def test_reacquire_matching_record_reacknowledges_fresh_lease(
 async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     lease = _lease(state, generation="run-1", revision=7)
@@ -331,14 +332,14 @@ async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
     lease.fence()
     newer = _completed_record(run_id="run-2", committed_revision=9)
     rebuilds: list[CompletedSwitchRecord | None] = []
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: newer,
         request_rebuild=rebuilds.append,
     )
 
-    assert await services._reacquire_lease(handle) is False
+    assert await embedding_lease._reacquire_lease(handle) is False
 
     assert rebuilds == [newer]
     with pytest.raises(EmbeddingGenerationLeaseLost, match="fenced"):
@@ -350,43 +351,50 @@ async def test_reacquire_mismatch_requests_rebuild_and_stays_fenced(
 async def test_reacquire_unmanaged_lease_without_record_reacknowledges(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     lease = _lease(state, generation="config-revision:5", revision=5)
     lease.activate()
     lease.fence()
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: None,
         request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
     )
 
-    assert await services._reacquire_lease(handle) is True
+    assert await embedding_lease._reacquire_lease(handle) is True
 
     handle.assert_serving()
 
 
 @pytest.mark.asyncio
-async def test_reacquire_unmanaged_lease_rejects_stale_encoded_revision(
+async def test_reacquire_unmanaged_lease_lost_to_newer_serving_lease_requests_rebuild(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
-    lease = _lease(state, generation="config-revision:4", revision=5)
+    lease = _lease(state, generation="config-revision:5", revision=5)
     lease.activate()
     lease.fence()
+    monkeypatch.setattr(
+        EmbeddingServingLease,
+        "activate",
+        lambda _lease: (_ for _ in ()).throw(
+            EmbeddingGenerationLeaseLost("cannot replace a newer serving lease")
+        ),
+    )
     rebuilds: list[CompletedSwitchRecord | None] = []
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=lambda: None,
         request_rebuild=rebuilds.append,
     )
 
-    assert await services._reacquire_lease(handle) is False
+    assert await embedding_lease._reacquire_lease(handle) is False
 
     assert rebuilds == [None]
     assert db.ack_insert_count() == 1
@@ -395,7 +403,7 @@ async def test_reacquire_unmanaged_lease_rejects_stale_encoded_revision(
 def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.0)
     reacquired: list[object] = []
 
     def deadline_lapsed(_lease: object, *, stop_event: threading.Event) -> bool:
@@ -405,11 +413,13 @@ def test_renew_loop_routes_local_deadline_lapse_to_reacquisition(
         reacquired.append(handle)
         return False
 
-    monkeypatch.setattr(services, "_renew_with_backoff", deadline_lapsed)
-    monkeypatch.setattr(services, "_reacquire_lease_from_renewal_thread", stop_after_reacquire)
+    monkeypatch.setattr(embedding_lease, "_renew_with_backoff", deadline_lapsed)
+    monkeypatch.setattr(
+        embedding_lease, "_reacquire_lease_from_renewal_thread", stop_after_reacquire
+    )
     handle = cast(Any, SimpleNamespace(lease=object(), renewal_stop=threading.Event()))
 
-    services._renew_embedding_lease(handle)
+    embedding_lease._renew_embedding_lease(handle)
 
     assert reacquired == [handle]
 
@@ -419,17 +429,23 @@ async def test_rebuild_request_reconciles_and_reprepares_current_revision() -> N
     rebuilt = asyncio.Event()
     revisions: list[int] = []
     subscribers: list[str] = []
+    memory_services = object()
+    snapshot = SimpleNamespace(revision=7, failed_live_keys={})
 
     class Runtime:
         def capture(self) -> object:
-            return SimpleNamespace(snapshot=SimpleNamespace(revision=7))
+            return SimpleNamespace(
+                snapshot=snapshot,
+                services={"memory_services": memory_services},
+            )
 
         async def reconcile_revision(self, revision: int) -> None:
             revisions.append(revision)
 
-        async def reprepare_subscriber(self, name: str) -> None:
+        async def reprepare_subscriber(self, name: str) -> object:
             subscribers.append(name)
             rebuilt.set()
+            return snapshot
 
     runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
 
@@ -438,6 +454,83 @@ async def test_rebuild_request_reconciles_and_reprepares_current_revision() -> N
 
     assert revisions == [7]
     assert subscribers == ["memory_services"]
+
+
+@pytest.mark.asyncio
+async def test_rebuild_request_skips_reprepare_when_reconcile_replaces_service() -> None:
+    replacement_visible = asyncio.Event()
+    subscribers: list[str] = []
+    snapshot = SimpleNamespace(revision=7, failed_live_keys={})
+
+    class Runtime:
+        memory_services = object()
+        reconciled = False
+
+        def capture(self) -> object:
+            if self.reconciled:
+                replacement_visible.set()
+            return SimpleNamespace(
+                snapshot=snapshot,
+                services={"memory_services": self.memory_services},
+            )
+
+        async def reconcile_revision(self, revision: int) -> None:
+            assert revision == 7
+            self.memory_services = object()
+            self.reconciled = True
+
+        async def reprepare_subscriber(self, name: str) -> object:
+            subscribers.append(name)
+            return snapshot
+
+    runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
+
+    services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
+    await asyncio.wait_for(replacement_visible.wait(), timeout=1.0)
+
+    assert subscribers == []
+
+
+@pytest.mark.asyncio
+async def test_rebuild_request_retries_degraded_reprepare(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0)
+    rebuilt = asyncio.Event()
+    memory_services = object()
+    clean = SimpleNamespace(revision=7, failed_live_keys={})
+    degraded = SimpleNamespace(
+        revision=7,
+        failed_live_keys={"memory.embedding_model": SimpleNamespace(subscriber="memory_services")},
+    )
+
+    class Runtime:
+        reprepare_calls = 0
+
+        def capture(self) -> object:
+            return SimpleNamespace(
+                snapshot=clean,
+                services={"memory_services": memory_services},
+            )
+
+        async def reconcile_revision(self, revision: int) -> None:
+            assert revision == 7
+
+        async def reprepare_subscriber(self, name: str) -> object:
+            assert name == "memory_services"
+            self.reprepare_calls += 1
+            if self.reprepare_calls == 2:
+                rebuilt.set()
+                return clean
+            return degraded
+
+    runtime = Runtime()
+    runner = cast(Any, SimpleNamespace(config_runtime=runtime))
+
+    services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
+    await asyncio.wait_for(rebuilt.wait(), timeout=1.0)
+
+    assert runtime.reprepare_calls == 2
 
 
 def test_rebuild_request_ignores_runtime_startup_window() -> None:
@@ -480,7 +573,7 @@ def test_completed_switch_reader_treats_value_error_as_malformed(
 async def test_reacquire_polls_until_storage_reachable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     lease = _lease(state, generation="run-1", revision=7)
@@ -494,14 +587,14 @@ async def test_reacquire_polls_until_storage_reachable(
             raise ConnectionError("storage still unreachable")
         return _completed_record(run_id="run-1", committed_revision=7)
 
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=read_record,
         request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
     )
 
-    assert await services._reacquire_lease(handle) is True
+    assert await embedding_lease._reacquire_lease(handle) is True
 
     assert probes["count"] == 3
     handle.assert_serving()
@@ -511,8 +604,8 @@ async def test_reacquire_polls_until_storage_reachable(
 async def test_renew_loop_fences_reacquires_and_resumes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(services, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
-    monkeypatch.setattr(services, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_LEASE_RENEW_SECONDS", 0.01)
+    monkeypatch.setattr(embedding_lease, "_EMBEDDING_REACQUIRE_POLL_SECONDS", 0.01)
     db = _StubHubDatabase()
     state = EmbeddingGenerationState(cast(Any, db))
     # TTL 1.0 keeps remaining below the initial backoff so one transient
@@ -525,14 +618,16 @@ async def test_renew_loop_fences_reacquires_and_resumes(
         db.fail_execute = None
         return _completed_record(run_id="run-1", committed_revision=7)
 
-    handle = services._ManagedEmbeddingLease(
+    handle = embedding_lease._ManagedEmbeddingLease(
         lease,
         asyncio.get_running_loop(),
         read_completed_record=read_record,
         request_rebuild=lambda record: pytest.fail("unexpected rebuild request"),
     )
     db.fail_execute = ConnectionError("partition")
-    loop_task = asyncio.create_task(asyncio.to_thread(services._renew_embedding_lease, handle))
+    loop_task = asyncio.create_task(
+        asyncio.to_thread(embedding_lease._renew_embedding_lease, handle)
+    )
     try:
         acknowledged = await asyncio.wait_for(asyncio.to_thread(db.ack_inserted.wait), timeout=5.0)
         assert acknowledged

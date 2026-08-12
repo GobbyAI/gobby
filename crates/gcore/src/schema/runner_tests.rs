@@ -145,6 +145,18 @@ fn install_predecessor_baseline(client: &mut Client) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn projection_change_sequence_cache_size(client: &mut Client) -> anyhow::Result<i64> {
+    Ok(client
+        .query_one(
+            "SELECT seqcache FROM pg_sequence \
+             WHERE seqrelid = pg_get_serial_sequence(\
+                 'embedding_projection_changes', 'sequence'\
+             )::regclass",
+            &[],
+        )?
+        .get(0))
+}
+
 fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::Result<()> {
     for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
         let granted: bool = client
@@ -341,6 +353,7 @@ fn fresh_baseline_creates_embedding_coordination_state() -> anyhow::Result<()> {
             "created_at",
         ]
     );
+    assert_eq!(projection_change_sequence_cache_size(&mut client)?, 1);
     for table in ["embedding_generation_acks", "embedding_projection_changes"] {
         assert_runtime_crud_privileges(&mut client, table)?;
     }
@@ -356,6 +369,10 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         return Ok(());
     };
     install_predecessor_baseline(&mut client)?;
+    client.batch_execute(
+        "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 32",
+    )?;
+    assert_eq!(projection_change_sequence_cache_size(&mut client)?, 32);
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('preserved.key', 'preserved')",
         &[],
@@ -377,6 +394,7 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         )?
         .get(0);
     assert_eq!(checksum, BASELINE_CHECKSUM);
+    assert_eq!(projection_change_sequence_cache_size(&mut client)?, 1);
     for table in [
         "config_state",
         "embedding_generation_acks",

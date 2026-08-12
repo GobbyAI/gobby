@@ -3,7 +3,7 @@
 pub(crate) fn baseline_refresh_statement(statement: &str) -> Option<String> {
     let body = statement_body(statement);
     let refreshes_schema = body.trim_end()
-        == "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
+        == "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 1";
     refreshes_schema.then(|| statement.to_owned())
 }
 
@@ -31,38 +31,38 @@ mod tests {
     #[test]
     fn ignores_leading_comments_and_requires_exact_statement() {
         let refreshable = "-- retained context\n\
-            GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
+            ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 1";
         let misleading =
-            "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability_extra";
+            "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 10";
 
         assert!(baseline_refresh_statement(refreshable).is_some());
         assert!(baseline_refresh_statement(misleading).is_none());
     }
 
     #[test]
-    fn rejects_broader_config_state_grants() {
+    fn rejects_other_identity_sequence_alters() {
         assert!(
             baseline_refresh_statement(
-                "GRANT SELECT ON TABLE config_state TO gobby_gcode_capability"
+                "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 32"
             )
             .is_none()
         );
         assert!(
             baseline_refresh_statement(
-                "GRANT SELECT(id,revision,secret) ON TABLE config_state TO gobby_gcode_capability"
+                "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence RESTART WITH 1"
             )
             .is_none()
         );
         assert!(
             baseline_refresh_statement(
-                "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability \
-                 WITH GRANT OPTION"
+                "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 1; \
+                 ALTER TABLE embedding_projection_changes ALTER COLUMN sequence RESTART WITH 1"
             )
             .is_none()
         );
         assert!(
             baseline_refresh_statement(
-                "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability"
+                "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 1"
             )
             .is_some()
         );

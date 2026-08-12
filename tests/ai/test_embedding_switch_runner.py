@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -111,9 +112,11 @@ class FakeDatabase:
     def transaction(self) -> Iterator[_FakeTransaction]:
         yield _FakeTransaction()
 
-    def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, int]:
+    def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, object] | None:
         if "MAX(sequence)" in query:
             return {"watermark": 0}
+        if "FROM memories" in query:
+            return None
         return {"incompatible": 0}
 
     def fetchall(self, query: str, params: tuple[object, ...] = ()) -> list[dict[str, object]]:
@@ -149,6 +152,16 @@ class FakeVectorStore:
 
     async def delete(self, point_id: str, *, collection_name: str) -> None:
         self.operations.append(("delete", point_id, collection_name))
+
+    async def upsert(
+        self,
+        point_id: str,
+        embedding: list[float],
+        payload: dict[str, Any],
+        *,
+        collection_name: str,
+    ) -> None:
+        self.operations.append(("upsert", point_id, collection_name))
 
 
 class FakeEmbeddingService:
@@ -372,11 +385,79 @@ async def test_build_replays_changes_after_enumeration_watermark(
     assert journal.caught_up_watermark == 9
     # Full corpus builders run only for the initial fill; replay is per-change.
     assert builds == ["memory", "tool", "github_issue"]
-    assert projected == [("tool", "tool-1"), ("memory", "memory-1")]
+    assert projected == [("tool", "tool-1")]
+    assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
     assert all(
         thread_id != threading.get_ident()
         for thread_id in cast(Any, runner.generation_state).db_threads
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "row",
+    [None, {"deleted_at": datetime.now(UTC)}],
+    ids=["absent", "deleted"],
+)
+async def test_memory_change_deletes_absent_or_deleted_source(
+    row: dict[str, object] | None,
+) -> None:
+    class MemoryDatabase(FakeDatabase):
+        def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, object] | None:
+            if "FROM memories" in query:
+                return row
+            return super().fetchone(query, params)
+
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=cast(Any, MemoryDatabase()))
+
+    projected = await runner._project_memory_change(
+        _journal(),
+        cast(Any, FakeEmbeddingService()),
+        cast(Any, vector_store),
+        "memory-1",
+    )
+
+    assert projected == 0
+    assert vector_store.operations == [("delete", "memory-1", "memories@4096-run")]
+
+
+@pytest.mark.asyncio
+async def test_memory_change_upserts_into_promoted_collection() -> None:
+    now = datetime.now(UTC)
+    row: dict[str, object] = {
+        "id": "memory-1",
+        "memory_type": "fact",
+        "content": "remember this",
+        "created_at": now,
+        "updated_at": now,
+        "project_id": "project-1",
+        "source_type": "agent",
+        "source_session_id": None,
+        "access_count": 0,
+        "last_accessed_at": None,
+        "tags": ["important"],
+        "deleted_at": None,
+    }
+
+    class MemoryDatabase(FakeDatabase):
+        def fetchone(self, query: str, params: tuple[object, ...] = ()) -> dict[str, object] | None:
+            if "FROM memories" in query:
+                return row
+            return super().fetchone(query, params)
+
+    vector_store = FakeVectorStore()
+    runner = EmbeddingSwitchRunner(FakeConfigStore(), db=cast(Any, MemoryDatabase()))
+
+    projected = await runner._project_memory_change(
+        _journal(),
+        cast(Any, FakeEmbeddingService()),
+        cast(Any, vector_store),
+        "memory-1",
+    )
+
+    assert projected == 1
+    assert vector_store.operations == [("upsert", "memory-1", "memories@4096-run")]
 
 
 @pytest.mark.asyncio
@@ -553,7 +634,7 @@ async def test_replay_is_bounded_and_raises_after_max_passes(
         def changes_after(
             self, sequence: int, *, up_to: int | None = None
         ) -> list[ProjectionChange]:
-            return [ProjectionChange(self.sequence, "memory", "memory-1", True)]
+            return [ProjectionChange(self.sequence, "memory", "memory-1", False)]
 
     cast(Any, runner).generation_state = EndlessGenerationState()
 
@@ -564,16 +645,15 @@ async def test_replay_is_bounded_and_raises_after_max_passes(
         "gobby_github_issues": "gobby_github_issues@4096-run",
     }
 
-    async def project_change(*_args: Any, **_kwargs: Any) -> int:
-        return 1
-
-    monkeypatch.setattr(runner, "_project_change", project_change)
-
     with pytest.raises(EmbeddingSwitchRunError, match="retry once projection writes quiesce"):
         await runner._replay_projection_changes(
             journal, cast(Any, FakeEmbeddingService()), cast(Any, vector_store)
         )
     assert cast(Any, runner.generation_state).sequence == _REPLAY_MAX_PASSES
+    assert (
+        vector_store.operations
+        == [("delete", "memory-1", "memories@4096-run")] * _REPLAY_MAX_PASSES
+    )
 
 
 @pytest.mark.asyncio

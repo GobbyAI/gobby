@@ -705,6 +705,8 @@ CREATE TABLE IF NOT EXISTS embedding_projection_changes (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 1;
+
 CREATE TABLE expansion_runs (
     id uuid NOT NULL,
     parent_task_id uuid NOT NULL,

@@ -5,6 +5,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -17,10 +18,10 @@ from gobby.ai.embedding_switch import (
     PHASE_FLIPPING,
     CompletedSwitchRecord,
     SwitchJournal,
+    SwitchJournalStateError,
     complete_switch,
     load_completed_switch,
     managed_embedding_projection,
-    verify_completed_switch,
 )
 from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
 from gobby.ai.embedding_switch_service import (
@@ -369,7 +370,14 @@ async def test_fresh_runtime_start_surfaces_journal_projection_targets(
 @pytest.mark.asyncio
 async def test_remote_catchup_after_journal_gc(temp_db: HubDatabase) -> None:
     store = ConfigStore(temp_db)
-    _journal, revision = _complete_managed_switch(store)
+    journal = _managed_journal()
+    journal.target_model = "nomic-embed-text"
+    journal.target_dim = 768
+    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, journal.to_dict())
+    complete_switch(store, journal)
+    completed_snapshot = store.read_snapshot()
+    assert AI_EMBEDDING_MODEL_KEY not in completed_snapshot.row_revisions
+    assert AI_EMBEDDING_DIM_KEY not in completed_snapshot.row_revisions
     runtime = ConfigRuntime(
         ConfigRepository(temp_db),
         managed_resolver=managed_embedding_projection,
@@ -379,12 +387,31 @@ async def test_remote_catchup_after_journal_gc(temp_db: HubDatabase) -> None:
         recovered = runtime.capture().managed[EMBEDDING_SWITCH_COMPLETED_KEY]
 
         assert isinstance(recovered, CompletedSwitchRecord)
-        assert recovered == verify_completed_switch(ConfigStore(temp_db), revision)
         assert recovered == load_completed_switch(ConfigStore(temp_db))
         assert recovered.run_id == "4096-run"
         assert recovered.physical_names["memories"] == "memories@4096-run"
     finally:
         await runtime.close()
+
+
+def test_managed_projection_rejects_rows_that_postdate_completion(
+    temp_db: HubDatabase,
+) -> None:
+    store = ConfigStore(temp_db)
+    _journal, committed_revision = _complete_managed_switch(store)
+    snapshot = store.read_snapshot()
+    postdated = SimpleNamespace(
+        revision=committed_revision + 1,
+        values=snapshot.values,
+        overrides=snapshot.overrides,
+        row_revisions={
+            **snapshot.row_revisions,
+            AI_EMBEDDING_MODEL_KEY: committed_revision + 1,
+        },
+    )
+
+    with pytest.raises(SwitchJournalStateError, match="rows postdate the commit"):
+        managed_embedding_projection(postdated)
 
 
 @pytest.mark.asyncio

@@ -25,7 +25,7 @@ use super::verify::{VerificationReport, qualified_name, validate_identifier, ver
 /// tripwire in `runner_tests` fails until the five artifacts stay in lockstep.
 /// Hubs more than one hop behind must recreate from a verified backup.
 pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "d4ff5a9a80305e7c4fb0e9aeff80cfdb88440081702204fb2276c2d6b62688b6";
+    "5ece6786529507efa3356d8cab89a20d5cb4c19860d876da0706fa7466bd2a24";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {

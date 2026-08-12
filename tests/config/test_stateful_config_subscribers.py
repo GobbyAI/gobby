@@ -156,12 +156,12 @@ async def test_failed_prepare_keeps_last_good_services() -> None:
 
 @pytest.mark.asyncio
 async def test_reprepare_subscriber_retries_failed_prepare_at_same_revision() -> None:
-    repository = FakeRepository([snapshot(0, alpha=0), snapshot(1, alpha=1)])
+    repository = FakeRepository([snapshot(0, alpha=0)])
     disposed: list[int] = []
-    broken = True
+    broken = False
 
     def build(change: ConfigChange) -> PreparedService:
-        if broken and change.revision == 1:
+        if broken:
             raise RuntimeError("broken replacement")
         client = Client(change.revision, disposed)
         return PreparedService(client, client.close)
@@ -173,18 +173,24 @@ async def test_reprepare_subscriber_retries_failed_prepare_at_same_revision() ->
     )
     await runtime.start()
     previous = runtime.capture().services["client"]
-    repository.index = 1
-    await runtime.reconcile_revision(1)
-    broken = False
 
+    broken = True
+    failed = await runtime.reprepare_subscriber("client")
+
+    failure = failed.failed_live_keys["alpha"]
+    assert runtime.capture().services["client"] is previous
+    assert failure.subscriber == "client"
+    assert failure.message == "broken replacement"
+
+    broken = False
     retried = await runtime.reprepare_subscriber("client")
 
     replacement = cast(Client, runtime.capture().services["client"])
-    assert retried.revision == 1
-    assert replacement.revision == 1
+    assert retried.revision == 0
+    assert replacement.revision == 0
     assert replacement is not previous
     assert "alpha" not in retried.failed_live_keys
-    assert retried.active_values["alpha"] == 1
+    assert retried.active_values["alpha"] == 0
     assert disposed == [0]
     await runtime.close()
 

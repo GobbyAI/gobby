@@ -32,6 +32,9 @@ class ProjectPurgeVectorStoreUnavailable(ProjectPurgeError):
     """Qdrant is configured but no runtime vector store could be resolved."""
 
 
+_LEDGER_PURGE_BATCH_SIZE = 100
+
+
 @dataclass(frozen=True)
 class PurgeOutcome:
     """Result of one project purge attempt."""
@@ -230,40 +233,49 @@ class ProjectPurgeService:
 
     def _delete_hub_rows(self, project_id: str) -> None:
         generation_state = EmbeddingGenerationState(self.db)
+        tombstone_batches = (
+            (
+                "memory",
+                "SELECT id AS row_id, id::text AS source_id FROM memories "
+                "WHERE project_id = %s LIMIT %s",
+                "DELETE FROM memories WHERE id = ANY(%s)",
+            ),
+            (
+                "github_issue",
+                "SELECT id AS row_id, project_id::text || ':' || repo || ':' || "
+                "issue_number::text AS source_id FROM gh_issues_triaged "
+                "WHERE project_id = %s LIMIT %s",
+                "DELETE FROM gh_issues_triaged WHERE id = ANY(%s)",
+            ),
+            (
+                "tool",
+                "SELECT tools.id AS row_id, tools.id::text AS source_id FROM tools "
+                "JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id "
+                "WHERE mcp_servers.project_id = %s LIMIT %s",
+                "DELETE FROM tools WHERE id = ANY(%s)",
+            ),
+        )
+        # Each transaction holds the shared projection-ledger lock for at most
+        # one bounded batch, allowing an exclusive switch watermark to proceed.
+        for source_kind, select_sql, delete_sql in tombstone_batches:
+            while True:
+                with self.db.transaction() as transaction:
+                    rows = transaction.execute(
+                        select_sql, (project_id, _LEDGER_PURGE_BATCH_SIZE)
+                    ).fetchall()
+                    if not rows:
+                        break
+                    for row in rows:
+                        generation_state.append_change(
+                            source_kind,
+                            str(row["source_id"]),
+                            is_tombstone=True,
+                            transaction=transaction,
+                        )
+                    transaction.execute(delete_sql, ([row["row_id"] for row in rows],))
+
         with self.db.transaction() as transaction:
-            # Tombstone every embedded artifact before the deletes: memories go
-            # explicitly (RESTRICT), triage rows and tools go via project cascade.
-            memory_rows = transaction.execute(
-                "SELECT id FROM memories WHERE project_id = %s", (project_id,)
-            ).fetchall()
-            issue_rows = transaction.execute(
-                "SELECT project_id, repo, issue_number FROM gh_issues_triaged "
-                "WHERE project_id = %s",
-                (project_id,),
-            ).fetchall()
-            tool_rows = transaction.execute(
-                """
-                SELECT tools.id AS id
-                  FROM tools
-                  JOIN mcp_servers ON mcp_servers.id = tools.mcp_server_id
-                 WHERE mcp_servers.project_id = %s
-                """,
-                (project_id,),
-            ).fetchall()
-            for row in memory_rows:
-                generation_state.append_change(
-                    "memory", str(row["id"]), is_tombstone=True, transaction=transaction
-                )
-            for row in issue_rows:
-                source_id = f"{row['project_id']}:{row['repo']}:{row['issue_number']}"
-                generation_state.append_change(
-                    "github_issue", source_id, is_tombstone=True, transaction=transaction
-                )
-            for row in tool_rows:
-                generation_state.append_change(
-                    "tool", str(row["id"]), is_tombstone=True, transaction=transaction
-                )
-            for table in ("tasks", "plans", "sessions", "memories"):
+            for table in ("tasks", "plans", "sessions"):
                 transaction.execute(
                     f"DELETE FROM {table} WHERE project_id = %s",  # nosec B608
                     (project_id,),
