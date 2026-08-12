@@ -11,6 +11,7 @@ import asyncio
 import logging
 import threading
 import time
+import weakref
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -169,7 +170,13 @@ class HTTPServer:
 
     @contextmanager
     def capture_runtime_operation(self) -> Iterator[None]:
-        """Pin one runtime bundle, including a pre-start fallback, for an operation."""
+        """Pin one runtime bundle, including a pre-start fallback, for an operation.
+
+        Child asyncio tasks copy the ``(True, bundle)`` context at creation and
+        retain that epoch for their lifetime. This intentionally makes background
+        work spawned by an operation retain its originating epoch, including
+        explicit pre-start fallback captures.
+        """
         is_captured, _ = self._runtime_bundle_context.get()
         if is_captured:
             yield
@@ -218,6 +225,20 @@ class HTTPServer:
 
         runtime_bundle = self.capture_runtime_bundle()
         config = self.resolve_runtime_config()
+        http_server_ref = weakref.ref(self)
+
+        def resolve_http_config() -> DaemonConfig | None:
+            http_server = http_server_ref()
+            return http_server.resolve_runtime_config() if http_server is not None else None
+
+        @contextmanager
+        def capture_http_runtime_operation() -> Iterator[None]:
+            http_server = http_server_ref()
+            if http_server is None:
+                yield
+                return
+            with http_server.capture_runtime_operation():
+                yield
 
         def captured_service(name: str) -> object | None:
             if runtime_bundle is None:
@@ -318,7 +339,7 @@ class HTTPServer:
 
         config_route_context = ConfigurationRouteContext(self)
         self._internal_manager = setup_internal_registries(
-            config_resolver=self.resolve_runtime_config,
+            config_resolver=resolve_http_config,
             _session_manager=None,  # Not needed for internal registries
             memory_manager_resolver=resolve_memory_manager,
             task_manager=services.task_manager,
@@ -416,8 +437,8 @@ class HTTPServer:
             internal_manager=self._internal_manager,
             db=services.database,
             startup_config=config,
-            config_resolver=self.resolve_runtime_config,
-            operation_context_factory=self.capture_runtime_operation,
+            config_resolver=resolve_http_config,
+            operation_context_factory=capture_http_runtime_operation,
             llm_service=llm_service,
             llm_service_resolver=resolve_llm_service,
             session_manager=services.session_manager,

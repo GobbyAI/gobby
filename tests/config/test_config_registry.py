@@ -230,7 +230,7 @@ def test_dynamic_segment_codec_rejects_unencodable_input(value: str) -> None:
 
 def test_machine_exported_secret_specs_are_rejected_at_registry_load() -> None:
     """The registry fails closed if a secret-bearing key enters the machine export."""
-    from gobby.config.registry import ConfigKeySpec, ConfigRegistry, PatternFieldSpec, RegistryError
+    from gobby.config.registry import ConfigFieldSpec, ConfigKeySpec, ConfigRegistry, RegistryError
 
     exported_secret = ConfigKeySpec(
         key="databases.falkordb.password",
@@ -258,7 +258,7 @@ def test_machine_exported_secret_specs_are_rejected_at_registry_load() -> None:
         default=None,
         machine_export=True,
         field_specs=(
-            PatternFieldSpec(
+            ConfigFieldSpec(
                 name="api_key",
                 annotation=str | None,
                 default=None,

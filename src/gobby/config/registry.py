@@ -163,8 +163,8 @@ def _namespace(key: str) -> str:
 
 
 @dataclass(frozen=True, slots=True)
-class PatternFieldSpec:
-    """Field-specific metadata for model-valued mapping patterns."""
+class ConfigFieldSpec:
+    """Field-specific metadata for model-valued configuration entries."""
 
     name: str
     annotation: object
@@ -190,7 +190,7 @@ class ConfigKeySpec:
     secrecy: ConfigSecrecy = ConfigSecrecy.NONE
     machine_export: bool = False
     description: str | None = None
-    field_specs: tuple[PatternFieldSpec, ...] = ()
+    field_specs: tuple[ConfigFieldSpec, ...] = ()
 
     @property
     def namespace(self) -> str:
@@ -214,7 +214,7 @@ class ConfigPatternSpec:
     secrecy: ConfigSecrecy = ConfigSecrecy.NONE
     machine_export: bool = False
     description: str | None = None
-    field_specs: tuple[PatternFieldSpec, ...] = ()
+    field_specs: tuple[ConfigFieldSpec, ...] = ()
 
     @property
     def key(self) -> str:
@@ -428,19 +428,19 @@ def _spec_carries_secrets(spec: RegistrySpec) -> bool:
     return any(field.secrecy is not ConfigSecrecy.NONE for field in spec.field_specs)
 
 
-def config_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
+def config_reference_fields(spec: RegistrySpec) -> tuple[ConfigFieldSpec, ...]:
     """Return structured fields that must contain secret references."""
     return tuple(field for field in spec.field_specs if field.secrecy is ConfigSecrecy.REFERENCE)
 
 
-def config_structured_reference_fields(spec: RegistrySpec) -> tuple[PatternFieldSpec, ...]:
+def config_structured_reference_fields(spec: RegistrySpec) -> tuple[ConfigFieldSpec, ...]:
     """Return secret-reference fields only for exact list-valued keys."""
     if not isinstance(spec, ConfigKeySpec) or get_origin(spec.annotation) is not list:
         return ()
     return config_reference_fields(spec)
 
 
-def config_structured_identity_field(spec: RegistrySpec) -> PatternFieldSpec:
+def config_structured_identity_field(spec: RegistrySpec) -> ConfigFieldSpec:
     """Return the sole registry-declared identity for a structured secret list."""
     identities = tuple(field for field in spec.field_specs if field.identity)
     if len(identities) != 1:
@@ -580,12 +580,12 @@ def _field_default(field: FieldInfo, instance_value: object = _MISSING) -> objec
     return _MISSING if default is PydanticUndefined else _freeze(default)
 
 
-def _field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
+def _field_specs(annotation: object) -> tuple[ConfigFieldSpec, ...]:
     model = _model_type(annotation)
     if model is None:
         return ()
     return tuple(
-        PatternFieldSpec(
+        ConfigFieldSpec(
             name=name,
             annotation=field.annotation,
             default=_field_default(field),
@@ -599,7 +599,7 @@ def _field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
     )
 
 
-def _list_field_specs(annotation: object) -> tuple[PatternFieldSpec, ...]:
+def _list_field_specs(annotation: object) -> tuple[ConfigFieldSpec, ...]:
     if get_origin(annotation) is not list:
         return ()
     arguments = get_args(annotation)
@@ -869,7 +869,7 @@ __all__ = [
     "ConfigRegistry",
     "ConfigSecrecy",
     "ConfigVisibility",
-    "PatternFieldSpec",
+    "ConfigFieldSpec",
     "RegistryError",
     "UnknownConfigKeyError",
     "config_reference_fields",

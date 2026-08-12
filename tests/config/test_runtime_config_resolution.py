@@ -355,6 +355,7 @@ def test_http_wiring_threads_live_resolvers_and_archive_override(tmp_path: Path)
 
     registry_config = setup.call_args.kwargs["config_resolver"]
     tools_config = daemon_tools.call_args.kwargs["config_resolver"]
+    tools_operation = daemon_tools.call_args.kwargs["operation_context_factory"]
     registry_llm = setup.call_args.kwargs["llm_service_resolver"]
     tools_llm = daemon_tools.call_args.kwargs["llm_service_resolver"]
     merge_config = merge_resolver.call_args.kwargs["config_resolver"]
@@ -364,6 +365,12 @@ def test_http_wiring_threads_live_resolvers_and_archive_override(tmp_path: Path)
 
     assert callable(registry_config)
     assert callable(tools_config)
+    assert callable(tools_operation)
+    assert getattr(registry_config, "__self__", None) is None
+    assert getattr(tools_config, "__self__", None) is None
+    assert getattr(tools_operation, "__self__", None) is None
+    with tools_operation():
+        assert tools_config().gobby_tasks.show_result_on_create is False
     assert registry_config().gobby_tasks.show_result_on_create is False
     assert tools_config().gobby_tasks.show_result_on_create is False
     assert merge_config() is configs[0].merge_resolution

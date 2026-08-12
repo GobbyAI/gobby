@@ -102,7 +102,7 @@ struct EnvGuard {
     gobby_home: Option<OsString>,
     daemon_url: Option<OsString>,
     port: Option<OsString>,
-    runtime_mode: Option<OsString>,
+    agent_api_token: Option<OsString>,
 }
 
 impl EnvGuard {
@@ -115,19 +115,18 @@ impl EnvGuard {
             gobby_home: std::env::var_os("GOBBY_HOME"),
             daemon_url: std::env::var_os("GOBBY_DAEMON_URL"),
             port: std::env::var_os("GOBBY_PORT"),
-            runtime_mode: std::env::var_os(crate::runtime_mode::RUNTIME_MODE_ENV),
+            agent_api_token: std::env::var_os(crate::local_token::AGENT_API_TOKEN_ENV),
         };
         // SAFETY: these tests serialize env mutation through TEST_ENV_LOCK,
         // and EnvGuard restores the original values while still holding
-        // that lock. GOBBY_DAEMON_URL/GOBBY_PORT are cleared so ambient
-        // overrides cannot leak into bootstrap-derived URL assertions. The
-        // explicit runtime-mode seal keeps guarded tests standalone.
+        // that lock. Daemon URL, port, and agent-token overrides are cleared
+        // so ambient values cannot leak into bootstrap-derived assertions.
         unsafe {
             std::env::set_var("HOME", home);
             std::env::set_var("GOBBY_HOME", home.join(".gobby"));
             std::env::remove_var("GOBBY_DAEMON_URL");
             std::env::remove_var("GOBBY_PORT");
-            std::env::set_var(crate::runtime_mode::RUNTIME_MODE_ENV, "standalone");
+            std::env::remove_var(crate::local_token::AGENT_API_TOKEN_ENV);
         }
         guard
     }
@@ -144,7 +143,10 @@ impl Drop for EnvGuard {
                 ("GOBBY_HOME", &self.gobby_home),
                 ("GOBBY_DAEMON_URL", &self.daemon_url),
                 ("GOBBY_PORT", &self.port),
-                (crate::runtime_mode::RUNTIME_MODE_ENV, &self.runtime_mode),
+                (
+                    crate::local_token::AGENT_API_TOKEN_ENV,
+                    &self.agent_api_token,
+                ),
             ] {
                 match value {
                     Some(value) => std::env::set_var(name, value),
