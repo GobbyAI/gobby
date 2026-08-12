@@ -5157,6 +5157,27 @@ ON gobby_agent_auth.principal_bindings
 FOR EACH ROW
 EXECUTE FUNCTION gobby_agent_auth.enforce_principal_lifetime();
 
+-- Single-hop refresh addition: supersedes the one-hour guard above. Agent
+-- credential lifetimes derive from the spawn timeout, so the DB-side bound
+-- matches MAX_ROLE_LIFETIME (24 hours) while still stopping runaway requests.
+CREATE OR REPLACE FUNCTION gobby_agent_auth.enforce_principal_lifetime()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $function$
+BEGIN
+    IF NEW.expires_at <= NEW.issued_at THEN
+        RAISE EXCEPTION 'managed principal expiry must follow issuance'
+            USING ERRCODE = '22023';
+    END IF;
+    IF NEW.expires_at > NEW.issued_at + INTERVAL '24 hours' THEN
+        RAISE EXCEPTION 'managed principal lifetime exceeds 24 hours'
+            USING ERRCODE = '22023';
+    END IF;
+    RETURN NEW;
+END
+$function$;
+
 CREATE OR REPLACE FUNCTION gobby_agent_auth.heartbeat_daemon(
     p_machine_id UUID,
     p_lease_duration INTERVAL DEFAULT INTERVAL '2 minutes'

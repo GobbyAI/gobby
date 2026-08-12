@@ -157,6 +157,17 @@ fn projection_change_sequence_cache_size(client: &mut Client) -> anyhow::Result<
         .get(0))
 }
 
+fn principal_lifetime_guard_def(client: &mut Client) -> anyhow::Result<String> {
+    Ok(client
+        .query_one(
+            "SELECT pg_get_functiondef(\
+                 'gobby_agent_auth.enforce_principal_lifetime()'::regprocedure\
+             )",
+            &[],
+        )?
+        .get(0))
+}
+
 fn assert_runtime_crud_privileges(client: &mut Client, table: &str) -> anyhow::Result<()> {
     for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE"] {
         let granted: bool = client
@@ -369,10 +380,10 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         return Ok(());
     };
     install_predecessor_baseline(&mut client)?;
-    client.batch_execute(
-        "ALTER TABLE embedding_projection_changes ALTER COLUMN sequence SET CACHE 32",
-    )?;
-    assert_eq!(projection_change_sequence_cache_size(&mut client)?, 32);
+    assert!(
+        principal_lifetime_guard_def(&mut client)?.contains("1 hour"),
+        "predecessor baseline must carry the one-hour lifetime guard"
+    );
     client.execute(
         "INSERT INTO config_store(key, value) VALUES ('preserved.key', 'preserved')",
         &[],
@@ -395,6 +406,10 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         .get(0);
     assert_eq!(checksum, BASELINE_CHECKSUM);
     assert_eq!(projection_change_sequence_cache_size(&mut client)?, 1);
+    assert!(
+        principal_lifetime_guard_def(&mut client)?.contains("24 hours"),
+        "refresh must supersede the one-hour lifetime guard"
+    );
     for table in [
         "config_state",
         "embedding_generation_acks",
