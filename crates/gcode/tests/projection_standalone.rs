@@ -248,7 +248,7 @@ fn run_gcode(
         .env("GOBBY_QDRANT_URL", qdrant_url)
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
         .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
-        .arg("--no-freshness")
+        .arg("--allow-stale")
         .arg("--format")
         .arg("json")
         .args(args);

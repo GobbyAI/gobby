@@ -412,7 +412,7 @@ fn failure_paths_match_legacy() {
             "--complete-scope",
             "--ai",
             "off",
-            "--no-freshness",
+            "--allow-stale",
         ],
     );
     assert!(!complete.status.success());

@@ -91,7 +91,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
 /// `last_indexed_at` — and `false` when the recorded index is already current
 /// and the lock (plus the full re-hash) can be skipped. Reads only; needs the
 /// hub exactly like the existing refresh path, and propagates a hub error the
-/// same way (`--no-freshness` still bypasses it upstream).
+/// same way (`--allow-stale` still bypasses it upstream).
 fn project_needs_refresh(ctx: &Context) -> anyhow::Result<bool> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
@@ -320,7 +320,7 @@ mod tests {
 
         #[test]
         #[serial_test::serial(serial_db)]
-        fn no_freshness_env_short_circuits_project_refresh() {
+        fn freshness_inflight_env_short_circuits_project_refresh() {
             let tmp = tempfile::tempdir().expect("tempdir");
             let ctx = context_for(tmp.path());
             unsafe { std::env::set_var(INFLIGHT_ENV, "1") };

@@ -41,7 +41,7 @@ pub struct CodeCommandOptions {
     pub compare_to: Option<String>,
     pub max_workers: usize,
     pub repair_citations: bool,
-    pub no_freshness: bool,
+    pub allow_stale: bool,
     pub quiet: bool,
     pub verbose: bool,
 }
@@ -168,7 +168,7 @@ pub(crate) fn run_command(options: CodeCommandOptions) -> Result<CommandOutcome,
     let freshness = check_freshness(
         options.requires_freshness(),
         &options.project_root,
-        options.no_freshness,
+        options.allow_stale,
         ensure_project_fresh,
     )
     .map_err(CodeCommandError::Freshness)?;

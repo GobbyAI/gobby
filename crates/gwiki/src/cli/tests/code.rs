@@ -22,7 +22,7 @@ fn map_code(args: &[&str]) -> CodeCommandOptions {
 
 #[test]
 fn code_cli_maps_to_public_command_with_freshness_control() {
-    let cli = Cli::try_parse_from(["gwiki", "code", "--project", "/repo", "--no-freshness"])
+    let cli = Cli::try_parse_from(["gwiki", "code", "--project", "/repo", "--allow-stale"])
         .expect("code command parses");
 
     let command = mapping::command_from_cli(cli.command, cli.scope.into())
@@ -31,7 +31,25 @@ fn code_cli_maps_to_public_command_with_freshness_control() {
         panic!("expected public code command");
     };
     assert_eq!(options.project_root, PathBuf::from("/repo"));
-    assert!(options.no_freshness);
+    assert!(options.allow_stale);
+}
+
+#[test]
+fn code_cli_rejects_removed_no_freshness_flag() {
+    assert!(Cli::try_parse_from(["gwiki", "code", "--no-freshness"]).is_err());
+}
+
+#[test]
+fn code_help_only_advertises_allow_stale() {
+    let mut command = Cli::command();
+    let help = command
+        .find_subcommand_mut("code")
+        .expect("code subcommand")
+        .render_help()
+        .to_string();
+
+    assert!(help.contains("--allow-stale"));
+    assert!(!help.contains("--no-freshness"));
 }
 
 #[test]
@@ -54,7 +72,7 @@ fn code_defaults_match_the_legacy_flat_command() {
     assert_eq!(options.compare_to, None);
     assert_eq!(options.max_workers, 1);
     assert!(!options.repair_citations);
-    assert!(!options.no_freshness);
+    assert!(!options.allow_stale);
 }
 
 #[test]
@@ -165,7 +183,7 @@ fn code_mode_conflicts_match_the_legacy_matrix() {
         );
     }
     assert!(Cli::try_parse_from(["gwiki", "code", "--force"]).is_err());
-    let allowed_mode_flags: &[&[&str]] = &[&["--out", "wiki"], &["--no-freshness"]];
+    let allowed_mode_flags: &[&[&str]] = &[&["--out", "wiki"], &["--allow-stale"]];
     for flags in allowed_mode_flags {
         let mut purge = vec!["gwiki", "code", "--purge", "--force"];
         purge.extend_from_slice(flags);

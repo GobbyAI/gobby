@@ -129,6 +129,8 @@ class TestEnsureIsolationCodeIndex:
         assert calls[1].args[:4] == ("/tmp/gcode", "index", "--quiet", "--project")
         assert calls[1].args[4] == str(tmp_path)
         assert calls[2].args[:3] == ("/tmp/gcode", "search-content", "__gobby_code_index_smoke__")
+        assert "--allow-stale" in calls[2].args
+        assert "--no-freshness" not in calls[2].args
         assert calls[0].kwargs["cwd"] == str(tmp_path)
 
     @pytest.mark.asyncio

@@ -292,7 +292,7 @@ fn run() -> anyhow::Result<()> {
             format,
         ),
         Command::Status => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::status::run(&ctx, format)
         }
         Command::Invalidate {
@@ -321,7 +321,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Rebuild,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::rebuild(&ctx, format)
         }
         Command::Graph {
@@ -330,7 +330,7 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Report { top_n },
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::report(&ctx, top_n, format)
         }
         Command::Vector {
@@ -341,7 +341,7 @@ fn run() -> anyhow::Result<()> {
                 },
         } => {
             if !allow_missing_indexed_file {
-                ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+                ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             }
             commands::vector::sync_file(&ctx, &file, allow_missing_indexed_file, format)
         }
@@ -351,13 +351,13 @@ fn run() -> anyhow::Result<()> {
         Command::Vector {
             command: VectorCommand::Rebuild,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::vector::rebuild(&ctx, format)
         }
         Command::Vector {
             command: VectorCommand::CleanupOrphans,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::vector::cleanup_orphans(&ctx, format)
         }
         Command::Embeddings {
@@ -366,19 +366,19 @@ fn run() -> anyhow::Result<()> {
         Command::Graph {
             command: GraphCommand::Overview { limit },
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::overview(&ctx, limit, format)
         }
         Command::Graph {
             command: GraphCommand::File { file },
         } => {
-            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::graph::file(&ctx, &file, format)
         }
         Command::Graph {
             command: GraphCommand::Neighbors { symbol_id, limit },
         } => {
-            ensure_symbol_fresh(&ctx, cli.no_freshness, &symbol_id)?;
+            ensure_symbol_fresh(&ctx, cli.allow_stale, &symbol_id)?;
             commands::graph::neighbors(&ctx, &symbol_id, limit, format)
         }
         Command::Graph {
@@ -390,7 +390,7 @@ fn run() -> anyhow::Result<()> {
                     limit,
                 },
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::graph_blast_radius(
                 &ctx,
                 symbol_id.as_deref(),
@@ -410,7 +410,7 @@ fn run() -> anyhow::Result<()> {
             language,
             token_budget,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search(
                 &ctx,
                 &query,
@@ -435,7 +435,7 @@ fn run() -> anyhow::Result<()> {
             language,
             with_graph,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_symbol(
                 &ctx,
                 &query,
@@ -458,7 +458,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             language,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_text(
                 &ctx,
                 &query,
@@ -476,7 +476,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             language,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::search::search_content(
                 &ctx,
                 &query,
@@ -499,7 +499,7 @@ fn run() -> anyhow::Result<()> {
             glob,
             max_count,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::grep::run(
                 &ctx,
                 commands::grep::GrepOptions {
@@ -519,28 +519,28 @@ fn run() -> anyhow::Result<()> {
         }
 
         Command::Outline { file, summarize } => {
-            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::symbols::outline(&ctx, &file, format, cli.verbose, summarize)
         }
         Command::Symbol { id } => {
-            ensure_symbol_fresh(&ctx, cli.no_freshness, &id)?;
+            ensure_symbol_fresh(&ctx, cli.allow_stale, &id)?;
             commands::symbols::symbol(&ctx, &id, format)
         }
         Command::SymbolAt { location, line } => {
             let file = commands::symbol_at::requested_file_for_freshness(&ctx, &location, line)?;
-            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            ensure_file_fresh(&ctx, cli.allow_stale, &file)?;
             commands::symbol_at::run(&ctx, &location, line, format)
         }
         Command::Symbols { ids } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::symbols::symbols(&ctx, &ids, format)
         }
         Command::Kinds => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::symbols::kinds(&ctx, format)
         }
         Command::Tree => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::symbols::tree(&ctx, format)
         }
         Command::Callers {
@@ -548,7 +548,7 @@ fn run() -> anyhow::Result<()> {
             limit,
             offset,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::callers(&ctx, &symbol_name, limit, offset, format)
         }
         Command::Usages {
@@ -557,11 +557,11 @@ fn run() -> anyhow::Result<()> {
             offset,
             token_budget,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::usages(&ctx, &symbol_name, limit, offset, token_budget, format)
         }
         Command::Imports { file } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::imports(&ctx, &file, format)
         }
         Command::Path {
@@ -569,7 +569,7 @@ fn run() -> anyhow::Result<()> {
             symbol_b,
             max_depth,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::path(&ctx, &symbol_a, &symbol_b, max_depth, format)
         }
         Command::BlastRadius {
@@ -577,12 +577,12 @@ fn run() -> anyhow::Result<()> {
             depth,
             token_budget,
         } => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::graph::blast_radius(&ctx, &target, depth, token_budget, format)
         }
 
         Command::RepoOutline => {
-            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            ensure_project_fresh(&ctx, cli.allow_stale)?;
             commands::status::repo_outline(&ctx, format)
         }
     }

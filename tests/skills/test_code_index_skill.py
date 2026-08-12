@@ -58,6 +58,13 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
 
 
+def test_code_index_skill_documents_allow_stale_flag() -> None:
+    body = parse_skill_file(SKILL_PATH).content
+
+    assert "--allow-stale" in body
+    assert "--no-freshness" not in body
+
+
 def test_code_index_skill_documents_durable_plan_targets() -> None:
     body = parse_skill_file(SKILL_PATH).content
 

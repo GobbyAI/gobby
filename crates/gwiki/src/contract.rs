@@ -6,7 +6,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gwiki",
-        contract_version: 16,
+        contract_version: 17,
         summary: "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
         global_flags: vec![format_flag(), FlagContract::switch("--quiet")],
         scope: Some(ScopeContract {
@@ -300,7 +300,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--compare-to", "GIT_REF[:META_PATH]"),
                     FlagContract::value("--max-workers", "N"),
                     FlagContract::switch("--repair-citations"),
-                    FlagContract::switch("--no-freshness"),
+                    FlagContract::switch("--allow-stale"),
                 ],
                 json_output_keys: vec![
                     "command",

@@ -68,7 +68,7 @@ gwiki --project /path/to/project code \
 Generation accepts `--ai auto|daemon|direct|off`, `--ai-depth`,
 `--ai-prose-depth`, `--ai-register`, and `--max-workers`. `--include-docs`
 adds narrative Markdown and text inputs to the default code and structured
-configuration set. `--no-freshness` bypasses the generation-path code-index
+configuration set. `--allow-stale` bypasses the generation-path code-index
 freshness check and should be reserved for controlled diagnostics.
 
 ## Dormant Daemon Routes

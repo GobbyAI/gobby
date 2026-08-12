@@ -6,14 +6,14 @@ pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
         // Additive optional flags are backward-compatible and do not bump this version.
-        contract_version: 3,
+        contract_version: 4,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
             format_flag(),
             FlagContract::switch("--quiet"),
             FlagContract::switch("--verbose"),
-            FlagContract::switch("--no-freshness"),
+            FlagContract::switch("--allow-stale"),
         ],
         scope: Some(ScopeContract {
             flags: vec![FlagContract::value("--project", "ROOT")],

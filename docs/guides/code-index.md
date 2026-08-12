@@ -103,7 +103,7 @@ All commands accept these global options unless noted:
 | `--format json\|text` | Select JSON or text output; JSON is the default |
 | `--quiet` | Suppress warnings |
 | `--verbose` | Enable verbose output |
-| `--no-freshness` | Skip read-time freshness checks |
+| `--allow-stale` | Allow stale index data by skipping read-time freshness checks |
 
 ### Index Lifecycle
 

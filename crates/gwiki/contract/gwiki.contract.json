@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 16,
+  "contract_version": 17,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -806,7 +806,7 @@
           "repeatable": false
         },
         {
-          "name": "--no-freshness",
+          "name": "--allow-stale",
           "takes_value": false,
           "value_name": null,
           "allowed_values": [],

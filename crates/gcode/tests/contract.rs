@@ -65,9 +65,22 @@ fn output_keys(contract: &Value, name: &str) -> Vec<String> {
 }
 
 #[test]
-fn contract_is_version_three_without_codewiki() {
+fn contract_is_version_four_without_codewiki() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
-    assert_eq!(contract["contract_version"], serde_json::json!(3));
+    assert_eq!(contract["contract_version"], serde_json::json!(4));
+    let global_flags = contract["global_flags"]
+        .as_array()
+        .expect("global flags array");
+    assert!(
+        global_flags
+            .iter()
+            .any(|flag| flag["name"] == "--allow-stale")
+    );
+    assert!(
+        !global_flags
+            .iter()
+            .any(|flag| flag["name"] == "--no-freshness")
+    );
     assert!(
         contract["commands"]
             .as_array()

@@ -115,7 +115,7 @@ pub(super) fn run_gcode_with_format(
         .env("GOBBY_FALKORDB_PORT", &env.falkor_port)
         .env("GOBBY_HOME", gobby_home)
         .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
-        .arg("--no-freshness")
+        .arg("--allow-stale")
         .arg("--format")
         .arg(format)
         .args(args);

@@ -175,7 +175,7 @@ gcode search --project /path/to/app "q"   # By path
 # Global flags
 --format text|json                        # Output format (default: json)
 --quiet                                   # Suppress warnings and progress
---no-freshness                            # Skip read-time index/source freshness checks
+--allow-stale                             # Allow stale data by skipping freshness checks
 ```
 
 `gcode grep` defaults to grouped text output: each matched file is printed once,

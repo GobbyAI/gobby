@@ -166,9 +166,27 @@ fn top_level_help_includes_agent_task_examples() {
 }
 
 #[test]
-fn test_parse_no_freshness_global_flag() {
-    let cli = Cli::try_parse_from(["gcode", "--no-freshness", "tree"]).expect("tree parses");
+fn test_parse_allow_stale_global_flag() {
+    for argv in [
+        ["gcode", "--allow-stale", "tree"],
+        ["gcode", "tree", "--allow-stale"],
+    ] {
+        let cli = Cli::try_parse_from(argv).expect("tree parses");
 
-    assert!(cli.no_freshness);
-    assert!(matches!(cli.command, Command::Tree));
+        assert!(cli.allow_stale);
+        assert!(matches!(cli.command, Command::Tree));
+    }
+}
+
+#[test]
+fn test_rejects_removed_no_freshness_global_flag() {
+    assert!(Cli::try_parse_from(["gcode", "--no-freshness", "tree"]).is_err());
+}
+
+#[test]
+fn top_level_help_only_advertises_allow_stale() {
+    let help = Cli::command().render_help().to_string();
+
+    assert!(help.contains("--allow-stale"));
+    assert!(!help.contains("--no-freshness"));
 }

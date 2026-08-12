@@ -98,7 +98,7 @@ mod serial_db {
             .env("GCODE_DATABASE_URL", &database_url)
             .env("GOBBY_HOME", isolated_gobby_home(project.path()))
             .env(gobby_core::runtime_mode::RUNTIME_MODE_ENV, "standalone")
-            .arg("--no-freshness")
+            .arg("--allow-stale")
             .arg("--format")
             .arg("json")
             .args([
@@ -186,7 +186,7 @@ mod serial_db {
             .env_remove("GOBBY_FALKORDB_PASSWORD")
             .env_remove("GOBBY_QDRANT_URL")
             .env_remove("GOBBY_QDRANT_API_KEY")
-            .arg("--no-freshness")
+            .arg("--allow-stale")
             .args(["prune", "--force"])
             .output()
             .expect("run gcode prune");
@@ -240,7 +240,7 @@ mod serial_db {
             .env_remove("GOBBY_FALKORDB_PASSWORD")
             .env_remove("GOBBY_QDRANT_URL")
             .env_remove("GOBBY_QDRANT_API_KEY")
-            .arg("--no-freshness")
+            .arg("--allow-stale")
             .args(["prune", "--force"])
             .output()
             .expect("run gcode prune");
@@ -288,7 +288,7 @@ mod serial_db {
             .env_remove("GOBBY_FALKORDB_PASSWORD")
             .env("GOBBY_QDRANT_URL", qdrant_url)
             .env_remove("GOBBY_QDRANT_API_KEY")
-            .arg("--no-freshness")
+            .arg("--allow-stale")
             .args(["prune", "--force"])
             .output()
             .expect("run gcode prune");

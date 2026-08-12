@@ -5,9 +5,9 @@ The machine-readable contract lives at `crates/gwiki/contract/gwiki.contract.jso
 
 ## Version
 
-`contract_version`: 16
+`contract_version`: 17
 
-Version 16 adds `gwiki code`, the project-scoped CodeWiki generation surface.
+Version 17 renames the `gwiki code` freshness bypass to `--allow-stale`.
 The contract covers generation, purge, citation repair, and metadata comparison,
 including AI routing, graph degradation, and JSON output keys.
 

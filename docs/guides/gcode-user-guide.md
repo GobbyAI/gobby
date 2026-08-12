@@ -657,11 +657,11 @@ transparently and then runs your command. This is meant to keep individual
 reads honest — it is **not** a substitute for `gcode index` after a bulk
 checkout or branch switch.
 
-Disable per-call when you know the index is current and you want zero overhead:
+Allow stale index data per call when you want zero freshness-check overhead:
 
 ```bash
-gcode --no-freshness search "query"
-gcode --no-freshness outline src/main.rs
+gcode --allow-stale search "query"
+gcode --allow-stale outline src/main.rs
 ```
 
 Set `GCODE_FRESHNESS_INFLIGHT=1` in nested processes (or scripts that already

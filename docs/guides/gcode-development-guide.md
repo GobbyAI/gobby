@@ -273,7 +273,7 @@ Search, symbol, outline, and graph read commands gate their work on `freshness::
 - **Scopes**: `FreshnessScope::Project` (re-runs the standard incremental indexer over the whole project root) and `FreshnessScope::Files(Vec<PathBuf>)` (limits the re-index to the listed files — used for `outline` and other file-scoped commands).
 - **Symbol scope**: `ensure_symbol_fresh` looks up the symbol's source file and re-indexes just that file when the stored byte range no longer matches the on-disk content.
 - **Re-entrancy guard**: `freshness::ensure_fresh` checks `GCODE_FRESHNESS_INFLIGHT`; if set, it short-circuits. The `FreshnessGuard` RAII helper sets and clears the same env var so the indexer's own subprocesses don't recurse into freshness.
-- **Disable from CLI**: the global `--no-freshness` flag (`Cli::no_freshness`) skips all of the above. `main.rs` wraps each freshness call in `ensure_project_fresh` / `ensure_files_fresh` / `ensure_symbol_fresh` thin helpers that respect the flag.
+- **Allow stale data from the CLI**: the global `--allow-stale` flag (`Cli::allow_stale`) skips all of the above. `dispatch.rs` wraps each freshness call in `ensure_project_fresh` / `ensure_file_fresh` / `ensure_symbol_fresh` thin helpers that respect the flag.
 - **Boundary**: freshness is per-call repair, not a substitute for `gcode index` after bulk changes (branch switches, large refactors). It's optimized for "this single file changed since the last index run."
 
 ### Project-scoped path validation

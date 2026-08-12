@@ -5,9 +5,9 @@ The machine-readable contract lives at `crates/gcode/contract/gcode.contract.jso
 
 ## Version
 
-`contract_version`: 2
+`contract_version`: 4
 
-Version 2 marks the full daemon-consumed query surface. Each command below emits
+Version 4 renames the global freshness bypass to `--allow-stale`. Each command below emits
 a stable JSON shape under `--format json`; the keys are pinned in
 `gcode.contract.json` and asserted by the drift tests.
 

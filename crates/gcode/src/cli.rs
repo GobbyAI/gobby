@@ -35,9 +35,9 @@ pub(crate) struct Cli {
     #[arg(long, global = true)]
     pub(crate) verbose: bool,
 
-    /// Skip read-time freshness checks
+    /// Allow stale index data by skipping read-time freshness checks
     #[arg(long, global = true)]
-    pub(crate) no_freshness: bool,
+    pub(crate) allow_stale: bool,
 
     #[command(subcommand)]
     pub(crate) command: Command,

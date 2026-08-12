@@ -317,7 +317,7 @@ async def ensure_isolation_code_index(
             "--limit",
             "1",
             "--quiet",
-            "--no-freshness",
+            "--allow-stale",
             "--project",
             str(workspace),
         ],

@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 3,
+  "contract_version": 4,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -39,7 +39,7 @@
       "repeatable": false
     },
     {
-      "name": "--no-freshness",
+      "name": "--allow-stale",
       "takes_value": false,
       "value_name": null,
       "allowed_values": [],

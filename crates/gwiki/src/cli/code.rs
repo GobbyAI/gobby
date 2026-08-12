@@ -119,9 +119,9 @@ pub(super) struct CodeArgs {
     /// Re-anchor existing citations without generating content.
     #[arg(long)]
     repair_citations: bool,
-    /// Skip the generation-path code index freshness check.
+    /// Allow stale index data by skipping the generation-path freshness check.
     #[arg(long)]
-    no_freshness: bool,
+    allow_stale: bool,
 }
 
 impl CodeArgs {
@@ -152,7 +152,7 @@ impl CodeArgs {
             compare_to: self.compare_to,
             max_workers: self.max_workers,
             repair_citations: self.repair_citations,
-            no_freshness: self.no_freshness,
+            allow_stale: self.allow_stale,
             quiet,
             verbose,
         }

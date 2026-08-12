@@ -37,7 +37,7 @@ fn code_options() -> CodeCommandOptions {
         compare_to: None,
         max_workers: 1,
         repair_citations: false,
-        no_freshness: false,
+        allow_stale: false,
         quiet: false,
         verbose: false,
     }
