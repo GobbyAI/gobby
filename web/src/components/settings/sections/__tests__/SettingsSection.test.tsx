@@ -1,10 +1,4 @@
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SettingsSection } from "../SettingsSection";
 import { SettingsSectionContext } from "../SettingsSectionContext";
@@ -110,6 +104,13 @@ describe("SettingsSection renderers", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
-    await waitFor(() => expect(saveConfig).toHaveBeenCalledWith({}));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Configuration schema is unavailable. Reload settings before saving.",
+    );
+    expect(saveConfig).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Server host" })).toHaveValue(
+      "0.0.0.0",
+    );
+    expect(screen.getByRole("button", { name: "Discard" })).toBeEnabled();
   });
 });

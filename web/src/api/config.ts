@@ -138,6 +138,7 @@ function errorBody(value: unknown): {
 export class ConfigurationClient {
   private snapshot: ConfigValuesSnapshot | null = null;
   private watermark = 0;
+  private pendingConvergenceRevision: number | null = null;
   private generation = 0;
   private refreshPromise: Promise<ConfigValuesSnapshot | null> | null = null;
   private refreshScheduled = false;
@@ -163,6 +164,7 @@ export class ConfigurationClient {
     this.generation += 1;
     this.snapshot = null;
     this.watermark = 0;
+    this.pendingConvergenceRevision = null;
     this.refreshPromise = null;
     this.refreshScheduled = false;
     this.listeners.clear();
@@ -198,14 +200,12 @@ export class ConfigurationClient {
     } catch {
       return;
     }
-    if (revision <= this.watermark) return;
-    this.watermark = revision;
-    if (this.refreshScheduled) return;
-    this.refreshScheduled = true;
-    queueMicrotask(() => {
-      this.refreshScheduled = false;
-      void this.fetchValues();
-    });
+    const observesPendingCommit =
+      this.pendingConvergenceRevision !== null &&
+      revision >= this.pendingConvergenceRevision;
+    if (revision <= this.watermark && !observesPendingCommit) return;
+    this.watermark = Math.max(this.watermark, revision);
+    this.scheduleRefresh();
   }
 
   async patch(
@@ -262,6 +262,10 @@ export class ConfigurationClient {
     // revision (subsequent patches must not reuse the stale one) without
     // publishing the torn revision/values pair, then refetch so subscribers
     // see the committed values.
+    this.pendingConvergenceRevision = Math.max(
+      this.pendingConvergenceRevision ?? 0,
+      revision,
+    );
     this.snapshot = {
       ...snapshot,
       revision,
@@ -412,7 +416,7 @@ export class ConfigurationClient {
 
   private async runRefresh(): Promise<ConfigValuesSnapshot | null> {
     const generation = this.generation;
-    let retriedWatermark: number | null = null;
+    let retriedRevision: number | null = null;
     while (true) {
       const response = await this.fetcher("/api/config/values");
       if (generation !== this.generation) return this.snapshot;
@@ -425,23 +429,47 @@ export class ConfigurationClient {
         this.publish(next);
       }
       if (
-        next.revision >= this.watermark ||
-        retriedWatermark === this.watermark
+        this.pendingConvergenceRevision !== null &&
+        next.revision >= this.pendingConvergenceRevision
+      ) {
+        this.pendingConvergenceRevision = null;
+      }
+      const requiredRevision = Math.max(
+        this.watermark,
+        this.pendingConvergenceRevision ?? 0,
+      );
+      if (
+        next.revision >= requiredRevision ||
+        retriedRevision === requiredRevision
       ) {
         return this.snapshot;
       }
-      retriedWatermark = this.watermark;
+      retriedRevision = requiredRevision;
     }
   }
 
   private async refreshAfterCommittedMutation(): Promise<void> {
     try {
       await this.fetchValues();
+      if (this.pendingConvergenceRevision !== null) this.scheduleRefresh();
     } catch {
-      // The write is already committed. Keep the pre-refresh watermark so the
-      // daemon's own-commit event can retry convergence without turning the
-      // successful mutation into a UI error.
+      // The write is already committed. Preserve the pending revision and
+      // repair in the background without turning mutation success into an
+      // unhandled rejection or a false UI failure.
+      this.scheduleRefresh();
     }
+  }
+
+  private scheduleRefresh(): void {
+    if (this.refreshScheduled) return;
+    this.refreshScheduled = true;
+    queueMicrotask(() => {
+      this.refreshScheduled = false;
+      void this.fetchValues().catch(() => {
+        // Keep pendingConvergenceRevision set. A same-revision own-commit
+        // event or a later revision can safely schedule another repair.
+      });
+    });
   }
 
   private async fetchRecord(
@@ -518,6 +546,10 @@ export class ConfigurationClient {
     // A YAML replace rewrites values wholesale and its response carries none of
     // them: bump the revision without publishing the torn snapshot, then
     // refetch so subscribers converge on the committed document.
+    this.pendingConvergenceRevision = Math.max(
+      this.pendingConvergenceRevision ?? 0,
+      revision,
+    );
     this.snapshot = {
       ...snapshot,
       revision,

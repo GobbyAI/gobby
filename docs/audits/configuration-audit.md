@@ -7,6 +7,7 @@ This audit inventories the legacy Configuration page and the backend configurati
 - `live`: backend and frontend paths both exist and the control can keep working in the overlay.
 - `dead-backend`: backend persistence exists but no visible frontend control exists today.
 - `dead-frontend`: frontend sends or shows a value that the backend does not persist or canonically support.
+- `cli-only`: supported configuration is intentionally available through CLI or operator tooling without a web control.
 - `mismatched-type`: frontend renders a control that cannot safely represent the backend schema type.
 - `missing-validation`: the option works but needs a bounded overlay control or backend validator before migration.
 

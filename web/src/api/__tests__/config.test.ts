@@ -133,11 +133,13 @@ describe("ConfigurationClient mutation convergence", () => {
     await client.fetchValues();
     const result = await client.patch({ memory: { enabled: false } });
     expect(result.kind).toBe("success");
+    const requestCountBeforeOwnCommit = fetcher.mock.calls.length;
 
     // The daemon broadcasts the committed revision to every client, including
     // the author. Observing it must not disturb (or be needed for) the
     // already-converged snapshot.
     client.observeRevision(5);
+    await Promise.resolve();
 
     await vi.waitFor(() => {
       expect(client.currentSnapshot?.revision).toBe(5);
@@ -145,6 +147,50 @@ describe("ConfigurationClient mutation convergence", () => {
         memory: { enabled: false },
       });
     });
+    expect(fetcher).toHaveBeenCalledTimes(requestCountBeforeOwnCommit);
+  });
+
+  it("advances_the_committed_revision_without_publishing_stale_values", async () => {
+    const { state, fetcher } = makeServer({
+      revision: 4,
+      desired: { memory: { enabled: true } },
+    });
+    const client = new ConfigurationClient(fetcher);
+    await client.fetchValues();
+    const serverFetcher = fetcher.getMockImplementation();
+    let resolvePostCommitRefresh: (response: Response) => void = () => {
+      throw new Error("post-commit refresh resolver was not installed");
+    };
+    let holdNextValuesRead = false;
+    fetcher.mockImplementation(async (input, init) => {
+      if (init?.method === "PATCH") {
+        const response = await serverFetcher!(input, init);
+        holdNextValuesRead = true;
+        return response;
+      }
+      if (holdNextValuesRead) {
+        holdNextValuesRead = false;
+        return new Promise<Response>((resolve) => {
+          resolvePostCommitRefresh = resolve;
+        });
+      }
+      return serverFetcher!(input, init);
+    });
+    const published: number[] = [];
+    client.subscribe((snapshot) => published.push(snapshot.revision));
+
+    const patch = client.patch({ memory: { enabled: false } });
+    await vi.waitFor(() => {
+      expect(client.currentSnapshot?.revision).toBe(state.revision);
+    });
+
+    expect(client.currentSnapshot?.desired).toEqual({
+      memory: { enabled: true },
+    });
+    expect(published).not.toContain(state.revision);
+
+    resolvePostCommitRefresh(await serverFetcher!("/api/config/values"));
+    await expect(patch).resolves.toMatchObject({ kind: "success" });
   });
 
   it("returns_success_and_uses_own_commit_event_when_the_post_patch_refetch_rejects", async () => {
@@ -155,28 +201,38 @@ describe("ConfigurationClient mutation convergence", () => {
     const client = new ConfigurationClient(fetcher);
     await client.fetchValues();
     const serverFetcher = fetcher.getMockImplementation();
-    let rejectNextValuesRead = false;
+    let rejectPostCommitRefresh: (reason?: unknown) => void = () => {
+      throw new Error("post-commit refresh rejector was not installed");
+    };
+    let holdNextValuesRead = false;
     fetcher.mockImplementation(async (input, init) => {
       if (init?.method === "PATCH") {
         const response = await serverFetcher!(input, init);
-        rejectNextValuesRead = true;
+        holdNextValuesRead = true;
         return response;
       }
-      if (rejectNextValuesRead) {
-        rejectNextValuesRead = false;
-        throw new Error("post-commit refresh failed");
+      if (holdNextValuesRead) {
+        holdNextValuesRead = false;
+        return new Promise<Response>((_resolve, reject) => {
+          rejectPostCommitRefresh = reject;
+        });
       }
       return serverFetcher!(input, init);
     });
 
-    const result = await client.patch({ memory: { enabled: false } });
-
-    expect(result.kind).toBe("success");
-    expect(client.currentSnapshot?.desired).toEqual({
-      memory: { enabled: true },
+    const patch = client.patch({ memory: { enabled: false } });
+    await vi.waitFor(() => {
+      expect(client.currentSnapshot?.revision).toBe(5);
     });
 
+    // The daemon's own-commit event commonly arrives while the PATCH-owned
+    // refresh is still in flight. Reject that refresh only after observing it.
     client.observeRevision(5);
+    await Promise.resolve();
+    rejectPostCommitRefresh(new Error("post-commit refresh failed"));
+    const result = await patch;
+
+    expect(result.kind).toBe("success");
     await vi.waitFor(() => {
       expect(client.currentSnapshot?.revision).toBe(5);
       expect(client.currentSnapshot?.desired).toEqual({

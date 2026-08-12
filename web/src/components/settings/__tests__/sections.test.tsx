@@ -131,7 +131,7 @@ describe("SettingsSection dirty draft", () => {
     fireEvent.click(screen.getByRole("button", { name: "Discard" }));
 
     expect(holder.isDirty?.()).toBe(false);
-    expect(input.value).toBe("initial");
+    expect(screen.getByLabelText("demo field")).toHaveValue("initial");
   });
 
   it("saves only the owned paths and clears dirty on success", async () => {

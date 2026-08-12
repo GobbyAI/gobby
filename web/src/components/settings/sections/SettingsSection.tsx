@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { ConfigApplyFailure } from "../../../api/config";
 import { DetailActionButton } from "../../activity/fields";
@@ -89,6 +89,8 @@ export function SettingsSection({
     registerDirtyGuard,
   } = useSettingsSectionContext();
   const section = getSettingsSection(sectionId);
+  const [schemaError, setSchemaError] = useState<string | null>(null);
+  const [editorRevision, setEditorRevision] = useState(0);
 
   const source = useMemo(
     () => pickPaths(configValues, ownedPaths),
@@ -99,12 +101,18 @@ export function SettingsSection({
     useDetailDraft<SectionDraft>({
       source,
       onSave: async (merged) => {
+        if (schema === null) {
+          setSchemaError(
+            "Configuration schema is unavailable. Reload settings before saving.",
+          );
+          return false;
+        }
+        setSchemaError(null);
         // Managed-activation paths (e.g. the embedding switch's structural
         // keys) are mutated only through their coordinator action; the store
         // rejects direct writes, so submitting them bricks the whole save.
         const payload = Object.fromEntries(
           Object.entries(merged).filter(([path]) => {
-            if (schema === null) return false;
             return resolveSchemaNode(schema, path)?.activation !== "managed";
           }),
         );
@@ -138,6 +146,12 @@ export function SettingsSection({
   };
 
   const hasFields = ownedPaths.length > 0;
+  const visibleSchemaError = schema === null ? schemaError : null;
+  const discardChanges = () => {
+    setSchemaError(null);
+    setEditorRevision((revision) => revision + 1);
+    discard();
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" aria-busy={isLoading}>
@@ -150,8 +164,17 @@ export function SettingsSection({
             {section.description}
           </p>
         </div>
-        <div className="flex flex-col gap-6">{children(fields)}</div>
-        {mutationError ? (
+        <div key={editorRevision} className="flex flex-col gap-6">
+          {children(fields)}
+        </div>
+        {visibleSchemaError ? (
+          <p
+            className="max-w-[48ch] text-sm leading-[1.4] text-destructive"
+            role="alert"
+          >
+            {visibleSchemaError}
+          </p>
+        ) : mutationError ? (
           <p
             className="max-w-[48ch] text-sm leading-[1.4] text-destructive"
             data-terminal={mutationError.terminal || undefined}
@@ -175,7 +198,7 @@ export function SettingsSection({
           <DetailActionButton
             label="Discard"
             variant="ghost"
-            onClick={discard}
+            onClick={discardChanges}
             disabled={!dirty || saving}
           />
           <DetailActionButton

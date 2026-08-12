@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -17,6 +18,16 @@ CONTRACT = (
 )
 GENERATOR = REPOSITORY_ROOT / "scripts" / "generate_runtime_config_contract.py"
 AUDIT = REPOSITORY_ROOT / "docs" / "audits" / "configuration-audit.md"
+
+UNREGISTERED_RUNTIME_CLAIM = re.compile(
+    r"(?:"
+    r"\b(?:not|never|no longer)\b.{0,64}\b(?:registered|registry)\b"
+    r"|\b(?:unregistered|absent|excluded|missing|outside)\b.{0,64}"
+    r"\b(?:registry|registered|runtime config(?:uration)?)\b"
+    r"|\b(?:registry|registered)\b.{0,64}\b(?:does not|doesn't|not)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 RAW_CONFIG_METHODS = frozenset(
     {
@@ -215,23 +226,39 @@ def test_cross_language_registry_coverage() -> None:
 def test_audit_registration_claims_match_runtime_contract() -> None:
     contract = json.loads(CONTRACT.read_text())
     registered_keys = {entry["key"] for entry in contract["exactKeys"]}
-    audit_rows: dict[str, list[str]] = {}
+    audit_rows: dict[str, list[list[str]]] = {}
     for line in AUDIT.read_text().splitlines():
         if not line.startswith("| "):
             continue
         columns = [column.strip() for column in line.strip("|").split("|")]
         if len(columns) == 7:
-            audit_rows[columns[0]] = columns[1:]
+            audit_rows.setdefault(columns[0], []).append(columns[1:])
 
-    registered_rows = registered_keys.intersection(audit_rows)
+    duplicate_rows = {key: rows for key, rows in audit_rows.items() if len(rows) > 1}
+    assert duplicate_rows == {}
+    unique_audit_rows = {key: rows[0] for key, rows in audit_rows.items()}
+
+    registered_rows = registered_keys.intersection(unique_audit_rows)
     contradictory_rows = {
-        key: audit_rows[key][0]
+        key: unique_audit_rows[key][0]
         for key in registered_rows
-        if "not a registered runtime config key" in audit_rows[key][0]
+        if UNREGISTERED_RUNTIME_CLAIM.search(unique_audit_rows[key][0])
     }
     assert "auth.username" in registered_rows
-    assert audit_rows["auth.username"][0].startswith("DaemonConfig schema via /api/config/schema")
+    assert unique_audit_rows["auth.username"][0].startswith(
+        "DaemonConfig schema via /api/config/schema"
+    )
     assert contradictory_rows == {}
+
+
+def test_unregistered_runtime_claim_detector_catches_reworded_claim() -> None:
+    claim = "Auth service; outside the runtime configuration registry"
+
+    assert UNREGISTERED_RUNTIME_CLAIM.search(claim)
+
+
+def test_audit_status_legend_documents_cli_only_rows() -> None:
+    assert "- `cli-only`:" in AUDIT.read_text()
 
 
 def test_legacy_config_surfaces_are_absent() -> None:

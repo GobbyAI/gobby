@@ -213,6 +213,41 @@ describe("McpToolsSection", () => {
     }
   });
 
+  it("clears duplicate skill hub feedback when the section is discarded", async () => {
+    const ctx = makeContext({
+      configValues: {
+        ...makeConfigValues(),
+        skills: {
+          ...(makeConfigValues().skills as Record<string, unknown>),
+          hubs: {
+            clawd: { type: "clawdhub" },
+            local: { type: "skillsmp" },
+          },
+        },
+      },
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      renderSection(ctx);
+      fireEvent.click(screen.getByRole("switch", { name: "Enable MCP proxy" }));
+      fireEvent.change(screen.getByLabelText("Skill hub key 2"), {
+        target: { value: "clawd" },
+      });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        'Hub key "clawd" already exists',
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+      await waitFor(() =>
+        expect(screen.queryByRole("alert")).not.toBeInTheDocument(),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("blocks_save_until_a_new_skill_hub_has_a_non_blank_key", async () => {
     const ctx = makeContext();
     renderSection(ctx);

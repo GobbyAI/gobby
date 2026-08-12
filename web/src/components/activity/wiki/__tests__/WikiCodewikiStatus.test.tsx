@@ -37,6 +37,22 @@ describe("WikiCodewikiStatus", () => {
     ).toBeTruthy();
   });
 
+  it("does not start polling after the first disabled snapshot", async () => {
+    vi.useFakeTimers();
+    mockFetchCodewikiStatus.mockResolvedValue({
+      enabled: false,
+      state: "disabled",
+      reason: "pending_wiki_redesign",
+    });
+
+    render(<WikiCodewikiStatus />);
+    await act(async () => Promise.resolve());
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(1);
+
+    await act(async () => vi.advanceTimersByTimeAsync(90_000));
+    expect(mockFetchCodewikiStatus).toHaveBeenCalledTimes(1);
+  });
+
   it("renders nothing once the surface is live", async () => {
     mockFetchCodewikiStatus.mockResolvedValue({
       enabled: true,
