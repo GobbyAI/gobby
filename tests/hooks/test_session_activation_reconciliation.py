@@ -28,6 +28,9 @@ from gobby.hooks.session_activation import (
     SESSION_ACTIVATION_CONTRACT_HASH,
     SESSION_ACTIVATION_CONTRACT_VERSION,
     _agent_run_from_row,
+    _AgentRunRecovery,
+    _ensure_step_workflow_from_definition,
+    _missing_step_workflow,
     _workflow_definition_exists,
     clear_active_rule_names_cache,
     reconcile_session_activation,
@@ -117,6 +120,7 @@ def _register_session(
     *,
     external_id: str = "external-1",
     agent_depth: int = 0,
+    parent_session_id: str | None = None,
 ) -> str:
     return session_manager.register_session(
         external_id=external_id,
@@ -125,6 +129,7 @@ def _register_session(
         project_id=project_id,
         project_path=str(tmp_path),
         agent_depth=agent_depth,
+        parent_session_id=parent_session_id,
     )
 
 
@@ -665,6 +670,105 @@ def test_active_rule_names_cache_purges_expired_entries(
     assert _resolve_active_rule_names(db, "new-agent", project_id) == set()
     assert ("stale-agent", project_id) not in _ACTIVE_RULE_NAMES_CACHE
     assert ("fresh-agent", project_id) in _ACTIVE_RULE_NAMES_CACHE
+
+
+def test_parent_shaped_taskless_session_does_not_restore_step_workflow(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    _create_worker_agent(db)
+    parent_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="parent-race",
+    )
+    session_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="child-race",
+        parent_session_id=parent_id,
+    )
+    session = session_manager.get(session_id)
+    assert session is not None
+    assert session.parent_session_id == parent_id
+    assert session.agent_run_id is None
+    assert session.agent_depth == 0
+    variables = {"_step_workflow_name": "worker-steps"}
+
+    missing = _missing_step_workflow(db, session_id, variables, session, None)
+    created = _ensure_step_workflow_from_definition(db, session_id, variables, session)
+
+    assert missing == []
+    assert created is False
+    assert WorkflowInstanceManager(db).get_instance(session_id, "worker-steps") is None
+
+
+def test_parent_shaped_taskless_session_ignores_agent_run_step_fallback(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    _create_worker_agent(db)
+    parent_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="parent-fallback",
+    )
+    session_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="child-fallback",
+        parent_session_id=parent_id,
+    )
+    session = session_manager.get(session_id)
+    assert session is not None
+    agent_run = _AgentRunRecovery(
+        id="run-race",
+        workflow_name=None,
+        agent_name="worker",
+        prompt=None,
+    )
+
+    missing = _missing_step_workflow(db, session_id, {}, session, agent_run)
+
+    assert missing == []
+    assert WorkflowInstanceManager(db).get_instance(session_id, "worker-steps") is None
+
+
+def test_interactive_persona_step_workflow_remains_repairable(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    project_id: str,
+    tmp_path: Path,
+) -> None:
+    _create_worker_agent(db)
+    session_id = _register_session(
+        session_manager,
+        project_id,
+        tmp_path,
+        external_id="interactive-persona",
+    )
+    session = session_manager.get(session_id)
+    assert session is not None
+    assert session.parent_session_id is None
+    variables = {
+        "_agent_type": "worker",
+        "_step_workflow_name": "worker-steps",
+    }
+
+    created = _ensure_step_workflow_from_definition(db, session_id, variables, session)
+
+    instance = WorkflowInstanceManager(db).get_instance(session_id, "worker-steps")
+    assert created is True
+    assert instance is not None
+    assert instance.current_step == "claim"
 
 
 def test_spawned_step_agent_restores_workflow_variable_and_instance(

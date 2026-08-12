@@ -710,4 +710,8 @@ def _ensure_step_workflow_from_definition(
 
 
 def _session_is_spawned(session: Any) -> bool:
-    return bool(getattr(session, "agent_run_id", None) or getattr(session, "agent_depth", 0))
+    return bool(
+        getattr(session, "parent_session_id", None)
+        or getattr(session, "agent_run_id", None)
+        or getattr(session, "agent_depth", 0)
+    )
