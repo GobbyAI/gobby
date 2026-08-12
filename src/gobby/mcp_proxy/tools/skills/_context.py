@@ -44,6 +44,18 @@ class SkillsContext:
     project_id: str | None
     hub_manager: HubManager | None
     db_runner: RunDb | None = None
+    search_resolver: Callable[[], SkillSearch] | None = None
+    hub_manager_resolver: Callable[[], HubManager | None] | None = None
+
+    def resolve_search(self) -> SkillSearch:
+        if self.search_resolver is not None:
+            return self.search_resolver()
+        return self.search
+
+    def resolve_hub_manager(self) -> HubManager | None:
+        if self.hub_manager_resolver is not None:
+            return self.hub_manager_resolver()
+        return self.hub_manager
 
     async def run_db(
         self,

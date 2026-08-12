@@ -8,7 +8,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
-from gobby.skills.search import SearchFilters
+from gobby.skills.search import SearchFilters, SkillSearch
 from gobby.storage.skills import ChangeEvent
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ class _SkillIndexer:
         self._dirty = True
         self._lock = threading.Lock()
 
-    def build(self) -> None:
+    def build(self, search: SkillSearch) -> None:
         """Rebuild the search index from all skills."""
         skills = self._ctx.storage.list_skills(
             project_id=self._ctx.project_id,
@@ -38,7 +38,7 @@ class _SkillIndexer:
             limit=_MAX_SKILL_INDEX,
             include_global=True,
         )
-        self._ctx.search.index_skills(skills)
+        search.index_skills(skills)
         with self._lock:
             self._dirty = False
 
@@ -47,12 +47,12 @@ class _SkillIndexer:
         with self._lock:
             self._dirty = True
 
-    def ensure_fresh(self) -> None:
+    def ensure_fresh(self, search: SkillSearch) -> None:
         """Rebuild index if dirty. Called before searches."""
         with self._lock:
-            needs_rebuild = self._dirty
+            needs_rebuild = self._dirty or not search.index_attempted
         if needs_rebuild:
-            self.build()
+            self.build(search)
 
 
 def _setup_indexing(ctx: SkillsContext) -> _SkillIndexer:
@@ -125,17 +125,16 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                     allowed_names=active_names,
                 )
 
+            search = ctx.resolve_search()
             # Ensure index is fresh before searching (run in thread to avoid blocking event loop)
-            await ctx.run_db(indexer.ensure_fresh)
+            await ctx.run_db(indexer.ensure_fresh, search)
 
             # Over-fetch when we'll post-filter internal skills, so top_k survives the trim.
             search_top_k = top_k * 3 if not include_internal else top_k
-            results = await ctx.search.search_async(
-                query=query, top_k=search_top_k, filters=filters
-            )
+            results = await search.search_async(query=query, top_k=search_top_k, filters=filters)
 
             # Surface clear error when index was never built (startup failure)
-            if not results and not ctx.search.index_attempted:
+            if not results and not search.index_attempted:
                 return {
                     "success": False,
                     "error": "Skill search index is not available. Index has not been built.",

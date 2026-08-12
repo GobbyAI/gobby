@@ -49,12 +49,15 @@ def create_skills_registry(
     db: HubDatabase,
     project_id: str | None = None,
     hub_manager: HubManager | None = None,
+    search: SkillSearch | None = None,
     search_config: SearchConfig | None = None,
     embedding_model: str = "nomic-embed-text",
     embedding_api_base: str | None = None,
     embedding_api_key: str | None = None,
     embedding_dim: int | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    search_resolver: Callable[[], SkillSearch] | None = None,
+    hub_manager_resolver: Callable[[], HubManager | None] | None = None,
 ) -> SkillsToolRegistry:
     """
     Create a skills management tool registry.
@@ -63,12 +66,15 @@ def create_skills_registry(
         db: Database connection for storage
         project_id: Optional default project scope for skill operations
         hub_manager: Optional HubManager for hub operations (list_hubs, search_hub)
+        search: Optional startup-epoch search instance
         search_config: Optional search configuration
         embedding_model: Embedding model name (from EmbeddingsConfig)
         embedding_api_base: API base URL for embedding endpoint
         embedding_api_key: API key for embedding provider
         embedding_dim: Expected embedding dimension. When set, mismatches fail fast.
         run_db: Optional bounded executor bridge for blocking database calls.
+        search_resolver: Per-call resolver for the active-epoch search instance.
+        hub_manager_resolver: Per-call resolver for the active-epoch hub manager.
 
     Returns:
         SkillsToolRegistry with skill management tools registered
@@ -87,7 +93,8 @@ def create_skills_registry(
         storage=storage,
         notifier=notifier,
         session_manager=SessionManager(db),
-        search=SkillSearch(
+        search=search
+        or SkillSearch(
             config=search_config,
             db=db,
             embedding_model=embedding_model,
@@ -100,6 +107,8 @@ def create_skills_registry(
         project_id=project_id,
         hub_manager=hub_manager,
         db_runner=run_db,
+        search_resolver=search_resolver,
+        hub_manager_resolver=hub_manager_resolver,
     )
 
     # Expose search instance on registry for testing/manual indexing

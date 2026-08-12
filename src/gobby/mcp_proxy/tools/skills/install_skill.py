@@ -90,14 +90,15 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if hub_reference is not None:
                 # Hub reference: hub_name:skill_slug
                 hub_name, skill_slug = hub_reference
+                hub_manager = ctx.resolve_hub_manager()
 
-                if ctx.hub_manager is None:
+                if hub_manager is None:
                     return {
                         "success": False,
                         "error": "No hub manager configured. Add hubs to config to enable hub installs.",
                     }
 
-                if not ctx.hub_manager.has_hub(hub_name):
+                if not hub_manager.has_hub(hub_name):
                     return {
                         "success": False,
                         "error": f"Unknown hub: {hub_name}. Use list_hubs to see available hubs.",
@@ -105,7 +106,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
 
                 try:
                     # Get the provider and download the skill
-                    provider = ctx.hub_manager.get_provider(hub_name)
+                    provider = hub_manager.get_provider(hub_name)
                     download_result = await provider.download_skill(skill_slug)
 
                     if download_result.is_temp and download_result.path:

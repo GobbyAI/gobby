@@ -20,7 +20,6 @@ from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._transcripts import register_transcript_tools
 
 if TYPE_CHECKING:
-    from gobby.config.values import ConfigValuesService
     from gobby.sessions.transcript_reader import TranscriptReader
     from gobby.storage.sessions import SessionManager
 
@@ -33,7 +32,6 @@ def create_session_messages_registry(
     transcript_processor: Any | None = None,
     startup_config: Any | None = None,
     config_resolver: Callable[[], Any | None] | None = None,
-    config_service_getter: Callable[[], ConfigValuesService] | None = None,
     db: Any | None = None,
     worktree_manager: Any | None = None,
     inter_session_message_manager: Any | None = None,
@@ -130,7 +128,7 @@ def create_session_messages_registry(
             llm_service_resolver=llm_service_resolver,
             session_summary_config=session_summary_config,
             compact_handoff_config=compact_handoff_config,
-            config_service_getter=config_service_getter,
+            config_resolver=_config,
             web_chat_session_registry=web_chat_session_registry,
         )
 

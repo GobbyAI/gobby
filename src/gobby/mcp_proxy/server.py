@@ -54,6 +54,7 @@ class GobbyDaemonTools:
         config_resolver: Callable[[], DaemonConfig | None] | None = None,
         operation_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
         llm_service: Any | None = None,
+        llm_service_resolver: Callable[[], Any | None] | None = None,
         session_manager: Any | None = None,
         memory_manager: Any | None = None,
         config_manager: Any | None = None,
@@ -70,6 +71,15 @@ class GobbyDaemonTools:
         self.daemon_port = daemon_port
         self.websocket_port = websocket_port
         self.start_time = start_time
+
+        def resolve_llm_service() -> Any | None:
+            if llm_service_resolver is not None:
+                return llm_service_resolver()
+            return llm_service
+
+        def resolve_recommend_config() -> Any | None:
+            config = self.resolve_config()
+            return config.recommend_tools if config is not None else None
 
         # Initialize services
         result_offloader = None
@@ -104,6 +114,7 @@ class GobbyDaemonTools:
             config_manager,
             self.resolve_config,
             llm_service=llm_service,
+            llm_service_resolver=resolve_llm_service,
         )
         self.recommendation = RecommendationService(
             llm_service,
@@ -111,9 +122,8 @@ class GobbyDaemonTools:
             db=db,
             semantic_search=semantic_search,
             project_id=None,  # Resolved per-call via get_project_context()
-            config_resolver=lambda: (
-                self.config.recommend_tools if self.config is not None else None
-            ),
+            config_resolver=resolve_recommend_config,
+            llm_service_resolver=resolve_llm_service,
         )
 
     def resolve_config(self) -> DaemonConfig | None:

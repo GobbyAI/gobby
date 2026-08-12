@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -220,7 +221,6 @@ def setup_internal_registries(
             llm_service_resolver=llm_service_resolver,
             startup_config=initial_config,
             config_resolver=config_resolver,
-            config_service_getter=config_service_getter,
             db=db,
             worktree_manager=worktree_storage,
             inter_session_message_manager=inter_session_message_manager,
@@ -435,45 +435,82 @@ def setup_internal_registries(
             SkillsMPProvider,
         )
         from gobby.skills.hubs.manager import resolve_hub_api_keys
+        from gobby.skills.search import SkillSearch
         from gobby.storage.secrets import SecretStore
 
-        # Get skills config (or use defaults)
-        skills_config = (
-            initial_config.skills
-            if initial_config and hasattr(initial_config, "skills")
-            else SkillsConfig()
+        secret_store = SecretStore(db)
+
+        def active_daemon_config() -> DaemonConfig | None:
+            return config_resolver() or initial_config
+
+        def build_hub_manager(active_config: DaemonConfig | None) -> HubManager:
+            skills_config = active_config.skills if active_config is not None else SkillsConfig()
+            api_keys = resolve_hub_api_keys(skills_config.hubs, secret_store)
+            manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
+            manager.register_provider_factory("clawdhub", ClawdHubProvider)
+            manager.register_provider_factory("skillsmp", SkillsMPProvider)
+            manager.register_provider_factory("github-collection", GitHubCollectionProvider)
+            manager.register_provider_factory("github-topic", GitHubTopicProvider)
+            manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
+            manager._skill_description_config = (
+                active_config.skill_description if active_config is not None else None
+            )
+            manager.warn_missing_auth()
+            return manager
+
+        def build_skill_search(active_config: DaemonConfig | None) -> SkillSearch:
+            embeddings = active_config.embeddings if active_config is not None else None
+            return SkillSearch(
+                config=active_config.get_search_config() if active_config is not None else None,
+                db=db,
+                embedding_model=embeddings.model if embeddings else "nomic-embed-text",
+                embedding_api_base=embeddings.api_base if embeddings else None,
+                embedding_api_key=embeddings.api_key if embeddings else None,
+                embedding_dim=embeddings.dim if embeddings else None,
+            )
+
+        initial_skills_epoch = initial_config
+        initial_hub_manager = build_hub_manager(initial_skills_epoch)
+        initial_search = build_skill_search(initial_skills_epoch)
+        hub_cache: tuple[object | None, HubManager] = (
+            initial_skills_epoch,
+            initial_hub_manager,
         )
-
-        # Resolve hub API keys from SecretStore — never from env.
-        api_keys = resolve_hub_api_keys(skills_config.hubs, SecretStore(db))
-
-        # Create hub manager with configured hubs
-        hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
-
-        # Register provider factories
-        hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)
-        hub_manager.register_provider_factory("skillsmp", SkillsMPProvider)
-        hub_manager.register_provider_factory("github-collection", GitHubCollectionProvider)
-        hub_manager.register_provider_factory("github-topic", GitHubTopicProvider)
-        hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
-        hub_manager._skill_description_config = (
-            getattr(initial_config, "skill_description", None) if initial_config else None
+        search_cache: tuple[object | None, SkillSearch] = (
+            initial_skills_epoch,
+            initial_search,
         )
+        hub_cache_lock = threading.Lock()
+        search_cache_lock = threading.Lock()
 
-        # Single-shot startup warning for hubs with missing required auth.
-        hub_manager.warn_missing_auth()
+        def resolve_hub_manager() -> HubManager:
+            nonlocal hub_cache
+            active_config = active_daemon_config()
+            if hub_cache[0] is active_config:
+                return hub_cache[1]
+            with hub_cache_lock:
+                if hub_cache[0] is not active_config:
+                    hub_cache = (active_config, build_hub_manager(active_config))
+                return hub_cache[1]
 
-        _emb_cfg = initial_config.embeddings if initial_config else None
+        def resolve_skill_search() -> SkillSearch:
+            nonlocal search_cache
+            active_config = active_daemon_config()
+            if search_cache[0] is active_config:
+                return search_cache[1]
+            with search_cache_lock:
+                if search_cache[0] is not active_config:
+                    search_cache = (active_config, build_skill_search(active_config))
+                return search_cache[1]
+
         skills_registry = create_skills_registry(
             db=db,
             project_id=project_id,
-            hub_manager=hub_manager,
-            search_config=initial_config.get_search_config() if initial_config else None,
-            embedding_model=_emb_cfg.model if _emb_cfg else "nomic-embed-text",
-            embedding_api_base=_emb_cfg.api_base if _emb_cfg else None,
-            embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,
-            embedding_dim=_emb_cfg.dim if _emb_cfg else None,
+            hub_manager=initial_hub_manager,
+            search=initial_search,
             run_db=run_db,
+            hub_manager_resolver=resolve_hub_manager,
+            search_resolver=resolve_skill_search,
         )
         manager.add_registry(skills_registry)
         logger.debug("Skills registry initialized")

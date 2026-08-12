@@ -50,6 +50,8 @@ def create_results_registry(
     )
     resolve_config = config_resolver if callable(config_resolver) else lambda: config_resolver
     initial_config = resolve_config()
+    initial_response_limit = initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    initial_default_limit = min(10_000, initial_response_limit)
     store = ToolResultStore(db, resolve_config)
     search_backend = pick_search_backend(db, "tool_result_chunks")
 
@@ -140,7 +142,7 @@ def create_results_registry(
     def get_tool_result(
         result_id: str,
         offset: int = 0,
-        limit: int = 10_000,
+        limit: int = initial_default_limit,
     ) -> dict[str, Any]:
         config = resolve_config()
         response_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
@@ -150,18 +152,22 @@ def create_results_registry(
         validation_error = _validate_slice_arguments(offset=offset, limit=limit)
         if validation_error is not None:
             return validation_error
+        if limit > response_limit:
+            return _bounded_error(
+                f"limit exceeds current live maximum of {response_limit}",
+                response_limit,
+            )
 
         project_id = current_project_id()
         if project_id is None:
             return _not_found(config)
 
-        bounded_limit = min(limit, response_limit)
         try:
             page = store.get_slice(
                 canonical_id,
                 project_id,
                 offset=offset,
-                limit=bounded_limit,
+                limit=limit,
             )
         except Exception:
             logger.exception("Failed to read stored tool result")
@@ -185,11 +191,8 @@ def create_results_registry(
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE,
-                    "default": min(
-                        10_000,
-                        initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE,
-                    ),
+                    "maximum": initial_response_limit,
+                    "default": initial_default_limit,
                 },
             },
             "required": ["result_id"],

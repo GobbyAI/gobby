@@ -21,6 +21,12 @@ from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _clear_process_project_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep result-tool scope tests independent of the invoking agent project."""
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
+
+
 def _config(*, retention_days: int = 13) -> ToolResultOffloadConfig:
     return ToolResultOffloadConfig(
         threshold_chars=3_000,
@@ -136,7 +142,7 @@ def _mocked_registry(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
-async def test_get_tool_result_pages_content_and_clamps_to_shared_budget(
+async def test_get_tool_result_pages_content_within_shared_budget(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -157,7 +163,11 @@ async def test_get_tool_result_pages_content_and_clamps_to_shared_budget(
 
     result = await registry.call(
         "get_tool_result",
-        {"result_id": result_id, "offset": 100, "limit": 10_000},
+        {
+            "result_id": result_id,
+            "offset": 100,
+            "limit": config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE,
+        },
     )
 
     assert result["content"] == content[100 : 100 + len(result["content"])]

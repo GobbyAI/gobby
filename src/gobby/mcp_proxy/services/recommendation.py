@@ -29,8 +29,10 @@ class RecommendationService:
         semantic_search: Any | None = None,
         project_id: str | None = None,
         config_resolver: Callable[[], RecommendToolsConfig | None] | None = None,
+        llm_service_resolver: Callable[[], Any | None] | None = None,
     ):
         self._llm_service = llm_service
+        self._llm_service_resolver = llm_service_resolver
         self._mcp_manager = mcp_manager
         self._semantic_search = semantic_search
         self._project_id = project_id
@@ -45,6 +47,11 @@ class RecommendationService:
         from gobby.config.features import RecommendToolsConfig
 
         return RecommendToolsConfig()
+
+    def _get_llm_service(self) -> Any | None:
+        if self._llm_service_resolver is not None:
+            return self._llm_service_resolver()
+        return self._llm_service
 
     async def recommend_tools(
         self,
@@ -156,6 +163,9 @@ class RecommendationService:
         # Use LLM to re-rank and add reasoning
         try:
             config = self._get_config()
+            llm_service = self._get_llm_service()
+            if llm_service is None:
+                raise RuntimeError("LLM service is unavailable")
             candidates = semantic_result["recommendations"]
             candidate_list = "\n".join(
                 f"- {c['server']}/{c['tool']}: {c.get('reason', 'No description')}"
@@ -170,7 +180,7 @@ class RecommendationService:
             }
             prompt = self._loader.render(prompt_path, context)
 
-            response = await self._llm_service.call_feature(
+            response = await llm_service.call_feature(
                 config,
                 prompt,
                 caller="mcp_proxy.recommendation.hybrid_rerank",
@@ -209,6 +219,9 @@ class RecommendationService:
             }
         try:
             config = self._get_config()
+            llm_service = self._get_llm_service()
+            if llm_service is None:
+                raise RuntimeError("LLM service is unavailable")
             available_servers = self._mcp_manager.get_available_servers()
 
             prompt_path = config.llm_prompt_path or "features/recommend_llm"
@@ -218,7 +231,7 @@ class RecommendationService:
             }
             prompt = self._loader.render(prompt_path, context)
 
-            response = await self._llm_service.call_feature(
+            response = await llm_service.call_feature(
                 config,
                 prompt,
                 caller="mcp_proxy.recommendation.llm",

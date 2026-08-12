@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.sessions._terminal_transcripts import _read_transcript_tail_lines
 
 if TYPE_CHECKING:
-    from gobby.config.values import ConfigValuesService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
@@ -32,15 +31,17 @@ def _has_summary_refresh_source(session: Any) -> bool:
 
 
 def _capture_handoff_configs(
-    config_service_getter: Callable[[], ConfigValuesService] | None,
+    config_resolver: Callable[[], Any | None] | None,
     *,
     session_summary_config: Any | None,
     compact_handoff_config: Any | None,
 ) -> tuple[Any | None, Any | None]:
     """Capture one active configuration revision for a compact operation."""
-    if config_service_getter is None:
+    if config_resolver is None:
         return session_summary_config, compact_handoff_config
-    active = config_service_getter().runtime.snapshot.active
+    active = config_resolver()
+    if active is None:
+        return session_summary_config, compact_handoff_config
     return active.session_summary, active.compact_handoff
 
 

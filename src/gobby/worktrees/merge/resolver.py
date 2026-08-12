@@ -10,6 +10,7 @@ Implements a four-tier resolution strategy:
 import asyncio
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -201,6 +202,8 @@ class MergeResolver:
         *,
         llm_service: "LLMService | None" = None,
         config: Any | None = None,
+        llm_service_resolver: Callable[[], "LLMService | None"] | None = None,
+        config_resolver: Callable[[], Any | None] | None = None,
     ):
         """Initialize MergeResolver.
 
@@ -214,9 +217,13 @@ class MergeResolver:
         self.max_parallel_files = max_parallel_files
         self._llm_service: LLMService | None = llm_service
         self._config: Any | None = config
+        self._llm_service_resolver = llm_service_resolver
+        self._config_resolver = config_resolver
 
     @property
     def llm_service(self) -> "LLMService | None":
+        if self._llm_service_resolver is not None:
+            return self._llm_service_resolver()
         return self._llm_service
 
     @llm_service.setter
@@ -225,6 +232,8 @@ class MergeResolver:
 
     @property
     def config(self) -> Any | None:
+        if self._config_resolver is not None:
+            return self._config_resolver()
         return self._config
 
     @config.setter
@@ -511,14 +520,16 @@ class MergeResolver:
         Returns:
             Dict with 'success' bool and 'resolutions' list
         """
-        if not self._llm_service:
+        llm_service = self.llm_service
+        config = self.config
+        if not llm_service:
             logger.warning("No LLM service available for resolution")
             return {
                 "success": False,
                 "resolutions": [],
                 "failure_reason": "llm_service_unavailable",
             }
-        if self._config is None:
+        if config is None:
             logger.warning("No merge resolution feature config available")
             return {
                 "success": False,
@@ -558,8 +569,8 @@ class MergeResolver:
             prompt += f"Return the resolved code chunks separated only by {_HUNK_SEPARATOR}."
 
             try:
-                response = await self._llm_service.call_feature(
-                    self._config,
+                response = await llm_service.call_feature(
+                    config,
                     prompt,
                     caller="worktrees.merge.resolve_hunks",
                 )
@@ -662,14 +673,16 @@ class MergeResolver:
         Returns:
             Dict with 'success' bool and 'resolutions' list
         """
-        if not self._llm_service:
+        llm_service = self.llm_service
+        config = self.config
+        if not llm_service:
             logger.warning("No LLM service available for resolution")
             return {
                 "success": False,
                 "resolutions": [],
                 "failure_reason": "llm_service_unavailable",
             }
-        if self._config is None:
+        if config is None:
             logger.warning("No merge resolution feature config available")
             return {
                 "success": False,
@@ -697,8 +710,8 @@ class MergeResolver:
                 )
                 prompt += content_with_markers
 
-                response = await self._llm_service.call_feature(
-                    self._config,
+                response = await llm_service.call_feature(
+                    config,
                     prompt,
                     caller="worktrees.merge.resolve_full_file",
                 )

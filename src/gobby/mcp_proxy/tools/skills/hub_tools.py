@@ -25,24 +25,25 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             Dict with success status and list of hub info
         """
         try:
-            if ctx.hub_manager is None:
+            hub_manager = ctx.resolve_hub_manager()
+            if hub_manager is None:
                 return {
                     "success": True,
                     "count": 0,
                     "hubs": [],
                 }
 
-            hub_names = ctx.hub_manager.list_hubs()
+            hub_names = hub_manager.list_hubs()
             hubs_list = []
 
             for name in hub_names:
-                config = ctx.hub_manager.get_config(name)
+                config = hub_manager.get_config(name)
                 entry = {
                     "name": name,
                     "type": config.type,
                     "base_url": config.base_url,
                 }
-                entry.update(ctx.hub_manager.auth_status(name))
+                entry.update(hub_manager.auth_status(name))
                 hubs_list.append(entry)
 
             return {
@@ -78,7 +79,8 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             if not query or not query.strip():
                 return {"success": False, "error": "Query is required and cannot be empty"}
 
-            if ctx.hub_manager is None:
+            hub_manager = ctx.resolve_hub_manager()
+            if hub_manager is None:
                 return {
                     "success": False,
                     "error": "No hub manager configured. Add hubs to config to enable hub search.",
@@ -88,7 +90,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             hub_names_filter = [hub_name] if hub_name else None
 
             # Perform search
-            results, errors = await ctx.hub_manager.search_all(
+            results, errors = await hub_manager.search_all(
                 query=query.strip(),
                 limit=limit,
                 hub_names=hub_names_filter,

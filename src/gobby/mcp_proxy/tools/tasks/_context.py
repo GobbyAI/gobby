@@ -87,11 +87,6 @@ class RegistryContext:
         return config.get_gobby_tasks_config().validation if config else None
 
     @property
-    def auto_generate_on_expand(self) -> bool:
-        validation_config = self.validation_config
-        return validation_config.auto_generate_on_expand if validation_config else True
-
-    @property
     def task_validator(self) -> "TaskValidator | None":
         """Resolve the current-epoch task validator per access."""
         resolver = self.task_validator_resolver

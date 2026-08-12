@@ -174,8 +174,10 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
     project_manager: Any,
     session_manager: Any,
     session_ref_kind: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Worktree registry wiring resolves shorthand and UUID session refs."""
+    monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
     worktree_storage = LocalWorktreeManager(temp_db)

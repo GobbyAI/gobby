@@ -10,6 +10,7 @@ Local-first version: Authentication is optional (defaults to always-allow).
 import asyncio
 import json
 import logging
+import threading
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -116,6 +117,7 @@ class WebSocketServer(
         self._startup_daemon_config = daemon_config.model_copy(deep=True) if daemon_config else None
         self._bootstrap_config = bootstrap_config or BootstrapConfig()
         self._daemon_config_cache: tuple[Any, DaemonConfig] | None = None
+        self._daemon_config_cache_lock = threading.Lock()
         self.config_runtime = config_runtime
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
@@ -178,28 +180,29 @@ class WebSocketServer(
 
     @property
     def daemon_config(self) -> DaemonConfig | None:
-        """Return an isolated bootstrap-overlaid active configuration projection."""
+        """Return the shared bootstrap-overlaid projection for the active epoch."""
         runtime = self.config_runtime
         if runtime is None or not getattr(runtime, "ready", False):
-            return (
-                self._startup_daemon_config.model_copy(deep=True)
-                if self._startup_daemon_config
-                else None
-            )
+            return self._startup_daemon_config
         snapshot = runtime.capture().snapshot
         cached = self._daemon_config_cache
         if cached is not None and cached[0] is snapshot:
-            return cached[1].model_copy(deep=True)
-        active = bootstrap_overlaid_config(snapshot.active, self._bootstrap_config)
-        self._daemon_config_cache = (snapshot, active)
-        return active.model_copy(deep=True)
+            return cached[1]
+        with self._daemon_config_cache_lock:
+            cached = self._daemon_config_cache
+            if cached is not None and cached[0] is snapshot:
+                return cached[1]
+            active = bootstrap_overlaid_config(snapshot.active, self._bootstrap_config)
+            self._daemon_config_cache = (snapshot, active)
+            return active
 
     @daemon_config.setter
     def daemon_config(self, value: Any) -> None:
         # Test seams assign a static config; clear the runtime-backed cache so
         # the assigned value only serves as the no-runtime fallback.
-        self._startup_daemon_config = value.model_copy(deep=True) if value is not None else None
-        self._daemon_config_cache = None
+        with self._daemon_config_cache_lock:
+            self._startup_daemon_config = value.model_copy(deep=True) if value is not None else None
+            self._daemon_config_cache = None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run daemon database work on the bounded DB executor."""

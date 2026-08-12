@@ -188,7 +188,10 @@ class TestSummarizeDescriptionWithClaude:
         with (
             patch("gobby.utils.tool_summarizer._get_config", return_value=mock_config),
             patch("gobby.utils.tool_summarizer._loader", mock_loader),
-            patch("gobby.utils.tool_summarizer._llm_service", mock_llm_service),
+            patch(
+                "gobby.utils.tool_summarizer._get_llm_service",
+                return_value=mock_llm_service,
+            ),
         ):
             result = await _summarize_description_with_llm("Long description " * 10)
             assert result == "Summarized text"
@@ -203,7 +206,7 @@ class TestSummarizeDescriptionWithClaude:
 
         with (
             patch("gobby.utils.tool_summarizer._get_config"),
-            patch("gobby.utils.tool_summarizer._llm_service", None),
+            patch("gobby.utils.tool_summarizer._get_llm_service", return_value=None),
         ):
             long_desc = "A" * 250
             result = await _summarize_description_with_llm(long_desc)
@@ -238,7 +241,10 @@ class TestGenerateServerDescription:
         with (
             patch("gobby.utils.tool_summarizer._get_config", return_value=mock_config),
             patch("gobby.utils.tool_summarizer._loader", mock_loader),
-            patch("gobby.utils.tool_summarizer._llm_service", mock_llm_service),
+            patch(
+                "gobby.utils.tool_summarizer._get_llm_service",
+                return_value=mock_llm_service,
+            ),
         ):
             result = await generate_server_description("server1", tool_summaries)
             assert result == "Server does things."
@@ -256,7 +262,7 @@ class TestGenerateServerDescription:
             {"name": "tool4", "description": "desc4"},
         ]
 
-        with patch("gobby.utils.tool_summarizer._llm_service", None):
+        with patch("gobby.utils.tool_summarizer._get_llm_service", return_value=None):
             result = await generate_server_description("server1", tool_summaries)
             assert "Provides tool1, tool2, tool3 and more" in result
 
@@ -265,6 +271,6 @@ class TestGenerateServerDescription:
         """Test fallback with no tools."""
         from gobby.utils.tool_summarizer import generate_server_description
 
-        with patch("gobby.utils.tool_summarizer._llm_service", None):
+        with patch("gobby.utils.tool_summarizer._get_llm_service", return_value=None):
             result = await generate_server_description("server1", [])
             assert result == "MCP server: server1"

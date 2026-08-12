@@ -115,7 +115,7 @@ def _http_server(
     )
 
 
-def test_http_config_returns_defensive_bootstrap_overlaid_copy() -> None:
+def test_http_config_reuses_bootstrap_overlaid_projection_per_epoch() -> None:
     runtime = _MutableRuntime(_snapshot(1, 3))
     server = _http_server(
         runtime.snapshot.active,
@@ -128,8 +128,7 @@ def test_http_config_returns_defensive_bootstrap_overlaid_copy() -> None:
 
     assert first is not None
     assert second is not None
-    assert first == second
-    assert first is not second
+    assert first is second
     assert first.daemon_port == 62000
 
 

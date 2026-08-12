@@ -23,6 +23,7 @@ class ServerManagementService:
         config_manager: Any,
         config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
         llm_service: "LLMService | None" = None,
+        llm_service_resolver: "Callable[[], LLMService | None] | None" = None,
     ):
         """
         Args:
@@ -35,6 +36,7 @@ class ServerManagementService:
         self._config_manager = config_manager
         self._config_resolver = config_resolver
         self._llm_service = llm_service
+        self._llm_service_resolver = llm_service_resolver
 
     async def add_server(
         self,
@@ -182,7 +184,11 @@ class ServerManagementService:
                 db=db,
                 current_project_id=current_project_id,
                 mcp_client_manager=self._mcp_manager,
-                llm_service=self._llm_service,
+                llm_service=(
+                    self._llm_service_resolver()
+                    if self._llm_service_resolver is not None
+                    else self._llm_service
+                ),
             )
 
             # Execute import based on source

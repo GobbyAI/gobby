@@ -76,8 +76,7 @@ def test_daemon_config_serves_one_projection_per_epoch() -> None:
     first = server.daemon_config
     second = server.daemon_config
 
-    assert first == second
-    assert first is not second
+    assert first is second
 
 
 def test_daemon_config_overlays_bootstrap_fields_on_live_snapshot() -> None:

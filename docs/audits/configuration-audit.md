@@ -66,7 +66,14 @@ Section ids are stable kebab-case ids. The matrix below assigns every `keep` row
 
 ## Full Matrix
 
-Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema rows).
+Total rows: 378 (22 manual frontend/route rows plus 356 backend schema rows).
+
+### Structural registry creation gates
+
+`gobby-tasks.enabled` and `tool_result_offload.enabled` control whether their MCP
+registries exist. The daemon reads both keys during internal-registry construction;
+changing either stored value takes effect after daemon restart. Settings inside an
+already-created registry continue to use the live per-epoch configuration contract.
 
 | Option | Backend source | Frontend control | Status | Disposition | Overlay section | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -147,7 +154,8 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | mcp_client_proxy.top_k | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | mcp-tools |  |
 | mcp_client_proxy.refresh_on_server_add | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | mcp-tools |  |
 | mcp_client_proxy.refresh_timeout | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | mcp-tools |  |
-| gobby-tasks.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| gobby-tasks.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | restart-structural | keep | automation-workflows | Registry creation gate; daemon restart required. |
+| tool_result_offload.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | restart-structural | keep | mcp-tools | Registry creation gate; daemon restart required. |
 | gobby-tasks.show_result_on_create | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | gobby-tasks.file_extraction.file_extensions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | automation-workflows | array items=string map= |
 | gobby-tasks.file_extraction.known_files | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | automation-workflows | array items=string map= |

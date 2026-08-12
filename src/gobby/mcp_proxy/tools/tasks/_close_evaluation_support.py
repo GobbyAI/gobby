@@ -88,15 +88,12 @@ async def derive_close_transcript_evidence(
     repo_path: str,
 ) -> TranscriptEvidence:
     """Parse and merge owning and closing session transcripts."""
+    config = ctx.config
     detection = resolve_validation_detection_config(
-        daemon_config=ctx.config,
+        daemon_config=config,
         project_path=repo_path,
     )
-    archive_dir = (
-        getattr(getattr(ctx.config, "sessions", None), "transcript_archive_dir", None)
-        if ctx.config
-        else None
-    )
+    archive_dir = config.session_lifecycle.transcript_archive_dir if config is not None else None
     evidence: list[TranscriptEvidence] = []
     for session_id in dict.fromkeys((owner_session_id, closing_session_id)):
         session = ctx.session_manager.get(session_id)

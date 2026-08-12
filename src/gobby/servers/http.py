@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -89,6 +90,7 @@ class HTTPServer:
             )
         )
         self._active_config_cache: tuple[ConfigSnapshot, DaemonConfig] | None = None
+        self._active_config_cache_lock = threading.Lock()
         self.port = port
         self.test_mode = test_mode
         self.codex_client = codex_client
@@ -235,6 +237,10 @@ class HTTPServer:
                 return service.llm_service
             return services.llm_service
 
+        def resolve_merge_config() -> Any | None:
+            active_config = self.resolve_runtime_config()
+            return active_config.merge_resolution if active_config is not None else None
+
         def resolve_memory_manager() -> Any | None:
             service = self._runtime_service("memory_services")
             if isinstance(service, MemoryServiceBundle):
@@ -282,9 +288,10 @@ class HTTPServer:
             from gobby.worktrees.merge.resolver import MergeResolver
 
             merge_storage = MergeResolutionManager(self.services.mcp_db_manager.db)
-            merge_resolver = MergeResolver()
-            merge_resolver.llm_service = llm_service
-            merge_resolver.config = config.merge_resolution if config else None
+            merge_resolver = MergeResolver(
+                llm_service_resolver=resolve_llm_service,
+                config_resolver=resolve_merge_config,
+            )
             inter_session_message_manager = InterSessionMessageManager(
                 self.services.mcp_db_manager.db
             )
@@ -297,8 +304,8 @@ class HTTPServer:
             from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
             archive_dir = None
-            if config and hasattr(config, "sessions"):
-                archive_dir = getattr(config.sessions, "transcript_archive_dir", None)
+            if config is not None:
+                archive_dir = config.session_lifecycle.transcript_archive_dir
             transcript_reader = TranscriptReader(
                 session_manager=services.session_manager,
                 archive_dir=archive_dir,
@@ -358,9 +365,13 @@ class HTTPServer:
             from gobby.utils.tool_summarizer import init_summarizer_config
 
             init_summarizer_config(
-                config.tool_summarizer,
+                lambda: (
+                    active_config.tool_summarizer
+                    if (active_config := self.resolve_runtime_config()) is not None
+                    else None
+                ),
                 db=services.database,
-                llm_service=llm_service,
+                llm_service_resolver=resolve_llm_service,
             )
             logger.debug("Tool summarizer config initialized")
 
@@ -408,6 +419,7 @@ class HTTPServer:
             config_resolver=self.resolve_runtime_config,
             operation_context_factory=self.capture_runtime_operation,
             llm_service=llm_service,
+            llm_service_resolver=resolve_llm_service,
             session_manager=services.session_manager,
             memory_manager=memory_manager,
             config_manager=services.mcp_db_manager,
@@ -421,16 +433,23 @@ class HTTPServer:
     # Property accessors for services (delegate to container)
     @property
     def config(self) -> DaemonConfig | None:
+        """Return the shared immutable configuration projection for the active epoch."""
         bundle = self.capture_runtime_bundle()
         if bundle is None:
-            return self.startup_config.model_copy(deep=True) if self.startup_config else None
+            return self.startup_config
         snapshot = bundle.snapshot
         cached = self._active_config_cache
         if cached is not None and cached[0] is snapshot:
-            return cached[1].model_copy(deep=True)
-        active = bootstrap_overlaid_config(snapshot.active, self.bootstrap_config)
-        self._active_config_cache = (snapshot, active)
-        return active.model_copy(deep=True)
+            return cached[1]
+        # Runtime config can be resolved from request worker threads. Serialize cache misses so
+        # every reader of one immutable snapshot receives the same projected object.
+        with self._active_config_cache_lock:
+            cached = self._active_config_cache
+            if cached is not None and cached[0] is snapshot:
+                return cached[1]
+            active = bootstrap_overlaid_config(snapshot.active, self.bootstrap_config)
+            self._active_config_cache = (snapshot, active)
+            return active
 
     @property
     def session_manager(self) -> Any:

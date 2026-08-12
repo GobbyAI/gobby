@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -16,41 +17,46 @@ logger = logging.getLogger(__name__)
 # Maximum description length for tool summaries
 MAX_DESCRIPTION_LENGTH = 200
 
-# Module-level config reference (set by init_summarizer_config)
-_config: ToolSummarizerConfig | None = None
+# Module-level resolvers are bound once; each tool call resolves its captured runtime epoch.
+_config_resolver: Callable[[], ToolSummarizerConfig | None] | None = None
 _loader: PromptLoader | None = None
-_llm_service: LLMService | None = None
+_llm_service_resolver: Callable[[], LLMService | None] | None = None
 
 
 def init_summarizer_config(
-    config: ToolSummarizerConfig,
+    config_resolver: Callable[[], ToolSummarizerConfig | None],
     db: HubDatabase,
     project_dir: str | None = None,
-    llm_service: LLMService | None = None,
+    llm_service_resolver: Callable[[], LLMService | None] | None = None,
 ) -> None:
-    """Initialize the summarizer with configuration."""
-    global _config, _loader, _llm_service
-    _config = config
+    """Initialize the summarizer with per-operation dependency resolvers."""
+    global _config_resolver, _loader, _llm_service_resolver
+    _config_resolver = config_resolver
     _loader = PromptLoader(db=db)
-    _llm_service = llm_service
+    _llm_service_resolver = llm_service_resolver
 
 
 def reset_summarizer_config() -> None:
     """Clear daemon-owned summarizer state after failed construction."""
-    global _config, _loader, _llm_service
-    _config = None
+    global _config_resolver, _loader, _llm_service_resolver
+    _config_resolver = None
     _loader = None
-    _llm_service = None
+    _llm_service_resolver = None
 
 
 def _get_config() -> ToolSummarizerConfig:
     """Get the current config, with fallback to defaults."""
-    if _config is not None:
-        return _config
+    config = _config_resolver() if _config_resolver is not None else None
+    if config is not None:
+        return config
     # Import here to avoid circular imports
     from gobby.config.features import ToolSummarizerConfig
 
     return ToolSummarizerConfig()
+
+
+def _get_llm_service() -> LLMService | None:
+    return _llm_service_resolver() if _llm_service_resolver is not None else None
 
 
 async def _summarize_description_with_llm(description: str) -> str:
@@ -64,9 +70,10 @@ async def _summarize_description_with_llm(description: str) -> str:
         Summarized description (max 180 chars)
     """
     config = _get_config()
+    llm_service = _get_llm_service()
 
     try:
-        if not _llm_service:
+        if not llm_service:
             raise RuntimeError("LLM service not initialized")
 
         # Get summary prompt
@@ -82,7 +89,7 @@ async def _summarize_description_with_llm(description: str) -> str:
         except (OSError, KeyError, ValueError, RuntimeError):
             system_prompt = "You are a technical summarizer."
 
-        return await _llm_service.call_feature(
+        return await llm_service.call_feature(
             config,
             prompt,
             system_prompt=system_prompt,
@@ -146,9 +153,10 @@ async def generate_server_description(
         Single-sentence description (aiming for <100 chars)
     """
     config = _get_config()
+    llm_service = _get_llm_service()
 
     try:
-        if not _llm_service:
+        if not llm_service:
             raise RuntimeError("LLM service not initialized")
 
         # Build tools list for prompt
@@ -173,7 +181,7 @@ async def generate_server_description(
         except (OSError, KeyError, ValueError, RuntimeError):
             system_prompt = "You write concise technical descriptions."
 
-        return await _llm_service.call_feature(
+        return await llm_service.call_feature(
             config,
             prompt,
             system_prompt=system_prompt,

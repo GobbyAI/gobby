@@ -427,7 +427,7 @@ async def import_mcp_server(
             db=db,
             current_project_id=current_project_id,
             mcp_client_manager=server.mcp_manager,
-            llm_service=getattr(server, "services", None) and server.services.llm_service,
+            llm_service=server.llm_service,
         )
 
         # Execute import based on source

@@ -1,9 +1,7 @@
 """Acceptance coverage for operational configuration consumers."""
 
-from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -11,7 +9,6 @@ import pytest
 from gobby.cli.tasks import expand as expand_module
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.config.values import ConfigValuesService
 from gobby.hooks import factory as hook_factory
 from gobby.mcp_proxy.tools.sessions import _terminal_handoff as terminal_handoff
 
@@ -79,33 +76,19 @@ def test_command_reads_one_revision(monkeypatch: pytest.MonkeyPatch) -> None:
         {"task_manager": task_manager, "llm_service": llm_service, "config": config}
     ]
 
-    second_config = DaemonConfig()
+    config_reads: list[None] = []
 
-    class AlternatingRuntime:
-        def __init__(self) -> None:
-            self.reads = 0
-
-        @property
-        def snapshot(self) -> SimpleNamespace:
-            self.reads += 1
-            active = config if self.reads == 1 else second_config
-            return SimpleNamespace(active=active)
-
-    machine_runtime = AlternatingRuntime()
-    machine_reads: list[None] = []
-
-    def get_config_service() -> SimpleNamespace:
-        machine_reads.append(None)
-        return SimpleNamespace(runtime=machine_runtime)
+    def resolve_config() -> DaemonConfig:
+        config_reads.append(None)
+        return config
 
     summary_config, compact_config = terminal_handoff._capture_handoff_configs(
-        cast(Callable[[], ConfigValuesService], get_config_service),
+        resolve_config,
         session_summary_config=None,
         compact_handoff_config=None,
     )
 
-    assert len(machine_reads) == 1
-    assert machine_runtime.reads == 1
+    assert config_reads == [None]
     assert summary_config is config.session_summary
     assert compact_config is config.compact_handoff
 

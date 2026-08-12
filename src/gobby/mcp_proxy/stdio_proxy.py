@@ -137,7 +137,7 @@ class DaemonProxy:
                 self._deps_factory().logger.warning(
                     "Failed to capture MCP tool timeout configuration: %s", exc
                 )
-                self._tool_timeouts = {}
+                return {}
         return self._tool_timeouts
 
     def _get_client(self) -> httpx.AsyncClient:
