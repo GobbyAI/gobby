@@ -22,7 +22,7 @@ use super::verify::{VerificationReport, qualified_name, validate_identifier, ver
 /// four artifacts stay in lockstep. Hubs more than one hop behind must recreate
 /// from a verified backup.
 pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
-    "0749c25617bdd825a561e0452fbf9cc2a80bb15e99e21bbd50f2a7ee01d44a6b";
+    "b99433df1d2af6fd059ee9f121bf586309ef669eb03e7a90268458c104600aa9";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ApplyReport {
@@ -452,14 +452,8 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
 pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
     let body = statement_body(statement);
     let refreshes_schema = [
-        "CREATE TABLE IF NOT EXISTS config_state",
-        "INSERT INTO config_state",
-        "ALTER TABLE config_store",
-        "CREATE TABLE IF NOT EXISTS embedding_generation_acks",
-        "CREATE TABLE IF NOT EXISTS embedding_projection_changes",
-        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE config_state",
-        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_generation_acks",
-        "GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE embedding_projection_changes",
+        "ALTER TABLE clones ALTER COLUMN branch_name DROP NOT NULL",
+        "ALTER TABLE worktrees ALTER COLUMN branch_name DROP NOT NULL",
     ]
     .iter()
     .any(|prefix| statement_starts_with_identifier_boundary(body, prefix));

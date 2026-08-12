@@ -170,6 +170,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         clone = ctx.clone_storage.get(clone_id)
         if not clone:
             return {"success": False, "error": f"Clone not found: {clone_id}"}
+        if clone.branch_name is None:
+            return {"success": False, "error": f"Detached clone '{clone_id}' cannot be synced"}
 
         if cancellation_requested is not None and cancellation_requested.is_set():
             raise asyncio.CancelledError
@@ -268,6 +270,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         clone = ctx.clone_storage.get(clone_id)
         if not clone:
             return {"success": False, "error": f"Clone not found: {clone_id}"}
+        if clone.branch_name is None:
+            return {"success": False, "error": f"Detached clone '{clone_id}' cannot be merged"}
 
         # Step 1: Fetch clone's branch directly from clone path into main repo.
         # This avoids pushing to origin (which fails on divergent branches).

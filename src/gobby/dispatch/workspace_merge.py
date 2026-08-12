@@ -184,17 +184,20 @@ def _resolve_paths(
         if source_id is None:
             raise RuntimeError("source worktree artifact is missing")
         worktree_source = storage.get(source_id)
+        if worktree_source is None:
+            raise RuntimeError("source or target worktree metadata is missing")
+        source_branch = worktree_source.branch_name
+        if source_branch is None:
+            raise RuntimeError("detached source worktree cannot be merged")
         if (
             _is_root_task(db, action.task_id)
             and artifacts.integration_workspace_id is not None
             and source_id == artifacts.integration_workspace_id
         ):
-            if worktree_source is None:
-                raise RuntimeError("source worktree metadata is missing")
             return _WorkspacePaths(
                 worktree_source.worktree_path,
                 str(_repo_path_for_task(db, action.task_id)),
-                worktree_source.branch_name,
+                source_branch,
                 worktree_source.id,
                 None,
                 target_is_local=True,
@@ -209,8 +212,6 @@ def _resolve_paths(
                 services=services,
             )
             worktree_target = storage.get_by_branch(project_id, action.target_branch)
-        if worktree_source is None:
-            raise RuntimeError("source or target worktree metadata is missing")
         if worktree_target is None:
             local_target = _local_target_path_if_checked_out(
                 db,
@@ -221,7 +222,7 @@ def _resolve_paths(
                 return _WorkspacePaths(
                     worktree_source.worktree_path,
                     str(local_target),
-                    worktree_source.branch_name,
+                    source_branch,
                     worktree_source.id,
                     None,
                     target_is_local=True,
@@ -231,7 +232,7 @@ def _resolve_paths(
         return _WorkspacePaths(
             worktree_source.worktree_path,
             worktree_target.worktree_path,
-            worktree_source.branch_name,
+            source_branch,
             worktree_source.id,
             worktree_target.id,
         )
@@ -246,17 +247,20 @@ def _resolve_paths(
     if source_id is None:
         raise RuntimeError("source clone artifact is missing")
     clone_source = clone_storage.get(source_id)
+    if clone_source is None:
+        raise RuntimeError("source or target clone metadata is missing")
+    source_branch = clone_source.branch_name
+    if source_branch is None:
+        raise RuntimeError("detached source clone cannot be merged")
     if (
         _is_root_task(db, action.task_id)
         and artifacts.integration_clone_id is not None
         and source_id == artifacts.integration_clone_id
     ):
-        if clone_source is None:
-            raise RuntimeError("source clone metadata is missing")
         return _WorkspacePaths(
             clone_source.clone_path,
             str(_repo_path_for_task(db, action.task_id)),
-            clone_source.branch_name,
+            source_branch,
             clone_source.id,
             None,
             target_is_local=True,
@@ -271,8 +275,6 @@ def _resolve_paths(
             services=services,
         )
         clone_target = clone_storage.get_by_branch(project_id, action.target_branch)
-    if clone_source is None:
-        raise RuntimeError("source or target clone metadata is missing")
     if clone_target is None:
         local_target = _local_target_path_if_checked_out(
             db,
@@ -283,7 +285,7 @@ def _resolve_paths(
             return _WorkspacePaths(
                 clone_source.clone_path,
                 str(local_target),
-                clone_source.branch_name,
+                source_branch,
                 clone_source.id,
                 None,
                 target_is_local=True,
@@ -293,7 +295,7 @@ def _resolve_paths(
     return _WorkspacePaths(
         clone_source.clone_path,
         clone_target.clone_path,
-        clone_source.branch_name,
+        source_branch,
         clone_source.id,
         clone_target.id,
     )

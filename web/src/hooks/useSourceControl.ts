@@ -47,7 +47,7 @@ export interface PullRequest {
 
 export interface WorktreeInfo {
   id: string;
-  branch_name: string;
+  branch_name: string | null;
   worktree_path: string;
   status: string;
   task_id: string | null;
@@ -61,7 +61,7 @@ export interface WorktreeInfo {
 
 export interface CloneInfo {
   id: string;
-  branch_name: string;
+  branch_name: string | null;
   clone_path: string;
   remote_url: string | null;
   status: string;

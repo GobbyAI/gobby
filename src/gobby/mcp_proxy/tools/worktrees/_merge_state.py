@@ -56,7 +56,7 @@ def is_worktree_git_merged(
     git_manager: WorktreeGitManager | None,
 ) -> bool | None:
     """Return git ancestry merge state, or None when git is unavailable."""
-    if git_manager is None:
+    if git_manager is None or worktree.branch_name is None:
         return None
     return is_branch_ancestor(
         git_manager,

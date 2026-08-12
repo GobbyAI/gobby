@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -14,6 +15,21 @@ from gobby.worktrees.executor import WorktreeDeleteExecutor
 pytestmark = pytest.mark.unit
 
 _VALID_TIMESTAMP = "2026-01-01T00:00:00+00:00"
+
+
+def _detached_worktree() -> Worktree:
+    return Worktree(
+        id="worktree-detached",
+        project_id="11111111-1111-4111-8111-111111110001",
+        branch_name=None,
+        worktree_path="/tmp/detached",
+        base_branch="main",
+        task_id=None,
+        agent_session_id=None,
+        status="active",
+        created_at=_VALID_TIMESTAMP,
+        updated_at=_VALID_TIMESTAMP,
+    )
 
 
 @pytest.fixture
@@ -651,6 +667,46 @@ async def test_mark_worktree_merged_requires_git_ancestry(
 
     assert result["success"] is False
     assert "not merged" in result["error"]
+    mock_worktree_storage.mark_merged.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments", "operation"),
+    [
+        (
+            "link_task_to_worktree",
+            {"worktree_id": "worktree-detached", "task_id": "#1"},
+            "linked to a task",
+        ),
+        ("sync_worktree", {"worktree_id": "worktree-detached"}, "synced"),
+        ("merge_worktree", {"worktree_id": "worktree-detached"}, "merged"),
+        (
+            "mark_worktree_merged",
+            {"worktree_id": "worktree-detached"},
+            "marked as merged",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_detached_worktree_rejects_branch_dependent_operations(
+    registry,
+    mock_worktree_storage,
+    mock_git_manager,
+    tool_name: str,
+    arguments: dict[str, str],
+    operation: str,
+) -> None:
+    mock_worktree_storage.get.return_value = _detached_worktree()
+
+    result = await registry.call(tool_name, arguments)
+
+    assert result == {
+        "success": False,
+        "error": f"Detached worktree 'worktree-detached' cannot be {operation}",
+    }
+    mock_git_manager.sync_from_main.assert_not_called()
+    mock_git_manager.run_git_command.assert_not_called()
+    mock_worktree_storage.update.assert_not_called()
     mock_worktree_storage.mark_merged.assert_not_called()
 
 
@@ -1729,7 +1785,9 @@ async def test_merge_worktree_explicit_source_branch(
 
 @pytest.mark.asyncio
 async def test_merge_worktree_uses_project_repo_for_local_target_merge(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: Any,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
 ) -> None:
     """Git merge commands run in the project repo because the target is local."""
     wt = Worktree(
@@ -1779,8 +1837,8 @@ async def test_get_worktree_by_task_downgrades_stale_merged_status(
         updated_at=_VALID_TIMESTAMP,
         task_id="task-1",
         agent_session_id=None,
-        merged_at="2026-04-22T00:00:00+00:00",
-        cleanup_after="2026-04-29T00:00:00+00:00",
+        merged_at=datetime.fromisoformat("2026-04-22T00:00:00+00:00"),
+        cleanup_after=datetime.fromisoformat("2026-04-29T00:00:00+00:00"),
     )
     mock_worktree_storage.get_by_task.return_value = wt
     mock_git_manager._run_git.return_value = MagicMock(returncode=1, stdout="", stderr="")

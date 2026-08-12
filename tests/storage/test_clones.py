@@ -285,6 +285,16 @@ class TestLocalCloneManagerCreate:
         assert str(uuid.UUID(clone.id)) == clone.id
         mock_db.execute.assert_called_once()
 
+    def test_create_detached(self, manager, mock_db) -> None:
+        clone = manager.create(
+            project_id="proj-abc",
+            branch_name=None,
+            clone_path="/tmp/clones/detached",
+        )
+
+        assert clone.branch_name is None
+        assert mock_db.execute.call_args.args[1][3] is None
+
     def test_create_with_all_fields(self, manager, mock_db) -> None:
         """Create clone with all optional fields."""
         mock_db.fetchone.return_value = {"machine_id": MACHINE_ID}

@@ -40,6 +40,13 @@ def registry(
     )
 
 
+def test_create_worktree_requires_branch_name(registry) -> None:
+    tool = registry.get_schema("create_worktree")
+
+    assert tool is not None
+    assert "branch_name" in tool["inputSchema"]["required"]
+
+
 @pytest.mark.asyncio
 async def test_create_worktree_success(registry, mock_worktree_storage, mock_git_manager) -> None:
     mock_git_manager.has_unpushed_commits.return_value = (False, 0)
@@ -558,7 +565,9 @@ async def test_create_worktree_auto_detects_unpushed(
 
 @pytest.mark.asyncio
 async def test_create_worktree_no_unpushed_uses_remote(
-    registry, mock_worktree_storage, mock_git_manager
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
 ) -> None:
     """Test create_worktree defaults to use_local=False when no unpushed commits."""
     mock_git_manager.has_unpushed_commits.return_value = (False, 0)

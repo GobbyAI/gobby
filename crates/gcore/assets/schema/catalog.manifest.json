@@ -582,7 +582,7 @@
     },
     {
       "name": "clones.branch_name",
-      "definition": "text|text|NO||NEVER"
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "clones.cleanup_after",
@@ -5330,7 +5330,7 @@
     },
     {
       "name": "worktrees.branch_name",
-      "definition": "text|text|NO||NEVER"
+      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "worktrees.cleanup_after",

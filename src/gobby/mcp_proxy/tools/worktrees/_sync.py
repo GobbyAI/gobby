@@ -124,6 +124,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+        if worktree.branch_name is None:
+            return {
+                "success": False,
+                "error": f"Detached worktree '{worktree_id}' cannot be synced",
+            }
 
         if strategy not in ("rebase", "merge"):
             return {
@@ -190,6 +195,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+        if worktree.branch_name is None:
+            return {
+                "success": False,
+                "error": f"Detached worktree '{worktree_id}' cannot be merged",
+            }
 
         if push:
             return {
@@ -825,6 +835,11 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+        if worktree.branch_name is None:
+            return {
+                "success": False,
+                "error": f"Detached worktree '{worktree_id}' cannot be pushed",
+            }
 
         source_branch = branch or worktree.branch_name
         destination_branch = target_branch or source_branch

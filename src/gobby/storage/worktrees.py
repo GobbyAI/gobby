@@ -50,7 +50,7 @@ class Worktree:
     project_id: str
     machine_id: str = field(default_factory=require_machine_id, kw_only=True)
     task_id: str | None
-    branch_name: str
+    branch_name: str | None
     worktree_path: str
     base_branch: str
     agent_session_id: str | None
@@ -127,7 +127,7 @@ class LocalWorktreeManager:
     def create(
         self,
         project_id: str,
-        branch_name: str,
+        branch_name: str | None,
         worktree_path: str,
         base_branch: str = "main",
         task_id: str | None = None,
@@ -139,7 +139,7 @@ class LocalWorktreeManager:
 
         Args:
             project_id: Project ID
-            branch_name: Git branch name
+            branch_name: Git branch name, or None for a detached worktree
             worktree_path: Absolute path to worktree directory
             base_branch: Base branch for the worktree
             task_id: Optional task ID to link

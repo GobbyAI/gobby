@@ -211,6 +211,11 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+        if worktree.branch_name is None:
+            return {
+                "success": False,
+                "error": f"Detached worktree '{worktree_id}' cannot be marked as merged",
+            }
 
         git_merged = is_worktree_git_merged(worktree, ctx.git_manager)
         if git_merged is None:
@@ -301,6 +306,11 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         worktree = ctx.worktree_storage.get(worktree_id)
         if not worktree:
             return {"success": False, "error": f"Worktree '{worktree_id}' not found"}
+        if worktree.branch_name is None:
+            return {
+                "success": False,
+                "error": f"Detached worktree '{worktree_id}' cannot be linked to a task",
+            }
 
         try:
             resolved_task_id = ctx.resolve_task_id(task_id)

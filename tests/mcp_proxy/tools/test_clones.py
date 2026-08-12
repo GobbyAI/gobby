@@ -12,6 +12,7 @@ Tests for the gobby-clones MCP server tools:
 import asyncio
 import subprocess
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, call, patch
@@ -149,6 +150,12 @@ class TestClonesRegistryCreation:
         assert "list_clones" in tool_names
         assert "delete_clone" in tool_names
         assert "sync_clone" in tool_names
+
+    def test_create_clone_requires_branch_name(self, registry: Any) -> None:
+        tool = registry.get_schema("create_clone")
+
+        assert tool is not None
+        assert "branch_name" in tool["inputSchema"]["required"]
 
 
 class TestCreateClone:
@@ -863,6 +870,20 @@ class TestSyncClone:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
+    async def test_sync_clone_rejects_detached_clone(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        mock_clone_storage.get.return_value = replace(_merge_test_clone(), branch_name=None)
+
+        result = await registry.call("sync_clone", {"clone_id": "clone-123"})
+
+        assert result == {
+            "success": False,
+            "error": "Detached clone 'clone-123' cannot be synced",
+        }
+        mock_git_manager.sync_clone.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_sync_clone_failure(
         self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
     ) -> None:
@@ -1141,6 +1162,21 @@ class TestMergeCloneToTarget:
 
         assert result["success"] is False
         assert "not found" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_merge_clone_rejects_detached_clone(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        mock_clone_storage.get.return_value = replace(_merge_test_clone(), branch_name=None)
+
+        result = await registry.call("merge_clone", {"clone_id": "clone-123"})
+
+        assert result == {
+            "success": False,
+            "error": "Detached clone 'clone-123' cannot be merged",
+        }
+        mock_git_manager.run_git_command.assert_not_called()
+        mock_clone_storage.mark_syncing.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_merge_clone_fetch_failure(

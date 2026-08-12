@@ -12,8 +12,8 @@ const PROJECT_PAYLOADS: Record<string, unknown> = {
     clone_count: 1,
   },
   branches: { branches: [{ name: "main" }] },
-  worktrees: { worktrees: [{ id: "new-worktree" }] },
-  clones: { clones: [{ id: "new-clone" }] },
+  worktrees: { worktrees: [{ id: "new-worktree", branch_name: null }] },
+  clones: { clones: [{ id: "new-clone", branch_name: null }] },
   prs: { prs: [{ number: 2 }] },
   issues: { issues: [{ number: 3 }] },
   runs: { runs: [{ id: 4 }] },
@@ -119,8 +119,12 @@ describe("useSourceControl", () => {
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     expect(oldSignals.every((signal) => signal.aborted)).toBe(true);
-    expect(result.current.worktrees).toEqual([{ id: "new-worktree" }]);
-    expect(result.current.clones).toEqual([{ id: "new-clone" }]);
+    expect(result.current.worktrees).toEqual([
+      { id: "new-worktree", branch_name: null },
+    ]);
+    expect(result.current.clones).toEqual([
+      { id: "new-clone", branch_name: null },
+    ]);
     expect(result.current.issues).toEqual([{ number: 3 }]);
     expect(result.current.error).toBeNull();
     expect(consoleError).not.toHaveBeenCalled();

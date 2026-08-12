@@ -4,14 +4,14 @@ import { NativeSelect } from "../ui/NativeSelect";
 
 interface WorktreeItem {
   id: string;
-  branch_name: string;
+  branch_name: string | null;
   worktree_path: string;
   status: string;
 }
 
 interface CloneItem {
   id: string;
-  branch_name: string;
+  branch_name: string | null;
   clone_path: string;
   status?: string;
 }
@@ -62,7 +62,7 @@ export function IsolationTargetSelector({
             <option value="">New worktree</option>
             {worktrees.map((worktree) => (
               <option key={worktree.id} value={worktree.id}>
-                {worktree.branch_name} ({worktree.id.slice(0, 8)})
+                {worktree.branch_name ?? "detached"} ({worktree.id.slice(0, 8)})
               </option>
             ))}
           </NativeSelect>
@@ -85,7 +85,7 @@ export function IsolationTargetSelector({
             <option value="">New clone</option>
             {clones.map((clone) => (
               <option key={clone.id} value={clone.id}>
-                {clone.branch_name} ({clone.id.slice(0, 8)})
+                {clone.branch_name ?? "detached"} ({clone.id.slice(0, 8)})
               </option>
             ))}
           </NativeSelect>

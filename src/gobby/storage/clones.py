@@ -58,7 +58,7 @@ class Clone:
     id: str
     project_id: str
     machine_id: str = field(default_factory=require_machine_id, kw_only=True)
-    branch_name: str
+    branch_name: str | None
     clone_path: str
     base_branch: str
     task_id: str | None
@@ -147,7 +147,7 @@ class LocalCloneManager:
     def create(
         self,
         project_id: str,
-        branch_name: str,
+        branch_name: str | None,
         clone_path: str,
         base_branch: str = "main",
         task_id: str | None = None,
@@ -161,7 +161,7 @@ class LocalCloneManager:
 
         Args:
             project_id: Project ID
-            branch_name: Git branch name
+            branch_name: Git branch name, or None for a detached clone
             clone_path: Absolute path to clone directory
             base_branch: Base branch for the clone
             task_id: Optional task ID to link

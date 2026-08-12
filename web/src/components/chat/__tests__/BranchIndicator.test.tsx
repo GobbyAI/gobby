@@ -34,6 +34,11 @@ let fetchMock: MockFetchInstance;
 function mockBranchPickerData(options?: {
   checkoutStatus?: number;
   checkoutBody?: unknown;
+  worktrees?: Array<{
+    id: string;
+    branch_name: string | null;
+    worktree_path: string;
+  }>;
 }) {
   fetchMock.mockJsonResponse(
     /\/api\/source-control\/status\?project_id=proj-1$/,
@@ -45,7 +50,7 @@ function mockBranchPickerData(options?: {
   fetchMock.mockJsonResponse(
     /\/api\/source-control\/worktrees\?project_id=proj-1$/,
     {
-      worktrees: [],
+      worktrees: options?.worktrees ?? [],
     },
   );
   fetchMock.mockJsonResponse(
@@ -126,6 +131,32 @@ describe("BranchIndicator", () => {
     expect(
       screen.queryByRole("option", { name: /remote-only/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders detached worktrees without hiding same-named branches", async () => {
+    mockBranchPickerData({
+      worktrees: [
+        {
+          id: "worktree-detached",
+          branch_name: null,
+          worktree_path: "/repo/detached",
+        },
+      ],
+    });
+    const { user, onWorktreeChange } = await openBranchPicker();
+
+    expect(
+      screen.getByRole("option", { name: /detached/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: /feature/i }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("option", { name: /detached/i }));
+    expect(onWorktreeChange).toHaveBeenCalledWith(
+      "/repo/detached",
+      "worktree-detached",
+    );
   });
 
   it("shows checkout errors without switching worktrees", async () => {

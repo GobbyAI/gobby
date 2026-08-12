@@ -180,7 +180,11 @@ export function BranchIndicator({
     : rawDisplayBranch;
 
   // Branch names that have worktrees (avoid duplicates)
-  const worktreeBranches = new Set(worktrees.map((wt) => wt.branch_name));
+  const worktreeBranches = new Set(
+    worktrees
+      .map((wt) => wt.branch_name)
+      .filter((branchName): branchName is string => branchName !== null),
+  );
   // Local branches without worktrees, excluding current
   const standaloneBranches = branches.filter(
     (b) => !b.is_remote && !worktreeBranches.has(b.name) && !b.is_current,
@@ -267,7 +271,7 @@ export function BranchIndicator({
                     <WorktreeIcon />
                     <div className="min-w-0">
                       <div className="truncate font-medium">
-                        {wt.branch_name}
+                        {wt.branch_name ?? "detached"}
                       </div>
                       <div className="truncate text-[length:var(--text-2xs)] text-muted-foreground/60">
                         {wt.worktree_path}

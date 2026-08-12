@@ -286,6 +286,20 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
         assert!(exists, "refresh must create {table}");
         assert_runtime_crud_privileges(&mut client, table)?;
     }
+    for table in ["clones", "worktrees"] {
+        let nullable: String = client
+            .query_one(
+                "SELECT is_nullable FROM information_schema.columns \
+                 WHERE table_schema = 'public' AND table_name = $1 \
+                 AND column_name = 'branch_name'",
+                &[&table],
+            )?
+            .get(0);
+        assert_eq!(
+            nullable, "YES",
+            "refresh must make {table}.branch_name nullable"
+        );
+    }
     let verification = SchemaRunner::new(&mut client, "public")?.verify()?;
     assert!(verification.checked_catalog_objects > 0);
     Ok(())

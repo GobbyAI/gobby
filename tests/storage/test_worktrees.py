@@ -158,6 +158,20 @@ class TestLocalWorktreeManagerCreate:
         assert str(uuid.UUID(worktree.id)) == worktree.id
         mock_db.execute.assert_called_once()
 
+    def test_create_detached(
+        self,
+        manager: LocalWorktreeManager,
+        mock_db: MagicMock,
+    ) -> None:
+        worktree = manager.create(
+            project_id="proj-abc",
+            branch_name=None,
+            worktree_path="/path/to/detached-worktree",
+        )
+
+        assert worktree.branch_name is None
+        assert mock_db.execute.call_args.args[1][4] is None
+
     def test_create_with_all_fields(
         self,
         manager: LocalWorktreeManager,

@@ -61,7 +61,7 @@ def build_branch_candidates(
     worktrees = LocalWorktreeManager(db)
     clones = LocalCloneManager(db)
     task_manager = LocalTaskManager(db)
-    candidates: set[str] = set()
+    candidates: set[str | None] = set()
 
     for task in tasks:
         artifacts = task_manager.artifacts.get_artifacts(task.id)
