@@ -13,6 +13,7 @@ CODEWIKI_DISABLED_REASON = "pending_wiki_redesign"
 
 __all__ = [
     "CODEWIKI_DISABLED_REASON",
+    "CODEWIKI_NIGHTLY_JOB_PREFIX",
     "CodewikiCronReconciliation",
     "reconcile_codewiki_crons_disabled",
 ]

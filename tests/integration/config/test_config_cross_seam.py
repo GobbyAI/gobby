@@ -236,6 +236,35 @@ async def test_patch_preserves_switch_installed_overrides(world: _World) -> None
 
 
 async def test_yaml_export_import_round_trip(world: _World) -> None:
+    await world.patch_and_reconcile(
+        {
+            "memory_recall.candidates": [{"candidate": "codex/gpt-5.6-sol"}],
+            "ai.model_metadata_aliases": [
+                {
+                    "provider": "codex",
+                    "provider_model_id": "gpt-5.6-sol",
+                    "openrouter_model_id": "openai/gpt-5.6-sol",
+                }
+            ],
+            "memory_backup.backup_path": ".gobby/test-memories.jsonl",
+        }
+    )
+    sparse_revision = world.runtime.snapshot.revision + 1
+    sparse_candidates = '[{"candidate":"codex/gpt-5.6-sol"}]'
+    with world.db.transaction() as transaction:
+        transaction.execute(
+            "UPDATE config_store SET value = %s, revision = %s WHERE key = %s",
+            (sparse_candidates, sparse_revision, "memory_recall.candidates"),
+        )
+        transaction.execute(
+            "UPDATE config_state SET revision = %s WHERE id = %s",
+            (sparse_revision, True),
+        )
+    await world.runtime.reconcile_local_commit(sparse_revision)
+    assert world.repository.read().overrides["memory_recall.candidates"] == [
+        {"candidate": "codex/gpt-5.6-sol"}
+    ]
+
     exported = await world.documents.export_yaml()
     content = cast(str, exported["content"])
     revision = cast(int, exported["revision"])
@@ -244,12 +273,15 @@ async def test_yaml_export_import_round_trip(world: _World) -> None:
     assert VOICE_SECRET_VALUE not in content
     assert MASKED_SECRET in content
 
-    result = await world.documents.replace_yaml(expected_revision=revision, content=content)
+    event_count = len(world.events)
+    for _ in range(2):
+        result = await world.documents.replace_yaml(expected_revision=revision, content=content)
+        assert result["revision"] == revision
+        assert result["changed_keys"] == []
 
-    replaced_revision = cast(int, result["revision"])
-    assert replaced_revision == revision + 1
+    assert len(world.events) == event_count
     snapshot = world.runtime.snapshot
-    assert snapshot.revision == replaced_revision
+    assert snapshot.revision == revision
     # Round-trip idempotence across the real seams: the masked voice key is
     # restored to its persisted secret reference, the switch-installed
     # embedding overrides survive, and the secret still resolves.

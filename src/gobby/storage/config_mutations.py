@@ -555,9 +555,13 @@ class ConfigMutations:
             # use JSON semantics: '5' never coerces to 5, but enum-keyed maps
             # accept their canonical string keys (python-strict would reject
             # the JSON form of a key's own default).
+            adapter: TypeAdapter[object] = TypeAdapter(annotation)
             return cast(
                 object,
-                TypeAdapter(annotation).validate_json(to_json(value), strict=True),
+                adapter.dump_python(
+                    adapter.validate_json(to_json(value), strict=True),
+                    mode="json",
+                ),
             )
         except TypeError:
             logger.exception("Configuration type adapter failed for %s", key)
@@ -593,7 +597,11 @@ class ConfigMutations:
     ) -> set[str]:
         changed = {key for key in patch.unset if key in snapshot.overrides}
         for key, value in values.items():
-            if snapshot.values.get(key) != value:
+            if key not in snapshot.values:
+                changed.add(key)
+                continue
+            stored_value = self._validate_value(self._resolve(key), key, snapshot.values[key])
+            if stored_value != value:
                 changed.add(key)
         for key, update in patch.secrets.items():
             binding = snapshot.secret_bindings.get(key)

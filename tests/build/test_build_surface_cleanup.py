@@ -97,16 +97,11 @@ def test_quick_and_no_merge_flags_propagate(monkeypatch: pytest.MonkeyPatch) -> 
 
 def test_json_surfaces_omit_removed_fields(temp_db: HubDatabase) -> None:
     """Build API, MCP schema, and request model expose only current fields."""
-    from unittest.mock import MagicMock
-
     from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
     from gobby.servers.routes.build import BuildRequest
     from gobby.storage.tasks import LocalTaskManager
 
-    registry = create_task_ops_registry(
-        LocalTaskManager(temp_db),
-        config=MagicMock(),
-    )
+    registry = create_task_ops_registry(LocalTaskManager(temp_db))
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = cast(dict[str, Any], tool["inputSchema"])
     assert {"isolation", "quick", "no_merge", "stage", "pr"}.issubset(schema["properties"])
