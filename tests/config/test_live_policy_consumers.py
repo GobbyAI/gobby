@@ -224,9 +224,12 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
 
     runtime.snapshot_reads = 0
     stale_config = DaemonConfig(tmux={"socket_path": "/tmp/stale.sock"})
-    services = SimpleNamespace(config=stale_config, config_runtime=runtime)
+    attention_server = cast(
+        Any,
+        SimpleNamespace(services=SimpleNamespace(config=stale_config, config_runtime=runtime)),
+    )
     payload = _run_tmux_payload(
-        services,
+        attention_server,
         SimpleNamespace(tmux_session_name="agent-session", pid=42),
     )
 
