@@ -26,7 +26,7 @@ class SetupInternalRegistries(Protocol):
     def __call__(
         self,
         *,
-        _config: Any,
+        config_resolver: Callable[[], Any],
         session_manager: Any,
         memory_manager_resolver: Any,
     ) -> Any: ...
@@ -106,7 +106,7 @@ def create_stdio_mcp_server(
 
     session_manager = None
     _ = effective_deps.setup_internal_registries(
-        _config=config,
+        config_resolver=lambda: config,
         session_manager=session_manager,
         memory_manager_resolver=None,
     )

@@ -33,7 +33,8 @@ if TYPE_CHECKING:
 def create_task_registry(
     task_manager: LocalTaskManager,
     task_validator_resolver: Callable[[], TaskValidator | None] | None = None,
-    config: "DaemonConfig | None" = None,
+    startup_config: "DaemonConfig | None" = None,
+    config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
     project_id: str | None = None,
     review_learning_service: "ReviewLearningService | None" = None,
 ) -> InternalToolRegistry:
@@ -43,7 +44,8 @@ def create_task_registry(
     Args:
         task_manager: LocalTaskManager instance
         task_validator_resolver: per-call resolver for the current TaskValidator (optional)
-        config: DaemonConfig instance (optional)
+        startup_config: DaemonConfig fallback before runtime readiness
+        config_resolver: per-operation current DaemonConfig resolver
         project_id: Default project ID (optional)
 
     Returns:
@@ -53,7 +55,8 @@ def create_task_registry(
     ctx = RegistryContext(
         task_manager=task_manager,
         task_validator_resolver=task_validator_resolver,
-        config=config,
+        startup_config=startup_config,
+        config_resolver=config_resolver,
         review_learning_service=review_learning_service,
     )
 

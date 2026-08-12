@@ -25,7 +25,6 @@ def register_action_tools(
     session_manager: SessionManager,
     llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
-    config: Any | None = None,
     db: Any | None = None,
     worktree_manager: Any | None = None,
 ) -> None:
@@ -36,7 +35,6 @@ def register_action_tools(
         session_manager: SessionManager for session lookups
         llm_service_resolver: per-call resolver for the current LLM service
         transcript_processor: Transcript processor for handoff generation
-        config: DaemonConfig for settings
         db: Database for dependency injection
         worktree_manager: Worktree manager for context enrichment
     """

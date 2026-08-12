@@ -41,7 +41,7 @@ logger = logging.getLogger("gobby.mcp.registries")
 
 
 def setup_internal_registries(
-    _config: DaemonConfig | None,
+    config_resolver: Callable[[], DaemonConfig | None],
     _session_manager: SessionManager | None = None,
     memory_manager_resolver: Callable[[], MemoryManager | None] | None = None,
     task_manager: LocalTaskManager | None = None,
@@ -89,7 +89,7 @@ def setup_internal_registries(
     creation gates on a single resolve at setup time.
 
     Args:
-        _config: Daemon configuration (reserved for future use)
+        config_resolver: per-operation current Daemon configuration resolver
         _session_manager: Session manager (reserved for future use)
         memory_manager_resolver: per-call resolver for the current MemoryManager
         task_manager: Task storage manager
@@ -119,6 +119,7 @@ def setup_internal_registries(
         InternalRegistryManager containing all registries
     """
     manager = InternalRegistryManager()
+    initial_config = config_resolver()
     # Review learning needs an initial manager; memory tools resolve per call.
     initial_memory_manager = (
         memory_manager_resolver() if memory_manager_resolver is not None else None
@@ -134,11 +135,11 @@ def setup_internal_registries(
         )
 
     # Initialize tasks registry if enabled and task_manager is available
-    if _config is None:
+    if initial_config is None:
         gobby_tasks_enabled = False
         logger.warning("Tasks registry not initialized: config is None")
     else:
-        gobby_tasks_enabled = _config.get_gobby_tasks_config().enabled
+        gobby_tasks_enabled = initial_config.get_gobby_tasks_config().enabled
         if not gobby_tasks_enabled:
             logger.debug("Tasks registry disabled by config")
 
@@ -151,7 +152,8 @@ def setup_internal_registries(
             tasks_registry = create_task_registry(
                 task_manager=task_manager,
                 task_validator_resolver=task_validator_resolver,
-                config=_config,
+                startup_config=initial_config,
+                config_resolver=config_resolver,
                 project_id=project_id,
                 review_learning_service=review_learning_service,
             )
@@ -164,7 +166,8 @@ def setup_internal_registries(
             ops_registry = create_task_ops_registry(
                 task_manager=task_manager,
                 task_validator_resolver=task_validator_resolver,
-                config=_config,
+                startup_config=initial_config,
+                config_resolver=config_resolver,
                 llm_service_resolver=llm_service_resolver,
                 completion_registry=completion_registry,
                 mcp_manager_resolver=mcp_manager_resolver,
@@ -191,14 +194,18 @@ def setup_internal_registries(
         manager.add_registry(profiles_registry)
         logger.debug("Profiles registry initialized")
 
-        if _config is not None:
-            offload_config = _config.get_tool_result_offload_config()
+        if initial_config is not None:
+            offload_config = initial_config.get_tool_result_offload_config()
             if offload_config.enabled is True:
                 from gobby.mcp_proxy.tools.results import create_results_registry
 
                 results_registry = create_results_registry(
                     db,
-                    offload_config,
+                    lambda: (
+                        config.get_tool_result_offload_config()
+                        if (config := config_resolver()) is not None
+                        else offload_config
+                    ),
                     default_project_id=project_id,
                 )
                 manager.add_registry(results_registry)
@@ -211,7 +218,8 @@ def setup_internal_registries(
         session_messages_registry = create_session_messages_registry(
             session_manager=session_manager,
             llm_service_resolver=llm_service_resolver,
-            config=_config,
+            startup_config=initial_config,
+            config_resolver=config_resolver,
             config_service_getter=config_service_getter,
             db=db,
             worktree_manager=worktree_storage,
@@ -231,7 +239,8 @@ def setup_internal_registries(
             llm_service_resolver=llm_service_resolver,
             memory_backup_manager_resolver=memory_backup_manager_resolver,
             session_manager=session_manager,
-            config=_config,
+            startup_config=initial_config,
+            config_resolver=config_resolver,
             dream_coordinator_resolver=dream_coordinator_resolver,
         )
         manager.add_registry(memory_registry)
@@ -310,7 +319,8 @@ def setup_internal_registries(
             mcp_inventory=workflow_mcp_inventory(manager, mcp_manager_resolver),
             completion_registry=completion_registry,
             lifecycle_monitor=agent_lifecycle_monitor,
-            daemon_config=_config,
+            startup_config=initial_config,
+            config_resolver=config_resolver,
             code_index=code_index,
             transcript_reader=transcript_reader,
             detection_registry=detection_registry,
@@ -428,7 +438,11 @@ def setup_internal_registries(
         from gobby.storage.secrets import SecretStore
 
         # Get skills config (or use defaults)
-        skills_config = _config.skills if _config and hasattr(_config, "skills") else SkillsConfig()
+        skills_config = (
+            initial_config.skills
+            if initial_config and hasattr(initial_config, "skills")
+            else SkillsConfig()
+        )
 
         # Resolve hub API keys from SecretStore — never from env.
         api_keys = resolve_hub_api_keys(skills_config.hubs, SecretStore(db))
@@ -443,18 +457,18 @@ def setup_internal_registries(
         hub_manager.register_provider_factory("github-topic", GitHubTopicProvider)
         hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
         hub_manager._skill_description_config = (
-            getattr(_config, "skill_description", None) if _config else None
+            getattr(initial_config, "skill_description", None) if initial_config else None
         )
 
         # Single-shot startup warning for hubs with missing required auth.
         hub_manager.warn_missing_auth()
 
-        _emb_cfg = _config.embeddings if _config else None
+        _emb_cfg = initial_config.embeddings if initial_config else None
         skills_registry = create_skills_registry(
             db=db,
             project_id=project_id,
             hub_manager=hub_manager,
-            search_config=_config.get_search_config() if _config else None,
+            search_config=initial_config.get_search_config() if initial_config else None,
             embedding_model=_emb_cfg.model if _emb_cfg else "nomic-embed-text",
             embedding_api_base=_emb_cfg.api_base if _emb_cfg else None,
             embedding_api_key=_emb_cfg.api_key if _emb_cfg else None,

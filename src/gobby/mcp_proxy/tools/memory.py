@@ -65,7 +65,8 @@ def create_memory_registry(
     llm_service_resolver: Callable[[], LLMService | None] | None = None,
     memory_backup_manager_resolver: Callable[[], Any | None] | None = None,
     session_manager: Any | None = None,
-    config: DaemonConfig | None = None,
+    startup_config: DaemonConfig | None = None,
+    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     dream_coordinator_resolver: Callable[[], MemoryDreamCoordinator | None] | None = None,
 ) -> InternalToolRegistry:
     """
@@ -77,7 +78,8 @@ def create_memory_registry(
         memory_backup_manager_resolver: per-call resolver for the current
             MemoryBackupManager (optional)
         session_manager: SessionManager for session lookups (optional)
-        config: DaemonConfig carrying digest feature routing config (optional)
+        startup_config: DaemonConfig fallback before runtime readiness
+        config_resolver: per-operation current DaemonConfig resolver
         dream_coordinator_resolver: resolves the daemon-owned dream coordinator
             for the memory_dream tools (optional)
 
@@ -102,6 +104,10 @@ def create_memory_registry(
         return (
             memory_backup_manager_resolver() if memory_backup_manager_resolver is not None else None
         )
+
+    def _config() -> DaemonConfig | None:
+        config = config_resolver() if config_resolver is not None else None
+        return config if config is not None else startup_config
 
     @registry.tool(
         name="create_memory",
@@ -845,7 +851,7 @@ def create_memory_registry(
                 session_id=session_id,
                 prompt_text=prompt_text,
                 llm_service=_llm_service(),
-                config=config,
+                config=_config(),
                 prior_turn_only=prior_turn_only,
             )
             if result is None:
@@ -860,7 +866,9 @@ def create_memory_registry(
         registry,
         memory_manager_resolver,
         llm_service_resolver=_llm_service,
-        config=config.memory_recall if config is not None else None,
+        config_resolver=lambda: (
+            config.memory_recall if (config := _config()) is not None else None
+        ),
     )
     register_memory_dream_tools(
         registry,

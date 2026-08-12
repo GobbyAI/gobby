@@ -26,10 +26,9 @@ def register_memory_recall_tool(
     memory_manager_resolver: Callable[[], MemoryManager | None],
     *,
     llm_service_resolver: Callable[[], Any | None] | None = None,
-    config: MemoryRecallConfig | None = None,
+    config_resolver: Callable[[], MemoryRecallConfig | None] | None = None,
 ) -> None:
     """Register inline recall and overflow-only retrieval."""
-    recall_config = config or MemoryRecallConfig()
 
     def _current_queue() -> MemoryRecallDeliveryQueue | None:
         manager = memory_manager_resolver()
@@ -39,11 +38,12 @@ def register_memory_recall_tool(
         manager = memory_manager_resolver()
         if manager is None:
             return None
+        recall_config = config_resolver() if config_resolver is not None else None
         return MemoryRecallRunner(
             db=manager.db,
             memory_manager=manager,
             llm_service=llm_service_resolver() if llm_service_resolver is not None else None,
-            config=recall_config,
+            config=recall_config or MemoryRecallConfig(),
         )
 
     @registry.tool(

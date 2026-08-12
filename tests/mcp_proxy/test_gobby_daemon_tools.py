@@ -108,7 +108,7 @@ class TestGobbyDaemonToolsInit:
             start_time=1000.0,
             internal_manager=mock_internal_manager,
             db=MagicMock(),
-            config=DaemonConfig(),
+            startup_config=DaemonConfig(),
         )
         without_db = GobbyDaemonTools(
             mcp_manager=mock_mcp_manager,
@@ -117,7 +117,7 @@ class TestGobbyDaemonToolsInit:
             start_time=1000.0,
             internal_manager=mock_internal_manager,
             db=None,
-            config=DaemonConfig(),
+            startup_config=DaemonConfig(),
         )
 
         assert isinstance(with_db.tool_proxy._result_offloader, ToolResultOffloader)

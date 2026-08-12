@@ -1,6 +1,7 @@
 """Server management service."""
 
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -20,19 +21,19 @@ class ServerManagementService:
         self,
         mcp_manager: MCPClientManager,
         config_manager: Any,
-        config: "DaemonConfig | None" = None,
+        config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
         llm_service: "LLMService | None" = None,
     ):
         """
         Args:
             mcp_manager: MCP client manager
             config_manager: Config manager (for saving changes)
-            config: Daemon configuration (for import operations)
+            config_resolver: Current Daemon configuration resolver
             llm_service: LLM service for SDK calls in import operations
         """
         self._mcp_manager = mcp_manager
         self._config_manager = config_manager
-        self._config = config
+        self._config_resolver = config_resolver
         self._llm_service = llm_service
 
     async def add_server(
@@ -159,8 +160,8 @@ class ServerManagementService:
             }
         current_project_id = project_ctx["id"]
 
-        # Validate config is available
-        if not self._config:
+        config = self._config_resolver() if self._config_resolver is not None else None
+        if config is None:
             return {
                 "success": False,
                 "error": "Daemon configuration not available for import operations",
@@ -177,7 +178,7 @@ class ServerManagementService:
                     "error": "Daemon database unavailable for import operations",
                 }
             importer = MCPServerImporter(
-                config=self._config,
+                config=config,
                 db=db,
                 current_project_id=current_project_id,
                 mcp_client_manager=self._mcp_manager,

@@ -249,11 +249,14 @@ def test_get_config_provided() -> None:
     from gobby.mcp_proxy.services.recommendation import RecommendationService
 
     custom_config = MagicMock()
+    replacement_config = MagicMock()
+    current_config = [custom_config]
     svc = RecommendationService(
         llm_service=MagicMock(),
         mcp_manager=MagicMock(),
-        config=custom_config,
+        config_resolver=lambda: current_config[0],
         db=MagicMock(),
     )
     assert svc._get_config() is custom_config
-    assert svc._config is custom_config
+    current_config[0] = replacement_config
+    assert svc._get_config() is replacement_config

@@ -193,7 +193,7 @@ class TestServerManagementServiceImport:
         return ServerManagementService(
             mcp_manager=mock_mcp_manager,
             config_manager=MagicMock(),
-            config=mock_config,
+            config_resolver=lambda: mock_config,
         )
 
     @pytest.fixture
@@ -202,7 +202,7 @@ class TestServerManagementServiceImport:
         return ServerManagementService(
             mcp_manager=mock_mcp_manager,
             config_manager=MagicMock(),
-            config=None,
+            config_resolver=lambda: None,
         )
 
     async def test_import_requires_source(self, service: ServerManagementService) -> None:

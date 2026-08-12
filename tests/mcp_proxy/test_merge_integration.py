@@ -15,7 +15,7 @@ def test_merge_server_registration_integration() -> None:
 
     # Setup registries with merge components
     manager = setup_internal_registries(
-        _config=MagicMock(),
+        config_resolver=lambda: MagicMock(),
         merge_storage=merge_storage,
         merge_resolver=merge_resolver,
     )

@@ -44,7 +44,8 @@ class RegistryContext:
     # Optional managers. Runtime-replaceable services are held as resolver
     # callables so every tool call observes the current runtime epoch.
     task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None
-    config: "DaemonConfig | None" = None
+    startup_config: "DaemonConfig | None" = None
+    config_resolver: "Callable[[], DaemonConfig | None] | None" = None
     llm_service_resolver: "Callable[[], LLMService | None] | None" = None
     completion_registry: "CompletionEventRegistry | None" = None
     mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None
@@ -58,13 +59,8 @@ class RegistryContext:
     project_manager: LocalProjectManager = field(init=False)
     worktree_manager: LocalWorktreeManager = field(init=False)
 
-    # Config settings (initialized in __post_init__)
-    show_result_on_create: bool = field(init=False)
-    auto_generate_on_expand: bool = field(init=False)
-    validation_config: "TaskValidationConfig | None" = field(init=False)
-
     def __post_init__(self) -> None:
-        """Initialize derived managers and config settings."""
+        """Initialize derived managers."""
         # Initialize managers from task_manager's database connection
         db = self.task_manager.db
         self.dep_manager = TaskDependencyManager(db)
@@ -74,16 +70,26 @@ class RegistryContext:
         self.project_manager = LocalProjectManager(db)
         self.worktree_manager = LocalWorktreeManager(db)
 
-        # Initialize config settings
-        self.show_result_on_create = False
-        self.auto_generate_on_expand = True
-        self.validation_config = None
+    @property
+    def config(self) -> "DaemonConfig | None":
+        """Resolve configuration from the operation epoch or startup fallback."""
+        config = self.config_resolver() if self.config_resolver is not None else None
+        return config if config is not None else self.startup_config
 
-        if self.config is not None:
-            tasks_config = self.config.get_gobby_tasks_config()
-            self.show_result_on_create = tasks_config.show_result_on_create
-            self.validation_config = tasks_config.validation
-            self.auto_generate_on_expand = self.validation_config.auto_generate_on_expand
+    @property
+    def show_result_on_create(self) -> bool:
+        config = self.config
+        return config.get_gobby_tasks_config().show_result_on_create if config else False
+
+    @property
+    def validation_config(self) -> "TaskValidationConfig | None":
+        config = self.config
+        return config.get_gobby_tasks_config().validation if config else None
+
+    @property
+    def auto_generate_on_expand(self) -> bool:
+        validation_config = self.validation_config
+        return validation_config.auto_generate_on_expand if validation_config else True
 
     @property
     def task_validator(self) -> "TaskValidator | None":

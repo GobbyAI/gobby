@@ -23,7 +23,7 @@ def test_setup_internal_registries_with_merge() -> None:
     worktree_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=MagicMock(),
+        config_resolver=lambda: MagicMock(),
         merge_storage=merge_storage,
         merge_resolver=merge_resolver,
         git_manager=git_manager,
@@ -38,7 +38,7 @@ def test_setup_internal_registries_with_merge() -> None:
 
 def test_setup_with_config_none() -> None:
     """Test setup with config=None disables tasks registry."""
-    manager = setup_internal_registries(_config=None)
+    manager = setup_internal_registries(config_resolver=lambda: None)
 
     registries = manager.get_all_registries()
     # Tasks registry should NOT be present when config is None
@@ -53,7 +53,7 @@ def test_setup_with_all_managers_none() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         memory_manager_resolver=None,
         task_manager=None,
         session_manager=None,
@@ -84,7 +84,7 @@ def test_setup_with_memory_manager_only() -> None:
     memory_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         memory_manager_resolver=lambda: memory_manager,
     )
 
@@ -100,7 +100,7 @@ async def test_memory_registry_recovers_after_runtime_manager_rebuild() -> None:
     current: list[Any | None] = [None]
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         memory_manager_resolver=lambda: current[0],
     )
     registry = manager.get_registry("gobby-memory")
@@ -126,7 +126,7 @@ def test_setup_with_metrics_manager_only() -> None:
     metrics_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         metrics_manager=metrics_manager,
     )
 
@@ -142,7 +142,7 @@ def test_setup_with_agent_runner_only() -> None:
     agent_runner = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         agent_runner=agent_runner,
     )
 
@@ -158,7 +158,7 @@ def test_setup_with_worktree_storage_only() -> None:
     worktree_storage = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         worktree_storage=worktree_storage,
     )
 
@@ -194,7 +194,7 @@ async def test_setup_worktrees_registry_claim_resolves_session_refs(
     )
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         session_manager=session_manager,
         worktree_storage=worktree_storage,
         project_id=project.id,
@@ -222,7 +222,7 @@ def test_setup_sessions_with_session_manager() -> None:
     session_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         session_manager=session_manager,
     )
 
@@ -236,7 +236,7 @@ def test_setup_hub_registry_with_active_database(temp_db: Any) -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config, db=temp_db)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config, db=temp_db)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
@@ -248,7 +248,7 @@ def test_setup_hub_registry_not_created_without_active_database() -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config)
 
     registry_names = [r.name for r in manager.get_all_registries()]
     assert "gobby-hub" not in registry_names
@@ -259,8 +259,8 @@ def test_setup_results_registry_requires_database_and_enabled_config(temp_db: An
     enabled_config.get_gobby_tasks_config.return_value.enabled = False
     enabled_config.get_tool_result_offload_config.return_value = ToolResultOffloadConfig()
 
-    without_database = setup_internal_registries(_config=enabled_config)
-    with_database = setup_internal_registries(_config=enabled_config, db=temp_db)
+    without_database = setup_internal_registries(config_resolver=lambda: enabled_config)
+    with_database = setup_internal_registries(config_resolver=lambda: enabled_config, db=temp_db)
 
     assert without_database.get_registry("gobby-results") is None
     assert with_database.get_registry("gobby-results") is not None
@@ -271,7 +271,7 @@ def test_setup_results_registry_omitted_when_offload_disabled(temp_db: Any) -> N
     config.get_gobby_tasks_config.return_value.enabled = False
     config.get_tool_result_offload_config.return_value = ToolResultOffloadConfig(enabled=False)
 
-    manager = setup_internal_registries(_config=config, db=temp_db)
+    manager = setup_internal_registries(config_resolver=lambda: config, db=temp_db)
 
     assert manager.get_registry("gobby-results") is None
 
@@ -283,7 +283,7 @@ def test_setup_tasks_disabled_by_config() -> None:
     task_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         task_manager=task_manager,
     )
 
@@ -297,7 +297,7 @@ def test_setup_plans_registry_when_db_exists_even_without_tasks(temp_db: Any) ->
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config, db=temp_db)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config, db=temp_db)
 
     registry_names = [r.name for r in manager.get_all_registries()]
     assert "gobby-plans" in registry_names
@@ -309,7 +309,7 @@ def test_setup_tasks_missing_task_manager() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = True
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         task_manager=None,
     )
 
@@ -326,7 +326,7 @@ def test_setup_tasks_only_requires_task_manager() -> None:
     task_manager = MagicMock()
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         task_manager=task_manager,
     )
 
@@ -344,7 +344,7 @@ def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> 
     mock_config.get_gobby_tasks_config.return_value.enabled = True
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         task_manager=LocalTaskManager(temp_db),
     )
 
@@ -363,7 +363,7 @@ def test_setup_merge_requires_both_storage_and_resolver() -> None:
 
     # Test with only storage
     manager1 = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         merge_storage=MagicMock(),
         merge_resolver=None,
     )
@@ -372,7 +372,7 @@ def test_setup_merge_requires_both_storage_and_resolver() -> None:
 
     # Test with only resolver
     manager2 = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         merge_storage=None,
         merge_resolver=MagicMock(),
     )
@@ -390,7 +390,7 @@ def test_setup_with_active_database(hub_db: Any) -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config, db=db)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config, db=db)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
@@ -401,7 +401,7 @@ def test_setup_with_active_database(hub_db: Any) -> None:
 
 def test_setup_skills_registry_not_created_without_config() -> None:
     """Test skills registry is not created when config is None."""
-    manager = setup_internal_registries(_config=None)
+    manager = setup_internal_registries(config_resolver=lambda: None)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
@@ -413,7 +413,7 @@ def test_setup_skills_registry_not_created_without_database() -> None:
     mock_config = MagicMock(spec=["get_gobby_tasks_config"])
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config)
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
@@ -427,7 +427,7 @@ def test_setup_hub_registry_has_expected_tools(hub_db: Any) -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
-    manager = setup_internal_registries(_config=mock_config, db=db)
+    manager = setup_internal_registries(config_resolver=lambda: mock_config, db=db)
 
     # Find the hub registry
     hub_registry = None
@@ -458,7 +458,7 @@ def test_setup_hub_registry_accepts_project_id(hub_db: Any) -> None:
     )
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         db=db,
         project_id=project_id,
     )
@@ -478,7 +478,7 @@ def test_setup_with_pipeline_executor() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         pipeline_executor=MagicMock(),
         workflow_loader=MagicMock(),
         pipeline_execution_manager=MagicMock(),
@@ -496,7 +496,7 @@ def test_setup_pipelines_always_registered_even_without_executor() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         pipeline_executor=None,
     )
 
@@ -511,7 +511,7 @@ def test_setup_pipelines_tools_accessible() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         pipeline_executor=MagicMock(),
         workflow_loader=MagicMock(),
         pipeline_execution_manager=MagicMock(),
@@ -544,7 +544,7 @@ def test_setup_clones_registered_without_git_manager() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         clone_storage=MagicMock(),
         git_manager=None,
         project_id="test-project",
@@ -563,7 +563,7 @@ def test_setup_clones_registered_with_git_manager() -> None:
     mock_git.repo_path = "/tmp/test-repo"
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         clone_storage=MagicMock(),
         git_manager=mock_git,
         project_id="test-project",
@@ -580,7 +580,7 @@ def test_setup_pipelines_tools_accessible_without_executor() -> None:
     mock_config.get_gobby_tasks_config.return_value.enabled = False
 
     manager = setup_internal_registries(
-        _config=mock_config,
+        config_resolver=lambda: mock_config,
         pipeline_executor=None,
         workflow_loader=None,
     )
@@ -638,7 +638,7 @@ class TestHubApiKeyResolution:
         # Patch at the source module — registries.py imports HubManager inside
         # the function body, so it resolves via gobby.skills.hubs at call time.
         with patch_fn("gobby.skills.hubs.HubManager", RecordingHubManager):
-            setup_internal_registries(_config=mock_config, db=db)
+            setup_internal_registries(config_resolver=lambda: mock_config, db=db)
 
         return captured
 

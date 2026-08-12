@@ -470,7 +470,7 @@ class TestCreateTaskTool:
         """Test create_task returns full result when show_result_on_create is True."""
         mock_config.get_gobby_tasks_config.return_value.show_result_on_create = True
 
-        registry = create_task_registry(mock_task_manager, config=mock_config)
+        registry = create_task_registry(mock_task_manager, startup_config=mock_config)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440011"
@@ -516,7 +516,7 @@ class TestCreateTaskTool:
         registry = create_task_registry(
             mock_task_manager,
             task_validator_resolver=lambda: mock_task_validator,
-            config=mock_config,
+            startup_config=mock_config,
         )
 
         mock_task = MagicMock()

@@ -31,7 +31,8 @@ def create_session_messages_registry(
     session_manager: SessionManager | None = None,
     llm_service_resolver: Callable[[], Any | None] | None = None,
     transcript_processor: Any | None = None,
-    config: Any | None = None,
+    startup_config: Any | None = None,
+    config_resolver: Callable[[], Any | None] | None = None,
     config_service_getter: Callable[[], ConfigValuesService] | None = None,
     db: Any | None = None,
     worktree_manager: Any | None = None,
@@ -46,7 +47,8 @@ def create_session_messages_registry(
         session_manager: SessionManager instance for session CRUD
         llm_service_resolver: per-call resolver for the current LLM service (optional)
         transcript_processor: Transcript processor for handoff generation (optional)
-        config: DaemonConfig for settings (optional)
+        startup_config: DaemonConfig fallback before runtime readiness
+        config_resolver: per-operation current DaemonConfig resolver
         db: Database for dependency injection (optional)
         worktree_manager: Worktree manager for context enrichment (optional)
         transcript_reader: TranscriptReader for JSONL + gzip fallback reads (optional)
@@ -59,12 +61,14 @@ def create_session_messages_registry(
         name="gobby-sessions",
         description="Session management and message querying - CRUD, retrieval, search",
     )
-    session_summary_config = (
-        getattr(config, "session_summary", None) if config is not None else None
-    )
-    compact_handoff_config = (
-        getattr(config, "compact_handoff", None) if config is not None else None
-    )
+
+    def _config() -> Any | None:
+        config = config_resolver() if config_resolver is not None else None
+        return config if config is not None else startup_config
+
+    initial_config = _config()
+    session_summary_config = getattr(initial_config, "session_summary", None)
+    compact_handoff_config = getattr(initial_config, "compact_handoff", None)
 
     # --- Message Tools ---
     # Register if transcript_reader or session_manager is available
@@ -79,7 +83,11 @@ def create_session_messages_registry(
             session_manager,
             llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
-            session_summary_config=session_summary_config,
+            session_summary_config_resolver=lambda: (
+                getattr(config, "session_summary", None)
+                if (config := _config()) is not None
+                else None
+            ),
             inter_session_message_manager=inter_session_message_manager,
         )
 
@@ -105,7 +113,6 @@ def create_session_messages_registry(
             session_manager=session_manager,
             llm_service_resolver=llm_service_resolver,
             transcript_processor=transcript_processor,
-            config=config,
             db=db,
             worktree_manager=worktree_manager,
         )

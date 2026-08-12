@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -27,19 +28,20 @@ class RecommendationService:
         db: HubDatabase | None,
         semantic_search: Any | None = None,
         project_id: str | None = None,
-        config: RecommendToolsConfig | None = None,
+        config_resolver: Callable[[], RecommendToolsConfig | None] | None = None,
     ):
         self._llm_service = llm_service
         self._mcp_manager = mcp_manager
         self._semantic_search = semantic_search
         self._project_id = project_id
-        self._config = config
+        self._config_resolver = config_resolver
         self._loader = PromptLoader(db=db) if db is not None else None
 
     def _get_config(self) -> RecommendToolsConfig:
         """Get config with fallback to defaults."""
-        if self._config is not None:
-            return self._config
+        config = self._config_resolver() if self._config_resolver is not None else None
+        if config is not None:
+            return config
         from gobby.config.features import RecommendToolsConfig
 
         return RecommendToolsConfig()

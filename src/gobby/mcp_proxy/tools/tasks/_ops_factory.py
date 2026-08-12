@@ -58,7 +58,8 @@ class _TaskOpsToolRegistry(InternalToolRegistry):
 def create_task_ops_registry(
     task_manager: LocalTaskManager,
     task_validator_resolver: "Callable[[], TaskValidator | None] | None" = None,
-    config: "DaemonConfig | None" = None,
+    startup_config: "DaemonConfig | None" = None,
+    config_resolver: "Callable[[], DaemonConfig | None] | None" = None,
     llm_service_resolver: "Callable[[], LLMService | None] | None" = None,
     completion_registry: "CompletionEventRegistry | None" = None,
     mcp_manager_resolver: "Callable[[], MCPClientManager | None] | None" = None,
@@ -69,7 +70,8 @@ def create_task_ops_registry(
     Args:
         task_manager: LocalTaskManager instance
         task_validator_resolver: per-call resolver for the current TaskValidator (optional)
-        config: DaemonConfig instance (optional)
+        startup_config: DaemonConfig fallback before runtime readiness
+        config_resolver: per-operation current DaemonConfig resolver
 
     Returns:
         InternalToolRegistry with ops task tools registered
@@ -78,7 +80,8 @@ def create_task_ops_registry(
     ctx = RegistryContext(
         task_manager=task_manager,
         task_validator_resolver=task_validator_resolver,
-        config=config,
+        startup_config=startup_config,
+        config_resolver=config_resolver,
         llm_service_resolver=llm_service_resolver,
         completion_registry=completion_registry,
         mcp_manager_resolver=mcp_manager_resolver,

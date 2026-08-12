@@ -812,14 +812,14 @@ class TestSpawnAgentSandbox:
         registry = create_spawn_agent_registry(
             mock_runner,
             db=MagicMock(),
-            daemon_config=MagicMock(
+            config_resolver=lambda: MagicMock(
                 agent_sandbox=MagicMock(
                     enabled=False,
                     mode="restrictive",
                     allow_network=False,
                     extra_read_paths=["/tmp/agent-read"],
                     extra_write_paths=["/tmp/agent-write"],
-                )
+                ),
             ),
         )
 

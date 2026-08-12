@@ -159,11 +159,11 @@ def test_stdio_server_takes_dial_port_from_bootstrap() -> None:
 
     assert server is mcp_server
     runtime_factory.assert_called_once_with()
-    setup_registries.assert_called_once_with(
-        _config=config,
-        session_manager=None,
-        memory_manager_resolver=None,
-    )
+    setup_registries.assert_called_once()
+    registry_kwargs = setup_registries.call_args.kwargs
+    assert registry_kwargs["config_resolver"]() is config
+    assert registry_kwargs["session_manager"] is None
+    assert registry_kwargs["memory_manager_resolver"] is None
     # The dial port comes from bootstrap.yaml, never the DB-backed projection.
     proxy_factory.assert_called_once_with(61031)
 
@@ -188,9 +188,9 @@ def test_stdio_server_starts_when_hub_is_down() -> None:
 
     assert server is mcp_server
     runtime.close.assert_called_once_with()
-    setup_registries.assert_called_once_with(
-        _config=None,
-        session_manager=None,
-        memory_manager_resolver=None,
-    )
+    setup_registries.assert_called_once()
+    registry_kwargs = setup_registries.call_args.kwargs
+    assert registry_kwargs["config_resolver"]() is None
+    assert registry_kwargs["session_manager"] is None
+    assert registry_kwargs["memory_manager_resolver"] is None
     proxy_factory.assert_called_once_with(61031)

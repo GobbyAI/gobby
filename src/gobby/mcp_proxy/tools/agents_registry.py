@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
@@ -45,7 +46,8 @@ def create_agents_registry(
     mcp_inventory: MCPInventoryProtocol | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     lifecycle_monitor: AgentLifecycleMonitor | None = None,
-    daemon_config: DaemonConfig | None = None,
+    startup_config: DaemonConfig | None = None,
+    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     code_index: CodeIndexContext | None = None,
     transcript_reader: TranscriptReader | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
@@ -66,7 +68,8 @@ def create_agents_registry(
         mcp_inventory: Combined internal and external MCP tool inventory.
         completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
         lifecycle_monitor: Agent lifecycle monitor for termination cleanup.
-        daemon_config: Daemon configuration for spawn_agent runtime defaults.
+        startup_config: DaemonConfig fallback before runtime readiness.
+        config_resolver: per-operation current DaemonConfig resolver.
         code_index: Code index context exposed to spawn_agent.
         transcript_reader: Transcript reader for agent query payloads.
 
@@ -102,7 +105,8 @@ def create_agents_registry(
         mcp_inventory=mcp_inventory,
         completion_registry=completion_registry,
         lifecycle_monitor=lifecycle_monitor,
-        daemon_config=daemon_config,
+        startup_config=startup_config,
+        config_resolver=config_resolver,
         code_index=code_index,
         transcript_reader=transcript_reader,
         detection_registry=detection_registry,

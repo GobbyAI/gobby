@@ -667,7 +667,7 @@ async def test_wiki_ingest_file_batch_aggregates_failures(
 
 def test_wiki_registry_registered_and_discoverable() -> None:
     manager = setup_internal_registries(
-        _config=DaemonConfig(wiki={"binary": "/bin/gwiki"}),
+        config_resolver=lambda: DaemonConfig(wiki={"binary": "/bin/gwiki"}),
         db=None,
     )
     registry = manager.get_registry("gobby-wiki")

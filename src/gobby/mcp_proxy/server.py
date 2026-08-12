@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -49,7 +50,9 @@ class GobbyDaemonTools:
         start_time: float,
         internal_manager: Any,
         db: HubDatabase | None,
-        config: DaemonConfig | None = None,
+        startup_config: DaemonConfig | None = None,
+        config_resolver: Callable[[], DaemonConfig | None] | None = None,
+        operation_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
         llm_service: Any | None = None,
         session_manager: Any | None = None,
         memory_manager: Any | None = None,
@@ -58,7 +61,8 @@ class GobbyDaemonTools:
         fallback_resolver: Any | None = None,
         hook_manager_resolver: Callable[[], Any | None] | None = None,
     ):
-        self.config = config
+        self._startup_config = startup_config
+        self._config_resolver = config_resolver
         self.internal_manager = internal_manager
         self._mcp_manager = mcp_manager  # Store for project_id access
         self._semantic_search = semantic_search  # Store for direct search access
@@ -70,19 +74,21 @@ class GobbyDaemonTools:
         # Initialize services
         result_offloader = None
         if db is not None:
-            configured_offload = (
-                config.get_tool_result_offload_config() if config is not None else None
-            )
-            offload_config = (
-                configured_offload
-                if isinstance(configured_offload, ToolResultOffloadConfig)
-                else ToolResultOffloadConfig()
-            )
-            result_store = ToolResultStore(db, offload_config)
+
+            def resolve_offload_config() -> ToolResultOffloadConfig:
+                config = self.config
+                configured = config.get_tool_result_offload_config() if config else None
+                return (
+                    configured
+                    if isinstance(configured, ToolResultOffloadConfig)
+                    else ToolResultOffloadConfig()
+                )
+
+            result_store = ToolResultStore(db, resolve_offload_config)
             result_offloader = ToolResultOffloader(
                 result_store,
                 db,
-                offload_config,
+                resolve_offload_config,
                 self._caller_project_ref,
             )
         self.tool_proxy = ToolProxyService(
@@ -91,9 +97,13 @@ class GobbyDaemonTools:
             fallback_resolver=fallback_resolver,
             hook_manager_resolver=hook_manager_resolver,
             result_offloader=result_offloader,
+            operation_context_factory=operation_context_factory,
         )
         self.server_mgmt = ServerManagementService(
-            mcp_manager, config_manager, config, llm_service=llm_service
+            mcp_manager,
+            config_manager,
+            self.resolve_config,
+            llm_service=llm_service,
         )
         self.recommendation = RecommendationService(
             llm_service,
@@ -101,8 +111,19 @@ class GobbyDaemonTools:
             db=db,
             semantic_search=semantic_search,
             project_id=None,  # Resolved per-call via get_project_context()
-            config=config.recommend_tools if config else None,
+            config_resolver=lambda: (
+                self.config.recommend_tools if self.config is not None else None
+            ),
         )
+
+    def resolve_config(self) -> DaemonConfig | None:
+        """Resolve current configuration with the pre-start fallback."""
+        config = self._config_resolver() if self._config_resolver is not None else None
+        return config if config is not None else self._startup_config
+
+    @property
+    def config(self) -> DaemonConfig | None:
+        return self.resolve_config()
 
     def _caller_project_ref(self) -> str | None:
         ctx = project_context_utils.get_project_context()

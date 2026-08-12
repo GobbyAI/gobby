@@ -117,7 +117,7 @@ def test_shared_service_identity(
     memory_manager = _scoped_memory_manager(sample_project["id"])
 
     manager = setup_internal_registries(
-        _config=DaemonConfig(),
+        config_resolver=lambda: DaemonConfig(),
         memory_manager_resolver=lambda: cast(MemoryManager, memory_manager),
         task_manager=LocalTaskManager(temp_db),
     )

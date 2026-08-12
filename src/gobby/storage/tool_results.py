@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from typing import Literal, TypedDict
 
@@ -37,9 +38,13 @@ class ToolResultMeta(TypedDict):
 class ToolResultStore:
     """Store and retrieve project-owned oversized tool results."""
 
-    def __init__(self, db: HubDatabase, config: ToolResultOffloadConfig) -> None:
+    def __init__(
+        self,
+        db: HubDatabase,
+        config: ToolResultOffloadConfig | Callable[[], ToolResultOffloadConfig],
+    ) -> None:
         self._db = db
-        self._config = config
+        self._config_resolver = config if callable(config) else lambda: config
 
     def save(
         self,
@@ -53,8 +58,9 @@ class ToolResultStore:
         total_chars: int,
     ) -> str:
         """Persist content and its bounded search chunks."""
+        config = self._config_resolver()
         result_id = str(uuid.uuid4())
-        chunks = _chunk_content(content, self._config.chunk_chars)
+        chunks = _chunk_content(content, config.chunk_chars)
         chunk_rows = [
             (
                 str(uuid.uuid4()),
@@ -98,10 +104,11 @@ class ToolResultStore:
 
     def cleanup_expired(self) -> int:
         """Delete retained results that have exceeded the configured lifetime."""
+        config = self._config_resolver()
         cursor = self._db.execute(
             """DELETE FROM tool_results
                WHERE created_at < NOW() - make_interval(days => %s)""",
-            (self._config.retention_days,),
+            (config.retention_days,),
         )
         return max(cursor.rowcount, 0)
 
@@ -118,6 +125,7 @@ class ToolResultStore:
         if limit <= 0:
             raise ValueError("limit must be positive")
 
+        config = self._config_resolver()
         canonical_id = _parse_result_id(result_id)
         if canonical_id is None:
             return None
@@ -134,7 +142,7 @@ class ToolResultStore:
                 limit,
                 canonical_id,
                 project_id,
-                self._config.retention_days,
+                config.retention_days,
             ),
         )
         if row is None:
@@ -153,6 +161,7 @@ class ToolResultStore:
 
     def get_meta(self, result_id: str, project_id: str) -> ToolResultMeta | None:
         """Return metadata when the result is visible and unexpired."""
+        config = self._config_resolver()
         canonical_id = _parse_result_id(result_id)
         if canonical_id is None:
             return None
@@ -164,7 +173,7 @@ class ToolResultStore:
                WHERE id = %s
                  AND project_id = %s
                  AND created_at >= NOW() - make_interval(days => %s)""",
-            (canonical_id, project_id, self._config.retention_days),
+            (canonical_id, project_id, config.retention_days),
         )
         if row is None:
             return None

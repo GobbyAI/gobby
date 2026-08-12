@@ -45,7 +45,13 @@ class AgentsRegistryContext:
     mcp_inventory: MCPInventoryProtocol | None = None
     completion_registry: CompletionEventRegistry | None = None
     lifecycle_monitor: AgentLifecycleMonitor | None = None
-    daemon_config: DaemonConfig | None = None
+    startup_config: DaemonConfig | None = None
+    config_resolver: Callable[[], DaemonConfig | None] | None = None
     code_index: CodeIndexContext | None = None
     transcript_reader: TranscriptReader | None = None
     detection_registry: DetectionManifestRegistry | None = None
+
+    @property
+    def daemon_config(self) -> DaemonConfig | None:
+        config = self.config_resolver() if self.config_resolver is not None else None
+        return config if config is not None else self.startup_config

@@ -1,6 +1,7 @@
 """Tool proxy service."""
 
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.mcp_proxy.manager import MCPClientManager
@@ -79,6 +80,7 @@ class ToolProxyService:
         tool_filter: Any = None,
         hook_manager_resolver: Callable[[], "HookManager | None"] | None = None,
         result_offloader: "ToolResultOffloader | None" = None,
+        operation_context_factory: Callable[[], AbstractContextManager[None]] | None = None,
     ):
         self._mcp_manager = mcp_manager
         self._internal_manager = internal_manager
@@ -87,6 +89,7 @@ class ToolProxyService:
         self._tool_filter = tool_filter
         self._hook_manager_resolver = hook_manager_resolver
         self._result_offloader = result_offloader
+        self._operation_context_factory = operation_context_factory
 
     @property
     def session_manager(self) -> "SessionManager | None":
@@ -264,18 +267,24 @@ class ToolProxyService:
         intent: str | None = None,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
-        return await call_tool_impl(
-            self,
-            server_name,
-            tool_name,
-            arguments,
-            session_id,
-            strip_unknown,
-            enforce_workflow,
-            timeout,
-            wrapper_originated,
-            intent,
+        operation_context = (
+            self._operation_context_factory()
+            if self._operation_context_factory is not None
+            else nullcontext()
         )
+        with operation_context:
+            return await call_tool_impl(
+                self,
+                server_name,
+                tool_name,
+                arguments,
+                session_id,
+                strip_unknown,
+                enforce_workflow,
+                timeout,
+                wrapper_originated,
+                intent,
+            )
 
     async def read_resource(self, server_name: str, uri: str) -> Any:
         """Read a resource."""

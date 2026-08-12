@@ -7,6 +7,7 @@ and delegates to spawn_agent_impl for execution.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -277,7 +278,7 @@ def create_spawn_agent_registry(
     session_manager: Any | None = None,
     db: HubDatabase | None = None,
     completion_registry: Any | None = None,
-    daemon_config: Any | None = None,
+    config_resolver: Callable[[], Any | None] | None = None,
     code_index: Any | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:
@@ -569,7 +570,7 @@ def create_spawn_agent_registry(
             session_manager=session_manager,
             db=db,
             completion_registry=completion_registry,
-            daemon_config=daemon_config,
+            daemon_config=config_resolver() if config_resolver is not None else None,
             code_index=code_index,
         )
 

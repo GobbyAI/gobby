@@ -121,7 +121,7 @@ def daemon_tools(mock_mcp_manager, mock_llm_service):
         start_time=1000.0,
         internal_manager=internal_manager,
         db=MagicMock(),
-        config=mock_config,
+        startup_config=mock_config,
         llm_service=mock_llm_service,
     )
     tools.tool_proxy._validate_arguments = False

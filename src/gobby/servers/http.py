@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
@@ -80,9 +81,11 @@ class HTTPServer:
             bootstrap_config: Process topology and authentication configuration
         """
         self.services = services
-        self._runtime_bundle_context: ContextVar[RuntimeActiveBundle | None] = ContextVar(
-            "gobby_http_runtime_bundle",
-            default=None,
+        self._runtime_bundle_context: ContextVar[tuple[bool, RuntimeActiveBundle | None]] = (
+            ContextVar(
+                "gobby_http_runtime_bundle",
+                default=(False, None),
+            )
         )
         self._active_config_cache: tuple[ConfigSnapshot, DaemonConfig] | None = None
         self.port = port
@@ -153,24 +156,39 @@ class HTTPServer:
 
     def capture_runtime_bundle(self) -> RuntimeActiveBundle | None:
         """Capture one immutable configuration/service epoch for an operation."""
-        request_bundle = self._runtime_bundle_context.get()
-        if request_bundle is not None:
+        is_captured, request_bundle = self._runtime_bundle_context.get()
+        if is_captured:
             return request_bundle
         runtime = self.services.config_runtime
         if runtime is None or not runtime.ready:
             return None
         return runtime.capture()
 
+    @contextmanager
+    def capture_runtime_operation(self) -> Iterator[None]:
+        """Pin one runtime bundle, including a pre-start fallback, for an operation."""
+        is_captured, _ = self._runtime_bundle_context.get()
+        if is_captured:
+            yield
+            return
+        token = self._runtime_bundle_context.set((True, self.capture_runtime_bundle()))
+        try:
+            yield
+        finally:
+            self._runtime_bundle_context.reset(token)
+
+    def resolve_runtime_config(self) -> DaemonConfig | None:
+        """Resolve configuration from the operation epoch or startup fallback."""
+        runtime_bundle = self.capture_runtime_bundle()
+        return runtime_bundle.snapshot.active if runtime_bundle else self.startup_config
+
     async def _capture_runtime_epoch(
         self,
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        token = self._runtime_bundle_context.set(self.capture_runtime_bundle())
-        try:
+        with self.capture_runtime_operation():
             return await call_next(request)
-        finally:
-            self._runtime_bundle_context.reset(token)
 
     def _runtime_service(self, name: str) -> object | None:
         bundle = self.capture_runtime_bundle()
@@ -197,7 +215,7 @@ class HTTPServer:
         from gobby.tasks.validation import TaskValidator
 
         runtime_bundle = self.capture_runtime_bundle()
-        config = runtime_bundle.snapshot.active if runtime_bundle else self.startup_config
+        config = self.resolve_runtime_config()
 
         def captured_service(name: str) -> object | None:
             if runtime_bundle is None:
@@ -293,7 +311,7 @@ class HTTPServer:
 
         config_route_context = ConfigurationRouteContext(self)
         self._internal_manager = setup_internal_registries(
-            _config=config,
+            config_resolver=self.resolve_runtime_config,
             _session_manager=None,  # Not needed for internal registries
             memory_manager_resolver=resolve_memory_manager,
             task_manager=services.task_manager,
@@ -386,7 +404,9 @@ class HTTPServer:
             start_time=self._start_time,
             internal_manager=self._internal_manager,
             db=services.database,
-            config=config,
+            startup_config=config,
+            config_resolver=self.resolve_runtime_config,
+            operation_context_factory=self.capture_runtime_operation,
             llm_service=llm_service,
             session_manager=services.session_manager,
             memory_manager=memory_manager,

@@ -646,7 +646,7 @@ class EmbeddingSwitchRunner:
         for project in LocalProjectManager(self.db).list():
             self._check_abort()
             internal_manager = setup_internal_registries(
-                config,
+                config_resolver=lambda: config,
                 db=self.db,
                 project_id=project.id,
                 mcp_manager_resolver=lambda: mcp_manager,

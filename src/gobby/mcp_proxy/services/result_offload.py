@@ -49,14 +49,18 @@ class ToolResultOffloader:
         self,
         store: ToolResultStore,
         db: HubDatabase,
-        config: ToolResultOffloadConfig,
+        config: ToolResultOffloadConfig | Callable[[], ToolResultOffloadConfig],
         project_id_getter: Callable[[], str | None],
     ) -> None:
         self._store = store
         self._db = db
-        self._config = config
+        self._config_resolver = config if callable(config) else lambda: config
         self._project_id_getter = project_id_getter
         self._search_backend = BM25SearchBackend(db, "tool_result_chunks")
+
+    @property
+    def _config(self) -> ToolResultOffloadConfig:
+        return self._config_resolver()
 
     async def maybe_offload(
         self,

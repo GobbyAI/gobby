@@ -37,7 +37,7 @@ _RESULT_ID_SCHEMA: dict[str, object] = {
 
 def create_results_registry(
     db: HubDatabase,
-    config: ToolResultOffloadConfig,
+    config_resolver: ToolResultOffloadConfig | Callable[[], ToolResultOffloadConfig],
     *,
     default_project_id: str | None = None,
     project_id_getter: Callable[[], str | None] | None = None,
@@ -48,9 +48,10 @@ def create_results_registry(
         name="gobby-results",
         description="Retrieve oversized MCP tool results by result_id",
     )
-    store = ToolResultStore(db, config)
+    resolve_config = config_resolver if callable(config_resolver) else lambda: config_resolver
+    initial_config = resolve_config()
+    store = ToolResultStore(db, resolve_config)
     search_backend = pick_search_backend(db, "tool_result_chunks")
-    response_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
 
     def current_project_id() -> str | None:
         if project_id_getter is not None:
@@ -66,6 +67,8 @@ def create_results_registry(
         query: str,
         limit: int = 5,
     ) -> dict[str, Any]:
+        config = resolve_config()
+        response_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
         canonical_id = _canonical_result_id(result_id)
         if canonical_id is None:
             return _not_found(config)
@@ -139,6 +142,8 @@ def create_results_registry(
         offset: int = 0,
         limit: int = 10_000,
     ) -> dict[str, Any]:
+        config = resolve_config()
+        response_limit = config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
         canonical_id = _canonical_result_id(result_id)
         if canonical_id is None:
             return _not_found(config)
@@ -180,8 +185,11 @@ def create_results_registry(
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": response_limit,
-                    "default": min(10_000, response_limit),
+                    "maximum": initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE,
+                    "default": min(
+                        10_000,
+                        initial_config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE,
+                    ),
                 },
             },
             "required": ["result_id"],

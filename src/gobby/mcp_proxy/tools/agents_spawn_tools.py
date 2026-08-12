@@ -80,7 +80,7 @@ def register_agent_spawn_tools(
         session_manager=ctx.session_manager,
         db=ctx.db,
         completion_registry=ctx.completion_registry,
-        daemon_config=ctx.daemon_config,
+        config_resolver=lambda: ctx.daemon_config,
         code_index=ctx.code_index,
         detection_registry=ctx.detection_registry,
     )
