@@ -881,7 +881,10 @@ async def spawn_agent_impl(
         # the pre-generated session_id which is not the actual child session
         # for terminal mode.
         step_wf_name = (initial_variables or {}).get("_step_workflow_name")
-        if step_wf_name and agent_body and agent_body.steps and db:
+        has_assigned_task = bool(
+            resolved_task_id or effective_initial_variables.get("assigned_task_id")
+        )
+        if has_assigned_task and step_wf_name and agent_body and agent_body.steps and db:
             try:
                 from gobby.workflows.definitions import WorkflowInstance
                 from gobby.workflows.state_manager import WorkflowInstanceManager

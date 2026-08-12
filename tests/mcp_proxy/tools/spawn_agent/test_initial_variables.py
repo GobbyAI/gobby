@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +14,7 @@ from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 if TYPE_CHECKING:
+    from gobby.agents.spawn_models import SpawnRequest
     from gobby.storage.tasks import LocalTaskManager, Task
     from gobby.workflows.definitions import WorkflowInstance
 
@@ -423,7 +424,14 @@ class TestSpawnAgentStepVariables:
         repo_root: Path,
         agent_name: str,
         additional_skills: list[str] | None = None,
-    ) -> tuple[dict[str, Any], LocalTaskManager, Task, WorkflowInstance | None]:
+        task_assignment: Literal["request", "initial_variables", "none"] = "request",
+    ) -> tuple[
+        dict[str, Any],
+        LocalTaskManager,
+        Task,
+        WorkflowInstance | None,
+        SpawnRequest,
+    ]:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.sessions import SessionManager
@@ -463,6 +471,8 @@ class TestSpawnAgentStepVariables:
             db=db,
         )
         agent_body = _bundled_agent_body(agent_name, repo_root)
+        if task_assignment == "initial_variables":
+            agent_body.workflows.variables["assigned_task_id"] = f"#{task.seq_num}"
 
         with (
             patch(
@@ -498,18 +508,88 @@ class TestSpawnAgentStepVariables:
                 message=None,
             )
 
-            result = await registry.call(
-                "spawn_agent",
-                {
-                    "prompt": "Implement the task",
-                    "agent": agent_name,
-                    "task_id": f"#{task.seq_num}",
-                    "parent_session_id": parent.id,
-                },
-            )
+            arguments = {
+                "prompt": "Implement the task",
+                "agent": agent_name,
+                "parent_session_id": parent.id,
+            }
+            if task_assignment == "request":
+                arguments["task_id"] = f"#{task.seq_num}"
+            result = await registry.call("spawn_agent", arguments)
 
         instance = WorkflowInstanceManager(db).get_instance(child.id, f"{agent_name}-steps")
-        return result, task_manager, task, instance
+        spawn_request = mock_execute.call_args.args[0]
+        return result, task_manager, task, instance, spawn_request
+
+    @pytest.mark.asyncio
+    async def test_taskless_developer_spawn_skips_step_workflow(
+        self,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
+    ) -> None:
+        agent_name = "backend-developer"
+        (
+            result,
+            task_manager,
+            task,
+            instance,
+            spawn_request,
+        ) = await self._spawn_bundled_developer_agent(
+            db=db,
+            mock_runner=mock_runner,
+            repo_root=repo_root,
+            agent_name=agent_name,
+            task_assignment="none",
+        )
+        agent_body = _bundled_agent_body(agent_name, repo_root)
+        initial_variables = spawn_request.initial_variables
+
+        assert result["success"] is True
+        assert task_manager.get_task(task.id).claimed_by_session_id is None
+        assert instance is None
+        assert initial_variables is not None
+        assert "assigned_task_id" not in initial_variables
+        assert initial_variables["_step_workflow_name"] == f"{agent_name}-steps"
+        assert initial_variables["_agent_type"] == agent_name
+        assert spawn_request.agent_name == agent_name
+        assert agent_body.workflows.rule_selectors is not None
+        assert agent_body.workflows.rule_selectors.include == [
+            "tag:default",
+            "tag:worker-safety",
+        ]
+        assert agent_body.blocked_mcp_tools == ["gobby-agents:kill_agent"]
+
+    @pytest.mark.asyncio
+    async def test_initial_variable_task_assignment_starts_step_workflow(
+        self,
+        db: Any,
+        mock_runner: MagicMock,
+        repo_root: Path,
+    ) -> None:
+        agent_name = "backend-developer"
+        (
+            result,
+            task_manager,
+            task,
+            instance,
+            spawn_request,
+        ) = await self._spawn_bundled_developer_agent(
+            db=db,
+            mock_runner=mock_runner,
+            repo_root=repo_root,
+            agent_name=agent_name,
+            task_assignment="initial_variables",
+        )
+        initial_variables = spawn_request.initial_variables
+
+        assert result["success"] is True
+        assert task_manager.get_task(task.id).claimed_by_session_id is None
+        assert instance is not None
+        assert instance.current_step == "claim"
+        assert instance.variables["task_claimed"] is False
+        assert initial_variables is not None
+        assert initial_variables["assigned_task_id"] == f"#{task.seq_num}"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("agent_name", ["backend-developer", "frontend-developer"])
@@ -520,7 +600,13 @@ class TestSpawnAgentStepVariables:
         repo_root: Path,
         agent_name: str,
     ) -> None:
-        result, task_manager, task, instance = await self._spawn_bundled_developer_agent(
+        (
+            result,
+            task_manager,
+            task,
+            instance,
+            _spawn_request,
+        ) = await self._spawn_bundled_developer_agent(
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
@@ -550,7 +636,13 @@ class TestSpawnAgentStepVariables:
         repo_root: Path,
         agent_name: str,
     ) -> None:
-        result, _task_manager, _task, instance = await self._spawn_bundled_developer_agent(
+        (
+            result,
+            _task_manager,
+            _task,
+            instance,
+            _spawn_request,
+        ) = await self._spawn_bundled_developer_agent(
             db=db,
             mock_runner=mock_runner,
             repo_root=repo_root,
