@@ -53,10 +53,8 @@ class _TestHandler(AgentEventHandlerMixin):
         self._message_processor_resolver = lambda: None
         self._task_manager = None
         self._workflow_handler = None
-        self._workflow_config = None
-        self._message_manager = None
+        self._workflow_config_resolver = lambda: None
         self._skill_manager = MagicMock()
-        self._skills_config = None
         self._session_task_manager = None
         self._dispatch_session_summaries_fn = MagicMock()
         self._get_machine_id = MagicMock(return_value="21000000-0000-4000-8000-000000000001")

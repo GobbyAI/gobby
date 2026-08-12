@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -58,7 +60,6 @@ def hook_manager_with_mocks(
     gobby_dir.mkdir()
     (gobby_dir / "project.json").write_text(f'{{"id": "{project.id}", "name": "test-project"}}')
 
-    from gobby.config.app import DaemonConfig
     from gobby.config.extensions import HookExtensionsConfig, WebhooksConfig
 
     # Create config with disabled webhooks.
@@ -675,11 +676,13 @@ class TestHookManagerConfigLoadError:
         hub_db: HubDatabase,
     ) -> None:
         """Test that init handles config loading errors gracefully."""
+        fallback_bootstrap = BootstrapConfig()
         with (
             patch("gobby.hooks.factory.DaemonClient") as MockDaemonClient,
             patch(
-                "gobby.hooks.factory.load_bootstrap", side_effect=Exception("Config load failed")
-            ),
+                "gobby.hooks.factory.load_bootstrap",
+                side_effect=[Exception("Config load failed"), fallback_bootstrap],
+            ) as mock_load_bootstrap,
         ):
             MockDaemonClient.return_value = mock_daemon_client
 
@@ -693,7 +696,8 @@ class TestHookManagerConfigLoadError:
 
             # Manager should still be created with defaults
             assert manager is not None
-            assert manager._config is None  # Config was not loaded
+            assert isinstance(manager._config, DaemonConfig)
+            assert mock_load_bootstrap.call_count == 2
 
             manager.shutdown()
 
@@ -704,11 +708,13 @@ class TestHookManagerConfigLoadError:
         hub_db: HubDatabase,
     ) -> None:
         """Test that init uses default health check interval when config is None."""
+        fallback_bootstrap = BootstrapConfig()
         with (
             patch("gobby.hooks.factory.DaemonClient") as MockDaemonClient,
             patch(
-                "gobby.hooks.factory.load_bootstrap", side_effect=Exception("Config load failed")
-            ),
+                "gobby.hooks.factory.load_bootstrap",
+                side_effect=[Exception("Config load failed"), fallback_bootstrap],
+            ) as mock_load_bootstrap,
         ):
             MockDaemonClient.return_value = mock_daemon_client
 
@@ -721,6 +727,8 @@ class TestHookManagerConfigLoadError:
 
             # Health check should still work with defaults
             assert manager._health_monitor is not None
+            assert manager._health_monitor._health_check_interval == 10.0
+            assert mock_load_bootstrap.call_count == 2
 
             manager.shutdown()
 
@@ -2217,6 +2225,7 @@ class TestHookManagerLogging:
         self,
         mock_daemon_client: MagicMock,
         hub_db: HubDatabase,
+        default_config: DaemonConfig,
     ) -> None:
         import logging
 
@@ -2230,6 +2239,7 @@ class TestHookManagerLogging:
             manager = HookManager(
                 daemon_host="localhost",
                 daemon_port=60887,
+                config=default_config,
                 database=hub_db,
             )
 
