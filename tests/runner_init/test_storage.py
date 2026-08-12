@@ -16,7 +16,7 @@ from gobby.runner_init.storage import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 def test_disabled_tmux_skips_availability_warning(

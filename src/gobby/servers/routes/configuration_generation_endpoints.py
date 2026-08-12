@@ -43,7 +43,8 @@ def register_generation_endpoint_routes(
         encoded_name = encode_dynamic_segment(endpoint_name)
         prefix = f"ai.generation.endpoints.{encoded_name}"
         try:
-            api_key = request.api_key or service.desired_secret(f"{prefix}.api_key")
+            stored_api_key = service.desired_secret(f"{prefix}.api_key")
+            api_key = request.api_key or stored_api_key
             current_config = service.desired_config()
         except ConfigValuesError as exc:
             return JSONResponse(content=exc.public_body(), status_code=exc.status_code)
@@ -77,18 +78,20 @@ def register_generation_endpoint_routes(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
         activated = probe_result.endpoint
+        values: dict[str, object] = {
+            f"{prefix}.protocol": activated.protocol,
+            f"{prefix}.wire_api": activated.wire_api,
+            f"{prefix}.api_base": activated.api_base,
+            f"{prefix}.model": activated.model,
+            f"{prefix}.tool_chat": activated.tool_chat,
+            f"{prefix}.vision_extract": activated.vision_extract,
+        }
+        if request.api_key and request.api_key != stored_api_key:
+            values[f"{prefix}.api_key"] = request.api_key
         try:
             mutation = await service.patch_flat(
                 expected_revision=request.expected_revision,
-                values={
-                    f"{prefix}.protocol": activated.protocol,
-                    f"{prefix}.wire_api": activated.wire_api,
-                    f"{prefix}.api_base": activated.api_base,
-                    f"{prefix}.api_key": api_key,
-                    f"{prefix}.model": activated.model,
-                    f"{prefix}.tool_chat": activated.tool_chat,
-                    f"{prefix}.vision_extract": activated.vision_extract,
-                },
+                values=values,
                 probe_verified=True,
             )
         except ConfigValuesError as exc:

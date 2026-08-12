@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.storage.config_repository import ConfigRepositoryError
+
 DEFAULT_ATTACHMENT_MAX_FILE_BYTES = 100_000_000
 DEFAULT_ATTACHMENT_MAX_FILES_PER_MESSAGE = 20
 DEFAULT_ATTACHMENT_MAX_TOTAL_BYTES_PER_MESSAGE = (
@@ -97,12 +99,11 @@ def resolve_chat_attachment_limits(
 
 def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
     """Resolve attachment limits from a server's current runtime epoch."""
-    from gobby.config.runtime import ConfigRuntime
-
     services = getattr(server, "services", None)
     runtime = getattr(services, "config_runtime", None)
-    if isinstance(runtime, ConfigRuntime) and runtime.ready:
-        return resolve_chat_attachment_limits(daemon_config=runtime.capture().snapshot.active)
+    capture = getattr(runtime, "capture", None)
+    if runtime is not None and getattr(runtime, "ready", False) and callable(capture):
+        return resolve_chat_attachment_limits(daemon_config=capture().snapshot.active)
     daemon_config = getattr(server, "config", None)
     store = getattr(services, "config_store", None)
     if store is not None and callable(getattr(store, "get", None)):
@@ -141,7 +142,7 @@ def resolve_server_attachment_limits(server: Any) -> ChatAttachmentLimits:
 def _store_limit(store: Any, key: str, fallback: int) -> int:
     try:
         value = store.get(key)
-    except Exception:
+    except (ConfigRepositoryError, ValueError):
         logger.warning("Config store read failed for %s; using fallback", key)
         return fallback
     return _positive_int(value, fallback)

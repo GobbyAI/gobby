@@ -18,6 +18,9 @@ from uuid import uuid4
 from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
+from gobby.config._loading import bootstrap_overlaid_config
+from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.auth import AuthMixin
@@ -77,7 +80,8 @@ class WebSocketServer(
         stop_registry: Any = None,
         session_manager: "SessionManager | None" = None,
         db_executor: "DatabaseExecutor | None" = None,
-        daemon_config: Any = None,
+        daemon_config: DaemonConfig | None = None,
+        bootstrap_config: BootstrapConfig | None = None,
         config_runtime: "ConfigRuntime | None" = None,
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
@@ -109,8 +113,9 @@ class WebSocketServer(
         self.completion_registry = completion_registry
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
-        self._startup_daemon_config = daemon_config
-        self._daemon_config_cache: tuple[Any, Any] | None = None
+        self._startup_daemon_config = daemon_config.model_copy(deep=True) if daemon_config else None
+        self._bootstrap_config = bootstrap_config or BootstrapConfig()
+        self._daemon_config_cache: tuple[Any, DaemonConfig] | None = None
         self.config_runtime = config_runtime
         self.workflow_handler: WorkflowHookHandler | None = None
         self.event_handlers: EventHandlers | None = None
@@ -172,24 +177,28 @@ class WebSocketServer(
         self._cleanup_task: asyncio.Task[None] | None = None
 
     @property
-    def daemon_config(self) -> Any:
-        """Live active daemon config; callers must treat it as read-only."""
+    def daemon_config(self) -> DaemonConfig | None:
+        """Return an isolated bootstrap-overlaid active configuration projection."""
         runtime = self.config_runtime
         if runtime is None or not getattr(runtime, "ready", False):
-            return self._startup_daemon_config
+            return (
+                self._startup_daemon_config.model_copy(deep=True)
+                if self._startup_daemon_config
+                else None
+            )
         snapshot = runtime.capture().snapshot
         cached = self._daemon_config_cache
         if cached is not None and cached[0] is snapshot:
-            return cached[1]
-        active = snapshot.active
+            return cached[1].model_copy(deep=True)
+        active = bootstrap_overlaid_config(snapshot.active, self._bootstrap_config)
         self._daemon_config_cache = (snapshot, active)
-        return active
+        return active.model_copy(deep=True)
 
     @daemon_config.setter
     def daemon_config(self, value: Any) -> None:
         # Test seams assign a static config; clear the runtime-backed cache so
         # the assigned value only serves as the no-runtime fallback.
-        self._startup_daemon_config = value
+        self._startup_daemon_config = value.model_copy(deep=True) if value is not None else None
         self._daemon_config_cache = None
 
     async def run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

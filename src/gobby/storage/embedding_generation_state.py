@@ -12,6 +12,7 @@ from gobby.config.embedding_keys import (
     EMBEDDING_SWITCH_JOURNAL_KEY,
 )
 from gobby.storage.config_store import ConfigStore
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 _SOURCE_KINDS = frozenset({"memory", "tool", "github_issue"})
@@ -35,6 +36,14 @@ _LEDGER_LOCK_ID = 1
 # (the production 30s TTL uses the full 3.0s margin).
 _LEASE_DEADLINE_MARGIN_SECONDS = 3.0
 _LEASE_DEADLINE_MARGIN_FRACTION = 0.1
+_INCOMPATIBLE_ACK_PREDICATE = """
+    lease_expires_at > CURRENT_TIMESTAMP
+    AND (
+        generation IS DISTINCT FROM %s
+        OR committed_revision IS DISTINCT FROM %s
+        OR acknowledged IS NOT TRUE
+    )
+"""
 
 
 def managed_projection_targets(
@@ -253,6 +262,10 @@ class EmbeddingGenerationState:
 
     def watermark(self) -> int:
         """Return a sequence bound every later-committed change strictly exceeds."""
+        if ambient_transaction(self.db) is not None:
+            raise EmbeddingGenerationError(
+                "Embedding projection watermark must run outside an ambient transaction"
+            )
         with self.db.transaction() as transaction:
             transaction.execute(
                 "SELECT pg_advisory_xact_lock(%s, %s)",
@@ -397,15 +410,10 @@ class EmbeddingGenerationState:
 
     def can_collect(self, generation: str, revision: int) -> bool:
         row = self.db.fetchone(
-            """
+            f"""
             SELECT COUNT(*) AS incompatible
             FROM embedding_generation_acks
-            WHERE lease_expires_at > CURRENT_TIMESTAMP
-              AND (
-                  generation IS DISTINCT FROM %s
-                  OR committed_revision IS DISTINCT FROM %s
-                  OR acknowledged IS NOT TRUE
-              )
+            WHERE {_INCOMPATIBLE_ACK_PREDICATE}
             """,
             (generation, revision),
         )
@@ -414,15 +422,10 @@ class EmbeddingGenerationState:
     def incompatible_serving_acks(self, generation: str, revision: int) -> list[str]:
         """Describe live acks blocking collection, for GC timeout diagnostics."""
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT daemon_instance_id, generation, committed_revision, acknowledged
             FROM embedding_generation_acks
-            WHERE lease_expires_at > CURRENT_TIMESTAMP
-              AND (
-                  generation IS DISTINCT FROM %s
-                  OR committed_revision IS DISTINCT FROM %s
-                  OR acknowledged IS NOT TRUE
-              )
+            WHERE {_INCOMPATIBLE_ACK_PREDICATE}
             ORDER BY daemon_instance_id
             """,
             (generation, revision),

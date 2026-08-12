@@ -98,7 +98,11 @@ def _proxy(
     )
 
 
-def _http_server(startup_config: DaemonConfig | None = None) -> HTTPServer:
+def _http_server(
+    startup_config: DaemonConfig | None = None,
+    *,
+    bootstrap_config: BootstrapConfig | None = None,
+) -> HTTPServer:
     return HTTPServer(
         services=ServiceContainer(
             database=MagicMock(),
@@ -107,8 +111,26 @@ def _http_server(startup_config: DaemonConfig | None = None) -> HTTPServer:
         ),
         startup_config=startup_config,
         test_mode=True,
-        bootstrap_config=BootstrapConfig(auth_mode="disabled"),
+        bootstrap_config=bootstrap_config or BootstrapConfig(auth_mode="disabled"),
     )
+
+
+def test_http_config_returns_defensive_bootstrap_overlaid_copy() -> None:
+    runtime = _MutableRuntime(_snapshot(1, 3))
+    server = _http_server(
+        runtime.snapshot.active,
+        bootstrap_config=BootstrapConfig(auth_mode="disabled", daemon_port=62000),
+    )
+    server.services.config_runtime = runtime
+
+    first = server.config
+    second = server.config
+
+    assert first is not None
+    assert second is not None
+    assert first == second
+    assert first is not second
+    assert first.daemon_port == 62000
 
 
 def _epoch_probe(

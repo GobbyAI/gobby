@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::sync::{Mutex, mpsc};
@@ -16,7 +16,10 @@ use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement};
+use super::runner::{
+    PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement, render_sql_for_schema,
+    statement_body,
+};
 use super::sql_splitter::split_sql_statements;
 
 const PREDECESSOR_BASELINE_SQL: &str =
@@ -289,11 +292,23 @@ fn existing_hub_reapplies_updated_baseline() -> anyhow::Result<()> {
 }
 
 fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow::Result<usize> {
-    let predecessor_statements: BTreeSet<String> =
-        split_sql_statements(predecessor)?.into_iter().collect();
-    let current_statements: BTreeSet<String> = split_sql_statements(current)?.into_iter().collect();
+    let normalized = |sql: &str| -> anyhow::Result<BTreeMap<String, String>> {
+        Ok(split_sql_statements(sql)?
+            .into_iter()
+            .map(|statement| {
+                let identity = statement_body(&statement)
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (identity, statement)
+            })
+            .collect())
+    };
+    let predecessor_statements = normalized(predecessor)?;
+    let current_statements = normalized(current)?;
     let removed: Vec<&String> = predecessor_statements
-        .difference(&current_statements)
+        .keys()
+        .filter(|statement| !current_statements.contains_key(*statement))
         .collect();
     anyhow::ensure!(
         removed.is_empty(),
@@ -301,8 +316,8 @@ fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow:
     );
 
     let mut refreshed = 0usize;
-    for statement in &current_statements {
-        let is_added = !predecessor_statements.contains(statement);
+    for (identity, statement) in &current_statements {
+        let is_added = !predecessor_statements.contains_key(identity);
         let accepted = baseline_refresh_statement(statement).is_some();
         anyhow::ensure!(
             accepted == is_added,
@@ -322,8 +337,19 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> an
         PREDECESSOR_BASELINE_CHECKSUM,
         "fixture must be the exact predecessor baseline the runner refreshes from",
     );
-    verify_baseline_refresh_contract(PREDECESSOR_BASELINE_SQL, BASELINE_SQL)?;
+    let predecessor = render_sql_for_schema(PREDECESSOR_BASELINE_SQL, "tripwire");
+    let current = render_sql_for_schema(BASELINE_SQL, "tripwire");
+    verify_baseline_refresh_contract(&predecessor, &current)?;
     Ok(())
+}
+
+#[test]
+fn baseline_refresh_prefix_ignores_leading_comments_and_checks_identifier_boundary() {
+    let refreshable = "-- retained context\nALTER TABLE config_store ADD COLUMN marker text";
+    let misleading = "ALTER TABLE config_store_extra ADD COLUMN marker text";
+
+    assert!(baseline_refresh_statement(refreshable).is_some());
+    assert!(baseline_refresh_statement(misleading).is_none());
 }
 
 #[test]

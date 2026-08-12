@@ -330,14 +330,15 @@ def test_apply_failure_returns_committed_metadata() -> None:
 
 
 class _EndpointService:
-    def __init__(self) -> None:
+    def __init__(self, stored_secret: str | None = None) -> None:
         self.calls: list[tuple[int, dict[str, object]]] = []
+        self.stored_secret = stored_secret
 
     def desired_config(self) -> DaemonConfig:
         return DaemonConfig()
 
     def desired_secret(self, _key: str) -> str | None:
-        return None
+        return self.stored_secret
 
     async def patch_flat(
         self,
@@ -397,6 +398,42 @@ def test_endpoint_activation_uses_typed_mutation(monkeypatch: pytest.MonkeyPatch
     assert revision == 3
     assert values["ai.generation.endpoints.openrouter.api_key"] == "endpoint-secret"
     assert values["ai.generation.endpoints.openrouter.model"] == "model-a"
+
+
+def test_endpoint_activation_omits_unchanged_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _EndpointService(stored_secret="endpoint-secret")
+    app = FastAPI()
+    router = APIRouter(prefix="/api/config")
+    register_generation_endpoint_routes(
+        router,
+        cast(ConfigurationRouteContext, _FakeContext(service)),
+    )
+    app.include_router(router)
+
+    async def probe(
+        _name: str,
+        endpoint: GenerationEndpointConfig,
+        _config: DaemonConfig,
+    ) -> EndpointActivationResult:
+        return EndpointActivationResult(endpoint=endpoint, vision_enabled=True)
+
+    monkeypatch.setattr(
+        "gobby.servers.routes.configuration_generation_endpoints.probe_responses_endpoint",
+        probe,
+    )
+    response = TestClient(app).put(
+        "/api/config/generation-endpoints/openrouter/activate",
+        json={
+            "expected_revision": 3,
+            "api_base": "https://openrouter.example/v1",
+            "api_key": "endpoint-secret",
+            "model": "model-a",
+        },
+    )
+
+    assert response.status_code == 200
+    _revision, values = service.calls[0]
+    assert "ai.generation.endpoints.openrouter.api_key" not in values
 
 
 _VOICE_KEY = "voice.openai_compatible_audio"
@@ -514,6 +551,34 @@ def test_patch_rejects_unprobed_responses_endpoint_creation() -> None:
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "probe_required"
     assert response.json()["error"]["action"] == "/api/config/generation-endpoints/neo/activate"
+    assert mutations.calls == []
+
+
+def test_probe_gate_is_anchored_to_expected_revision() -> None:
+    service, _runtime, mutations = _service(_snapshot(2))
+
+    response = _client(service).patch(
+        "/api/config/values",
+        json={
+            "expected_revision": 1,
+            "values": {
+                "ai": {
+                    "generation": {
+                        "endpoints": {
+                            "neo": {
+                                "wire_api": "responses",
+                                "api_base": "https://neo.example/v1",
+                                "model": "neo-model",
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "revision_conflict"
     assert mutations.calls == []
 
 

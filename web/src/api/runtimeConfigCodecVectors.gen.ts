@@ -40,3 +40,7 @@ export const INVALID_DYNAMIC_SEGMENTS: readonly string[] = [
   "é",
   "%FF",
 ]
+
+export const INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS: readonly string[] = [
+  "\ud800",
+]

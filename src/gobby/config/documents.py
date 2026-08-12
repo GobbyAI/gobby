@@ -94,9 +94,11 @@ class ConfigDocumentsService:
         """Validate a full YAML candidate before one daemon-namespace CAS."""
         self._validate_revision(expected_revision)
         snapshot = self._runtime_snapshot()
-        if snapshot.revision != expected_revision:
-            # Masked-secret restoration below reads this snapshot; anchor it to
-            # the exact CAS epoch so restored references cannot cross epochs.
+        patch, restored_masked_reference = await self.run_blocking(
+            lambda: self._prepare(content, snapshot)
+        )
+        if restored_masked_reference and snapshot.revision != expected_revision:
+            # Masked restoration reads the snapshot, so it must share the CAS epoch.
             raise ConfigValuesError(
                 "revision_conflict",
                 "Configuration revision is stale",
@@ -106,7 +108,6 @@ class ConfigDocumentsService:
                 expected_revision=expected_revision,
                 actual_revision=snapshot.revision,
             )
-        patch = await self.run_blocking(lambda: self._prepare(content, snapshot))
         try:
             result = await self.run_blocking(
                 lambda: self.mutations.replace_namespace(
@@ -165,7 +166,7 @@ class ConfigDocumentsService:
                 retryable=True,
             ) from exc
 
-    def _prepare(self, content: str, snapshot: ConfigSnapshot) -> ConfigPatch:
+    def _prepare(self, content: str, snapshot: ConfigSnapshot) -> tuple[ConfigPatch, bool]:
         try:
             parsed = yaml.safe_load(content)
         except yaml.YAMLError as exc:
@@ -194,6 +195,7 @@ class ConfigDocumentsService:
         values: dict[str, object] = {}
         secrets: dict[str, SecretUpdate] = {}
         validation_values: dict[str, object] = {}
+        restored_masked_reference = False
         for key, value in flat.items():
             if not isinstance(key, str):
                 raise self._invalid_key(str(key), "Configuration keys must be strings")
@@ -209,21 +211,29 @@ class ConfigDocumentsService:
                     f"Configuration key {key!r} requires managed activation",
                 )
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
-                self._prepare_secret(
-                    key=key,
-                    value=value,
-                    snapshot=snapshot,
-                    values=values,
-                    secrets=secrets,
-                    validation_values=validation_values,
+                restored_masked_reference = (
+                    self._prepare_secret(
+                        key=key,
+                        value=value,
+                        snapshot=snapshot,
+                        values=values,
+                        secrets=secrets,
+                        validation_values=validation_values,
+                    )
+                    or restored_masked_reference
                 )
                 continue
             if reference_fields := config_reference_fields(spec):
+                fields = tuple(field.name for field in reference_fields)
+                restored_masked_reference = (
+                    self._has_masked_structured_reference(value, fields)
+                    or restored_masked_reference
+                )
                 value = self._prepare_structured_references(
                     key,
                     value,
                     snapshot,
-                    tuple(field.name for field in reference_fields),
+                    fields,
                 )
             values[key] = value
             validation_values[key] = value
@@ -247,7 +257,15 @@ class ConfigDocumentsService:
                 f"Complete configuration candidate is invalid: {exc}",
                 ("content",),
             ) from exc
-        return ConfigPatch(values=values, secrets=secrets)
+        return ConfigPatch(values=values, secrets=secrets), restored_masked_reference
+
+    @staticmethod
+    def _has_masked_structured_reference(value: object, reference_fields: tuple[str, ...]) -> bool:
+        return isinstance(value, list) and any(
+            isinstance(item, dict)
+            and any(item.get(field) == MASKED_SECRET for field in reference_fields)
+            for item in value
+        )
 
     def _prepare_structured_references(
         self,
@@ -280,12 +298,12 @@ class ConfigDocumentsService:
         values: dict[str, object],
         secrets: dict[str, SecretUpdate],
         validation_values: dict[str, object],
-    ) -> None:
+    ) -> bool:
         if value in (None, ""):
             # An unset secret contributes no override: the namespace replace
             # clears any stored reference, and the projection default applies.
             validation_values[key] = None
-            return
+            return False
         if not isinstance(value, str):
             raise self._invalid_key(key, "Secret configuration value must be a string")
         if value == MASKED_SECRET:
@@ -297,7 +315,7 @@ class ConfigDocumentsService:
                 raise self._invalid_key(key, "Persisted secret cannot be resolved")
             values[key] = reference
             validation_values[key] = plaintext
-            return
+            return True
         if value.startswith("$secret:"):
             name = value.removeprefix("$secret:")
             plaintext = self.resolve_secret(name)
@@ -305,9 +323,10 @@ class ConfigDocumentsService:
                 raise self._invalid_key(key, "Secret reference cannot be resolved")
             values[key] = value
             validation_values[key] = plaintext
-            return
+            return False
         secrets[key] = SecretUpdate(plaintext=value, category="general")
         validation_values[key] = value
+        return False
 
     def _dump(self, snapshot: ConfigSnapshot) -> str:
         values: dict[str, object] = {}
@@ -323,13 +342,7 @@ class ConfigDocumentsService:
             ):
                 continue
             if config_key_secrecy(spec, key) is ConfigSecrecy.REFERENCE:
-                # Only a persisted $secret: reference is masked; an unset
-                # secret has nothing to hide, and masking it would export a
-                # document replace_yaml must reject ("no persisted reference").
-                if isinstance(value, str) and value.startswith("$secret:"):
-                    values[key] = MASKED_SECRET
-                else:
-                    values[key] = value
+                values[key] = MASKED_SECRET
             elif reference_fields := config_reference_fields(spec):
                 values[key] = mask_structured_references(
                     value,

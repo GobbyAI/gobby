@@ -1090,6 +1090,7 @@ class TestRuntimeLogFile:
             result = _runtime_log_file(tmp_path / "gobby-home")
 
         assert result == str(tmp_path / "custom-logs" / RUNTIME_LOG_FILENAME)
+        runtime.require_config.assert_called_once_with(apply_migrations=False)
 
     def test_falls_back_when_config_is_unreachable(self, tmp_path: Path) -> None:
         from gobby.cli.installers.service_common import _runtime_log_file

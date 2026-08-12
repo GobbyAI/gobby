@@ -119,6 +119,7 @@ function errorBody(value: unknown): { code: string; message: string; retryable: 
 export class ConfigurationClient {
   private snapshot: ConfigValuesSnapshot | null = null
   private watermark = 0
+  private generation = 0
   private refreshPromise: Promise<ConfigValuesSnapshot | null> | null = null
   private refreshScheduled = false
   private readonly listeners = new Set<(snapshot: ConfigValuesSnapshot) => void>()
@@ -136,6 +137,7 @@ export class ConfigurationClient {
   }
 
   reset(): void {
+    this.generation += 1
     this.snapshot = null
     this.watermark = 0
     this.refreshPromise = null
@@ -167,8 +169,12 @@ export class ConfigurationClient {
   observeRevision(value: unknown): void {
     // Called from the WebSocket event dispatcher with untrusted payload data;
     // a malformed revision must be ignored, never thrown into the dispatcher.
-    if (!Number.isSafeInteger(value) || (value as number) < 0) return
-    const revision = value as number
+    let revision: number
+    try {
+      revision = parseConfigRevision(value)
+    } catch {
+      return
+    }
     if (revision <= this.watermark) return
     this.watermark = revision
     if (this.refreshScheduled) return
@@ -351,11 +357,14 @@ export class ConfigurationClient {
   }
 
   private async runRefresh(): Promise<ConfigValuesSnapshot | null> {
+    const generation = this.generation
     let retriedWatermark: number | null = null
     while (true) {
       const response = await this.fetcher('/api/config/values')
+      if (generation !== this.generation) return this.snapshot
       if (!response.ok) return this.snapshot
       const next = parseSnapshot(await response.json())
+      if (generation !== this.generation) return this.snapshot
       this.watermark = Math.max(this.watermark, next.revision)
       if (this.snapshot === null || next.revision >= this.snapshot.revision) {
         this.snapshot = next

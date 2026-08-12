@@ -74,11 +74,10 @@ async function openOverlay(): Promise<HTMLElement> {
   const defaultSection = SETTINGS_SECTIONS.find(
     (section) => section.id === DEFAULT_SETTINGS_SECTION,
   )
-  await waitFor(() =>
-    expect(
-      within(dialog).getByRole('heading', { name: defaultSection?.label }),
-    ).toBeInTheDocument(),
-  )
+  await waitFor(() => {
+    const heading = within(dialog).getByRole('heading', { name: defaultSection?.label })
+    expect(heading.closest('[aria-busy]')).toHaveAttribute('aria-busy', 'false')
+  })
   return dialog
 }
 

@@ -108,7 +108,7 @@ def _runtime_log_file(gobby_home_path: Path) -> str:
     from gobby.cli.runtime import get_cli_runtime
 
     try:
-        logging_settings = get_cli_runtime().require_config().logging
+        logging_settings = get_cli_runtime().require_config(apply_migrations=False).logging
     except Exception:
         return str(gobby_home_path / "logs" / RUNTIME_LOG_FILENAME)
     return str(resolved_log_path(logging_settings, RUNTIME_LOG_FILENAME))

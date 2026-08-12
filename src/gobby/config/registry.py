@@ -85,6 +85,8 @@ DYNAMIC_SEGMENT_CODEC_VECTORS: tuple[tuple[str, str], ...] = (
     ("e\u0301", "e%CC%81"),
 )
 
+INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS: tuple[str, ...] = ("\ud800",)
+
 INVALID_DYNAMIC_SEGMENTS: tuple[str, ...] = (
     "",
     "%",
@@ -834,6 +836,7 @@ __all__ = [
     "BOOTSTRAP_RUNTIME_PATHS",
     "CONFIG_REGISTRY",
     "DYNAMIC_SEGMENT_CODEC_VECTORS",
+    "INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS",
     "INVALID_DYNAMIC_SEGMENTS",
     "ActivationPolicy",
     "ConfigKeySpec",

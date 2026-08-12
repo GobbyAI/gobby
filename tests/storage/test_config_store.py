@@ -6,7 +6,6 @@ import pytest
 
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
-    EMBEDDING_API_KEY_SECRET_NAME,
     EMBEDDING_API_KEY_SECRET_REF,
 )
 from gobby.storage.config_mutations import ConfigValidationError
@@ -173,38 +172,6 @@ class TestConfigStore:
     def test_cross_key_secret_reference_is_rejected(self, store: ConfigStore) -> None:
         with pytest.raises(ValueError, match="looks like a secret"):
             store.set(AI_EMBEDDING_API_KEY_KEY, "$secret:falkordb_password")
-
-    def test_secret_set_delete_and_delete_all(
-        self,
-        store: ConfigStore,
-        secret_store: SecretStore,
-    ) -> None:
-        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "secret", secret_store)
-        store.set("ui.enabled", True)
-
-        with pytest.raises(ValueError, match="use clear_secret"):
-            store.delete(AI_EMBEDDING_API_KEY_KEY)
-        assert store.delete_all(secret_store) == 2
-        assert store.get_all() == {}
-        assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
-
-    def test_delete_all_preserves_incoming_secret_binding(
-        self,
-        store: ConfigStore,
-        secret_store: SecretStore,
-    ) -> None:
-        store.set_secret(AI_EMBEDDING_API_KEY_KEY, "preserved", secret_store)
-        store.set("ui.enabled", True)
-
-        assert (
-            store.delete_all(
-                secret_store,
-                preserved_secret_keys={AI_EMBEDDING_API_KEY_KEY},
-            )
-            == 1
-        )
-        assert store.get_all() == {AI_EMBEDDING_API_KEY_KEY: EMBEDDING_API_KEY_SECRET_REF}
-        assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "preserved"
 
     def test_delete_and_source_tracking(self, store: ConfigStore, temp_db: HubDatabase) -> None:
         store.set("ui.enabled", True, source="migrated")

@@ -17,6 +17,7 @@ from gobby.utils.env import is_test_protect_enabled
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.config.bootstrap import BootstrapConfig
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,52 @@ _BOOTSTRAP_PRE_DATABASE_KEYS = (
     "database_url",
     "postgres_pool",
 )
+_MASKED_REFERENCE = "********"
+
+
+def _mask_reference_values(
+    value: object,
+    canonical_prefix: tuple[str, ...] = (),
+) -> object:
+    """Mask every scalar reference-secrecy value in a dumped config tree."""
+    # app imports this loader, while registry derives its schema from app.
+    # Resolve the registry only when the export-only path actually runs.
+    from gobby.config.registry import (
+        CONFIG_REGISTRY,
+        ConfigSecrecy,
+        UnknownConfigKeyError,
+        config_key_secrecy,
+        encode_dynamic_segment,
+    )
+
+    if isinstance(value, list):
+        return [_mask_reference_values(item, canonical_prefix) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    masked: dict[object, object] = {}
+    for key, child in value.items():
+        if not isinstance(key, str):
+            masked[key] = child
+            continue
+        segment = (
+            encode_dynamic_segment(key)
+            if CONFIG_REGISTRY.dynamic_segment_follows(canonical_prefix)
+            else key
+        )
+        child_prefix = (*canonical_prefix, segment)
+        try:
+            spec = CONFIG_REGISTRY.resolve(".".join(child_prefix))
+        except UnknownConfigKeyError:
+            spec = None
+        if (
+            spec is not None
+            and config_key_secrecy(spec, ".".join(child_prefix)) is ConfigSecrecy.REFERENCE
+        ):
+            masked[key] = _MASKED_REFERENCE
+        else:
+            masked[key] = _mask_reference_values(child, child_prefix)
+    return masked
 
 
 def expand_env_vars(
@@ -226,6 +273,18 @@ def deep_merge(base: dict[str, Any], updates: dict[str, Any]) -> None:
             base[key] = value
 
 
+def bootstrap_overlaid_config(
+    candidate: DaemonConfig,
+    bootstrap: BootstrapConfig,
+) -> DaemonConfig:
+    """Overlay bootstrap-owned facts onto a DB-backed configuration projection."""
+    from gobby.config.app import DaemonConfig
+
+    merged = candidate.model_dump(mode="python", by_alias=False)
+    deep_merge(merged, bootstrap.to_config_dict())
+    return DaemonConfig.model_validate(merged)
+
+
 def _reject_removed_file_config_sections(file_dict: dict[str, Any], config_path: Path) -> None:
     """Reject config-file-only surfaces that must not silently round-trip."""
     if "llm_providers" in file_dict:
@@ -303,7 +362,10 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # Convert config to dict, excluding None values to keep file clean
     # mode="json" ensures Path objects are converted to strings for YAML serialization
     config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
-    config_dict = mask_voice_audio_api_keys(config_dict)
+    masked_config = _mask_reference_values(config_dict)
+    if not isinstance(masked_config, dict):
+        raise TypeError("Daemon configuration must serialize as a mapping")
+    config_dict = mask_voice_audio_api_keys(masked_config)
 
     fd, temp_name = tempfile.mkstemp(
         dir=config_path.parent,

@@ -143,11 +143,12 @@ def test_detection_manifest_migration_applies(temp_db: HubDatabase) -> None:
             """
         )
     }
-    # Baseline application stamps one receipt row at the baseline version;
-    # per-migration rows are gone, so assert the head covers migration 333.
-    head = temp_db.fetchone("SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations")
+    receipt = temp_db.fetchone(
+        "SELECT version, filename FROM schema_migrations WHERE version = %s AND filename = %s",
+        (375, "baseline@375"),
+    )
 
-    assert head is not None and head["version"] >= 333
+    assert receipt == {"version": 375, "filename": "baseline@375"}
     assert {
         "provider_id",
         "version",

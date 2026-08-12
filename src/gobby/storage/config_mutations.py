@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections.abc import Collection, Iterable, Mapping
 from contextlib import AbstractContextManager
@@ -11,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
 from pydantic import TypeAdapter, ValidationError
-from pydantic_core import to_json, to_jsonable_python
+from pydantic_core import PydanticSerializationError, to_json, to_jsonable_python
 
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
@@ -47,6 +48,7 @@ from gobby.utils.datetime import utc_now
 CONFIG_CHANGED_CHANNEL = "gobby_config_changed"
 _CONFIG_SECRET_NAMES = {"databases.falkordb.password": "falkordb_password"}
 _SECRET_NAME_SANITIZER = re.compile(r"[^a-z0-9_]+")
+_MAX_CONFIG_SECRET_NAME_LENGTH = 200
 
 
 class ConfigMutationError(RuntimeError):
@@ -156,7 +158,28 @@ def config_key_to_secret_name(key: str) -> str:
         return secret_name
     sanitized = _SECRET_NAME_SANITIZER.sub("_", key.lower()).strip("_")
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
-    return f"config_{sanitized}_{digest}"
+    suffix = f"_{digest}"
+    readable_limit = _MAX_CONFIG_SECRET_NAME_LENGTH - len("config_") - len(suffix)
+    return f"config_{sanitized[:readable_limit]}{suffix}"
+
+
+def _require_json_domain(value: object) -> None:
+    """Reject Python-only values before Pydantic's JSON serializer can coerce them."""
+    if value is None or isinstance(value, (bool, int, str)):
+        return
+    if isinstance(value, float):
+        if math.isfinite(value):
+            return
+        raise TypeError("non-finite floats are not valid JSON values")
+    if isinstance(value, list):
+        for item in value:
+            _require_json_domain(item)
+        return
+    if isinstance(value, dict) and all(isinstance(key, str) for key in value):
+        for item in value.values():
+            _require_json_domain(item)
+        return
+    raise TypeError(f"{type(value).__name__} is not a valid JSON value")
 
 
 class ConfigMutations:
@@ -465,11 +488,12 @@ class ConfigMutations:
             # use JSON semantics: '5' never coerces to 5, but enum-keyed maps
             # accept their canonical string keys (python-strict would reject
             # the JSON form of a key's own default).
+            _require_json_domain(value)
             return cast(
                 object,
                 TypeAdapter(annotation).validate_json(to_json(value), strict=True),
             )
-        except ValidationError as exc:
+        except (ValidationError, PydanticSerializationError, TypeError, ValueError) as exc:
             raise ConfigValidationError(
                 f"Invalid value for configuration key {key!r}: {exc}",
                 key=key,

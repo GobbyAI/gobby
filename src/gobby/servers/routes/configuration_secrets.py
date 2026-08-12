@@ -7,14 +7,13 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from gobby.config.embedding_keys import runtime_embedding_config_keys_to_storage
 from gobby.config.persistence import validate_falkordb_password
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 from gobby.servers.routes.configuration_models import SaveSecretRequest
 from gobby.storage.config_mutations import config_key_to_secret_name
 from gobby.storage.config_store import ConfigStore, is_secret_key_name
-from gobby.storage.secrets import VALID_CATEGORIES, SecretStore
+from gobby.storage.secrets import VALID_CATEGORIES
 
 MASKED_SECRET = "********"
 FALKOR_PASSWORD_KEY = "databases.falkordb.password"
@@ -23,8 +22,6 @@ FALKOR_RESTART_HINT = (
 )
 
 logger = logging.getLogger(__name__)
-
-PRESERVED_CONFIG_PREFIXES = ("ui_settings.", "tool_approvals.")
 
 
 def mask_secret_value(key: str, value: Any) -> Any:
@@ -58,21 +55,6 @@ def falkordb_validation_response(error: ValueError) -> JSONResponse:
 
 def is_secret_reference(value: Any) -> bool:
     return isinstance(value, str) and value.startswith("$secret:")
-
-
-def delete_all_except(
-    config_store: ConfigStore,
-    secret_store: SecretStore,
-    preserved_keys: set[str],
-) -> int:
-    """Delete unpreserved config rows and their encrypted secrets atomically."""
-    preserved_keys = runtime_embedding_config_keys_to_storage(preserved_keys)
-    preserved_keys.update(
-        key for key in config_store.list_keys() if key.startswith(PRESERVED_CONFIG_PREFIXES)
-    )
-    if not preserved_keys:
-        return config_store.delete_all(secret_store)
-    return config_store.delete_all_except(secret_store, preserved_keys)
 
 
 def partition_config_entries(

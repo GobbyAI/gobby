@@ -101,15 +101,29 @@ def test_url_scrub_hides_only_urls_and_not_real_placeholder_bugs() -> None:
     assert _has_foreign_placeholder("SELECT * FROM tasks WHERE id = $1") is True
 
 
+def test_prepare_exemption_requires_exactly_one_statement() -> None:
+    assert _has_foreign_placeholder("PREPARE query(int) AS SELECT $1") is False
+    assert _has_foreign_placeholder("PREPARE query(int) AS SELECT $1;") is False
+    assert _has_foreign_placeholder("PREPARE query(int) AS SELECT $1; SELECT $2") is True
+
+
 def _has_foreign_placeholder(sql: str) -> bool:
     scrubbed = _scrub_sql(sql)
     if "?" in scrubbed:
         return True
-    if re.match(r"\s*PREPARE\b", scrubbed, re.IGNORECASE):
+    if _is_single_prepare_statement(scrubbed):
         # A server-side PREPARE statement's $n markers are PostgreSQL's own
         # prepared-parameter syntax, not a foreign client placeholder style.
         return False
     return DOLLAR_PLACEHOLDER_RE.search(scrubbed) is not None
+
+
+def _is_single_prepare_statement(scrubbed: str) -> bool:
+    candidate = scrubbed.strip()
+    if not re.match(r"PREPARE\b", candidate, re.IGNORECASE):
+        return False
+    body = candidate[:-1].rstrip() if candidate.endswith(";") else candidate
+    return ";" not in body
 
 
 def _has_unescaped_percent(sql: str) -> bool:

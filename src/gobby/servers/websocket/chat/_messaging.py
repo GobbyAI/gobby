@@ -14,7 +14,7 @@ from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat_attachments import AttachmentSessionManager
 
 if TYPE_CHECKING:
-    from gobby.servers.websocket.chat_attachments import AttachmentDaemonConfig
+    from gobby.config.app import DaemonConfig
 
 
 class ChatMessagingMixin(
@@ -35,7 +35,7 @@ class ChatMessagingMixin(
     _pending_inject_contexts: dict[str, str]
     web_chat_session_registry: Any
     session_manager: AttachmentSessionManager | None
-    daemon_config: AttachmentDaemonConfig | None
+    daemon_config: DaemonConfig | None
 
     if TYPE_CHECKING:
 

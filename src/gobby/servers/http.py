@@ -19,6 +19,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from gobby.ai import build_daemon_tool_chat_service
+from gobby.config._loading import bootstrap_overlaid_config
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import ConfigSnapshot, RuntimeActiveBundle
@@ -179,8 +180,7 @@ class HTTPServer:
 
     def resolve_runtime_config(self) -> DaemonConfig | None:
         """Resolve configuration from the operation epoch or startup fallback."""
-        runtime_bundle = self.capture_runtime_bundle()
-        return runtime_bundle.snapshot.active if runtime_bundle else self.startup_config
+        return self.config
 
     async def _capture_runtime_epoch(
         self,
@@ -423,15 +423,14 @@ class HTTPServer:
     def config(self) -> DaemonConfig | None:
         bundle = self.capture_runtime_bundle()
         if bundle is None:
-            return self.startup_config
+            return self.startup_config.model_copy(deep=True) if self.startup_config else None
         snapshot = bundle.snapshot
         cached = self._active_config_cache
         if cached is not None and cached[0] is snapshot:
-            return cached[1]
-        # One typed projection per epoch; callers must treat it as read-only.
-        active = snapshot.active
+            return cached[1].model_copy(deep=True)
+        active = bootstrap_overlaid_config(snapshot.active, self.bootstrap_config)
         self._active_config_cache = (snapshot, active)
-        return active
+        return active.model_copy(deep=True)
 
     @property
     def session_manager(self) -> Any:

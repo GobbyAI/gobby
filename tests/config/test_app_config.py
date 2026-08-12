@@ -758,6 +758,30 @@ class TestSaveConfig:
         assert binding["model"] == "whisper-large-v3"
         assert "resolved-runtime-key" not in raw_text
 
+    def test_masks_all_reference_secrecy_fields(self, temp_dir: Path) -> None:
+        plaintext = "legacy-plaintext-must-never-export"
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "remote": {
+                            "api_base": "https://example.invalid/v1",
+                            "api_key": plaintext,
+                            "model": "model-a",
+                        }
+                    }
+                }
+            }
+        )
+        config_file = temp_dir / "masked.yaml"
+
+        export_config_to_yaml(config, str(config_file))
+
+        raw_text = config_file.read_text()
+        endpoint = yaml.safe_load(raw_text)["ai"]["generation"]["endpoints"]["remote"]
+        assert endpoint["api_key"] == "********"
+        assert plaintext not in raw_text
+
     def test_file_permissions(self, temp_dir: Path, default_config: DaemonConfig) -> None:
         """Test saved config has restrictive permissions."""
         config_file = temp_dir / "secure.yaml"

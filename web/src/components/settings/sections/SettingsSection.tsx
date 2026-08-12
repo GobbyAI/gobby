@@ -142,7 +142,7 @@ export function SettingsSection({
   const hasFields = ownedPaths.length > 0
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col" aria-busy={isLoading}>
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-7 py-6">
         <div className="flex flex-col gap-1.5 border-b border-border pb-5">
           <h3 className="text-lg font-semibold leading-[1.2] text-foreground">

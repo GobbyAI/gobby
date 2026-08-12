@@ -3,9 +3,11 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from click import ClickException
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.cli._skills_hubs import _store_hub_config
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager
 
@@ -1541,3 +1543,24 @@ class TestSkillsHubAddCommand:
         result = runner.invoke(cli, ["skills", "hub", "add", "--help"])
         assert result.exit_code == 0
         assert "--repo" in result.output
+
+    def test_duplicate_hub_raises_click_error_without_exiting_callback(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        snapshot = MagicMock()
+        snapshot.overrides = {"skills.hubs.existing.type": "git"}
+
+        def apply_patch(**kwargs: object) -> None:
+            build_patch = kwargs["build_patch"]
+            assert callable(build_patch)
+            build_patch(snapshot)
+
+        monkeypatch.setattr(
+            "gobby.cli.config_writes.apply_cas_config_patch",
+            apply_patch,
+        )
+        monkeypatch.setattr("gobby.storage.config_store.ConfigStore", MagicMock())
+
+        with pytest.raises(ClickException, match="already exists"):
+            _store_hub_config(MagicMock(), "existing", {"type": "git"})

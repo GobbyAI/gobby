@@ -10,8 +10,10 @@ from pydantic import BaseModel
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.registry import (
+    BOOTSTRAP_RUNTIME_PATHS,
     CONFIG_REGISTRY,
     DYNAMIC_SEGMENT_CODEC_VECTORS,
+    INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS,
     INVALID_DYNAMIC_SEGMENTS,
     ActivationPolicy,
     ConfigPatternSpec,
@@ -198,7 +200,17 @@ def test_dynamic_segment_codec_round_trip() -> None:
             assert CONFIG_REGISTRY.resolve(key) is pattern
 
 
-@pytest.mark.parametrize("value", ["", "\ud800"])
+def test_bootstrap_runtime_paths_match_projection_and_registry_exclusion() -> None:
+    expected = frozenset(_flatten_mapping(BootstrapConfig().to_config_dict()))
+    registry_source_paths = {
+        spec.source_path for spec in CONFIG_REGISTRY.specs if spec.source_path is not None
+    }
+
+    assert BOOTSTRAP_RUNTIME_PATHS == expected
+    assert BOOTSTRAP_RUNTIME_PATHS.isdisjoint(registry_source_paths)
+
+
+@pytest.mark.parametrize("value", ["", *INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS])
 def test_dynamic_segment_codec_rejects_unencodable_input(value: str) -> None:
     with pytest.raises(ValueError):
         encode_dynamic_segment(value)

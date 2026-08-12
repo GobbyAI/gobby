@@ -399,12 +399,15 @@ fn apply_baseline(
 }
 
 fn render_baseline_for_schema(schema: &str) -> Cow<'static, str> {
+    render_sql_for_schema(BASELINE_SQL, schema)
+}
+
+pub(super) fn render_sql_for_schema<'a>(sql: &'a str, schema: &str) -> Cow<'a, str> {
     if schema == "public" {
-        return Cow::Borrowed(BASELINE_SQL);
+        return Cow::Borrowed(sql);
     }
     Cow::Owned(
-        BASELINE_SQL
-            .replace("SCHEMA public", &format!("SCHEMA {schema}"))
+        sql.replace("SCHEMA public", &format!("SCHEMA {schema}"))
             .replace("public.", &format!("{schema}.")),
     )
 }
@@ -472,7 +475,7 @@ fn statement_starts_with_identifier_boundary(statement: &str, prefix: &str) -> b
     })
 }
 
-fn statement_body(mut statement: &str) -> &str {
+pub(super) fn statement_body(mut statement: &str) -> &str {
     loop {
         statement = statement.trim_start();
         if let Some(comment) = statement.strip_prefix("--") {

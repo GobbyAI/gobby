@@ -283,6 +283,8 @@ async def _register_stateful_services(runner: GobbyRunner) -> None:
                 change.managed,
                 change.revision,
             ),
+            # Watermark preparation can wait behind active shared producer transactions.
+            prepare_timeout=30.0,
         ),
         ServiceSubscriber(
             name="code_index",

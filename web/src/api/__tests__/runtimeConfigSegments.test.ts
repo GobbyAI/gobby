@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DYNAMIC_SEGMENT_CODEC_VECTORS,
   INVALID_DYNAMIC_SEGMENTS,
+  INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS,
 } from '../runtimeConfigCodecVectors.gen'
 import {
   DynamicSegmentError,
@@ -33,6 +34,12 @@ describe('dynamic segment codec contract', () => {
 
   it('rejects_encoding_an_empty_segment', () => {
     expect(() => encodeDynamicSegment('')).toThrow(DynamicSegmentError)
+  })
+
+  it('rejects_invalid_unicode_text_before_encoding', () => {
+    for (const value of INVALID_DYNAMIC_SEGMENT_TEXT_VECTORS) {
+      expect(() => encodeDynamicSegment(value)).toThrow(DynamicSegmentError)
+    }
   })
 
   it('lenient_decode_falls_back_to_the_raw_key', () => {

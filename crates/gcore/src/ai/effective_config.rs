@@ -370,8 +370,8 @@ fn validate_managed_bundle(
     // set, so `is_machine_config_key` rejects them here at the key level.
     // Machine clients that need those values resolve them datastore-side via
     // `DaemonOrPrimary::DaemonWithSecrets`; managed embeddings stay brokered
-    // through the daemon. `validate_served_values` below remains a value-level
-    // backstop against unresolved references in whatever is served.
+    // through the daemon. `validate_served_values` below is the narrower
+    // value-level backstop: it rejects strings containing `$secret:` or `${`.
     for key in bundle.config.keys() {
         if !is_machine_config_key(key) {
             return Err(EffectiveConfigError::Contract {

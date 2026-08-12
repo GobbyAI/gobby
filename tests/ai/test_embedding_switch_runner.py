@@ -372,8 +372,7 @@ async def test_build_replays_changes_after_enumeration_watermark(
     assert journal.caught_up_watermark == 9
     # Full corpus builders run only for the initial fill; replay is per-change.
     assert builds == ["memory", "tool", "github_issue"]
-    assert projected == [("tool", "tool-1")]
-    assert ("delete", "memory-1", "memories@4096-run") in vector_store.operations
+    assert projected == [("tool", "tool-1"), ("memory", "memory-1")]
     assert all(
         thread_id != threading.get_ident()
         for thread_id in cast(Any, runner.generation_state).db_threads
@@ -565,7 +564,12 @@ async def test_replay_is_bounded_and_raises_after_max_passes(
         "gobby_github_issues": "gobby_github_issues@4096-run",
     }
 
-    with pytest.raises(EmbeddingSwitchRunError, match="did not converge"):
+    async def project_change(*_args: Any, **_kwargs: Any) -> int:
+        return 1
+
+    monkeypatch.setattr(runner, "_project_change", project_change)
+
+    with pytest.raises(EmbeddingSwitchRunError, match="retry once projection writes quiesce"):
         await runner._replay_projection_changes(
             journal, cast(Any, FakeEmbeddingService()), cast(Any, vector_store)
         )

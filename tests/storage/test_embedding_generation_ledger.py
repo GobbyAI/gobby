@@ -10,6 +10,7 @@ import pytest
 
 from gobby.projects.purge import ProjectPurgeService
 from gobby.storage.embedding_generation_state import (
+    EmbeddingGenerationError,
     EmbeddingGenerationLeaseLost,
     EmbeddingGenerationState,
 )
@@ -62,6 +63,19 @@ def test_watermark_waits_for_inflight_producers(temp_db: HubDatabase) -> None:
 
     assert allocated and watermarks
     assert watermarks[0] >= allocated[0]
+
+
+def test_watermark_rejects_ambient_transaction(temp_db: HubDatabase) -> None:
+    state = EmbeddingGenerationState(temp_db)
+
+    with (
+        temp_db.transaction(),
+        pytest.raises(
+            EmbeddingGenerationError,
+            match="outside an ambient transaction",
+        ),
+    ):
+        state.watermark()
 
 
 def test_rolled_back_producer_leaves_no_ledger_event(temp_db: HubDatabase) -> None:

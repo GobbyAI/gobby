@@ -102,6 +102,7 @@ function ConfigFieldState({
   // A freshly typed secret sits unmasked in the draft until save; the status
   // strip must never echo it (or the stored active value) in plaintext.
   const secret = fields.secretKeys.includes(path)
+    || resolveSchemaNode(fields.schema, path)?.secrecy === 'reference'
   const statusValue = (value: unknown): string =>
     secret && value !== undefined && value !== null ? '********' : displayValue(value)
   const label = activation === 'restart_required'

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.servers.websocket.models import WebSocketConfig
@@ -52,11 +53,15 @@ def test_daemon_config_reads_live_runtime_snapshot() -> None:
         config_runtime=cast(Any, runtime),
     )
 
-    assert server.daemon_config.voice.enabled is False
+    initial_config = server.daemon_config
+    assert initial_config is not None
+    assert initial_config.voice.enabled is False
 
     runtime.set_active(DaemonConfig(voice={"enabled": True}))
 
-    assert server.daemon_config.voice.enabled is True
+    live_config = server.daemon_config
+    assert live_config is not None
+    assert live_config.voice.enabled is True
 
 
 @pytest.mark.unit
@@ -68,7 +73,26 @@ def test_daemon_config_serves_one_projection_per_epoch() -> None:
         config_runtime=cast(Any, runtime),
     )
 
-    assert server.daemon_config is server.daemon_config
+    first = server.daemon_config
+    second = server.daemon_config
+
+    assert first == second
+    assert first is not second
+
+
+def test_daemon_config_overlays_bootstrap_fields_on_live_snapshot() -> None:
+    runtime = _LiveRuntime(DaemonConfig(daemon_port=61000))
+    server = WebSocketServer(
+        config=WebSocketConfig(),
+        mcp_manager=MagicMock(),
+        bootstrap_config=BootstrapConfig(daemon_port=62000),
+        config_runtime=cast(Any, runtime),
+    )
+
+    captured = server.daemon_config
+
+    assert captured is not None
+    assert captured.daemon_port == 62000
 
 
 @pytest.mark.unit
@@ -82,7 +106,9 @@ def test_daemon_config_falls_back_before_runtime_ready() -> None:
         config_runtime=cast(Any, runtime),
     )
 
-    assert server.daemon_config is startup
+    captured = server.daemon_config
+    assert captured == startup
+    assert captured is not startup
 
     no_runtime = WebSocketServer(config=WebSocketConfig(), mcp_manager=MagicMock())
     assert no_runtime.daemon_config is None
@@ -106,5 +132,7 @@ async def test_start_passes_warning_level_websockets_logger() -> None:
     assert server._cleanup_task is not None
     await server._cleanup_task
     mock_serve.assert_awaited_once()
-    serve_kwargs = mock_serve.await_args.kwargs
+    serve_call = mock_serve.await_args
+    assert serve_call is not None
+    serve_kwargs = serve_call.kwargs
     assert serve_kwargs["logger"] is websockets_logger

@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 import gobby.servers.routes.chat_attachments as chat_attachment_routes
 from gobby.config.app import DaemonConfig
+from gobby.servers.chat_attachment_limits import resolve_server_attachment_limits
 from gobby.servers.routes.chat_attachments import (
     create_chat_attachments_router,
     resolve_mime_type,
@@ -89,6 +90,47 @@ def test_attachment_limits_returns_configured_max_file_bytes(
 
     assert response.status_code == 200
     assert response.json() == {"max_file_bytes": 4}
+
+
+def test_attachment_limits_accept_wrapped_runtime_capability() -> None:
+    active = DaemonConfig(
+        chat={
+            "attachment_max_file_bytes": 4321,
+            "attachment_max_total_bytes_per_message": 86_420,
+        }
+    )
+
+    class Runtime:
+        ready = True
+
+        def capture(self) -> object:
+            snapshot = type("Snapshot", (), {"active": active})()
+            return type("Capture", (), {"snapshot": snapshot})()
+
+    class Services:
+        config_runtime = Runtime()
+
+    class Server:
+        services = Services()
+
+    assert resolve_server_attachment_limits(Server()).max_file_bytes == 4321
+
+
+def test_attachment_limit_runtime_capture_failure_propagates() -> None:
+    class Runtime:
+        ready = True
+
+        def capture(self) -> object:
+            raise RuntimeError("capture failed")
+
+    class Services:
+        config_runtime = Runtime()
+
+    class Server:
+        services = Services()
+
+    with pytest.raises(RuntimeError, match="capture failed"):
+        resolve_server_attachment_limits(Server())
 
 
 def test_upload_without_project_id_uses_server_project(

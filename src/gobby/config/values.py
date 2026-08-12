@@ -238,7 +238,12 @@ class ConfigValuesService:
             path = resolved_paths.setdefault(key, tuple(key.split(".")))
             self._authorize(key, path)
         if not probe_verified:
-            self._reject_unprobed_responses_endpoints(values, unset, resolved_paths)
+            self._reject_unprobed_responses_endpoints(
+                values,
+                unset,
+                resolved_paths,
+                expected_revision=expected_revision,
+            )
 
         patch = ConfigPatch(
             values=value_updates,
@@ -345,6 +350,8 @@ class ConfigValuesService:
         values: Mapping[str, object],
         unset: Collection[str],
         resolved_paths: Mapping[str, tuple[str, ...]],
+        *,
+        expected_revision: int,
     ) -> None:
         """Require the probe-gated activation route for responses-wire endpoints."""
         if not any(key.startswith(_GENERATION_ENDPOINT_PREFIX) for key in (*values, *unset)):
@@ -353,7 +360,7 @@ class ConfigValuesService:
             values,
             unset,
             resolved_paths,
-            self._snapshot().desired,
+            self._anchored_snapshot(expected_revision).desired,
         )
 
     def _authorize(self, key: str, path: tuple[str, ...]) -> ConfigSecrecy:

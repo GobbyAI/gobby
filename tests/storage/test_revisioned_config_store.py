@@ -342,16 +342,6 @@ def test_restricted_keys_require_internal_mutation(mutations: ConfigMutations) -
     assert result.revision == 1
 
 
-def test_facade_mutation_reuses_ambient_transaction(revision_db: HubDatabase) -> None:
-    store = ConfigStore(revision_db)
-    store.set("ui.enabled", True)
-
-    with embedding_mutation_context(revision_db):
-        assert store.delete_all() == 1
-
-    assert store.get_all() == {}
-
-
 def test_colliding_secret_key_names_stay_distinct(
     mutations: ConfigMutations,
     secret_store: SecretStore,
@@ -395,6 +385,15 @@ def test_colliding_secret_key_names_stay_distinct(
 
     assert secret_store.get(first_name) is None
     assert secret_store.get(second_name) == "beta-secret"
+
+
+def test_derived_secret_name_is_bounded_with_hash_tail() -> None:
+    key = f"ai.generation.endpoints.{'x' * 500}.api_key"
+
+    secret_name = config_key_to_secret_name(key)
+
+    assert len(secret_name) == 200
+    assert len(secret_name.rsplit("_", 1)[-1]) == 8
 
 
 def test_shared_secret_reference_survives_partial_unset(
@@ -610,6 +609,45 @@ def test_convenience_setter_retries_once_on_conflict(
 
     assert calls["count"] == 2
     assert store.get("rules.enforcement_enabled") is False
+
+
+def test_ambient_convenience_setter_does_not_retry_same_snapshot(
+    revision_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = ConfigStore(revision_db)
+    store.set("ui.enabled", True)
+    calls = {"count": 0}
+
+    def stale_revision() -> int:
+        calls["count"] += 1
+        return 0
+
+    monkeypatch.setattr(store.mutations.repository, "current_revision", stale_revision)
+
+    with revision_db.transaction(), pytest.raises(ConfigConflictError):
+        store.set("rules.enforcement_enabled", False)
+
+    assert calls["count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("cors_origins", ("https://example.invalid",)),
+        ("ui.enabled", object()),
+    ],
+)
+def test_config_mutations_reject_python_only_values(
+    mutations: ConfigMutations,
+    key: str,
+    value: object,
+) -> None:
+    with pytest.raises(ConfigValidationError, match="Invalid value"):
+        mutations.patch(
+            expected_revision=0,
+            patch=ConfigPatch(values={key: value}),
+        )
 
 
 def test_ambient_read_is_coherent(revision_db: HubDatabase) -> None:

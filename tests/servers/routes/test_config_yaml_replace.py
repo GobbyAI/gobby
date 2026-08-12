@@ -361,6 +361,19 @@ def test_masked_export_round_trip() -> None:
     assert mutations.calls[0][2] == ConfigPatch(values=values)
 
 
+def test_export_masks_reference_key_even_when_stored_value_is_plaintext() -> None:
+    key = "ai.generation.endpoints.openrouter.api_key"
+    plaintext = "legacy-plaintext-must-never-export"
+    service, _runtime, _mutations = _service(_snapshot(3, desired_values={key: plaintext}))
+
+    response = _client(service).get("/api/config/template")
+    content = response.json()["content"]
+
+    assert response.status_code == 200
+    assert MASKED_SECRET in content
+    assert plaintext not in content
+
+
 _VOICE_KEY = "voice.openai_compatible_audio"
 
 
@@ -469,6 +482,13 @@ def test_stale_revision_replacement_is_rejected() -> None:
         "expected_revision": 7,
         "actual_revision": 8,
     }
+    assert mutations.calls == [
+        (
+            "daemon",
+            7,
+            ConfigPatch(values={"websocket.ping_interval": 15.0}),
+        )
+    ]
     assert (mutations.rows, mutations.secrets, mutations.revision) == before
 
 

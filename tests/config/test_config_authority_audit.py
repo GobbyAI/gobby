@@ -22,8 +22,6 @@ RAW_CONFIG_METHODS = frozenset(
     {
         "clear_secret",
         "delete",
-        "delete_all",
-        "delete_all_except",
         "get",
         "get_all",
         "get_secret_keys",

@@ -211,6 +211,32 @@ describe('ConfigurationClient mutation convergence', () => {
     expect(fetcher).not.toHaveBeenCalled()
   })
 
+  it('reset_ignores_an_in_flight_refresh_continuation', async () => {
+    let resolveRequest: (response: Response) => void = () => {
+      throw new Error('request resolver was not installed')
+    }
+    const fetcher: Mock<Fetcher> = vi.fn(
+      () => new Promise<Response>((resolve) => {
+        resolveRequest = resolve
+      }),
+    )
+    const client = new ConfigurationClient(fetcher)
+    const refresh = client.fetchValues()
+
+    client.reset()
+    resolveRequest(jsonResponse({
+      revision: 9,
+      desired: { memory: { enabled: true } },
+      active: { memory: { enabled: true } },
+      secret_set: {},
+      pending_restart_keys: [],
+      failed_live_keys: {},
+    }))
+    await refresh
+
+    expect(client.currentSnapshot).toBeNull()
+  })
+
   it('patch_last_write_wins_retries_once_after_a_conflict', async () => {
     const { state, fetcher } = makeServer({
       revision: 4,

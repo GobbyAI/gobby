@@ -50,7 +50,7 @@ def test_public_writes_reject_internal_lifecycle_key(temp_db: HubDatabase) -> No
         store.set_many({EMBEDDING_SWITCH_JOURNAL_KEY: "payload"})
 
 
-def test_live_journal_blocks_embedding_mutation_and_bulk_reset_preserves_it(
+def test_live_journal_blocks_embedding_mutation(
     temp_db: HubDatabase,
 ) -> None:
     store = ConfigStore(temp_db)
@@ -59,9 +59,7 @@ def test_live_journal_blocks_embedding_mutation_and_bulk_reset_preserves_it(
 
     with pytest.raises(ConfigValidationError, match="managed activation"):
         store.set(AI_EMBEDDING_MODEL_KEY, "new-model")
-    assert store.delete_all() == 1
-
-    assert store.get("rules.enforcement_enabled") is None
+    assert store.get("rules.enforcement_enabled") is False
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
 
 
@@ -79,25 +77,6 @@ def test_lifecycle_owner_can_write_config_and_delete_journal_atomically(
 
     assert store.delete_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, "run-1")
     assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is None
-
-
-def test_bulk_delete_preserves_journal(
-    temp_db: HubDatabase,
-) -> None:
-    class SecretStore:
-        def set(self, **_kwargs: object) -> None:
-            raise AssertionError("blocked secret mutation must not reach storage")
-
-        def delete(self, _name: str) -> bool:
-            return True
-
-    store = ConfigStore(temp_db)
-    secrets = SecretStore()
-    store.set("rules.enforcement_enabled", False)
-    store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, {"run_id": "run-1"})
-
-    assert store.delete_all_except(secrets, set()) == 1  # type: ignore[arg-type]
-    assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
 
 
 def test_structural_keys_require_switch(temp_db: HubDatabase) -> None:

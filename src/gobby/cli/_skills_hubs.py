@@ -130,11 +130,9 @@ def _store_hub_config(
 
         def build_patch(snapshot: ConfigReadSnapshot) -> ConfigPatch:
             if snapshot.overrides.get(f"skills.hubs.{name}.type") is not None:
-                click.echo(
-                    f"Error: Hub '{name}' already exists. Use 'hub remove' first to replace it.",
-                    err=True,
+                raise click.ClickException(
+                    f"Hub '{name}' already exists. Use 'hub remove' first to replace it."
                 )
-                sys.exit(1)
             return ConfigPatch(
                 values={f"skills.hubs.{name}.{key}": value for key, value in hub_config.items()}
             )

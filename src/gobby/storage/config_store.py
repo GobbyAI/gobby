@@ -34,6 +34,7 @@ from gobby.storage.config_mutations import (
     embedding_mutation_context,
 )
 from gobby.storage.config_repository import ConfigReadSnapshot, ConfigRepository
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretInfo, SecretStore
 
@@ -184,7 +185,8 @@ class ConfigStore:
         Callers that decided on a snapshot must thread that snapshot's revision
         as ``expected_revision`` so the CAS protects the decision; convenience
         setters without a decision snapshot pass ``retry_on_conflict`` instead
-        and re-read the revision once on conflict.
+        and replay the same patch against one freshly read revision. Ambient
+        transactions use one snapshot and therefore make one attempt.
         """
         structural_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
         patch_keys = set(patch.values) | set(patch.unset) | set(patch.secrets)
@@ -197,7 +199,13 @@ class ConfigStore:
                 key=key,
             )
         mutations = self._bind_secret_store(secret_store) if secret_store else self.mutations
-        attempts = 2 if retry_on_conflict and expected_revision is None else 1
+        attempts = (
+            2
+            if retry_on_conflict
+            and expected_revision is None
+            and ambient_transaction(self.db) is None
+            else 1
+        )
         for attempt in range(attempts):
             revision = (
                 expected_revision
@@ -273,52 +281,6 @@ class ConfigStore:
             expected_revision=snapshot.revision,
         )
         return key in result.changed_keys
-
-    def delete_all(
-        self,
-        secret_store: SecretStore | None = None,
-        *,
-        preserved_secret_keys: Collection[str] = (),
-    ) -> int:
-        """Delete all config entries and their encrypted secrets atomically.
-
-        ``preserved_secret_keys`` keeps encrypted values that incoming config
-        references will immediately reattach to new config rows.
-        """
-        if secret_store is not None:
-            self._bind_secret_store(secret_store)
-        snapshot = self.repository.read(resolve_secrets=False)
-        preserved = set(preserved_secret_keys)
-        keys = frozenset(
-            key
-            for key in snapshot.overrides
-            if key not in preserved and key not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS
-        )
-        result = self._apply_internal(
-            ConfigPatch(unset=keys),
-            source="user",
-            secret_store=secret_store,
-            expected_revision=snapshot.revision,
-        )
-        return len(result.changed_keys)
-
-    def delete_all_except(
-        self,
-        secret_store: SecretStore,
-        preserved_keys: Collection[str],
-    ) -> int:
-        """Delete public rows except an allowlist while always preserving lifecycle state."""
-        self._bind_secret_store(secret_store)
-        preserved = set(preserved_keys) | set(EMBEDDING_INTERNAL_LIFECYCLE_KEYS)
-        snapshot = self.repository.read(resolve_secrets=False)
-        keys = frozenset(key for key in snapshot.overrides if key not in preserved)
-        result = self._apply_internal(
-            ConfigPatch(unset=keys),
-            source="user",
-            secret_store=secret_store,
-            expected_revision=snapshot.revision,
-        )
-        return len(result.changed_keys)
 
     def list_keys(self, prefix: str | None = None) -> list[str]:
         """List all keys, optionally filtered by prefix."""
@@ -676,9 +638,10 @@ def flatten_config(
             try:
                 decode_dynamic_segment(key)
             except ValueError as exc:
+                location = repr(prefix) if prefix else "<root>"
                 raise ValueError(
-                    f"Dynamic configuration segment {key!r} under "
-                    f"{prefix or '<root>'!r} is not canonically encoded: {exc}"
+                    f"Dynamic configuration segment {key!r} under {location} "
+                    f"is not canonically encoded: {exc}"
                 ) from exc
         full_key = f"{prefix}{key}" if not prefix else f"{prefix}.{key}"
         if isinstance(value, dict):

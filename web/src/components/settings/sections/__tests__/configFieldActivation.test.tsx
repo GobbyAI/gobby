@@ -10,12 +10,14 @@ function makeFields(overrides: Partial<SettingsSectionFields> = {}): SettingsSec
     'service.restart': 'desired-value',
     'service.failed': 'failed-value',
     'service.managed': 'catalog-key',
+    'service.secret': 'desired-secret',
   }
   const active: Record<string, unknown> = {
     'service.live': 'live-value',
     'service.restart': 'active-value',
     'service.failed': 'old-value',
     'service.managed': 'old-catalog-key',
+    'service.secret': 'active-secret',
   }
   return {
     getValue: (path) => desired[path],
@@ -28,10 +30,15 @@ function makeFields(overrides: Partial<SettingsSectionFields> = {}): SettingsSec
         'service.restart': { type: 'string', activation: 'restart_required' },
         'service.failed': { type: 'string', activation: 'live' },
         'service.managed': { type: 'string', activation: 'managed' },
+        'service.secret': {
+          type: 'string',
+          activation: 'restart_required',
+          secrecy: 'reference',
+        },
       },
     },
     secretKeys: [],
-    pendingRestartKeys: ['service.restart'],
+    pendingRestartKeys: ['service.restart', 'service.secret'],
     failedLiveKeys: {
       'service.failed': { revision: 12, subscriber: 'memory-runtime' },
     },
@@ -93,5 +100,20 @@ describe('configuration field activation', () => {
     })
     expect(managedAction).toHaveBeenCalledWith('next-catalog-key')
     expect(setValue).not.toHaveBeenCalledWith('service.managed', 'next-catalog-key')
+  })
+
+  it('masks_reference_secret_status_from_schema_even_without_secret_key_metadata', () => {
+    render(
+      <TextConfigField
+        fields={makeFields()}
+        path="service.secret"
+        label="Secret field"
+        ariaLabel="Secret field"
+      />,
+    )
+
+    expect(screen.getByText('Desired: ********')).toBeInTheDocument()
+    expect(screen.getByText('Active: ********')).toBeInTheDocument()
+    expect(screen.queryByText(/desired-secret|active-secret/)).not.toBeInTheDocument()
   })
 })
