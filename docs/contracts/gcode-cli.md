@@ -44,6 +44,19 @@ identify the resolved project with `project_id` and, where path context matters,
 Use `--format json` for daemon calls. Text output is for humans and is not a
 stable integration surface.
 
+## Embeddings Doctor
+
+`gcode embeddings doctor` emits these top-level JSON keys: `endpoint`, `model`,
+`dim`, `probe_error`, `peer_error`, `api_key_present`, `api_key_fingerprint`,
+`namespace_resolved`, `source`, `agrees`, and `drift`. A direct dimension-probe
+failure populates `probe_error`; daemon peer transport or protocol failures
+populate `peer_error`.
+
+Exit codes are `0` for healthy configuration, `10` when neither local nor daemon
+configuration resolves, `11` for local/daemon drift, and `20` for a probe or
+daemon peer failure. An unreachable daemon with no local configuration exits
+`20`, replacing the earlier `10` behavior for that case.
+
 ## Drift Checks
 
 Both the CLI and daemon tests load this contract. New daemon-facing flags or JSON

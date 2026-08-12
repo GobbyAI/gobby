@@ -47,6 +47,8 @@ pub(crate) struct EmbeddingsDoctorReport {
     pub dim: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub probe_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_error: Option<String>,
     pub api_key_present: bool,
     pub api_key_fingerprint: Option<String>,
     pub namespace_resolved: Option<String>,
@@ -123,7 +125,7 @@ fn build_doctor_report(
         PeerDoctorOutcome::Absent => (report_without_peer(&resolution, dim), EXIT_HEALTHY),
         PeerDoctorOutcome::TransportError(error) => {
             let mut report = report_without_peer(&resolution, dim);
-            report.probe_error = Some(error);
+            report.peer_error = Some(error);
             (report, EXIT_TRANSPORT)
         }
         PeerDoctorOutcome::Present(peer) => {
@@ -157,6 +159,7 @@ fn report_from_daemon(peer: PeerDoctorOutcome) -> (EmbeddingsDoctorReport, u8) {
         model: None,
         dim: None,
         probe_error: None,
+        peer_error: None,
         api_key_present: false,
         api_key_fingerprint: None,
         namespace_resolved: None,
@@ -168,15 +171,21 @@ fn report_from_daemon(peer: PeerDoctorOutcome) -> (EmbeddingsDoctorReport, u8) {
     match peer {
         PeerDoctorOutcome::Absent => (report, EXIT_CONFIG_MISSING),
         PeerDoctorOutcome::TransportError(error) => {
-            report.probe_error = Some(error);
+            report.peer_error = Some(error);
             (report, EXIT_TRANSPORT)
         }
         PeerDoctorOutcome::Present(peer) => {
+            let complete = peer.endpoint.is_some() && peer.model.is_some() && peer.dim.is_some();
             report.endpoint = peer.endpoint;
             report.model = peer.model;
             report.dim = peer.dim;
             report.source = Some("daemon".to_string());
-            (report, EXIT_HEALTHY)
+            let exit_code = if complete {
+                EXIT_HEALTHY
+            } else {
+                EXIT_CONFIG_MISSING
+            };
+            (report, exit_code)
         }
     }
 }
@@ -198,6 +207,7 @@ fn base_report(resolution: &EmbeddingConfigDetails, dim: Option<usize>) -> Embed
         model: Some(resolution.config.model.clone()),
         dim,
         probe_error: None,
+        peer_error: None,
         api_key_present: resolution.config.api_key.is_some(),
         api_key_fingerprint: resolution
             .config
@@ -392,6 +402,20 @@ mod tests {
         assert_eq!(code, EXIT_TRANSPORT);
         assert_eq!(transport.dim, None);
         assert_eq!(transport.probe_error.as_deref(), Some("probe failed"));
+        assert_eq!(transport.peer_error, None);
+
+        let (peer_transport, code) = build_doctor_report(
+            Some(details(None)),
+            Some(768),
+            |_| unreachable!("configured dim should not probe"),
+            PeerDoctorOutcome::TransportError("daemon unavailable".to_string()),
+        );
+        assert_eq!(code, EXIT_TRANSPORT);
+        assert_eq!(peer_transport.probe_error, None);
+        assert_eq!(
+            peer_transport.peer_error.as_deref(),
+            Some("daemon unavailable")
+        );
     }
 
     #[test]
@@ -416,6 +440,39 @@ mod tests {
     }
 
     #[test]
+    fn daemon_only_config_requires_endpoint_model_and_dimension() {
+        let incomplete = [
+            PeerDoctorReport {
+                endpoint: None,
+                model: Some("nomic-embed-text".to_string()),
+                dim: Some(768),
+            },
+            PeerDoctorReport {
+                endpoint: Some("http://localhost:1234/v1".to_string()),
+                model: None,
+                dim: Some(768),
+            },
+            PeerDoctorReport {
+                endpoint: Some("http://localhost:1234/v1".to_string()),
+                model: Some("nomic-embed-text".to_string()),
+                dim: None,
+            },
+        ];
+
+        for peer in incomplete {
+            let (report, code) = build_doctor_report(
+                None,
+                None,
+                |_| unreachable!("daemon config should not probe directly"),
+                PeerDoctorOutcome::Present(peer),
+            );
+
+            assert_eq!(code, EXIT_CONFIG_MISSING);
+            assert_eq!(report.source.as_deref(), Some("daemon"));
+        }
+    }
+
+    #[test]
     fn daemon_transport_error_is_reported_without_direct_config() {
         let (report, code) = build_doctor_report(
             None,
@@ -425,7 +482,8 @@ mod tests {
         );
 
         assert_eq!(code, EXIT_TRANSPORT);
-        assert_eq!(report.probe_error.as_deref(), Some("daemon unavailable"));
+        assert_eq!(report.probe_error, None);
+        assert_eq!(report.peer_error.as_deref(), Some("daemon unavailable"));
     }
 
     #[test]

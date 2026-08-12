@@ -9,6 +9,8 @@ use time::format_description::well_known::Rfc3339;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use crate::baseline_refresh::{baseline_refresh_statement, statement_body};
+
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
 };
@@ -16,10 +18,7 @@ use super::error::SchemaError;
 use super::gate::{
     BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
 };
-use super::runner::{
-    PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, baseline_refresh_statement, render_sql_for_schema,
-    statement_body,
-};
+use super::runner::{PREDECESSOR_BASELINE_CHECKSUM, SchemaRunner, render_sql_for_schema};
 use super::sql_splitter::split_sql_statements;
 
 const PREDECESSOR_BASELINE_SQL: &str =
@@ -604,7 +603,7 @@ fn isolated_gcode_principal_reads_parent_and_writes_only_its_overlay() -> anyhow
 }
 
 fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow::Result<usize> {
-    let normalized = |sql: &str| -> anyhow::Result<BTreeMap<String, String>> {
+    let normalized = |sql: &str| -> anyhow::Result<Vec<(String, String)>> {
         Ok(split_sql_statements(sql)?
             .into_iter()
             .map(|statement| {
@@ -616,28 +615,75 @@ fn verify_baseline_refresh_contract(predecessor: &str, current: &str) -> anyhow:
             })
             .collect())
     };
-    let predecessor_statements = normalized(predecessor)?;
-    let current_statements = normalized(current)?;
-    let removed: Vec<&String> = predecessor_statements
-        .keys()
-        .filter(|statement| !current_statements.contains_key(*statement))
+    let counts = |statements: &[(String, String)]| -> BTreeMap<String, usize> {
+        let mut counts = BTreeMap::<String, usize>::new();
+        for (identity, _) in statements {
+            *counts.entry(identity.clone()).or_default() += 1;
+        }
+        counts
+    };
+
+    let predecessor_sequence = normalized(predecessor)?;
+    let current_sequence = normalized(current)?;
+    let predecessor_counts = counts(&predecessor_sequence);
+    let current_predecessor_sequence: Vec<(String, String)> = current_sequence
+        .iter()
+        .filter(|(_, statement)| baseline_refresh_statement(statement).is_none())
+        .cloned()
+        .collect();
+    let current_predecessor_counts = counts(&current_predecessor_sequence);
+    if predecessor_sequence.len() == current_predecessor_sequence.len() {
+        let modified: Vec<(&String, &String)> = predecessor_sequence
+            .iter()
+            .map(|(identity, _)| identity)
+            .zip(
+                current_predecessor_sequence
+                    .iter()
+                    .map(|(identity, _)| identity),
+            )
+            .filter(|(predecessor, current)| predecessor != current)
+            .collect();
+        anyhow::ensure!(
+            modified.is_empty(),
+            "current baseline modified predecessor statements: {modified:?}"
+        );
+    }
+    let removed: Vec<(&String, usize, usize)> = predecessor_counts
+        .iter()
+        .filter_map(|(statement, expected)| {
+            let actual = current_predecessor_counts
+                .get(statement)
+                .copied()
+                .unwrap_or_default();
+            (actual < *expected).then_some((statement, *expected, actual))
+        })
         .collect();
     anyhow::ensure!(
         removed.is_empty(),
-        "current baseline removed predecessor statements: {removed:?}"
+        "current baseline removed predecessor statement occurrences \
+         (statement, predecessor count, current count): {removed:?}"
     );
 
-    let mut refreshed = 0usize;
-    for (identity, statement) in &current_statements {
-        let is_added = !predecessor_statements.contains_key(identity);
-        let accepted = baseline_refresh_statement(statement).is_some();
-        anyhow::ensure!(
-            accepted == is_added,
-            "baseline_refresh_statement must accept exactly the statements added since the \
-             predecessor baseline; drifted on: {statement}",
-        );
-        refreshed += usize::from(accepted);
-    }
+    let added: Vec<(&String, usize, usize)> = current_predecessor_counts
+        .iter()
+        .filter_map(|(statement, actual)| {
+            let expected = predecessor_counts
+                .get(statement)
+                .copied()
+                .unwrap_or_default();
+            (*actual > expected).then_some((statement, expected, *actual))
+        })
+        .collect();
+    anyhow::ensure!(
+        added.is_empty(),
+        "baseline_refresh_statement rejected added statement occurrences \
+         (statement, predecessor count, current count): {added:?}"
+    );
+
+    let refreshed = current_sequence
+        .iter()
+        .filter(|(_, statement)| baseline_refresh_statement(statement).is_some())
+        .count();
     anyhow::ensure!(refreshed > 0, "the refresh set must not be empty");
     Ok(refreshed)
 }
@@ -656,51 +702,46 @@ fn baseline_refresh_accepts_exactly_the_predecessor_statement_difference() -> an
 }
 
 #[test]
-fn baseline_refresh_ignores_leading_comments_and_requires_exact_statement() {
-    let refreshable = "-- retained context\n\
-        GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
-    let misleading =
-        "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability_extra";
-
-    assert!(baseline_refresh_statement(refreshable).is_some());
-    assert!(baseline_refresh_statement(misleading).is_none());
-}
-
-#[test]
-fn baseline_refresh_rejects_broader_config_state_grants() {
-    assert!(
-        baseline_refresh_statement("GRANT SELECT ON TABLE config_state TO gobby_gcode_capability")
-            .is_none()
-    );
-    assert!(
-        baseline_refresh_statement(
-            "GRANT SELECT(id,revision,secret) ON TABLE config_state TO gobby_gcode_capability"
-        )
-        .is_none()
-    );
-    assert!(
-        baseline_refresh_statement(
-            "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability \
-             WITH GRANT OPTION"
-        )
-        .is_none()
-    );
-    assert!(
-        baseline_refresh_statement(
-            "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability"
-        )
-        .is_some()
-    );
-}
-
-#[test]
 fn baseline_refresh_contract_rejects_removed_statements() {
     let error = verify_baseline_refresh_contract(
+        "CREATE TABLE preserved_predecessor_table (id integer);\
+         CREATE TABLE removed_predecessor_table (id integer);",
         "CREATE TABLE preserved_predecessor_table (id integer);",
-        "CREATE TABLE IF NOT EXISTS config_state (id integer);",
     )
     .expect_err("removing a predecessor statement must trip the refresh contract");
-    assert!(error.to_string().contains("removed predecessor statements"));
+    assert!(
+        error
+            .to_string()
+            .contains("removed predecessor statement occurrences")
+    );
+}
+
+#[test]
+fn baseline_refresh_contract_rejects_modified_statements_distinctly() {
+    let error = verify_baseline_refresh_contract(
+        "CREATE TABLE predecessor_table (id integer);",
+        "CREATE TABLE predecessor_table (id bigint);",
+    )
+    .expect_err("modifying a predecessor statement must trip the refresh contract");
+    assert!(
+        error
+            .to_string()
+            .contains("modified predecessor statements")
+    );
+}
+
+#[test]
+fn baseline_refresh_contract_counts_duplicate_statements() {
+    let error = verify_baseline_refresh_contract(
+        "CREATE TABLE duplicate_table (id integer);\
+         CREATE TABLE duplicate_table (id integer);",
+        "CREATE TABLE duplicate_table (id integer);",
+    )
+    .expect_err("losing one duplicate occurrence must trip the refresh contract");
+    let display = error.to_string();
+    assert!(display.contains("removed predecessor statement occurrences"));
+    assert!(display.contains("2"));
+    assert!(display.contains("1"));
 }
 
 #[test]

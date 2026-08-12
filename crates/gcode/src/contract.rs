@@ -463,6 +463,7 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![],
                 json_output_keys: embeddings_doctor_keys(),
@@ -778,12 +779,16 @@ fn vector_cleanup_keys() -> Vec<&'static str> {
 
 fn embeddings_doctor_keys() -> Vec<&'static str> {
     vec![
-        "status",
-        "project_id",
-        "source",
+        "endpoint",
         "model",
-        "vector_dim",
-        "peer",
+        "dim",
+        "probe_error",
+        "peer_error",
+        "api_key_present",
+        "api_key_fingerprint",
+        "namespace_resolved",
+        "source",
+        "agrees",
         "drift",
     ]
 }

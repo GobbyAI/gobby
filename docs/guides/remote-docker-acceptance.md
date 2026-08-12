@@ -444,7 +444,7 @@ done
 test "$switch_state" = "not_found"
 printf '%s\n' "$switch_status" \
   | tee "$ACCEPT_EVIDENCE/embedding-switch-final.json"
-GOBBY_HOME="$LOCAL_ACCEPT_HOME" uv run gobby embeddings doctor \
+GOBBY_HOME="$LOCAL_ACCEPT_HOME" "$HOME/.gobby/bin/gcode" embeddings doctor \
   | tee "$ACCEPT_EVIDENCE/embedding-doctor.json"
 ```
 

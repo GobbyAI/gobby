@@ -6,6 +6,7 @@
 //! so small binaries do not inherit services they never call.
 
 // Always available - existing modules.
+mod baseline_refresh;
 pub mod bootstrap;
 pub mod cli_contract;
 pub mod daemon_url;

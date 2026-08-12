@@ -233,8 +233,12 @@ impl ServiceConfigSource for ServiceSource<'_> {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
 
-    use super::{ServiceSource, warn_for_unregistered_served_keys};
+    use super::{ServiceSource, read_config_layers, warn_for_unregistered_served_keys};
     use crate::config::services::{
         ServiceConfigSource, resolve_embedding_config_details_from_service_source,
     };
@@ -249,6 +253,28 @@ mod tests {
                 .map(|(key, value)| (key.to_string(), value.to_string()))
                 .collect::<BTreeMap<_, _>>(),
         )
+    }
+
+    fn spawn_served_config() -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind served-config daemon");
+        let address = listener.local_addr().expect("served-config daemon address");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept served-config request");
+            let mut request = [0_u8; 4096];
+            let request_len = stream
+                .read(&mut request)
+                .expect("read served-config request");
+            let request = String::from_utf8_lossy(&request[..request_len]);
+            assert!(request.starts_with("GET /api/config/effective HTTP/1.1"));
+            let body = r#"{"config":{"contract.unknown.key":"served-value"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write served-config response");
+        });
+        (format!("http://{address}"), handle)
     }
 
     #[test]
@@ -422,7 +448,48 @@ mod tests {
 
         captured_warnings().clear();
         warn_for_unregistered_served_keys(&served([]));
-        assert!(captured_warnings().is_empty());
+        assert!(
+            captured_warnings()
+                .iter()
+                .all(|message| !message.contains("served configuration key"))
+        );
+    }
+
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn read_config_layers_warns_for_unregistered_served_keys() {
+        install_capture_logger();
+        captured_warnings().clear();
+
+        let home = tempfile::tempdir().expect("temporary gobby home");
+        fs::write(
+            home.path()
+                .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
+            "served-config-token",
+        )
+        .expect("write local CLI token");
+        let (daemon_url, daemon) = spawn_served_config();
+        let home = home.path().to_str().expect("UTF-8 temporary home");
+        temp_env::with_vars(
+            [
+                ("GOBBY_HOME", Some(home)),
+                ("GOBBY_DAEMON_URL", Some(daemon_url.as_str())),
+                (gobby_core::runtime_mode::RUNTIME_MODE_ENV, Some("auto")),
+                ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+            ],
+            || {
+                read_config_layers().expect("read daemon-served config layers");
+            },
+        );
+        daemon.join().expect("served-config daemon thread");
+
+        let warning = captured_warnings()
+            .iter()
+            .find(|message| message.contains("contract.unknown.key"))
+            .cloned()
+            .expect("read_config_layers emits the stale-binary warning");
+        assert!(warning.contains("rebuild and reinstall gcode"));
+        assert!(!warning.contains("served-value"));
     }
 
     #[test]

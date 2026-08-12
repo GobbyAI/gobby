@@ -1707,16 +1707,20 @@
     {
       "name": "embeddings doctor",
       "summary": "Emit embedding configuration doctor JSON.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [],
       "flags": [],
       "json_output_keys": [
-        "status",
-        "project_id",
-        "source",
+        "endpoint",
         "model",
-        "vector_dim",
-        "peer",
+        "dim",
+        "probe_error",
+        "peer_error",
+        "api_key_present",
+        "api_key_fingerprint",
+        "namespace_resolved",
+        "source",
+        "agrees",
         "drift"
       ]
     },

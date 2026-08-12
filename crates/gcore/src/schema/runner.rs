@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use postgres::{Client, GenericClient};
 
+use crate::baseline_refresh::{baseline_refresh_statement, statement_body};
+
 use super::assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS, sha256_hex,
 };
@@ -14,13 +16,14 @@ use super::verify::{VerificationReport, qualified_name, validate_identifier, ver
 /// Checksum of the immediate predecessor of the current embedded baseline.
 ///
 /// Single-hop refresh policy: the runner upgrades a hub in place only from
-/// this one predecessor revision. When `baseline.sql` changes, re-arm all four
+/// this one predecessor revision. When `baseline.sql` changes, re-arm all five
 /// artifacts together: move this constant to the outgoing baseline's checksum,
-/// rewrite the prefix list in [`baseline_refresh_statement`], replace
-/// `tests/fixtures/schema/predecessor_baseline.sql`, and update the predecessor
-/// reapply test. The set-difference tripwire in `runner_tests` fails until the
-/// four artifacts stay in lockstep. Hubs more than one hop behind must recreate
-/// from a verified backup.
+/// replace the exact match in [`baseline_refresh_statement`], replace
+/// `tests/fixtures/schema/predecessor_baseline.sql`, update the predecessor
+/// reapply test, and update the `baseline@<version>` identity in both
+/// [`recognized_baseline_receipt`] and `assets::root_hash`. The set-difference
+/// tripwire in `runner_tests` fails until the five artifacts stay in lockstep.
+/// Hubs more than one hop behind must recreate from a verified backup.
 pub(super) const PREDECESSOR_BASELINE_CHECKSUM: &str =
     "d4ff5a9a80305e7c4fb0e9aeff80cfdb88440081702204fb2276c2d6b62688b6";
 
@@ -447,28 +450,6 @@ fn baseline_statement_for_state(statement: &str, state: BaselineState) -> Option
         }
     }
     Some(statement.to_owned())
-}
-
-pub(super) fn baseline_refresh_statement(statement: &str) -> Option<String> {
-    let body = statement_body(statement);
-    let refreshes_schema = body.trim_end()
-        == "GRANT SELECT(id,revision) ON TABLE config_state TO gobby_gcode_capability";
-    refreshes_schema.then(|| statement.to_owned())
-}
-
-pub(super) fn statement_body(mut statement: &str) -> &str {
-    loop {
-        statement = statement.trim_start();
-        if let Some(comment) = statement.strip_prefix("--") {
-            statement = comment
-                .find('\n')
-                .map_or("", |newline| &comment[newline + 1..]);
-        } else if let Some(comment) = statement.strip_prefix("/*") {
-            statement = comment.find("*/").map_or("", |end| &comment[end + 2..]);
-        } else {
-            return statement;
-        }
-    }
 }
 
 fn create_table_name(statement: &str) -> Option<&str> {

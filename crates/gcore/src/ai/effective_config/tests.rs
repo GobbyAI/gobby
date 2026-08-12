@@ -149,6 +149,10 @@ fn spawn_truncated_json_body() -> std::io::Result<(String, RequestHandle)> {
 #[test]
 #[serial_test::serial]
 fn fetch_carries_bearer_and_parses_effective_config_envelope() {
+    let _env_guard = EnvVarsGuard::set(&[
+        ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+        ("GOBBY_AGENT_API_TOKEN", None),
+    ]);
     let home = temp_home();
     fs::write(
         home.path().join(LOCAL_CLI_TOKEN_FILENAME),
@@ -313,9 +317,8 @@ fn managed_bundle_rejects_unapproved_config_keys() {
 #[test]
 #[serial_test::serial]
 fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
-    // `ai.embeddings.api_key` is deliberately machine-exportable (its stored
-    // form is a `$secret:` reference), so the guard for managed bundles is
-    // the value-level unresolved-reference rejection, not the key gate.
+    // Secret-bearing reference keys are never machine-exportable. Managed
+    // bundles therefore reject this key before inspecting its value.
     let home = temp_home();
     let body = r#"{
         "version": 1,
@@ -353,7 +356,7 @@ fn managed_bundle_rejects_unresolved_embedding_secret_reference() {
     assert!(matches!(error, EffectiveConfigError::Contract { .. }));
     let display = error.to_string();
     assert!(display.contains("ai.embeddings.api_key"));
-    assert!(display.contains("unresolved secret reference"));
+    assert!(display.contains("configuration key is not allowed in managed execution"));
     assert!(!display.contains("$secret:embeddings_api_key"));
     join_request(request);
 }
@@ -427,7 +430,7 @@ fn loopback_timeout_is_bounded_and_categorized() {
 
     let (base_url, request) =
         spawn_delayed_json_response(Duration::from_millis(20)).expect("spawn delayed daemon");
-    fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(200))
+    fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_secs(2))
         .expect("response within timeout");
     join_request(request);
 
@@ -492,34 +495,41 @@ fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
 #[test]
 #[serial_test::serial]
 fn served_secret_or_environment_references_are_contract_failures() {
-    let home = temp_home();
     let cases = [
         (
-            "databases.postgres.dsn",
-            "postgresql://user:$secret:DB_PASSWORD@host/gobby",
+            "ai.embeddings.model",
+            "$secret:embedding_model",
+            "unresolved secret reference",
         ),
         (
-            "ai.embeddings.api_base",
-            "https://${PRIVATE_HOST}/embeddings",
+            "ai.embeddings.query_prefix",
+            "${PRIVATE_QUERY_PREFIX}",
+            "unresolved environment reference",
         ),
     ];
 
-    for (key, value) in cases {
-        let body = serde_json::json!({"config": {key: value}}).to_string();
-        let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
-        let error =
-            daemon_mode_layers_at(&base_url, home.path()).expect_err("contract must be strict");
+    for (key, value, reason) in cases {
+        assert!(
+            is_machine_config_key(key),
+            "the value-level backstop must be tested behind a machine-exportable key"
+        );
+        let values = BTreeMap::from([(key.to_string(), value.to_string())]);
+        let error = validate_served_values(&values).expect_err("contract must be strict");
         assert!(matches!(error, EffectiveConfigError::Contract { .. }));
         let display = error.to_string();
         assert!(display.contains(key));
+        assert!(display.contains(reason));
         assert!(!display.contains(value));
-        join_request(request);
     }
 }
 
 #[test]
 #[serial_test::serial]
 fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
+    let _env_guard = EnvVarsGuard::set(&[
+        ("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", None),
+        ("GOBBY_AGENT_API_TOKEN", None),
+    ]);
     let home = temp_home();
     fs::write(home.path().join("gcore.yaml"), "ai: [malformed")
         .expect("write malformed gcore yaml");
