@@ -612,6 +612,7 @@ def register_terminal_tools(
                     pending_session_id=resolved_session_id,
                     target_session=session,
                     before_command=before_command,
+                    attempt_id=compact_attempt_id,
                 )
 
             schedule_continuation_readiness = schedule_codex_readiness

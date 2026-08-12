@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -98,4 +98,5 @@ Send the compact command and watch for the provider's completion marker.
         pending_session_id="s1",
         target_session=session,
         before_command="",
+        attempt_id=ANY,
     )

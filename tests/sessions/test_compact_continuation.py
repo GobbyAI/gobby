@@ -173,7 +173,12 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     session_db: HubDatabase,
 ) -> None:
     prompt = "Continue the claimed task."
-    mark_compact_self_continuation_pending(session_db, SESSION_ID, prompt=prompt)
+    mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        prompt=prompt,
+        attempt_id="current-attempt",
+    )
     before_command = "Earlier output\n• Context compacted\n›"
 
     class ReadinessTmux(_FakeTmux):
@@ -205,6 +210,7 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             pending_session_id=SESSION_ID,
             before_command=before_command,
             poll_seconds=0,
+            attempt_id="current-attempt",
         )
 
     # The paste is followed by a settle-tolerant second Enter (a no-op when the
@@ -215,6 +221,109 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     ]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert COMPACT_SELF_CONTINUE_VARIABLE not in variables
+
+
+@pytest.mark.asyncio
+async def test_codex_readiness_stops_when_attempt_marker_is_replaced(
+    session_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="newer-attempt",
+    )
+
+    class UnexpectedTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            raise AssertionError("stale watcher must not inspect the pane")
+
+    with caplog.at_level("WARNING"):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            tmux=UnexpectedTmux(),
+            target="%12",
+            pending_session_id=SESSION_ID,
+            before_command="Earlier output",
+            poll_seconds=0,
+            attempt_id="older-attempt",
+            fresh_seconds=1,
+        )
+
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    assert marker["attempt_id"] == "newer-attempt"
+    assert "Timed out waiting for Codex compact readiness" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
+    session_db: HubDatabase,
+) -> None:
+    mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="older-attempt",
+    )
+
+    class RacingTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            mark_compact_self_continuation_pending(
+                session_db,
+                SESSION_ID,
+                attempt_id="newer-attempt",
+            )
+            return "Earlier output\n• Context compacted\n›"
+
+    tmux = RacingTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        tmux=tmux,
+        target="%12",
+        pending_session_id=SESSION_ID,
+        before_command="Earlier output",
+        poll_seconds=0,
+        attempt_id="older-attempt",
+        fresh_seconds=1,
+    )
+
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    assert marker["attempt_id"] == "newer-attempt"
+    assert tmux.sent_keys == []
+
+
+@pytest.mark.asyncio
+async def test_codex_readiness_stops_when_tmux_pane_disappears(
+    session_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mark_compact_self_continuation_pending(
+        session_db,
+        SESSION_ID,
+        attempt_id="current-attempt",
+    )
+
+    class MissingPaneTmux(_FakeTmux):
+        async def capture_pane(self, pane_id: str, *, lines: int) -> str:
+            raise RuntimeError("tmux pane is gone")
+
+    with caplog.at_level("WARNING"):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            tmux=MissingPaneTmux(),
+            target="%12",
+            pending_session_id=SESSION_ID,
+            before_command="Earlier output",
+            poll_seconds=0,
+            attempt_id="current-attempt",
+            fresh_seconds=1,
+        )
+
+    variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
+    marker = variables[COMPACT_SELF_CONTINUE_VARIABLE]
+    assert marker["attempt_id"] == "current-attempt"
+    assert "Timed out waiting for Codex compact readiness" not in caplog.text
 
 
 @pytest.mark.asyncio

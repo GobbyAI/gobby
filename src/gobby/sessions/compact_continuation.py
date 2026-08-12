@@ -305,10 +305,16 @@ def _take_compact_self_continuation_pending(
     *,
     now: datetime | None = None,
     fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
+    expected_attempt_id: str | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     """Atomically take a fresh marker while retaining its exact payload."""
     try:
-        value = _pop_session_variable(db, session_id, COMPACT_SELF_CONTINUE_VARIABLE)
+        value = _pop_session_variable(
+            db,
+            session_id,
+            COMPACT_SELF_CONTINUE_VARIABLE,
+            expected_attempt_id=expected_attempt_id,
+        )
     except Exception:
         logger.warning(
             "Failed to consume compact_self continuation pending for session %s",
@@ -377,6 +383,7 @@ def schedule_codex_compact_self_continuation_readiness(
     pending_session_id: str,
     target_session: Any,
     before_command: str | None,
+    attempt_id: str | None = None,
     loop: Any | None = None,
     poll_seconds: float = _CODEX_COMPACT_READY_POLL_SECONDS,
 ) -> bool:
@@ -409,6 +416,7 @@ def schedule_codex_compact_self_continuation_readiness(
         pending_session_id=pending_session_id,
         before_command=before_command,
         poll_seconds=poll_seconds,
+        attempt_id=attempt_id,
     )
     return _schedule_coroutine(coro, loop=loop)
 
@@ -502,6 +510,7 @@ async def _continue_after_codex_compaction_ready(
     pending_session_id: str,
     before_command: str,
     poll_seconds: float,
+    attempt_id: str | None = None,
     fresh_seconds: int = COMPACT_SELF_CONTINUE_FRESH_SECONDS,
 ) -> None:
     """Consume and submit only after Codex renders a fresh completion marker."""
@@ -522,7 +531,16 @@ async def _continue_after_codex_compaction_ready(
                 exc_info=True,
             )
             return
-        if COMPACT_SELF_CONTINUE_VARIABLE not in variables:
+        pending_payload = variables.get(COMPACT_SELF_CONTINUE_VARIABLE)
+        if pending_payload is None:
+            return
+        if attempt_id is not None and (
+            not isinstance(pending_payload, dict) or pending_payload.get("attempt_id") != attempt_id
+        ):
+            logger.debug(
+                "Stopped stale Codex compact readiness watcher for session %s",
+                pending_session_id,
+            )
             return
 
         try:
@@ -536,12 +554,16 @@ async def _continue_after_codex_compaction_ready(
                 pending_session_id,
                 exc_info=True,
             )
-            output = None
+            return
+        if not isinstance(output, str):
+            logger.debug(
+                "Stopped Codex compact readiness watcher after pane disappeared for session %s",
+                pending_session_id,
+            )
+            return
 
-        fresh_output = (
-            _fresh_terminal_output(before_command, output) if isinstance(output, str) else ""
-        )
-        ready = isinstance(output, str) and (
+        fresh_output = _fresh_terminal_output(before_command, output)
+        ready = (
             _count_codex_compact_ready_status_lines(output) > baseline_count
             or _count_codex_compact_ready_status_lines(fresh_output) > 0
         )
@@ -552,6 +574,7 @@ async def _continue_after_codex_compaction_ready(
                 _take_compact_self_continuation_pending,
                 db,
                 pending_session_id,
+                expected_attempt_id=attempt_id,
             )
             if pending is None:
                 return
