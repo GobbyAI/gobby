@@ -9,8 +9,10 @@ from __future__ import annotations
 import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
@@ -22,6 +24,39 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+RULES_ROOT = REPO_ROOT / "src/gobby/install/shared/workflows/rules"
+RULES_REFERENCE = RULES_ROOT / "CLAUDE.md"
+MANAGED_GIT_RULES = {
+    "block-git-clone",
+    "block-git-clone-interactive",
+    "block-git-worktree-mutations",
+    "block-git-worktree-mutations-interactive",
+}
+EXPECTED_WORKER_SAFETY_RULES = {
+    "no-push",
+    "no-force-push",
+    "no-destructive-git",
+} | MANAGED_GIT_RULES
+GIT_GLOBAL_OPTION_PREFIXES = (
+    "git -C /repo",
+    "git -c core.pager=cat",
+    "git --git-dir=/repo/.git",
+    "git --git-dir /repo/.git",
+    "git --work-tree=/repo",
+    "git --work-tree /repo",
+    "git --namespace=task",
+    "git --namespace task",
+    "git --exec-path=/usr/libexec/git-core",
+    "git --exec-path /usr/libexec/git-core",
+    "git --no-pager",
+    "git --paginate",
+    "git -p",
+    "git --bare",
+    "git --literal-pathspecs",
+    "git --no-optional-locks",
+    "git --no-pager -C /repo",
+)
 
 
 @pytest.fixture
@@ -45,6 +80,56 @@ def _sync_bundled(db: HubDatabase) -> dict[str, object]:
     return result
 
 
+def _get_rule(
+    manager: LocalWorkflowDefinitionManager,
+    name: str,
+) -> RuleDefinitionBody:
+    row = manager.get_by_name(name)
+    assert row is not None, f"Rule {name!r} not found after sync"
+    return RuleDefinitionBody.model_validate_json(row.definition_json)
+
+
+def _rule_matches(body: RuleDefinitionBody, command: str) -> bool:
+    return any(
+        effect.command_pattern is not None and re.search(effect.command_pattern, command)
+        for effect in body.resolved_effects
+    )
+
+
+def _first_effect(body: RuleDefinitionBody) -> RuleEffect:
+    effects = body.resolved_effects
+    assert effects
+    return effects[0]
+
+
+def _yaml_rule_count(group: str) -> int:
+    count = 0
+    for path in sorted((RULES_ROOT / group).glob("*.yaml")):
+        data: object = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(data, dict), f"{path} must contain a YAML mapping"
+        rules = data.get("rules")
+        assert isinstance(rules, dict), f"{path} must contain a rules mapping"
+        count += len(rules)
+    return count
+
+
+@pytest.mark.parametrize(
+    ("group", "expected_count"),
+    (("task-enforcement", 20), ("worker-safety", 56)),
+)
+def test_rule_reference_counts_match_yaml(group: str, expected_count: int) -> None:
+    prefix = f"| `{group}` |"
+    matching_lines = [
+        line
+        for line in RULES_REFERENCE.read_text(encoding="utf-8").splitlines()
+        if line.startswith(prefix)
+    ]
+    assert len(matching_lines) == 1
+    columns = [column.strip() for column in matching_lines[0].strip("|").split("|")]
+
+    assert _yaml_rule_count(group) == int(columns[2]) == expected_count
+
+
 class TestWorkerSafetySync:
     """Test that the bundled worker-safety.yaml syncs correctly."""
 
@@ -55,7 +140,7 @@ class TestWorkerSafetySync:
         rules = manager.list_all(workflow_type="rule")
         rule_names = {r.name for r in rules}
 
-        expected = {"no-push", "no-force-push", "no-destructive-git"}
+        expected = EXPECTED_WORKER_SAFETY_RULES
         assert expected.issubset(rule_names), f"Missing: {expected - rule_names}"
 
     def test_all_rules_have_group(self, db, manager) -> None:
@@ -65,7 +150,7 @@ class TestWorkerSafetySync:
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
             body = json.loads(row.definition_json)
-            if row.name in {"no-push", "no-force-push", "no-destructive-git"}:
+            if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 assert body.get("group") == "worker-safety", f"{row.name} missing group"
 
     def test_agent_scope_persists_through_sync(self, db, manager) -> None:
@@ -84,7 +169,7 @@ class TestWorkerSafetySync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"no-push", "no-force-push", "no-destructive-git"}:
+            if row.name in EXPECTED_WORKER_SAFETY_RULES:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 assert body.event.value == "before_tool"
                 assert body.effects[0].type == "block"
@@ -136,6 +221,170 @@ class TestNoDestructiveGitRule:
         assert body.effects[0].tools == ["Bash"]
         assert body.effects[0].command_pattern is not None
         assert "reset" in body.effects[0].command_pattern
+
+
+class TestManagedGitIsolationRules:
+    rules: dict[str, RuleDefinitionBody]
+
+    @pytest.fixture(autouse=True)
+    def _load_rules(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        self.rules = {name: _get_rule(manager, name) for name in MANAGED_GIT_RULES}
+
+    @pytest.mark.parametrize(
+        "subcommand",
+        ("add ../task", "remove ../task", "move ../old ../new", "prune", "repair"),
+    )
+    def test_blocks_worktree_mutations(self, subcommand: str) -> None:
+        command = f"git worktree {subcommand}"
+        assert _rule_matches(self.rules["block-git-worktree-mutations"], command)
+        assert _rule_matches(self.rules["block-git-worktree-mutations-interactive"], command)
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "git clone https://example.com/repo.git",
+            "git clone --depth=1 https://example.com/repo.git ./repo",
+            "/usr/bin/git clone https://example.com/repo.git",
+        ),
+    )
+    def test_blocks_clone(self, command: str) -> None:
+        assert _rule_matches(self.rules["block-git-clone"], command)
+        assert _rule_matches(self.rules["block-git-clone-interactive"], command)
+
+    @pytest.mark.parametrize("prefix", GIT_GLOBAL_OPTION_PREFIXES)
+    def test_blocks_supported_git_global_options(self, prefix: str) -> None:
+        assert _rule_matches(
+            self.rules["block-git-worktree-mutations"],
+            f"{prefix} worktree prune",
+        )
+        assert _rule_matches(
+            self.rules["block-git-clone"],
+            f"{prefix} clone https://example.com/repo.git",
+        )
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "git worktree list",
+            "git worktree lock ../task",
+            "git worktree unlock ../task",
+            "git -C /repo worktree list --porcelain",
+            "git worktree --help",
+            "git worktree addendum",
+        ),
+    )
+    def test_allows_nonmutating_worktree_commands(self, command: str) -> None:
+        assert not _rule_matches(self.rules["block-git-worktree-mutations"], command)
+        assert not _rule_matches(self.rules["block-git-worktree-mutations-interactive"], command)
+
+    @pytest.mark.parametrize(
+        "command",
+        (
+            "git status",
+            "git submodule add https://example.com/repo.git vendor/repo",
+            "git cloneable https://example.com/repo.git",
+            "git-clone https://example.com/repo.git",
+        ),
+    )
+    def test_allows_commands_that_are_not_git_clone(self, command: str) -> None:
+        assert not _rule_matches(self.rules["block-git-clone"], command)
+        assert not _rule_matches(self.rules["block-git-clone-interactive"], command)
+
+    @pytest.mark.parametrize(
+        ("worker_name", "interactive_name"),
+        (
+            ("block-git-clone", "block-git-clone-interactive"),
+            (
+                "block-git-worktree-mutations",
+                "block-git-worktree-mutations-interactive",
+            ),
+        ),
+    )
+    def test_worker_and_interactive_rule_shape(
+        self,
+        manager: LocalWorkflowDefinitionManager,
+        worker_name: str,
+        interactive_name: str,
+    ) -> None:
+        worker = self.rules[worker_name]
+        interactive = self.rules[interactive_name]
+        worker_row = manager.get_by_name(worker_name)
+        interactive_row = manager.get_by_name(interactive_name)
+        assert worker_row is not None and interactive_row is not None
+
+        assert worker.when == "variables.get('is_spawned_agent')"
+        assert interactive.when == "not variables.get('is_spawned_agent')"
+        worker_effect = _first_effect(worker)
+        interactive_effect = _first_effect(interactive)
+        assert worker_effect.command_pattern == interactive_effect.command_pattern
+        assert worker_row.priority == 50
+        assert interactive_row.priority == 55
+        assert "default" in (worker_row.tags or [])
+        assert "default" in (interactive_row.tags or [])
+        assert "Ask the user for permission to disable this rule" not in (
+            worker_effect.reason or ""
+        )
+        assert "Ask the user for permission to disable this rule" in (
+            interactive_effect.reason or ""
+        )
+
+    def test_reasons_route_to_managed_workspace_tools(self) -> None:
+        worktree_reason = _first_effect(self.rules["block-git-worktree-mutations"]).reason or ""
+        clone_reason = _first_effect(self.rules["block-git-clone"]).reason or ""
+
+        assert "gobby-worktrees.create_worktree" in worktree_reason
+        assert "gobby-worktrees.delete_worktree" in worktree_reason
+        assert "worktree_path" in worktree_reason
+        assert "gobby-clones.create_clone" in clone_reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("command", "spawned"),
+        (
+            ("git clone https://example.com/repo.git", True),
+            ("git clone https://example.com/repo.git", False),
+            ("git worktree add ../task", True),
+            ("git worktree add ../task", False),
+        ),
+    )
+    async def test_audience_condition_selects_matching_rule(
+        self,
+        db: HubDatabase,
+        command: str,
+        spawned: bool,
+    ) -> None:
+        db.execute(
+            "DELETE FROM workflow_definitions WHERE name NOT IN "
+            "('block-git-clone', 'block-git-clone-interactive', "
+            "'block-git-worktree-mutations', "
+            "'block-git-worktree-mutations-interactive')"
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(UTC),
+            data={
+                "command": command,
+                "tool_input": {"command": command},
+                "tool_name": "Bash",
+            },
+        )
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id=SESSION_ID,
+            variables={"is_spawned_agent": spawned},
+        )
+
+        assert response.decision == "block"
+        reason = response.reason or ""
+        assert ("Ask the user for permission to disable this rule" in reason) is not spawned
 
 
 class TestDockerPolicyApprovalRule:
@@ -278,7 +527,7 @@ class TestNoFullVitestSuiteRule:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        return body.effects[0]
+        return _first_effect(body)
 
     @staticmethod
     def _is_blocked(effect: RuleEffect, command: str) -> bool:
@@ -339,7 +588,7 @@ class TestNoFullCargoSuiteRule:
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        return body.effects[0]
+        return _first_effect(body)
 
     @staticmethod
     def _is_blocked(effect: RuleEffect, command: str) -> bool:

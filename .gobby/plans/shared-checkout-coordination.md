@@ -120,8 +120,8 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/rules/worker-safety/block-git-worktree-mutations.yaml`
-- `src/gobby/install/shared/workflows/rules/worker-safety/block-git-clone.yaml`
+- `src/gobby/install/shared/workflows/rules/worker-safety/block-git-worktree-mutations.yaml::*` — scope-reason: define both worker and interactive worktree mutation rules
+- `src/gobby/install/shared/workflows/rules/worker-safety/block-git-clone.yaml::*` — scope-reason: define both worker and interactive clone rules
 - `src/gobby/install/shared/workflows/rules/CLAUDE.md`
 - `src/gobby/install/bundled_content_manifest.json::*` — scope-reason: refresh every bundled template hash after rule changes
 - `tests/workflows/test_worker_safety_rules.py::*` — scope-reason: cover Git command parsing, audience gating, and documentation counts

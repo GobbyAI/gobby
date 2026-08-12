@@ -1,0 +1,26 @@
+tags: [worker-safety, enforcement, default, gobby]
+
+rules:
+  block-git-clone:
+    description: "Block unmanaged Git clones for spawned agents."
+    event: before_tool
+    enabled: true
+    priority: 50
+    when: "variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+clone(?=\\s|$|&&|;|\\|)"
+        reason: "Use gobby-clones.create_clone so the clone is registered and lifecycle-managed."
+
+  block-git-clone-interactive:
+    description: "Block unmanaged Git clones with an interactive escape hatch."
+    event: before_tool
+    enabled: true
+    priority: 55
+    when: "not variables.get('is_spawned_agent')"
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: "git(?:\\s+(?:-C\\s+\\S+|-c\\s+\\S+|--git-dir(?:=|\\s+)\\S+|--work-tree(?:=|\\s+)\\S+|--namespace(?:=|\\s+)\\S+|--exec-path(?:=|\\s+)\\S+|--no-pager|--paginate|-p|--bare|--literal-pathspecs|--no-optional-locks))*\\s+clone(?=\\s|$|&&|;|\\|)"
+        reason: "Use gobby-clones.create_clone so the clone is registered and lifecycle-managed. Ask the user for permission to disable this rule if you need to proceed."
