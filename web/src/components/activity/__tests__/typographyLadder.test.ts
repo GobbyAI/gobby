@@ -149,7 +149,7 @@ describe("activity-panel typography ladder (#14245)", () => {
     expect(activitySource).toContain("px-3");
     expect(filterPrimitivesSource).toContain("relative aria-expanded:border-");
     expect(filterPrimitivesSource).toContain("data-filter-active-count");
-    expect(filterPrimitivesSource).toContain("absolute -right-1 -top-1");
+    expect(filterPrimitivesSource).toContain("absolute -top-1 -right-1");
 
     const filterButtonAuthors = readTsxSources("src")
       .filter(([, source]) => source.includes("activity-filter-button"))
@@ -187,11 +187,11 @@ describe("activity-panel typography ladder (#14245)", () => {
     expect(match).not.toBeNull();
     const body = match![1];
 
-    expect(body).toMatch(/0:\s*'var\(--font-weight-semibold\)'/);
-    expect(body).toMatch(/1:\s*'var\(--font-weight-semibold\)'/);
-    expect(body).toMatch(/2:\s*'var\(--font-weight-medium\)'/);
-    expect(body).toMatch(/3:\s*'var\(--font-weight-medium\)'/);
-    expect(body).toMatch(/4:\s*'var\(--font-weight-medium\)'/);
+    expect(body).toMatch(/0:\s*["']var\(--font-weight-semibold\)["']/);
+    expect(body).toMatch(/1:\s*["']var\(--font-weight-semibold\)["']/);
+    expect(body).toMatch(/2:\s*["']var\(--font-weight-medium\)["']/);
+    expect(body).toMatch(/3:\s*["']var\(--font-weight-medium\)["']/);
+    expect(body).toMatch(/4:\s*["']var\(--font-weight-medium\)["']/);
     expect(body).not.toMatch(/var\(--font-weight-normal\)/);
   });
 

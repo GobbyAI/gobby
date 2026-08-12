@@ -303,6 +303,20 @@ fi
 record_command_result "mypy" "$MYPY_EXIT" "$MYPY_REPORT"
 echo ""
 
+# Prettier - frontend formatting
+echo ">>> Checking frontend formatting..."
+FRONTEND_FORMAT_REPORT="$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"
+FRONTEND_FORMAT_EXIT=0
+if (cd web && npm run format:check) 2>&1 | tee "$FRONTEND_FORMAT_REPORT"; then
+    echo "✓ Frontend format check passed"
+else
+    FRONTEND_FORMAT_EXIT=$?
+    echo "✗ Frontend format check failed"
+    FAILED=1
+fi
+record_command_result "frontend-format" "$FRONTEND_FORMAT_EXIT" "$FRONTEND_FORMAT_REPORT"
+echo ""
+
 # TypeScript - frontend type checking
 echo ">>> Running TypeScript check..."
 TSC_REPORT="$REPORTS_DIR/tsc-$TIMESTAMP.txt"

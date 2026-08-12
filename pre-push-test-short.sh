@@ -65,6 +65,18 @@ else
 fi
 echo ""
 
+# Prettier - frontend formatting
+echo ">>> Checking frontend formatting..."
+(cd web && npm run format:check) 2>&1 | tee "$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"
+frontend_format_status=${PIPESTATUS[0]}
+if [ "$frontend_format_status" -eq 0 ]; then
+    echo "✓ Frontend format check passed"
+else
+    echo "✗ Frontend format check failed"
+    FAILED=$((FAILED+1))
+fi
+echo ""
+
 # TypeScript - frontend type checking
 echo ">>> Running TypeScript check..."
 (cd web && npx tsc --noEmit) 2>&1 | tee "$REPORTS_DIR/tsc-$TIMESTAMP.txt"

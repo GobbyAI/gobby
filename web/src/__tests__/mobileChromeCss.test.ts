@@ -545,8 +545,8 @@ describe("mobile chrome CSS", () => {
     );
     expectNoClassToken(segmentedControlSource, "pointer-coarse:min-h-11");
     expectNoClassToken(segmentedControlSource, "pointer-coarse:min-w-11");
-    expect(segmentedControlSource).toContain(
-      "controlHeight === 'sm' ? 'var(--control-row-height-sm)' : 'var(--control-row-height)'",
+    expect(segmentedControlSource).toMatch(
+      /controlHeight === "sm"\s*\? "var\(--control-row-height-sm\)"\s*: "var\(--control-row-height\)"/,
     );
     expect(segmentedControlSource).toContain("style={{ height: heightVar }}");
     expect(activityActionsSource).toContain(
@@ -784,6 +784,6 @@ describe("mobile chrome CSS", () => {
     expect(voiceControlsSource).toContain("gap-1");
     expect(mainColumnSource).toContain("@container/chat-column");
     expect(mainColumnSource).toContain("data-chat-column");
-    expect(narrowHookSource).toContain("closest('[data-chat-column]')");
+    expect(narrowHookSource).toContain('closest("[data-chat-column]")');
   });
 });

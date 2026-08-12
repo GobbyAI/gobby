@@ -335,6 +335,29 @@ def test_pre_push_records_manifest_and_checks_source_integrity(repo_root: Path) 
     assert "report manifest invalidated" in script
 
 
+def test_frontend_format_check_is_enforced_in_ci_and_pre_push(repo_root: Path) -> None:
+    workflow = _load_yaml(repo_root / ".github/workflows/ci.yml")
+    lint_frontend = _mapping(_mapping(workflow["jobs"])["lint-frontend"])
+    ci_runs = _step_runs(_sequence(lint_frontend["steps"]))
+
+    assert "npm run format:check" in ci_runs
+    assert ci_runs.index("npm run format:check") < ci_runs.index("npm run lint")
+
+    short_script = _load_pre_push_short_script(repo_root)
+    assert (
+        '(cd web && npm run format:check) 2>&1 | tee "$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"'
+    ) in short_script
+    assert "frontend_format_status=${PIPESTATUS[0]}" in short_script
+    _assert_before(short_script, "npm run format:check", "npx tsc --noEmit")
+
+    full_script = _load_pre_push_script(repo_root)
+    assert 'FRONTEND_FORMAT_REPORT="$REPORTS_DIR/frontend-format-$TIMESTAMP.txt"' in full_script
+    assert (
+        'record_command_result "frontend-format" "$FRONTEND_FORMAT_EXIT" "$FRONTEND_FORMAT_REPORT"'
+    ) in full_script
+    _assert_before(full_script, "npm run format:check", "npx tsc --noEmit")
+
+
 def test_pre_push_exports_managed_falkordb_settings_before_home_isolation(
     repo_root: Path,
 ) -> None:

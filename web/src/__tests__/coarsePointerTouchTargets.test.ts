@@ -414,8 +414,8 @@ describe("coarse-pointer touch targets", () => {
     expect(selectorSource).toContain(
       "h-[var(--control-row-height)] min-h-[var(--control-row-height)] w-full items-stretch rounded-md border border-border bg-background mobile:inline-flex",
     );
-    expect(selectorSource).toContain(
-      'cn("w-full rounded-[inherit] py-0 [font-family:inherit]", coarseHitAreaCls)',
+    expect(selectorSource).toMatch(
+      /cn\(\s*"w-full rounded-\[inherit\] py-0 \[font-family:inherit\]",\s*coarseHitAreaCls,\s*\)/,
     );
   });
 

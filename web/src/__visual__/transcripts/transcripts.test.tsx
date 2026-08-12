@@ -126,9 +126,23 @@ beforeAll(() => {
   Date.prototype.toLocaleTimeString = function (this: Date): string {
     return this.toISOString().slice(11, 19);
   };
+  document.documentElement.style.setProperty(
+    "--breakpoint-mobile-max-width",
+    "767px",
+  );
+  document.documentElement.style.setProperty(
+    "--breakpoint-mobile-max-height",
+    "500px",
+  );
 });
 afterAll(() => {
   Date.prototype.toLocaleTimeString = originalToLocaleTimeString;
+  document.documentElement.style.removeProperty(
+    "--breakpoint-mobile-max-width",
+  );
+  document.documentElement.style.removeProperty(
+    "--breakpoint-mobile-max-height",
+  );
 });
 
 describe("transcript visual regression", () => {

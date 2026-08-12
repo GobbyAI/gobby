@@ -241,8 +241,8 @@ describe("MarkdownBody typography ownership", () => {
 
     const sharedSource = readSource("src/components/shared/MarkdownBody.tsx");
     expect(sharedSource).toContain("export const markdownBodyClassName");
-    expect(sharedSource).toContain("'max-w-[70ch]'");
-    expect(sharedSource).toContain("'[&_h1]:text-[length:var(--text-3xl)]'");
+    expect(sharedSource).toContain('"max-w-[70ch]"');
+    expect(sharedSource).toContain('"[&_h1]:text-[length:var(--text-3xl)]"');
 
     const hosts = [
       "src/components/chat/MessageItem.tsx",
@@ -289,7 +289,7 @@ describe("MarkdownBody typography ownership", () => {
         "return <MarkdownBody id={id} content={block.content} />",
       ],
       "src/components/chat/Markdown.tsx": [
-        "export { MarkdownBody as Markdown } from '../shared/MarkdownBody'",
+        'export { MarkdownBody as Markdown } from "../shared/MarkdownBody";',
       ],
     };
     for (const [path, pins] of Object.entries(directConsumers)) {

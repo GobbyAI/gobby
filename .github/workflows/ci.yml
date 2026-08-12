@@ -139,6 +139,10 @@ jobs:
         run: npm ci
         working-directory: web
 
+      - name: Check formatting
+        run: npm run format:check
+        working-directory: web
+
       - name: Run ESLint
         run: npm run lint
         working-directory: web

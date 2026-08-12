@@ -429,7 +429,10 @@ export default function App() {
     sessionCatalog.isLoading,
     dbSessionId,
     webChatSessions,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+    settings.defaultChatMode,
+    updateChatMode,
+    sendMode,
+  ]);
 
   const handleInputChange = useCallback(
     (value: string) => {
