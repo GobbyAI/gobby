@@ -18,7 +18,7 @@ from gobby.storage.projects import PERSONAL_PROJECT_ID
 PROJECT_PURGE_JOB_NAME = "gobby:project-purge"
 PROJECT_PURGE_HANDLER_NAME = "projects:purge-expired"
 PROJECT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
-PROJECT_PURGE_RETENTION_DAYS = 30
+PROJECT_PURGE_RETENTION_HOURS = 24
 PROJECT_PURGE_DESCRIPTION = "Purge project state retained beyond the soft-delete window"
 PROJECT_PURGE_ID_LIMIT = 10
 PROJECT_PURGE_CONCURRENCY = 4
@@ -275,7 +275,7 @@ def create_project_purge_handler(service: ProjectPurgeService) -> CronHandler:
     """Create a failure-isolated daily retention handler."""
 
     async def _handler(_job: CronJob) -> PurgeBatchResult:
-        cutoff = datetime.now(UTC) - timedelta(days=PROJECT_PURGE_RETENTION_DAYS)
+        cutoff = datetime.now(UTC) - timedelta(hours=PROJECT_PURGE_RETENTION_HOURS)
         projects = await asyncio.to_thread(service.projects.list_purge_candidates, cutoff)
         semaphore = asyncio.Semaphore(PROJECT_PURGE_CONCURRENCY)
 

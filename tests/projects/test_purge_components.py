@@ -18,18 +18,22 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.prune_job import guard_project_cron_handler
 
 
-def test_project_storage_lists_only_expired_non_system_candidates(temp_db: HubDatabase) -> None:
+def test_project_storage_uses_inclusive_24_hour_boundary(temp_db: HubDatabase) -> None:
     projects = LocalProjectManager(temp_db)
-    expired = projects.create("expired-project")
-    recent = projects.create("recent-project")
-    projects.soft_delete(expired.id)
-    projects.soft_delete(recent.id)
-    old = datetime.now(UTC) - timedelta(days=45)
-    temp_db.execute("UPDATE projects SET deleted_at = %s WHERE id = %s", (old, expired.id))
+    exact = projects.create("exact-boundary-project")
+    just_under = projects.create("just-under-boundary-project")
+    projects.soft_delete(exact.id)
+    projects.soft_delete(just_under.id)
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    temp_db.execute("UPDATE projects SET deleted_at = %s WHERE id = %s", (cutoff, exact.id))
+    temp_db.execute(
+        "UPDATE projects SET deleted_at = %s WHERE id = %s",
+        (cutoff + timedelta(microseconds=1), just_under.id),
+    )
 
-    candidates = projects.list_purge_candidates(datetime.now(UTC) - timedelta(days=30))
+    candidates = projects.list_purge_candidates(cutoff)
 
-    assert [project.id for project in candidates] == [expired.id]
+    assert [project.id for project in candidates] == [exact.id]
 
 
 def test_cron_storage_can_park_and_remove_all_project_rows(temp_db: HubDatabase) -> None:

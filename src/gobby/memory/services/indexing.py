@@ -27,7 +27,7 @@ GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
 class MemoryStorageProtocol(Protocol):
     db: Any
 
-    def list_all_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]: ...
+    def list_live_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]: ...
 
     def get_memories(
         self,
@@ -255,7 +255,7 @@ class IndexingService:
         return await self._reconcile_stores_admitted(dry_run=True)
 
     async def _reconcile_stores_admitted(self, dry_run: bool) -> dict[str, Any]:
-        storage_ids = set(await self._run_storage(self._storage.list_all_ids))
+        storage_ids = set(await self._run_storage(self._storage.list_live_ids))
         intent_ids = set(await self._run_storage(self._storage.list_vector_reindex_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,

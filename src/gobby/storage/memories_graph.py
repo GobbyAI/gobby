@@ -93,8 +93,8 @@ class MemoryGraphMixin(MemoryStoreBase):
                 raise ValueError(f"Memory not found: {memory_id}")
             return str(row["graph_status"])
 
-    def list_all_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]:
-        """Return memory IDs from the database.
+    def list_live_ids(self, *, limit: int | None = None, offset: int = 0) -> list[str]:
+        """Return live memory IDs from the database.
 
         Args:
             limit: Max number of IDs to return. None returns all.
@@ -102,13 +102,16 @@ class MemoryGraphMixin(MemoryStoreBase):
         """
         if limit is not None:
             rows = self.db.fetchall(
-                "SELECT id FROM memories ORDER BY id LIMIT %s OFFSET %s",
+                "SELECT id FROM memories WHERE deleted_at IS NULL ORDER BY id LIMIT %s OFFSET %s",
                 (limit, offset),
             )
         elif offset:
-            rows = self.db.fetchall("SELECT id FROM memories ORDER BY id OFFSET %s", (offset,))
+            rows = self.db.fetchall(
+                "SELECT id FROM memories WHERE deleted_at IS NULL ORDER BY id OFFSET %s",
+                (offset,),
+            )
         else:
-            rows = self.db.fetchall("SELECT id FROM memories ORDER BY id")
+            rows = self.db.fetchall("SELECT id FROM memories WHERE deleted_at IS NULL ORDER BY id")
         return [row["id"] for row in rows]
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:

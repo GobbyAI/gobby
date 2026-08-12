@@ -116,40 +116,59 @@ pub(crate) fn purge_scope(scope: &SearchScope, config: &FalkorConfig) -> Result<
     Ok(())
 }
 
-pub(crate) fn list_project_scopes(config: &FalkorConfig) -> Result<Vec<String>, WikiError> {
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct FalkorScopes {
+    pub(crate) projects: Vec<String>,
+    pub(crate) topics: Vec<String>,
+}
+
+pub(crate) fn list_scopes(config: &FalkorConfig) -> Result<FalkorScopes, WikiError> {
     let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to FalkorDB for gwiki prune discovery: {error}"),
         }
     })?;
     let rows = client
-        .query(project_scope_query(), None)
+        .query(scope_discovery_query(), None)
         .map_err(|error| WikiError::Config {
-            detail: format!("failed to enumerate FalkorDB gwiki project scopes: {error}"),
+            detail: format!("failed to enumerate FalkorDB gwiki scopes: {error}"),
         })?;
 
     let mut project_ids = BTreeSet::new();
+    let mut topic_names = BTreeSet::new();
     for row in rows {
-        let Some(project_id) = row.get("project_id").and_then(Value::as_str) else {
+        let Some(scope_kind) = row.get("scope_kind").and_then(Value::as_str) else {
             return Err(WikiError::Config {
-                detail: "FalkorDB gwiki scope discovery returned a non-string project_id"
+                detail: "FalkorDB gwiki scope discovery returned a non-string scope_kind"
                     .to_string(),
             });
         };
-        project_ids.insert(project_id.to_string());
+        let Some(scope_id) = row.get("scope_id").and_then(Value::as_str) else {
+            return Err(WikiError::Config {
+                detail: "FalkorDB gwiki scope discovery returned a non-string scope_id".to_string(),
+            });
+        };
+        match scope_kind {
+            "project" => project_ids.insert(scope_id.to_string()),
+            "topic" => topic_names.insert(scope_id.to_string()),
+            _ => false,
+        };
     }
-    Ok(project_ids.into_iter().collect())
+    Ok(FalkorScopes {
+        projects: project_ids.into_iter().collect(),
+        topics: topic_names.into_iter().collect(),
+    })
 }
 
-fn project_scope_query() -> &'static str {
+fn scope_discovery_query() -> &'static str {
     "MATCH (node) \
        WHERE (node:WikiDoc OR node:WikiSource OR node:WikiTarget) \
-         AND node.scope_kind = 'project' \
-       RETURN DISTINCT node.scope_id AS project_id \
+         AND node.scope_kind IN ['project', 'topic'] \
+       RETURN DISTINCT node.scope_kind AS scope_kind, node.scope_id AS scope_id \
        UNION \
        MATCH ()-[rel:WIKI_LINKS_TO|MENTIONS_TARGET|SUPPORTS]->() \
-       WHERE rel.scope_kind = 'project' \
-       RETURN DISTINCT rel.scope_id AS project_id"
+       WHERE rel.scope_kind IN ['project', 'topic'] \
+       RETURN DISTINCT rel.scope_kind AS scope_kind, rel.scope_id AS scope_id"
 }
 
 /// Latest-deleted document paths in the scope, mirroring the Qdrant stale-path
@@ -296,8 +315,8 @@ mod tests {
     }
 
     #[test]
-    fn project_scope_discovery_covers_nodes_and_relationships() {
-        let query = project_scope_query();
+    fn scope_discovery_covers_nodes_relationships_and_both_kinds() {
+        let query = scope_discovery_query();
 
         assert!(query.contains("MATCH (node)"));
         for label in [WIKI_DOC_LABEL, WIKI_SOURCE_LABEL, WIKI_TARGET_LABEL] {
@@ -307,7 +326,10 @@ mod tests {
             assert!(query.contains(relationship));
         }
         assert!(!query.contains("MATCH ()-[rel]->()"));
-        assert_eq!(query.matches("scope_kind = 'project'").count(), 2);
+        assert_eq!(
+            query.matches("scope_kind IN ['project', 'topic']").count(),
+            2
+        );
         assert!(query.contains("UNION"));
     }
 }

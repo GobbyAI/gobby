@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use crate::config::{self, Context};
 use crate::db;
@@ -9,7 +10,7 @@ use crate::vector::code_symbols;
 use super::content_gc::{ContentGcCandidate, discover_content_gc, prune_content_versions};
 use super::invalidate::invalidate_project_locked;
 use super::projects::stale_projects;
-use super::shared::{collect_projects, collect_projects_from, display_name};
+use super::shared::{collect_projects_from, display_name};
 
 mod inventory;
 mod reconcile;
@@ -24,6 +25,7 @@ use reconcile::{
 };
 
 const GLOBAL_SERVICE_CONTEXT_PROJECT_ID: &str = "00000000-0000-0000-0000-000000000000";
+const CODE_INDEX_RETENTION_HOURS: i32 = 24;
 
 #[derive(Debug, Default, PartialEq, Eq)]
 struct DestructiveSet {
@@ -49,9 +51,32 @@ struct StaleProjectPlan {
     reason: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RegistryProjectState {
+    id: String,
+    eligible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MachineProjectState {
+    machine_id: String,
+    project_id: String,
+    root_path: String,
+    eligible: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct DiscoveryCounts {
+    scanned: usize,
+    active: usize,
+}
+
 struct GlobalPruneDiscovery {
     services: Context,
-    stale_projects: Vec<StaleProjectPlan>,
+    machine_states: Vec<StaleProjectPlan>,
+    machine_state_counts: DiscoveryCounts,
+    registry_projects: Vec<StaleProjectPlan>,
+    registry_project_counts: DiscoveryCounts,
     collections: Option<CollectionInventory>,
     graph_scopes: Option<ScopeInventory>,
     content_gc_candidates: Vec<ContentGcCandidate>,
@@ -60,15 +85,19 @@ struct GlobalPruneDiscovery {
 struct GlobalProjectPruneDiscovery {
     authority: HashSet<String>,
     stale_project_ids: HashSet<String>,
-    stale_projects: Vec<StaleProjectPlan>,
+    machine_states: Vec<StaleProjectPlan>,
+    machine_state_counts: DiscoveryCounts,
+    registry_projects: Vec<StaleProjectPlan>,
+    registry_project_counts: DiscoveryCounts,
 }
 
 impl GlobalPruneDiscovery {
     fn destructive_set(&self) -> DestructiveSet {
         DestructiveSet {
             stale_project_ids: self
-                .stale_projects
+                .machine_states
                 .iter()
+                .chain(&self.registry_projects)
                 .map(|project| project.id.clone())
                 .collect(),
             orphan_collection_ids: self
@@ -146,7 +175,7 @@ fn prune_project_scoped(
         eprintln!("Aborted.");
         return Ok(());
     }
-    let stale_totals = mutate_stale_projects(&discovery);
+    let stale_totals = mutate_project_scoped_stale(&discovery);
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
     let content_gc_totals =
         prune_content_versions(&discovery.services, &discovery.content_gc_candidates)?;
@@ -168,8 +197,10 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
         return Ok(());
     }
 
-    let stale_totals = mutate_stale_projects(&discovery);
-    print_reconcile_totals("Stale project reconciliation", &stale_totals);
+    let machine_state_totals = mutate_machine_states(&discovery);
+    print_reconcile_totals("machine_states", &machine_state_totals);
+    let registry_project_totals = mutate_registry_projects(&discovery);
+    print_reconcile_totals("registry_projects", &registry_project_totals);
     refresh_global_projection_inventories(&mut discovery, &pending)?;
     let collection_totals = mutate_orphan_collections(&discovery);
     let graph_totals = mutate_orphan_graph_scopes(&discovery);
@@ -198,11 +229,13 @@ fn prune_global(force: bool, quiet: bool, retention_days: u32) -> anyhow::Result
             )
         }),
     );
-    let failed = stale_totals.failed
+    let failed = machine_state_totals.failed
+        + registry_project_totals.failed
         + collection_totals.as_ref().map_or(0, |totals| totals.failed)
         + graph_totals.as_ref().map_or(0, |totals| totals.failed)
         + content_gc_totals.failed_versions;
-    if stale_totals.has_failures()
+    if machine_state_totals.has_failures()
+        || registry_project_totals.has_failures()
         || collection_totals
             .as_ref()
             .is_some_and(ReconcileTotals::has_failures)
@@ -228,9 +261,8 @@ fn print_content_gc_totals(totals: &super::content_gc::ContentGcTotals) {
 }
 
 fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<GlobalPruneDiscovery> {
-    let all_projects = collect_projects()?;
     let database_url = db::resolve_database_url()?;
-    let project_discovery = discover_global_project_prune(&all_projects);
+    let project_discovery = discover_global_project_prune(&database_url)?;
     let content_gc_candidates = discover_content_gc(&database_url, retention_days, None)?;
 
     let services = Context::resolve_for_project_id_with_services(
@@ -243,7 +275,10 @@ fn discover_global_prune(quiet: bool, retention_days: u32) -> anyhow::Result<Glo
 
     Ok(GlobalPruneDiscovery {
         services,
-        stale_projects: project_discovery.stale_projects,
+        machine_states: project_discovery.machine_states,
+        machine_state_counts: project_discovery.machine_state_counts,
+        registry_projects: project_discovery.registry_projects,
+        registry_project_counts: project_discovery.registry_project_counts,
         collections,
         graph_scopes,
         content_gc_candidates,
@@ -288,8 +323,7 @@ fn refresh_global_projection_inventories(
     discovery: &mut GlobalPruneDiscovery,
     authorized: &DestructiveSet,
 ) -> anyhow::Result<()> {
-    let projects = collect_projects()?;
-    let project_discovery = discover_global_project_prune(&projects);
+    let project_discovery = discover_global_project_prune(&discovery.services.database_url)?;
     let (collections, graph_scopes) =
         discover_projection_inventories(&discovery.services, &project_discovery)?;
     discovery.collections = collections.map(|mut inventory| {
@@ -314,15 +348,181 @@ fn refresh_global_projection_inventories(
 }
 
 fn discover_global_project_prune(
-    projects: &[crate::models::IndexedProject],
+    database_url: &str,
+) -> anyhow::Result<GlobalProjectPruneDiscovery> {
+    let local_machine_id = gobby_core::machine::read_local_machine_id()?;
+    let mut conn = db::connect_readonly(database_url)?;
+    let registry_projects = conn
+        .query(
+            "SELECT id::text AS id,
+                    updated_at <= NOW() - ($1::INT * INTERVAL '1 hour') AS eligible
+             FROM code_indexed_projects
+             ORDER BY id",
+            &[&CODE_INDEX_RETENTION_HOURS],
+        )?
+        .into_iter()
+        .map(|row| RegistryProjectState {
+            id: row.get("id"),
+            eligible: row.get("eligible"),
+        })
+        .collect::<Vec<_>>();
+    let machine_states = conn
+        .query(
+            "SELECT machine_id::text AS machine_id, project_id::text AS project_id, root_path,
+                    updated_at <= NOW() - ($1::INT * INTERVAL '1 hour') AS eligible
+             FROM code_indexed_project_states
+             ORDER BY machine_id, project_id",
+            &[&CODE_INDEX_RETENTION_HOURS],
+        )?
+        .into_iter()
+        .map(|row| MachineProjectState {
+            machine_id: row.get("machine_id"),
+            project_id: row.get("project_id"),
+            root_path: row.get("root_path"),
+            eligible: row.get("eligible"),
+        })
+        .collect::<Vec<_>>();
+    Ok(classify_global_project_prune(
+        &local_machine_id,
+        &registry_projects,
+        &machine_states,
+    ))
+}
+
+fn classify_global_project_prune(
+    local_machine_id: &str,
+    registry_projects: &[RegistryProjectState],
+    machine_states: &[MachineProjectState],
 ) -> GlobalProjectPruneDiscovery {
-    // #17435/#17437 will add machine-owned root mappings. Until then, an absolute
-    // root missing on this machine says nothing about shared project liveness.
-    GlobalProjectPruneDiscovery {
-        authority: projects.iter().map(|project| project.id.clone()).collect(),
-        stale_project_ids: HashSet::new(),
-        stale_projects: Vec::new(),
+    let mut authority = registry_projects
+        .iter()
+        .map(|project| project.id.clone())
+        .collect::<HashSet<_>>();
+    authority.extend(machine_states.iter().map(|state| state.project_id.clone()));
+
+    let local_states = machine_states
+        .iter()
+        .filter(|state| state.machine_id == local_machine_id)
+        .collect::<Vec<_>>();
+    let mut stale_reasons = BTreeMap::new();
+    for state in &local_states {
+        if let Some(reason) = stale_root_reason(&state.project_id, &state.root_path) {
+            stale_reasons.insert(state.project_id.clone(), reason.to_string());
+        }
     }
+
+    let mut by_root: BTreeMap<PathBuf, Vec<&MachineProjectState>> = BTreeMap::new();
+    for state in &local_states {
+        if stale_reasons.contains_key(&state.project_id) {
+            continue;
+        }
+        let Ok(root) = Path::new(&state.root_path).canonicalize() else {
+            continue;
+        };
+        by_root.entry(root).or_default().push(state);
+    }
+    for (root, states) in by_root {
+        if states.len() < 2 {
+            continue;
+        }
+        let Ok(identity) = config::resolve_project_identity(&root, config::MissingIdentity::Error)
+        else {
+            continue;
+        };
+        if !states
+            .iter()
+            .any(|state| state.project_id == identity.project_id)
+        {
+            continue;
+        }
+        for state in states {
+            if state.project_id != identity.project_id {
+                stale_reasons.insert(
+                    state.project_id.clone(),
+                    format!(
+                        "duplicate root superseded by current project id {}",
+                        crate::utils::short_id(&identity.project_id)
+                    ),
+                );
+            }
+        }
+    }
+
+    let machine_state_plans = local_states
+        .into_iter()
+        .filter(|state| state.eligible)
+        .filter_map(|state| {
+            stale_reasons
+                .get(&state.project_id)
+                .map(|reason| StaleProjectPlan {
+                    id: state.project_id.clone(),
+                    label: project_label(&state.root_path, &state.project_id),
+                    reason: reason.clone(),
+                })
+        })
+        .collect::<Vec<_>>();
+    let state_project_ids = machine_states
+        .iter()
+        .map(|state| state.project_id.as_str())
+        .collect::<HashSet<_>>();
+    let registry_project_plans = registry_projects
+        .iter()
+        .filter(|project| project.eligible && !state_project_ids.contains(project.id.as_str()))
+        .map(|project| StaleProjectPlan {
+            id: project.id.clone(),
+            label: project.id.clone(),
+            reason: format!(
+                "registry has no machine state and is at least {CODE_INDEX_RETENTION_HOURS} hours old"
+            ),
+        })
+        .collect::<Vec<_>>();
+    let stale_project_ids = machine_state_plans
+        .iter()
+        .chain(&registry_project_plans)
+        .map(|project| project.id.clone())
+        .collect();
+    let machine_state_counts = DiscoveryCounts {
+        scanned: machine_states.len(),
+        active: machine_states.len() - machine_state_plans.len(),
+    };
+    let registry_project_counts = DiscoveryCounts {
+        scanned: registry_projects.len(),
+        active: registry_projects.len() - registry_project_plans.len(),
+    };
+
+    GlobalProjectPruneDiscovery {
+        authority,
+        stale_project_ids,
+        machine_states: machine_state_plans,
+        machine_state_counts,
+        registry_projects: registry_project_plans,
+        registry_project_counts,
+    }
+}
+
+fn stale_root_reason(project_id: &str, root_path: &str) -> Option<&'static str> {
+    if project_id.starts_with("00000000") {
+        return Some("sentinel project (not a code project)");
+    }
+    if root_path.is_empty() {
+        return Some("empty root path");
+    }
+    let root = Path::new(root_path);
+    if !root.is_absolute() {
+        return Some("relative root path");
+    }
+    if !root.exists() {
+        return Some("path does not exist");
+    }
+    None
+}
+
+fn project_label(root_path: &str, project_id: &str) -> String {
+    Path::new(root_path)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| project_id.to_string())
 }
 
 fn discover_project_scoped_records(
@@ -343,7 +543,10 @@ fn discover_project_scoped_records(
         discover_content_gc(&ctx.database_url, retention_days, Some(&ctx.project_id))?;
     Ok(GlobalPruneDiscovery {
         services: ctx.clone(),
-        stale_projects,
+        machine_states: stale_projects,
+        machine_state_counts: DiscoveryCounts::default(),
+        registry_projects: Vec::new(),
+        registry_project_counts: DiscoveryCounts::default(),
         collections: None,
         graph_scopes: None,
         content_gc_candidates,
@@ -352,8 +555,9 @@ fn discover_project_scoped_records(
 
 fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool> {
     eprintln!(
-        "Pending gcode prune: {} stale project(s), {} orphan collection(s), {} orphan graph scope(s), {} expired content version(s).",
-        discovery.stale_projects.len(),
+        "Pending gcode prune: {} stale machine state(s), {} stale registry project(s), {} orphan collection(s), {} orphan graph scope(s), {} expired content version(s).",
+        discovery.machine_states.len(),
+        discovery.registry_projects.len(),
         discovery
             .collections
             .as_ref()
@@ -366,9 +570,15 @@ fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool
             .map_or(0, |ids| ids.len()),
         discovery.content_gc_candidates.len(),
     );
-    for project in &discovery.stale_projects {
+    for project in &discovery.machine_states {
         eprintln!(
-            "  stale: {} ({}) — {}",
+            "  machine state: {} ({}) — {}",
+            project.label, project.id, project.reason
+        );
+    }
+    for project in &discovery.registry_projects {
+        eprintln!(
+            "  registry project: {} ({}) — {}",
             project.label, project.id, project.reason
         );
     }
@@ -396,9 +606,9 @@ fn confirm_global_prune(discovery: &GlobalPruneDiscovery) -> anyhow::Result<bool
     Ok(input.trim().eq_ignore_ascii_case("y"))
 }
 
-fn mutate_stale_projects(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
+fn mutate_project_scoped_stale(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
     let project_ids = discovery
-        .stale_projects
+        .machine_states
         .iter()
         .map(|project| project.id.clone())
         .collect::<Vec<_>>();
@@ -415,6 +625,149 @@ fn mutate_stale_projects(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
         ctx.project_id = project_id.to_string();
         invalidate_project_locked(&ctx)?;
         Ok(SweepOutcome::Deleted)
+    })
+}
+
+fn mutate_machine_states(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
+    let project_ids = discovery
+        .machine_states
+        .iter()
+        .map(|project| project.id.clone())
+        .collect::<Vec<_>>();
+    let mut totals = sweep_discovered_ids_with(&project_ids, |project_id| {
+        let Some(_lock) = lock_project_by_id(
+            &discovery.services.database_url,
+            project_id,
+            IndexLockPolicy::maintenance_try(),
+        )?
+        else {
+            return Ok(SweepOutcome::Busy);
+        };
+        reconcile_machine_state_locked(&discovery.services.database_url, project_id)
+    });
+    totals.scanned = discovery.machine_state_counts.scanned;
+    totals.active += discovery.machine_state_counts.active;
+    totals
+}
+
+fn reconcile_machine_state_locked(
+    database_url: &str,
+    project_id: &str,
+) -> anyhow::Result<SweepOutcome> {
+    let refreshed = discover_global_project_prune(database_url)?;
+    if !refreshed
+        .machine_states
+        .iter()
+        .any(|project| project.id == project_id)
+    {
+        let mut conn = db::connect_readonly(database_url)?;
+        let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+        let project_id = db::id_param(project_id)?;
+        let exists = conn
+            .query_opt(
+                "SELECT 1 FROM code_indexed_project_states
+                 WHERE machine_id = $1 AND project_id = $2",
+                &[&machine_id, &project_id],
+            )?
+            .is_some();
+        return Ok(if exists {
+            SweepOutcome::Active
+        } else {
+            SweepOutcome::AlreadyMissing
+        });
+    }
+
+    let mut conn = db::connect_readwrite(database_url)?;
+    let machine_id = db::id_param(&gobby_core::machine::read_local_machine_id()?)?;
+    let project_uuid = db::id_param(project_id)?;
+    let mut tx = conn.transaction()?;
+    tx.execute(
+        "DELETE FROM code_indexed_file_states
+         WHERE machine_id = $1 AND project_id = $2",
+        &[&machine_id, &project_uuid],
+    )?;
+    let deleted = tx.execute(
+        "DELETE FROM code_indexed_project_states
+         WHERE machine_id = $1 AND project_id = $2
+           AND updated_at <= NOW() - ($3::INT * INTERVAL '1 hour')",
+        &[&machine_id, &project_uuid, &CODE_INDEX_RETENTION_HOURS],
+    )?;
+    if deleted == 0 {
+        tx.rollback()?;
+        return Ok(SweepOutcome::Active);
+    }
+    let has_remaining_state = tx
+        .query_opt(
+            "SELECT 1 FROM code_indexed_project_states WHERE project_id = $1 LIMIT 1",
+            &[&project_uuid],
+        )?
+        .is_some();
+    if !has_remaining_state {
+        tx.execute(
+            "DELETE FROM code_indexed_projects WHERE id = $1",
+            &[&project_uuid],
+        )?;
+    }
+    tx.commit()?;
+    Ok(SweepOutcome::Deleted)
+}
+
+fn mutate_registry_projects(discovery: &GlobalPruneDiscovery) -> ReconcileTotals {
+    let project_ids = discovery
+        .registry_projects
+        .iter()
+        .map(|project| project.id.clone())
+        .collect::<Vec<_>>();
+    let mut totals = sweep_discovered_ids_with(&project_ids, |project_id| {
+        let Some(_lock) = lock_project_by_id(
+            &discovery.services.database_url,
+            project_id,
+            IndexLockPolicy::maintenance_try(),
+        )?
+        else {
+            return Ok(SweepOutcome::Busy);
+        };
+        reconcile_registry_project_locked(&discovery.services.database_url, project_id)
+    });
+    totals.scanned = discovery.registry_project_counts.scanned;
+    totals.active += discovery.registry_project_counts.active;
+    totals
+}
+
+fn reconcile_registry_project_locked(
+    database_url: &str,
+    project_id: &str,
+) -> anyhow::Result<SweepOutcome> {
+    let refreshed = discover_global_project_prune(database_url)?;
+    if !refreshed
+        .registry_projects
+        .iter()
+        .any(|project| project.id == project_id)
+    {
+        let mut conn = db::connect_readonly(database_url)?;
+        return Ok(if db::indexed_project_exists(&mut conn, project_id)? {
+            SweepOutcome::Active
+        } else {
+            SweepOutcome::AlreadyMissing
+        });
+    }
+
+    let mut conn = db::connect_readwrite(database_url)?;
+    let project_uuid = db::id_param(project_id)?;
+    let deleted = conn.execute(
+        "DELETE FROM code_indexed_projects project
+         WHERE project.id = $1
+           AND project.updated_at <= NOW() - ($2::INT * INTERVAL '1 hour')
+           AND NOT EXISTS (
+               SELECT 1 FROM code_indexed_project_states state
+               WHERE state.project_id = project.id
+           )",
+        &[&project_uuid, &CODE_INDEX_RETENTION_HOURS],
+    )?;
+    Ok(if deleted == 0 {
+        SweepOutcome::Active
+    } else {
+        SweepOutcome::Deleted
     })
 }
 
